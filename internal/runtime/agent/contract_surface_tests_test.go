@@ -32067,11 +32067,11 @@ func TestReadOnlyCompletionGateCandidateOnlyRecoveryNamesSourceBody(t *testing.T
 	brief.AllowedTools = []string{"search_content", "read_file", "code_navigate"}
 
 	runner := &Runner{RuntimeBrief: brief}
-	result, rejected := runner.readOnlyEvidenceCompletionRejection("ShortLabel returns Save changes.", []workspace.ToolResult{{
+	result, rejected := runner.completionGateRejection("ShortLabel returns Save changes.", []workspace.ToolResult{{
 		Tool:    "search_content",
 		Summary: "Found 1 matching line(s).",
 		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
-	}})
+	}}, 1, nil, false)
 
 	if !rejected {
 		t.Fatal("expected candidate-only read-only answer to be rejected")
@@ -32091,11 +32091,11 @@ func TestReadOnlyCompletionGateCandidateOnlyRecoveryNamesSourceBody(t *testing.T
 		t.Fatalf("candidate-only recovery should not fall back to generic discovery advice:\n%s", result.Error)
 	}
 
-	if _, rejected := runner.readOnlyEvidenceCompletionRejection("<<QUESTION>>: Cannot answer until source-body evidence is available.", []workspace.ToolResult{{
+	if _, rejected := runner.completionGateRejection("<<QUESTION>>: Cannot answer until source-body evidence is available.", []workspace.ToolResult{{
 		Tool:    "search_content",
 		Summary: "Found 1 matching line(s).",
 		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
-	}}); rejected {
+	}}, 1, nil, false); rejected {
 		t.Fatal("candidate-only recovery must not reject an explicit blocker terminal outcome")
 	}
 }
@@ -32117,11 +32117,11 @@ func TestReadOnlyCompletionGateDiagnosticLogCitationIgnoresStaleSearchCandidates
 	answer := "The latest failure was a repeated completion-gate rejection in `" + logPath + "` after stale search candidates polluted the source-grounding ledger."
 
 	runner := &Runner{RuntimeBrief: brief}
-	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); reason != "" {
 		t.Fatalf("read diagnostic log citation should satisfy source grounding for the cited log, got %q", reason)
 	}
 
-	result, rejected := runner.readOnlyEvidenceCompletionRejection(answer, results)
+	result, rejected := runner.completionGateRejection(answer, results, 1, nil, false)
 	if rejected {
 		t.Fatalf("stale search candidates must not reject an answer grounded in a read diagnostic log, got: %s", result.Error)
 	}
@@ -32148,7 +32148,7 @@ func TestReadOnlyCompletionGateDiagnosticLogCitationDoesNotSatisfySourceFailureQ
 	answer := "The runner build failed according to `" + logPath + "`."
 
 	runner := &Runner{RuntimeBrief: brief}
-	result, rejected := runner.readOnlyEvidenceCompletionRejection(answer, results)
+	result, rejected := runner.completionGateRejection(answer, results, 1, nil, false)
 	if !rejected {
 		t.Fatal("source/build failure questions must still require source-body or relevant diagnostic evidence")
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -17,10 +18,10 @@ type sourceGroundingRejectionKind string
 
 const (
 	sourceGroundingRejectionUnknown           sourceGroundingRejectionKind = ""
+	sourceGroundingRejectionMissingEvidence   sourceGroundingRejectionKind = "missing_evidence"
 	sourceGroundingRejectionCandidateOnly     sourceGroundingRejectionKind = "candidate_only"
 	sourceGroundingRejectionMissingCandidate  sourceGroundingRejectionKind = "missing_candidate"
 	sourceGroundingRejectionUnsupportedDetail sourceGroundingRejectionKind = "unsupported_detail"
-	sourceGroundingRejectionExactDetail       sourceGroundingRejectionKind = "exact_detail"
 	sourceGroundingRejectionScaffold          sourceGroundingRejectionKind = "scaffold"
 )
 
@@ -127,24 +128,6 @@ func sourceGroundingScaffoldAssessment(text string) sourceGroundingAssessment {
 	}
 }
 
-func sourceGroundingCandidateOnlyCompletionAssessment(brief workerruntime.WorkerRuntimeBrief, answer string, results []workspace.ToolResult) (sourceGroundingAssessment, bool) {
-	ledger, candidateOnly := sourceGroundingCandidateOnlyLedger(brief, results)
-	if !candidateOnly {
-		return sourceGroundingAssessment{}, false
-	}
-	projection := newToolResultEvidenceProjection(results)
-	if sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, answer, projection) {
-		return sourceGroundingAssessment{}, true
-	}
-
-	candidates := closurePromptEvidencePaths(ledger.CandidatePaths, 4)
-	if len(candidates) == 0 {
-		return sourceGroundingAssessment{}, true
-	}
-
-	return sourceGroundingCandidateOnlyAssessment(candidates), true
-}
-
 func sourceGroundingCandidateOnlyLedger(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (readOnlyAnswerabilityLedger, bool) {
 	if !readOnlyDirectAnswerLane(brief) {
 		return readOnlyAnswerabilityLedger{}, false
@@ -173,6 +156,8 @@ func (a sourceGroundingAssessment) BlocksFinalAnswer() bool {
 
 func (a sourceGroundingAssessment) Message() string {
 	switch a.Kind {
+	case sourceGroundingRejectionMissingEvidence:
+		return strings.TrimSpace(a.Text)
 	case sourceGroundingRejectionCandidateOnly:
 		paths := nonEmptyRunnerStrings(a.Paths, 8)
 		pathSummary := strings.Join(paths, ", ")
@@ -184,7 +169,7 @@ func (a sourceGroundingAssessment) Message() string {
 		return "the answer cites path(s) that were discovered as index candidates but " + sourceGroundingMissingCandidateMarker + ": " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Read the first unread path with one bounded `read_file` or `code_navigate` call and cite the actual evidence from the file body. If the path was from search or graph results and does not need a full read, qualify the claim as `unverified` next to the citation."
 	case sourceGroundingRejectionUnsupportedDetail:
 		return "the answer cites source path/line/symbol detail " + sourceGroundingUnsupportedDetailMarker + ": " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
-	case sourceGroundingRejectionExactDetail, sourceGroundingRejectionScaffold:
+	case sourceGroundingRejectionScaffold:
 		return strings.TrimSpace(a.Text)
 	default:
 		return ""
@@ -211,28 +196,11 @@ func (a sourceGroundingAssessment) RecoveryPrompt(ledgerGuidance string) string 
 
 func (a sourceGroundingAssessment) PresentableDetail() string {
 	switch a.Kind {
+	case sourceGroundingRejectionMissingEvidence:
+		return "the run did not retain bounded evidence for the answer"
 	case sourceGroundingRejectionCandidateOnly, sourceGroundingRejectionMissingCandidate:
 		return "the run did not retain a supported answer from inspected evidence"
 	case sourceGroundingRejectionUnsupportedDetail:
-		return "the run did not retain a supported answer from inspected evidence"
-	case sourceGroundingRejectionExactDetail:
-		detail := firstSentenceBeforeAny(a.Text,
-			" Either anchor that detail",
-			" Either issue ONE concrete tool call",
-			" Answer with the exact",
-			" Use one exact read",
-			"\n\nEvidence paths observed before rejection:",
-		)
-		detail = strings.TrimSpace(sourceGroundingStripGateRecoveryPrefix(detail))
-		lowerDetail := strings.ToLower(detail)
-		if strings.Contains(lowerDetail, "the answer names additional implementation detail") ||
-			strings.Contains(lowerDetail, "without an exact inspected probe") {
-
-			return "the run did not retain a supported answer from inspected evidence"
-		}
-		if detail != "" {
-			return lowercaseFirstSentence(detail)
-		}
 		return "the run did not retain a supported answer from inspected evidence"
 	default:
 		return ""
@@ -249,7 +217,13 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 		return sourceGroundingAssessment{}
 	}
 
-	if !sourceGroundingGateApplies(brief) {
+	citationGateApplies := sourceGroundingGateApplies(brief)
+	evidenceFloorApplies := citationGateApplies ||
+		readOnlyExplanationGateApplies(brief) ||
+		(brief.Readiness != nil &&
+			!brief.Readiness.ReadyToAnswer &&
+			len(genericReadOnlyEvidenceTools(brief.AllowedTools)) > 0)
+	if !evidenceFloorApplies {
 		return sourceGroundingAssessment{}
 	}
 
@@ -261,10 +235,19 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 		return sourceGroundingScaffoldAssessment("the answer is only a retained-context or evidence-scaffold summary. Final answers must state the concrete behavior supported by relevant source-body or diagnostic evidence, not only list evidence surfaces.")
 	}
 
+	projection := newToolResultEvidenceProjection(results)
+
+	if assessment := r.readOnlyEvidenceSourceGroundingAssessment(brief, answer, results, projection); assessment.BlocksFinalAnswer() {
+		return assessment
+	}
+
+	if !citationGateApplies {
+		return sourceGroundingAssessment{}
+	}
+
 	validationLedgerEvidence := r.validationStatusAnswerCanUseLedgerEvidence(answer, results)
 
 	citations := analyzeSourceCitations(answer)
-	projection := newToolResultEvidenceProjection(results)
 	if escaping := sourceGroundingUnsupportedEscapingPaths(answer, citations.EscapingPaths, projection); len(escaping) > 0 {
 		return sourceGroundingUnsupportedDetailAssessment(escaping)
 	}
@@ -359,8 +342,80 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 	return sourceGroundingAssessment{}
 }
 
-func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspace.ToolResult) string {
-	return r.assessSourceGrounding(answer, results).Message()
+func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.WorkerRuntimeBrief, answer string, results []workspace.ToolResult, projection toolResultEvidenceProjection) sourceGroundingAssessment {
+	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
+		return sourceGroundingAssessment{}
+	}
+
+	ledger, directCandidateOnly := sourceGroundingCandidateOnlyLedger(brief, results)
+	if brief.Readiness == nil &&
+		!readOnlyExplanationGateApplies(brief) &&
+		!workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDirectAnswer) &&
+		!directCandidateOnly {
+
+		return sourceGroundingAssessment{}
+	}
+
+	if len(genericReadOnlyEvidenceTools(brief.AllowedTools)) == 0 {
+		return sourceGroundingAssessment{}
+	}
+
+	if readOnlyClosureDecisionForResults(brief, results).Answerable() {
+		return sourceGroundingAssessment{}
+	}
+
+	if readOnlyDirectAnswerLane(brief) && readOnlyAnswerReportsInsufficientEvidence(answer) {
+		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+		if len(ledger.SourceBodyPaths) > 0 || len(ledger.ExternalDocumentBodyPaths) > 0 || ledger.DiagnosticEvidence {
+			return sourceGroundingAssessment{}
+		}
+	}
+
+	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, answer, projection)
+	if genericReadOnlyAnswerEvidenceReady(brief, results) {
+		return sourceGroundingAssessment{}
+	}
+
+	if diagnosticArtifactSupported {
+		return sourceGroundingAssessment{}
+	}
+
+	if workerruntime.ConstraintPresent(brief.Constraints, workerruntime.ConstraintAnswerReadinessReached) {
+		return sourceGroundingAssessment{}
+	}
+
+	if workerruntime.ConstraintPresent(brief.Constraints, workerruntime.ConstraintChildPacketAvailable) {
+		return sourceGroundingAssessment{}
+	}
+
+	if len(intersectRunnerPaths(
+		readOnlySourceLikePaths(pathparse.MentionedWorkspacePaths(answer), 16),
+		delegatedClosureEvidencePaths(brief.Objective, results, 8),
+	)) > 0 {
+		return sourceGroundingAssessment{}
+	}
+
+	if postChildReadOnlyPacketAvailable(brief, results) {
+		return sourceGroundingAssessment{}
+	}
+
+	if directCandidateOnly {
+		if candidates := closurePromptEvidencePaths(ledger.CandidatePaths, 4); len(candidates) > 0 {
+			return sourceGroundingCandidateOnlyAssessment(candidates)
+		}
+	}
+
+	if readPaths := sortedRunnerPathKeys(projection.ReadPaths()); len(readPaths) > 0 {
+		return sourceGroundingAssessment{
+			Kind: sourceGroundingRejectionMissingEvidence,
+			Text: "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Already inspected path(s) should not be reread: " + strings.Join(readPaths, ", ") + ". Use one targeted source search/read/navigation request for a different concrete code path tied to the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
+		}
+	}
+
+	return sourceGroundingAssessment{
+		Kind: sourceGroundingRejectionMissingEvidence,
+		Text: "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Use one targeted read/search/discovery tool for the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
+	}
 }
 
 func sourceGroundingStripGateRecoveryPrefix(text string) string {

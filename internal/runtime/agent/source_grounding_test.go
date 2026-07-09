@@ -57,7 +57,7 @@ func TestSourceGroundingAllowsBackedExternalDocumentCitation(t *testing.T) {
 	}
 	answer := "The Website failure brief says duplicate surfaces caused drift, and that is grounded in `" + filepath.ToSlash(filepath.Clean(docPath)) + "`."
 
-	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); reason != "" {
 		t.Fatalf("body-backed external document citation should not be rejected: %q", reason)
 	}
 }
@@ -68,7 +68,7 @@ func TestSourceGroundingRejectsUnbackedExternalDocumentCitation(t *testing.T) {
 	runner.RuntimeBrief.Objective = "What does the Website failure brief say about duplicate surfaces?"
 	answer := "The Website failure brief says duplicate surfaces caused drift, and that is grounded in `" + docPath + "`."
 
-	reason := runner.sourceGroundingRejectionReason(answer, nil)
+	reason := runner.assessSourceGrounding(answer, nil).Message()
 	if !strings.Contains(reason, docPath) {
 		t.Fatalf("unbacked external document citation should be rejected, got %q", reason)
 	}
@@ -86,7 +86,7 @@ func TestSourceGroundingAllowsRelativeCitationToBackedExternalDocument(t *testin
 	}
 	answer := "Add book-positioning copy from `front-back/book-matter-and-cover-copy-proposal.md` and author bio material from `front-back/back-matter.md`."
 
-	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); reason != "" {
 		t.Fatalf("relative citations to body-backed external documents should not be rejected: %q", reason)
 	}
 }
@@ -104,7 +104,7 @@ func TestSourceGroundingAllowsBacktickedExternalDocumentPathWithSpaces(t *testin
 		t.Fatalf("mentioned paths = %#v, want intact external path without truncated Project fragment", paths)
 	}
 
-	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); reason != "" {
 		t.Fatalf("backticked body-backed external document path with spaces should not be rejected: %q", reason)
 	}
 }
@@ -142,7 +142,7 @@ func TestSourceGroundingAllowsQuotedLineRangeForBackedSourceBody(t *testing.T) {
 		t.Fatalf("mentioned paths should not include literal line range: %#v", paths)
 	}
 
-	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); reason != "" {
 		t.Fatalf("body-backed quoted line range should not be rejected: %q", reason)
 	}
 }
@@ -200,7 +200,7 @@ func TestSourceGroundingRejectsAmbiguousRelativeExternalDocumentCitation(t *test
 	}
 	answer := "Use the author material from `front-back/back-matter.md`."
 
-	reason := runner.sourceGroundingRejectionReason(answer, results)
+	reason := runner.assessSourceGrounding(answer, results).Message()
 	if !strings.Contains(reason, "front-back/back-matter.md") {
 		t.Fatalf("ambiguous relative external citation should remain rejected, got %q", reason)
 	}
@@ -214,7 +214,7 @@ func TestSourceGroundingAllowsUniqueBareExternalDocumentCitation(t *testing.T) {
 	}
 	answer := "`back-matter.md:1` contains the author notes."
 
-	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); reason != "" {
 		t.Fatalf("unique bare external document citation should be accepted, got %q", reason)
 	}
 }
@@ -238,7 +238,7 @@ func TestSourceGroundingRejectsBareCitationAmbiguousAcrossWorkspaceAndExternalBo
 	}
 	answer := "`back-matter.md:1` contains the author notes."
 
-	reason := runner.sourceGroundingRejectionReason(answer, results)
+	reason := runner.assessSourceGrounding(answer, results).Message()
 	if !strings.Contains(reason, "back-matter.md") {
 		t.Fatalf("bare citation ambiguous across workspace and external body reads should be rejected, got %q", reason)
 	}
@@ -262,7 +262,7 @@ func TestSourceGroundingRejectsExistingWorkspaceCitationEvenWhenExternalSuffixMa
 	}
 	answer := "`front-back/back-matter.md:1` defines the workspace author bio copy."
 
-	reason := runner.sourceGroundingRejectionReason(answer, results)
+	reason := runner.assessSourceGrounding(answer, results).Message()
 	if !strings.Contains(reason, workspacePath) {
 		t.Fatalf("existing workspace citation without workspace body evidence should not be laundered through external suffix, got %q", reason)
 	}
@@ -320,10 +320,10 @@ func TestSourceGroundingRejectsPathOnlyCitationSupport(t *testing.T) {
 		Output:  "package productworkflow\nfunc EvaluateCoverageGate() {}\n",
 	}}
 
-	reason := runner.sourceGroundingRejectionReason(
+	reason := runner.assessSourceGrounding(
 		"The current source `internal/workflows/productworkflow/coverage_gate.go` defines the coverage gate behavior.",
 		results,
-	)
+	).Message()
 	if !strings.Contains(reason, "internal/workflows/productworkflow/coverage_gate.go") {
 		t.Fatalf("path-only read metadata must not satisfy source-body citation support, got %q", reason)
 	}
@@ -335,10 +335,10 @@ func TestSourceGroundingRawBodyEvidenceSatisfiesCitationSupport(t *testing.T) {
 		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 80, 552, "func EvaluateCoverageGate() {}\n"),
 	}
 
-	reason := runner.sourceGroundingRejectionReason(
+	reason := runner.assessSourceGrounding(
 		"The current source `internal/workflows/productworkflow/coverage_gate.go` defines the coverage gate behavior.",
 		results,
-	)
+	).Message()
 	if reason != "" {
 		t.Fatalf("expected raw read_file source-body evidence to satisfy citation support, got %q", reason)
 	}
@@ -365,7 +365,7 @@ func TestSourceGroundingBasenameResolutionUsesResultBackedEvidence(t *testing.T)
 	rawResults := []workspace.ToolResult{
 		readFileSourceBodyResult("internal/app/target.go", 1, 20, 0, "package app\nfunc targetBehavior() {}\n"),
 	}
-	if reason := rawRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", rawResults); reason != "" {
+	if reason := rawRunner.assessSourceGrounding("`target.go:2` defines target behavior.", rawResults).Message(); reason != "" {
 		t.Fatalf("unique basename backed by raw source-body evidence blocked: %q", reason)
 	}
 
@@ -378,7 +378,7 @@ func TestSourceGroundingBasenameResolutionUsesResultBackedEvidence(t *testing.T)
 		readFileSourceBodyResult(uniquePath, 1, 20, 0, "package app\nfunc targetBehavior() {}\n"),
 		readFileSourceBodyResult("internal/other/target.go", 1, 20, 0, "package other\nfunc targetBehavior() {}\n"),
 	}
-	reason := ambiguousRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", ambiguousResults)
+	reason := ambiguousRunner.assessSourceGrounding("`target.go:2` defines target behavior.", ambiguousResults).Message()
 	if !strings.Contains(reason, "target.go") {
 		t.Fatalf("ambiguous basename should remain unsupported, got %q", reason)
 	}

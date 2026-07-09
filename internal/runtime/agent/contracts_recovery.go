@@ -52,9 +52,6 @@ func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool
 			return taskLedger.completionRejection(reply)
 		},
 		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
-			return r.readOnlyEvidenceCompletionRejection(reply, results)
-		},
-		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 			return r.readOnlyNonSubstantiveCompletionRejection(reply, results)
 		},
 		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {

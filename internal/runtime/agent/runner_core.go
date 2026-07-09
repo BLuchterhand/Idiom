@@ -10296,40 +10296,44 @@ func (r *Runner) finalAnswerAcceptanceCompletionRejection(reply string, results 
 		return workspace.ToolResult{}, false
 	}
 
+	summary := "Final answer rejected by blocker check"
+	if violation, ok := turnContractAssessmentPrimaryViolation(acceptance.ContractAssessment); ok &&
+		violation.Kind == turnViolationSourceGroundingUnmet {
+
+		summary = "Read-only completion gate rejected final answer"
+	}
+
 	return finalAnswerCompletionGateProjection(
 		acceptance,
-		"Final answer rejected by blocker check",
+		summary,
 		r.finalAnswerBlockerErrorText(acceptance.BlockerKind, acceptance.Reason, reply, results),
 	)
 }
 
-func (r *Runner) replyMayProjectFinalAnswerAcceptanceThroughCompletionGate(reply string) bool {
-	if !r.readOnlyProtocolMetaCompletionProjectionLane() {
-		return false
-	}
-
-	return looksLikePriorAnswerReferenceFinalAnswer(reply) ||
-		looksLikeGateSatisfactionMetaFinalAnswer(reply) ||
-		looksLikeEmbeddedQuestionProtocolFinalAnswer(reply)
+func (r *Runner) replyMayProjectFinalAnswerAcceptanceThroughCompletionGate(_ string) bool {
+	return r != nil &&
+		!runnerBriefRequiresMutation(r.RuntimeBrief) &&
+		workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile)
 }
 
 func (r *Runner) finalAnswerAcceptanceProjectsThroughCompletionGate(acceptance finalAnswerAcceptance) bool {
-	if !r.readOnlyProtocolMetaCompletionProjectionLane() {
+	if r == nil ||
+		runnerBriefRequiresMutation(r.RuntimeBrief) ||
+		!workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) {
+
 		return false
 	}
 
 	switch acceptance.BlockerKind {
 	case string(turnViolationProtocolMetaFinalAnswer):
 		return true
+	case string(turnViolationSourceGroundingUnmet):
+		return r != nil &&
+			workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) &&
+			!runnerBriefRequiresMutation(r.RuntimeBrief)
 	default:
 		return false
 	}
-}
-
-func (r *Runner) readOnlyProtocolMetaCompletionProjectionLane() bool {
-	return r != nil &&
-		!runnerBriefRequiresMutation(r.RuntimeBrief) &&
-		workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile)
 }
 
 func rawToolResultTranscriptCompletionRejection(reply string) (workspace.ToolResult, bool) {
@@ -10341,98 +10345,6 @@ func rawToolResultTranscriptCompletionRejection(reply string) (workspace.ToolRes
 		Tool:    "completion_gate",
 		Summary: "Raw tool result transcript rejected as final answer",
 		Error:   "the reply is an internal tool-result transcript, not a user-facing answer. Synthesize the answer from the gathered evidence, or state the concrete blocker/no-op reason; do not copy tool/status/output fields.",
-	}, true
-}
-
-func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
-	if r == nil {
-		return workspace.ToolResult{}, false
-	}
-
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
-		return workspace.ToolResult{}, false
-	}
-
-	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
-		return workspace.ToolResult{}, false
-	}
-
-	candidateOnlyAssessment, directCandidateOnly := sourceGroundingCandidateOnlyCompletionAssessment(brief, reply, results)
-	if brief.Readiness == nil &&
-		!readOnlyExplanationGateApplies(brief) &&
-		!workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDirectAnswer) &&
-		!directCandidateOnly {
-
-		return workspace.ToolResult{}, false
-	}
-
-	if len(genericReadOnlyEvidenceTools(brief.AllowedTools)) == 0 {
-		return workspace.ToolResult{}, false
-	}
-
-	if strings.HasPrefix(strings.TrimSpace(reply), "<<QUESTION>>") {
-		return workspace.ToolResult{}, false
-	}
-
-	if readOnlyClosureDecisionForResults(brief, results).Answerable() {
-		return workspace.ToolResult{}, false
-	}
-
-	if readOnlyDirectAnswerLane(brief) && readOnlyAnswerReportsInsufficientEvidence(reply) {
-		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
-		if len(ledger.SourceBodyPaths) > 0 || len(ledger.ExternalDocumentBodyPaths) > 0 || ledger.DiagnosticEvidence {
-			return workspace.ToolResult{}, false
-		}
-	}
-
-	projection := newToolResultEvidenceProjection(results)
-	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, reply, projection)
-	concreteReadOnlyEvidence := false
-	for _, observation := range projection.ReadOnlyEvidenceObservations() {
-		switch observation.Kind {
-		case readOnlyEvidenceDiagnostic, readOnlyEvidenceSourceBody, readOnlyEvidenceExternalDocument:
-			concreteReadOnlyEvidence = true
-		}
-	}
-	if readOnlyDirectAnswerLane(brief) &&
-		(concreteReadOnlyEvidence ||
-			readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results) ||
-			diagnosticArtifactSupported) {
-
-		if acceptance := r.evaluateFinalAnswerAcceptance(reply, results); acceptance.BlockerKind == "" {
-			return workspace.ToolResult{}, false
-		}
-	}
-
-	if candidateOnlyAssessment.BlocksFinalAnswer() {
-		return workspace.ToolResult{
-			Tool:    "completion_gate",
-			Summary: "Read-only completion gate rejected final answer",
-			Error:   candidateOnlyAssessment.Message(),
-		}, true
-	}
-
-	if genericReadOnlyAnswerEvidenceReady(brief, results) {
-		return workspace.ToolResult{}, false
-	}
-
-	if diagnosticArtifactSupported {
-		return workspace.ToolResult{}, false
-	}
-
-	if readPaths := sortedRunnerPathKeys(projection.ReadPaths()); len(readPaths) > 0 {
-		return workspace.ToolResult{
-			Tool:    "completion_gate",
-			Summary: "Read-only completion gate rejected final answer",
-			Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Already inspected path(s) should not be reread: " + strings.Join(readPaths, ", ") + ". Use one targeted source search/read/navigation request for a different concrete code path tied to the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
-		}, true
-	}
-
-	return workspace.ToolResult{
-		Tool:    "completion_gate",
-		Summary: "Read-only completion gate rejected final answer",
-		Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Use one targeted read/search/discovery tool for the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
 	}, true
 }
 

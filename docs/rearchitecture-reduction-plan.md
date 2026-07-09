@@ -148,6 +148,11 @@ The stale standalone `idiom-analyze` log-shape miner was deleted after shell
 replacement redirects were removed; its main purpose was proposing
 shell-to-structured-tool redirect rules that no longer align with the harness
 north star.
+Read-only source-grounding rejection now lives under final-answer acceptance
+instead of a separate completion-gate checker. Completion gate projects the
+typed acceptance violation into retry/recovery/audit shape, while evidence
+projection and delegated child-packet authorities remain the source of what was
+actually inspected.
 Language-backed read-only capability registry, runtime routing, evidence
 capabilities, and discovery profiling now project from a workspace catalog and
 the semantic `languagetools` code-navigation spec instead of separate

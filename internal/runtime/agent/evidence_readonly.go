@@ -5879,14 +5879,6 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 		}, true
 	}
 
-	if reason := r.sourceGroundingRejectionReason(reply, results); reason != "" {
-		return workspace.ToolResult{
-			Tool:    "completion_gate",
-			Summary: "Read-only explanation gate rejected ungrounded source citation",
-			Error:   reason,
-		}, true
-	}
-
 	return workspace.ToolResult{}, false
 }
 
@@ -5981,20 +5973,6 @@ func featurePlannerPlanArtifactResult(result workspace.ToolResult) bool {
 	}
 
 	return featurePlannerPlanMarkdownReadResult(result)
-}
-
-func readOnlyPlanArtifactEvidenceSupportsReply(brief workerruntime.WorkerRuntimeBrief, answer string, results []workspace.ToolResult) bool {
-	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
-	if len(ledger.PlanArtifactPaths) == 0 {
-		return false
-	}
-
-	if ledger.planArtifactAnswerable() && answerAddressesPlanArtifactObjective(answer, ledger.Objective, ledger) {
-		return true
-	}
-
-	mentioned := readOnlySourceLikePaths(analyzeSourceCitations(answer).MentionedPaths, 16)
-	return len(mentioned) > 0 && proposedPlanPathCitationsAreRelevant(answer, mentioned, ledger)
 }
 
 func featurePlannerPlanArtifactMatchesObjective(objective string, result workspace.ToolResult) bool {

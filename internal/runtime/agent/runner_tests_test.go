@@ -30451,8 +30451,8 @@ func TestReadOnlyEvidenceCompletionRejectionRequiresBoundedEvidence(t *testing.T
 		t.Fatalf("expected read-only final answer without evidence to be rejected")
 	}
 
-	if !strings.Contains(result.Error, "bounded source-body or diagnostic evidence") {
-		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
+	if !strings.Contains(result.Error, sourceGroundingCandidateOnlyMarker) {
+		t.Fatalf("expected candidate-only source-body evidence rejection, got %#v", result)
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{result})
@@ -30465,7 +30465,7 @@ func TestReadOnlyEvidenceCompletionRejectionRequiresBoundedEvidence(t *testing.T
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionAppliesToDirectAnswerAliasWithoutReadiness(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceRequiresEvidenceForDirectAnswerAliasWithoutReadiness(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30475,9 +30475,12 @@ func TestReadOnlyEvidenceCompletionRejectionAppliesToDirectAnswerAliasWithoutRea
 			Objective:         "Find why the TUI chat input first wraps to a newline.",
 		},
 	}
-	result, rejected := runner.readOnlyEvidenceCompletionRejection(
+	result, rejected := runner.completionGateRejection(
 		"I cannot determine from the available evidence why the TUI chat input first wraps to a newline.",
 		nil,
+		1,
+		nil,
+		false,
 	)
 
 	if !rejected {
@@ -30489,7 +30492,7 @@ func TestReadOnlyEvidenceCompletionRejectionAppliesToDirectAnswerAliasWithoutRea
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionSkipsConversationWithoutReadiness(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceSkipsConversationWithoutReadiness(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30499,9 +30502,12 @@ func TestReadOnlyEvidenceCompletionRejectionSkipsConversationWithoutReadiness(t 
 			Objective:         "In two short sentences, explain ordinary chat that does not ask for repository work.",
 		},
 	}
-	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+	_, rejected := runner.completionGateRejection(
 		"Ordinary chat should be handled as direct conversation without workspace tools.",
 		nil,
+		1,
+		nil,
+		false,
 	)
 
 	if rejected {
@@ -30509,7 +30515,7 @@ func TestReadOnlyEvidenceCompletionRejectionSkipsConversationWithoutReadiness(t 
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionAllowsSourceBackedInsufficientEvidenceAlias(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceAllowsSourceBackedInsufficientEvidenceAlias(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30519,7 +30525,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsSourceBackedInsufficientEviden
 			Objective:         "Find why the TUI chat input first wraps to a newline.",
 		},
 	}
-	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+	_, rejected := runner.completionGateRejection(
 		"I cannot determine from the available evidence why the TUI chat input first wraps to a newline.",
 		[]workspace.ToolResult{
 			readFileSourceBodyResult(
@@ -30530,6 +30536,9 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsSourceBackedInsufficientEviden
 				"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string { return strings.TrimSpace(rawTool) }\n",
 			),
 		},
+		1,
+		nil,
+		false,
 	)
 
 	if rejected {
@@ -30537,7 +30546,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsSourceBackedInsufficientEviden
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionAllowsFeaturePlannerPlanArtifact(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceAllowsFeaturePlannerPlanArtifact(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30556,9 +30565,12 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsFeaturePlannerPlanArtifact(t *
 		Payload:     payload,
 	}}
 
-	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+	_, rejected := runner.completionGateRejection(
 		"The active plan does not create durable memory yet. Its proposed files to create are `src/model_wrapper.py` and `tests/test_model_wrapper.py`, which are proposed plan paths, not existing source files.",
 		results,
+		1,
+		nil,
+		false,
 	)
 
 	if rejected {
@@ -30566,7 +30578,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsFeaturePlannerPlanArtifact(t *
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdownArtifact(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceAllowsReadFeaturePlannerPlanMarkdownArtifact(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30578,9 +30590,12 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdown
 	}
 	results := []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()}
 
-	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+	_, rejected := runner.completionGateRejection(
 		"The planned tests are `tests/test_models.py`, `tests/test_config.py`, and `tests/test_orchestrator.py`. I would expand the intended TDD coverage with persistence, config default, and orchestrator failure variants.",
 		results,
+		1,
+		nil,
+		false,
 	)
 
 	if rejected {
@@ -30588,7 +30603,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdown
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdownArtifactBasenames(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceAllowsReadFeaturePlannerPlanMarkdownArtifactBasenames(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30600,9 +30615,12 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdown
 	}
 	results := []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()}
 
-	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+	_, rejected := runner.completionGateRejection(
 		"The planned tests are `test_models.py`, `test_config.py`, and `test_orchestrator.py`. I would expand the intended TDD coverage with persistence, config default, and orchestrator failure variants.",
 		results,
+		1,
+		nil,
+		false,
 	)
 
 	if rejected {
@@ -30610,7 +30628,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdown
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionRejectsUnrelatedFeaturePlannerPlanArtifact(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceRejectsUnrelatedFeaturePlannerPlanArtifact(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30629,20 +30647,23 @@ func TestReadOnlyEvidenceCompletionRejectionRejectsUnrelatedFeaturePlannerPlanAr
 		Payload:     payload,
 	}}
 
-	result, rejected := runner.readOnlyEvidenceCompletionRejection(
+	result, rejected := runner.completionGateRejection(
 		"`src/model_wrapper.py` defines `ModelWrapper`.",
 		results,
+		1,
+		nil,
+		false,
 	)
 
 	if !rejected {
 		t.Fatal("plan artifact must not satisfy current-source implementation claims")
 	}
-	if !strings.Contains(result.Error, "bounded source-body or diagnostic evidence") {
-		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
+	if !strings.Contains(result.Error, "not read as source-body evidence") {
+		t.Fatalf("expected source-body evidence rejection, got %#v", result)
 	}
 }
 
-func TestReadOnlyEvidenceCompletionRejectionRejectsOverlappingNonPlanQuestion(t *testing.T) {
+func TestReadOnlyFinalAnswerAcceptanceRejectsOverlappingNonPlanQuestion(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
@@ -30661,9 +30682,12 @@ func TestReadOnlyEvidenceCompletionRejectionRejectsOverlappingNonPlanQuestion(t 
 		Payload:     payload,
 	}}
 
-	result, rejected := runner.readOnlyEvidenceCompletionRejection(
+	result, rejected := runner.completionGateRejection(
 		"The model wrapper fails tests because the inference flow is incomplete.",
 		results,
+		1,
+		nil,
+		false,
 	)
 
 	if !rejected {
@@ -30693,7 +30717,7 @@ func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t 
 			Error:   "read-only workspace answers require bounded source-body or diagnostic evidence before a final answer",
 		},
 	}
-	result, rejected := runner.readOnlyEvidenceCompletionRejection("The guard is probably in the runner.", results)
+	result, rejected := runner.completionGateRejection("The guard is probably in the runner.", results, 1, nil, false)
 
 	if !rejected {
 		t.Fatal("expected read-only evidence rejection before codebase evidence")
@@ -37305,21 +37329,14 @@ func TestForcedCompletionCatchesLiveSessionGarbageAnswer(t *testing.T) {
 			t.Log("rawToolResultTranscript: not rejected")
 		}
 
-		// Check 4: read-only evidence
-		if ev, _ := runner.readOnlyEvidenceCompletionRejection(garbageAnswer, results); ev.Tool != "" {
-			t.Logf("readOnlyEvidence: rejected - %s", ev.Summary)
-		} else {
-			t.Log("readOnlyEvidence: not rejected (evidence is ready)")
-		}
-
-		// Check 5: read-only non-substantive
+		// Check 4: read-only non-substantive
 		if ns, _ := runner.readOnlyNonSubstantiveCompletionRejection(garbageAnswer, results); ns.Tool != "" {
 			t.Logf("readOnlyNonSubstantive: rejected - %s", ns.Summary)
 		} else {
 			t.Log("readOnlyNonSubstantive: not rejected (answer has enough words)")
 		}
 
-		// Check 6: read-only search hit inventory - THIS IS THE ONE THAT SHOULD CATCH IT
+		// Check 5: read-only search hit inventory - THIS IS THE ONE THAT SHOULD CATCH IT
 		if si, rejected2 := runner.readOnlySearchHitInventoryCompletionRejection(garbageAnswer, results); rejected2 {
 			t.Logf("readOnlySearchHitInventory: REJECTED - %s", si.Summary)
 		} else {
@@ -38743,7 +38760,7 @@ func TestSourceGroundingIgnoresPathsInsideFencedTemplateExamples(t *testing.T) {
 		"```",
 	}, "\n")
 
-	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); reason != "" {
 		t.Fatalf("fenced template paths should not be treated as answer citations, got %q", reason)
 	}
 }
@@ -38763,7 +38780,7 @@ func TestSourceGroundingStillRejectsUnquotedTopLevelCandidateTextPath(t *testing
 		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("a.txt")},
 	}
 
-	if reason := runner.sourceGroundingRejectionReason(answer, results); !strings.Contains(reason, "a.txt") {
+	if reason := runner.assessSourceGrounding(answer, results).Message(); !strings.Contains(reason, "a.txt") {
 		t.Fatalf("unquoted top-level candidate path should still require source grounding, got %q", reason)
 	}
 }
