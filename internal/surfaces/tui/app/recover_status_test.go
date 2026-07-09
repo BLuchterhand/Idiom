@@ -223,10 +223,11 @@ func TestProductSlashCommandsStaySeparateFromFeaturePlanner(t *testing.T) {
 func TestFeaturePlannerTUIPlanExecuteCompletionPreservesNestedDegradedStatus(t *testing.T) {
 	model := &Model{}
 
-	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion(strings.Join([]string{
+	completionSummary := model.featurePlannerPlanExecuteCompletionSummary(strings.Join([]string{
 		`{"type":"idiom.plan_execute.review_repair_degraded","status":"degraded","reason_class":"review_model_error","status_detail":"review unavailable"}`,
 		`{"type":"message","content":"review unavailable"}`,
 	}, "\n"))
+	payload, err := encodeFeaturePlannerPlanExecuteCompletionSummary(completionSummary)
 	if err != nil {
 		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
 	}
@@ -265,7 +266,8 @@ func TestFeaturePlannerTUIPlanExecuteCompletionRequiresTypedNestedStatus(t *test
 		},
 	}
 
-	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plain nested stdout without typed completion")
+	completionSummary := model.featurePlannerPlanExecuteCompletionSummary("plain nested stdout without typed completion")
+	payload, err := encodeFeaturePlannerPlanExecuteCompletionSummary(completionSummary)
 	if err != nil {
 		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
 	}
@@ -311,7 +313,8 @@ func TestFeaturePlannerTUIPlanExecuteCompletionEncodesNonzeroRunResult(t *testin
 		},
 	}
 
-	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute exited 1")
+	completionSummary := model.featurePlannerPlanExecuteCompletionSummary("plan-execute exited 1")
+	payload, err := encodeFeaturePlannerPlanExecuteCompletionSummary(completionSummary)
 	if err != nil {
 		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
 	}
@@ -355,7 +358,8 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableProgressStateForSparse
 		},
 	}
 
-	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute returned without terminal JSONL")
+	completionSummary := model.featurePlannerPlanExecuteCompletionSummary("plan-execute returned without terminal JSONL")
+	payload, err := encodeFeaturePlannerPlanExecuteCompletionSummary(completionSummary)
 	if err != nil {
 		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
 	}
@@ -416,7 +420,8 @@ func TestFeaturePlannerTUIPlanExecuteCompletionPrefersDurableReviewRepairProgres
 	}
 	fallbackOutput := `{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact"}`
 
-	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion(fallbackOutput)
+	completionSummary := model.featurePlannerPlanExecuteCompletionSummary(fallbackOutput)
+	payload, err := encodeFeaturePlannerPlanExecuteCompletionSummary(completionSummary)
 	if err != nil {
 		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
 	}
@@ -478,7 +483,8 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableSkippedReviewState(t *
 		},
 	}
 
-	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute returned without terminal JSONL")
+	completionSummary := model.featurePlannerPlanExecuteCompletionSummary("plan-execute returned without terminal JSONL")
+	payload, err := encodeFeaturePlannerPlanExecuteCompletionSummary(completionSummary)
 	if err != nil {
 		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
 	}
@@ -546,7 +552,8 @@ func TestFeaturePlannerTUIPlanExecuteCompletionPreservesTerminalParentAuthority(
 		},
 	}
 
-	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute returned without terminal JSONL")
+	completionSummary := model.featurePlannerPlanExecuteCompletionSummary("plan-execute returned without terminal JSONL")
+	payload, err := encodeFeaturePlannerPlanExecuteCompletionSummary(completionSummary)
 	if err != nil {
 		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
 	}

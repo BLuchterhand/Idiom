@@ -20,10 +20,6 @@ type planExecuteScopeIntake struct {
 	PathRoles          []plancontract.ScopeExpansionPath
 }
 
-func classifyPlanExecuteScopeIntake(prompt string, plan promptExecutionPlan) planExecuteScopeIntake {
-	return implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, config.Config{})
-}
-
 func implementationDispatchCompilePlanExecuteScopeIntake(prompt string, plan promptExecutionPlan, _ config.Config) planExecuteScopeIntake {
 	intake := planExecuteScopeIntake{
 		RequiredTargets:    appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...),

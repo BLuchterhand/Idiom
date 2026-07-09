@@ -22,8 +22,6 @@ type planState struct {
 	overlayBody           string
 	autoShown             bool
 	submittedEdits        map[string]planartifact.PlanEdit
-	cachedItemsContent    string
-	cachedItems           []planItemMeta
 	collapsedHeadings     map[string]bool
 	renderedRows          []planRenderedRow
 }

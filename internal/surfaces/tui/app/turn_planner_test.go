@@ -3034,10 +3034,6 @@ func TestPlanExecuteRepeatedCompletionGateSurfacesDeterministicMessage(t *testin
 			PlannerAnswer: "Missing completion evidence: gate retry 3/3 requires a successful submit_plan tool result",
 		},
 	}
-	if !planExecuteFailureIsRepeatedCompletionGate(failure) {
-		t.Fatalf("expected repeated completion gate classifier to match")
-	}
-
 	answer := humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
 		Decision: "surface",
 		Reason:   "planner stopped before emitting `submit_plan`, `Decision: source-satisfied`, or a concrete blocker after repeated completion-gate rejection",

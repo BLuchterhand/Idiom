@@ -1121,30 +1121,6 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 	return answer, result.State, statePath, nil
 }
 
-func buildProductWorkflowBriefWithPromotionEvents(effortRoot string, workflowState productworkflow.WorkflowState, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger, traceability productworkflow.TraceabilityMatrix, implementationRecords []productworkflow.ImplementationLedgerRecord, promotionEvents []productworkflow.BehavioralCoveragePromotionEvent) *featureplanner.ProductWorkflowBrief {
-	input := productworkflow.PrepareBriefGenerationInput(productworkflow.BriefGenerationInput{
-		EffortRoot:            effortRoot,
-		WorkflowState:         workflowState,
-		PRD:                   prd,
-		ADRIndex:              adrIdx,
-		ADRs:                  parsedADRs,
-		TDD:                   ledger,
-		Traceability:          traceability,
-		ImplementationRecords: implementationRecords,
-		PromotionEvents:       promotionEvents,
-	})
-	handoff := productworkflow.BuildImplementationHandoff(input)
-	brief := featureplannerproduct.BriefFromImplementationHandoff(handoff)
-
-	brief.Constraints = appendUniqueBriefStrings(brief.Constraints,
-		"Preserve accepted PRD requirements and ADR decisions unless a new accepted ADR supersedes them.",
-		"Do not mutate product workflow artifacts while implementing the feature atom.",
-		"Report a planner question if PRD, ADR, or TDD obligations contradict the implementation scope.",
-	)
-
-	return brief
-}
-
 func formatProductWorkflowFeaturePlannerRecovery(state featureplanner.FeatureState, statePath string) (string, bool) {
 	var blockers []string
 
@@ -1730,39 +1706,6 @@ const (
 	// against this budget.
 	maxParseRepairRetries = 2
 )
-
-// sanitizeEffortSlug produces a filesystem-safe directory name from a description.
-func sanitizeEffortSlug(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-
-	result := strings.Builder{}
-
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			result.WriteRune(r)
-		} else if r == ' ' || r == '-' || r == '_' || r == '.' {
-			if result.Len() > 0 && result.String()[result.Len()-1] != '-' {
-				result.WriteByte('-')
-			}
-		}
-	}
-
-	slug := strings.Trim(result.String(), "-")
-	if len(slug) > 60 {
-		slug = slug[:60]
-		slug = strings.TrimRight(slug, "-")
-		// Truncate back to last word boundary to avoid partial words.
-		if lastDash := strings.LastIndex(slug, "-"); lastDash > 0 {
-			slug = slug[:lastDash]
-		}
-	}
-
-	if slug == "" {
-		slug = fmt.Sprintf("effort-%d", time.Now().Unix())
-	}
-
-	return slug
-}
 
 // firstNonEmpty returns the first non-empty string.
 func firstNonEmpty(values ...string) string {

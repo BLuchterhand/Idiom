@@ -91,15 +91,12 @@ var (
 // ── Model popup ───────────────────────────────────────────────────────────────
 
 var (
-	popupBoxStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(1, 2)
-	popupTitleStyle         = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
-	popupHintStyle          = lipgloss.NewStyle().Foreground(colorDim)
-	popupRoleActiveStyle    = lipgloss.NewStyle().Bold(true).Foreground(colorText)
-	popupRoleInactiveStyle  = lipgloss.NewStyle().Foreground(colorDim)
-	popupModelActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
-	popupModelInactiveStyle = lipgloss.NewStyle().Foreground(colorMuted)
-	popupModelRowStyle      = lipgloss.NewStyle().Foreground(colorText)
-	popupDescStyle          = lipgloss.NewStyle().Foreground(colorDim)
+	popupBoxStyle          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(1, 2)
+	popupTitleStyle        = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
+	popupHintStyle         = lipgloss.NewStyle().Foreground(colorDim)
+	popupRoleActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
+	popupRoleInactiveStyle = lipgloss.NewStyle().Foreground(colorDim)
+	popupDescStyle         = lipgloss.NewStyle().Foreground(colorDim)
 )
 
 // ── Slash-command suggestion popup ────────────────────────────────────────────

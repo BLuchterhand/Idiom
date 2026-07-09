@@ -1820,6 +1820,35 @@ Reviewer-updated estimate:
   `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
+- TUI dead-surface and wrong-owner coverage cleanup deleted the disconnected
+  model popup, the old plan-item cache/parser path, duplicate compaction-budget
+  formula helpers, shallow feature-planner predicate/formatter/completion
+  wrappers, the plan-execute scope-intake facade, the unused effort slugger, the
+  TUI-owned product-workflow brief builder, a repeated completion-gate predicate
+  used only by tests, the duplicate session replay reader, the workspace tool
+  surface pass-through, and leftover model-popup styles. Runtime behavior now
+  goes through `/model list` and direct model swap, plan selectable rows,
+  `ContextBudget`, `implementationDispatchCompilePlanExecuteScopeIntake`,
+  feature-planner summary/encoding/formatting owners, `replaySessionLog`, and
+  `workspaceAllowedToolsForTaskFamily`. Product handoff/brief coverage remains
+  in `productworkflow` and `featureplannerproduct`; TUI tests no longer preserve
+  that wrong owner. Production Go changed `+60 / -613`, net `-553`; test Go
+  changed `+125 / -643`, net `-518`; total Go changed `+185 / -1256`, net
+  `-1071`. With this worktree included, the branch is production Go
+  `+26,611 / -35,846`, net `-9,235` versus `main`. Focused verification:
+  `go test ./internal/surfaces/tui/app -count=1`;
+  `go test ./internal/workflows/productworkflow ./internal/workflows/featureplannerproduct -count=1`;
+  focused U1000 and TUI deadcode scans are clean. Full verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
+  Full deadcode inventory still reports unrelated candidates outside this slice:
+  compile phase vocabulary, featureplanner nested event names, intentloop event
+  parsing/cleanup helpers, recovery report/failure vocabulary helpers,
+  workflowstate transition validation, atomicfile post-commit status, shared
+  JSON-events test helpers, comprehension view cache/load helpers, semantic
+  indexsupport/languagetools helpers, modepolicy/readiness helpers, CLI MCP
+  discovery server construction, and intentloop stale-session cleanup.
 
 ## Review And Regression Protocol
 

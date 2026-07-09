@@ -31,25 +31,6 @@ var (
 	planApprovalAnchorRe = regexp.MustCompile(`<!--\s*plan-approval:\s*([^ \t<]+?)\s*-->`)
 )
 
-// parsePlanItems walks the plan markdown and returns one entry per
-// checkbox line, recording whichever anchors it carries. Non-checkbox
-// lines are ignored so headings and prose don't inflate the cursor
-// stops when the user navigates with j/k.
-func parsePlanItems(plan string) []planItemMeta {
-	var items []planItemMeta
-
-	for i, raw := range strings.Split(plan, "\n") {
-		meta, ok := parsePlanItemLine(i, raw)
-		if !ok {
-			continue
-		}
-
-		items = append(items, meta)
-	}
-
-	return items
-}
-
 func parsePlanItemLine(lineIdx int, raw string) (planItemMeta, bool) {
 	trimmed := strings.TrimLeft(raw, " \t")
 	if !strings.HasPrefix(trimmed, "- [") && !strings.HasPrefix(trimmed, "* [") {

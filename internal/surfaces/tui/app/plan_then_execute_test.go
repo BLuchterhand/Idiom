@@ -23,7 +23,7 @@ func TestSetForcedTaskFamilyProjectsPlanThenExecuteToolSurface(t *testing.T) {
 	defer model.Close()
 
 	// Default: edit_file in the manifest, submit_plan absent.
-	defaultTools := model.workspaceAllowedTools()
+	defaultTools := model.workspaceAllowedToolsForTaskFamily(model.forcedTaskFamily)
 	if !appPlanModeContains(defaultTools, "edit_file") {
 		t.Fatalf("default workspace must include edit_file, got %v", defaultTools)
 	}
@@ -36,7 +36,7 @@ func TestSetForcedTaskFamilyProjectsPlanThenExecuteToolSurface(t *testing.T) {
 	// plan-submission planner surface.
 	model.SetForcedTaskFamily("plan_then_execute_planner")
 
-	plannerTools := model.workspaceAllowedTools()
+	plannerTools := model.workspaceAllowedToolsForTaskFamily(model.forcedTaskFamily)
 	if !appPlanModeContains(plannerTools, "submit_plan") {
 		t.Fatalf("planner-profile manifest must include submit_plan, got %v", plannerTools)
 	}
@@ -50,7 +50,7 @@ func TestSetForcedTaskFamilyProjectsPlanThenExecuteToolSurface(t *testing.T) {
 	// Switching to a different family returns to the default workspace surface.
 	model.SetForcedTaskFamily("implementation")
 
-	restored := model.workspaceAllowedTools()
+	restored := model.workspaceAllowedToolsForTaskFamily(model.forcedTaskFamily)
 	if !appPlanModeContains(restored, "edit_file") {
 		t.Fatalf("restored manifest must include edit_file, got %v", restored)
 	}
@@ -61,7 +61,7 @@ func TestSetForcedTaskFamilyProjectsPlanThenExecuteToolSurface(t *testing.T) {
 
 	model.SetForcedTaskFamily("plan_then_execute_review_repair")
 
-	reviewTools := model.workspaceAllowedTools()
+	reviewTools := model.workspaceAllowedToolsForTaskFamily(model.forcedTaskFamily)
 	if !appPlanModeContains(reviewTools, "submit_plan") {
 		t.Fatalf("review-repair profile must include submit_plan, got %v", reviewTools)
 	}

@@ -265,7 +265,6 @@ type Model struct {
 	planApprovalSerial         sync.Mutex
 	planApprovalPending        *pendingPlanApproval
 	planExecuteApproveAllEdits bool
-	modelPopup                 modelPopupState
 	laneSwitchPopup            laneSwitchPopupState
 	// lastLaneSwitchSelection records the most recent lane command key
 	// chosen from the lane-switch popup. It supports test assertions and

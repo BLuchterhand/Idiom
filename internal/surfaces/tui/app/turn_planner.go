@@ -1227,14 +1227,6 @@ func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode modepolicy.Mode, workspa
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
 
-func (m *Model) workspaceAllowedTools() []string {
-	if m == nil || m.workspace == nil {
-		return nil
-	}
-
-	return m.workspaceAllowedToolsForTaskFamily(m.forcedTaskFamily)
-}
-
 func (m *Model) workspaceAllowedToolsForTaskFamily(family string) []string {
 	if m == nil || m.workspace == nil {
 		return nil

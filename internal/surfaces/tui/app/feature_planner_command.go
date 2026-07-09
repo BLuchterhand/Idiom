@@ -379,34 +379,6 @@ func (m *Model) productBriefForFeaturePlannerState(state featureplanner.FeatureS
 	return brief, effortRoot, nil
 }
 
-func (m *Model) directFeaturePlannerHasOpenQuestion() bool {
-	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
-	if sessionID == "" {
-		return false
-	}
-
-	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
-	if err != nil {
-		return false
-	}
-
-	return featureplanner.CountOpenPlannerQuestions(state) > 0
-}
-
-func (m *Model) directFeaturePlannerAcceptsOperatorInput() bool {
-	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
-	if sessionID == "" {
-		return false
-	}
-
-	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
-	if err != nil {
-		return false
-	}
-
-	return featurePlannerStateAcceptsDirectOperatorInput(state)
-}
-
 func (m *Model) directFeaturePlannerShouldConsumeOperatorInput(input string) bool {
 	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
 	if sessionID == "" || strings.TrimSpace(input) == "" {
@@ -764,10 +736,6 @@ func planExecuteAnswerIsBlocked(answer string) bool {
 	return false
 }
 
-func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
-	return encodeFeaturePlannerPlanExecuteCompletionSummary(m.featurePlannerPlanExecuteCompletionSummary(summary))
-}
-
 func (m *Model) featurePlannerPlanExecuteCompletionSummary(text string) featureplanner.PlanExecuteCompletionSummary {
 	summary := featureplanner.PlanExecuteCompletionSummaryFromOutput(text)
 	if m != nil {
@@ -1067,10 +1035,6 @@ func featurePlannerTUITerminalRole(status string) string {
 	default:
 		return featureplannercontract.EventName(featureplannercontract.EventTerminal)
 	}
-}
-
-func formatFeaturePlannerTUIAnswer(state featureplanner.FeatureState, statePath string) string {
-	return formatFeaturePlannerTUIAnswerForRoot(state, statePath, "")
 }
 
 func formatFeaturePlannerTUIAnswerForRoot(state featureplanner.FeatureState, statePath string, workspaceRoot string) string {

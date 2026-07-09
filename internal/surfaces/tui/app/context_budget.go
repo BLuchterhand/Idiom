@@ -13,7 +13,7 @@ const estTokensPerMsg = 125
 type ContextBudget struct {
 	CtxSize int
 
-	// Compaction thresholds (from compactionParams)
+	// Compaction thresholds.
 	CompactionThreshold  int // message count to trigger compaction
 	CompactionRecentKeep int // recent messages to keep verbatim
 
@@ -21,7 +21,7 @@ type ContextBudget struct {
 	ConvFirstMilestone int // first call-count awareness nudge
 	ConvNudgeInterval  int // interval between subsequent nudges
 
-	// Context limits for conversation lanes (from runnerContextLimitsForConversation)
+	// Context limits for conversation lanes.
 	ConvMaxMessages int
 	ConvMaxChars    int
 }
@@ -35,7 +35,7 @@ func NewContextBudget(ctxSize int) ContextBudget {
 
 	b := ContextBudget{CtxSize: ctxSize}
 
-	// --- Compaction thresholds (from compactionParams) ---
+	// Compaction thresholds.
 	// Fire at ~40% of window, keep ~20% as recent verbatim.
 	thresholdTokens := ctxSize * 40 / 100
 	recentTokens := ctxSize * 20 / 100
@@ -58,7 +58,7 @@ func NewContextBudget(ctxSize int) ContextBudget {
 	b.ConvFirstMilestone = maxInt(15, maxToolCalls*25/100)
 	b.ConvNudgeInterval = maxInt(20, maxToolCalls*35/100)
 
-	// --- Context limits (from runnerContextLimitsForConversation) ---
+	// Context limits.
 	b.ConvMaxMessages = (ctxSize * 80 / 100) / estTokensPerMsg
 	b.ConvMaxChars = ctxSize * 4 * 80 / 100
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -229,8 +228,8 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	if sessionID == "" {
 		t.Fatal("direct feature-planner session should be remembered after open question")
 	}
-	if !m.directFeaturePlannerHasOpenQuestion() {
-		t.Fatal("direct feature-planner session should report an open question")
+	if !m.directFeaturePlannerShouldConsumeOperatorInput("Approved.") {
+		t.Fatal("direct feature-planner session should consume an approval answer")
 	}
 
 	answer, err = m.runDirectFeaturePlannerAnswerOnce(context.Background(), "Approved.")
@@ -477,10 +476,10 @@ func TestFeaturePlannerTUIDirectPlanningRepairAcceptsPlainOperatorInput(t *testi
 		directFeaturePlannerSessionID: state.SessionID,
 	}
 
-	if m.directFeaturePlannerHasOpenQuestion() {
+	if featureplanner.CountOpenPlannerQuestions(state) != 0 {
 		t.Fatal("repair-only state should not masquerade as an open planner question")
 	}
-	if !m.directFeaturePlannerAcceptsOperatorInput() {
+	if !featurePlannerStateAcceptsDirectOperatorInput(state) {
 		t.Fatal("plain typed input should resume direct feature-planner planning-repair state")
 	}
 	if !m.directFeaturePlannerShouldConsumeOperatorInput("Treat fluid_network_system.h/cpp as the two explicit scoped files.") {
@@ -3001,7 +3000,7 @@ func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
 		AffectedFields:    []string{"new_file_authorization", "verification_command"},
 	}}
 
-	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, ".idiom/feature-planner/question-session/state.json", "")
 	for _, want := range []string{
 		"Feature planner needs your approval before it can continue.",
 		"Question: Approve greenfield scope",
@@ -3157,7 +3156,7 @@ func TestFeaturePlannerTUIRepairSummaryDoesNotLeakRawDiagnostics(t *testing.T) {
 		"behavioral_coverage_draft missing concrete_data",
 	}
 
-	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/repair-session/state.json")
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, ".idiom/feature-planner/repair-session/state.json", "")
 	for _, want := range []string{
 		"feature-planner: planning-repair",
 		"state: .idiom/feature-planner/repair-session/state.json",
@@ -3190,7 +3189,7 @@ func TestFeaturePlannerTUIGenericOperatorQuestionRendersChatQuestion(t *testing.
 		AffectedFields:    []string{"product_scope"},
 	}}
 
-	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, ".idiom/feature-planner/question-session/state.json", "")
 	for _, want := range []string{
 		"Feature planner needs your input before it can continue.",
 		"Question: Confirm product decision",
@@ -3227,7 +3226,7 @@ func TestFeaturePlannerTUINonOperatorSourceLocalizationQuestionIsHiddenByDefault
 		AffectedFields:    []string{"source_localization"},
 	}}
 
-	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, ".idiom/feature-planner/question-session/state.json", "")
 	for _, want := range []string{
 		"feature-planner: " + featureplanner.FeatureStatePlanningQuestion,
 		"state: .idiom/feature-planner/question-session/state.json",
@@ -3263,7 +3262,7 @@ func TestFeaturePlannerTUIExplicitSourceLocalizationQuestionCanRender(t *testing
 		UserFacing:        true,
 	}}
 
-	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, ".idiom/feature-planner/question-session/state.json", "")
 	for _, want := range []string{
 		"Feature planner needs your input before it can continue.",
 		"Question: Provide accepted source facts for CollapseEvent",
@@ -3431,7 +3430,7 @@ func TestFeaturePlannerTUIAnswerIncludesOpenQuestionDetails(t *testing.T) {
 		QuestionSummary: "Which tooltip path owns the row?",
 	}}
 
-	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, ".idiom/feature-planner/question-session/state.json", "")
 	if !strings.Contains(answer, "Feature planner needs your input before it can continue.") ||
 		!strings.Contains(answer, "Question: Which tooltip path owns the row?") {
 		t.Fatalf("TUI answer omitted question details:\n%s", answer)
@@ -3517,40 +3516,6 @@ func loadFeaturePlannerCommandStateFile(t *testing.T, path string) featureplanne
 	}
 
 	return state
-}
-
-func TestSanitizeEffortSlug(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"build user auth", "build-user-auth"},
-		{"Add OAuth 2.0 support!!!", "add-oauth-2-0-support"},
-		{"  spaces  everywhere  ", "spaces-everywhere"},
-		{"UPPERCASE", "uppercase"},
-		{"", ""}, // empty returns a timestamp-based slug, not testable here
-		{"a", "a"},
-		{"a very long feature description that goes on and on and on and on forever", "a-very-long-feature-description-that-goes-on-and-on-and-on"},
-		{"already-slugged", "already-slugged"},
-		{"-leading-and-trailing-", "leading-and-trailing"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := sanitizeEffortSlug(tt.input)
-			if tt.input == "" {
-				if got == "" {
-					t.Error("empty input should produce a timestamp-based slug")
-				}
-
-				return
-			}
-
-			if got != tt.expected {
-				t.Errorf("sanitizeEffortSlug(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
 }
 
 func writeNativeQualityEffort(t *testing.T, effortRoot string) {
@@ -4733,396 +4698,6 @@ func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.
 		if !strings.Contains(msg, want) {
 			t.Fatalf("source-sanity recovery message missing %q:\n%s", want, msg)
 		}
-	}
-}
-
-func TestBuildProductWorkflowBriefIncludesWorkflowReferencedPaths(t *testing.T) {
-	brief := buildProductWorkflowBriefWithPromotionEvents(
-		"docs/product-workflows/efforts/example",
-		productworkflow.WorkflowState{
-			Context: productworkflow.WorkflowContext{
-				ReferencedPaths: []string{"internal/surfaces/tui/app/product_status.go"},
-			},
-		},
-		productworkflow.PRDDocument{},
-		productworkflow.ADRIndex{},
-		nil,
-		productworkflow.TDDLedger{EffortID: "effort-1", TaskID: "task-1"},
-		productworkflow.TraceabilityMatrix{},
-		nil,
-		nil,
-	)
-
-	if !slices.Contains(brief.ContextEvidencePaths, "internal/surfaces/tui/app/product_status.go") {
-		t.Fatalf("expected workflow referenced path in ContextEvidencePaths, got %#v", brief.ContextEvidencePaths)
-	}
-}
-
-func TestBuildProductWorkflowBriefCarriesAcceptedBehavioralCoverageWhileTDDEvidencePending(t *testing.T) {
-	effortRoot := filepath.Join(t.TempDir(), "effort")
-	contract := productworkflow.BehavioralCoverageContract{
-		ContractID:   "cov-product",
-		EffortID:     "effort-product",
-		TaskID:       "task-product",
-		CoverageTier: "behavior_standard",
-		EventID:      "evt-product-coverage",
-		EARS: []productworkflow.EARSRequirementCoverage{{
-			ID:          "REQ-1",
-			Statement:   "When accepted coverage exists, the system shall display it in feature planning.",
-			MappedRefs:  []string{"BDD-1"},
-			Obligations: []string{"TDD-1"},
-		}},
-		BDDScenarios: []productworkflow.BDDScenarioCoverage{{
-			ID:               "BDD-1",
-			RequirementID:    "REQ-1",
-			Given:            []string{"accepted behavioral coverage exists"},
-			When:             []string{"the TUI builds the feature planner brief"},
-			Then:             []string{"accepted coverage appears in the plan context"},
-			ConcreteDataRefs: []string{"fixtures/accepted-coverage.json"},
-			Obligations:      []string{"TDD-1"},
-		}},
-		DesignContracts: []productworkflow.DesignContractCoverage{{
-			ID:             "DBC-1",
-			Boundary:       "productworkflow to featureplanner",
-			Preconditions:  []string{"behavioral coverage is accepted"},
-			Postconditions: []string{"coverage detail is read-only planner context"},
-			Invariants:     []string{"planner cannot author accepted coverage"},
-			TestRefs:       []string{"TestBuildProductWorkflowBriefCarriesAcceptedBehavioralCoverageWhileTDDEvidencePending"},
-			Obligations:    []string{"TDD-1"},
-		}},
-		FaultTreeLeaves: []productworkflow.FaultTreeLeafCoverage{{
-			ID:          "FTA-1",
-			TopEvent:    "accepted coverage dropped",
-			Cause:       "adapter omits non-BDD coverage detail",
-			TestRefs:    []string{"TestBuildProductWorkflowBriefCarriesAcceptedBehavioralCoverageWhileTDDEvidencePending"},
-			Obligations: []string{"TDD-1"},
-		}},
-		PostMortems: []productworkflow.PostMortemCoverage{{
-			ID:               "PM-1",
-			Incident:         "coverage detail was missing from planner context",
-			CatchingTestRefs: []string{"TestBuildProductWorkflowBriefCarriesAcceptedBehavioralCoverageWhileTDDEvidencePending"},
-			Obligations:      []string{"TDD-1"},
-		}},
-		FormalModels: []productworkflow.FormalModelCoverage{{
-			ID:               "FORMAL-1",
-			Model:            "accepted_coverage_boundary",
-			VerificationRefs: []string{"models/accepted_coverage_boundary.tla"},
-			Obligations:      []string{"TDD-1"},
-		}},
-		TestObligations: []productworkflow.TestObligationCoverage{{
-			ID:             "TDD-1",
-			Type:           "contract",
-			Behavior:       "accepted behavioral coverage reaches the feature planner brief",
-			Command:        "go test ./internal/surfaces/tui/app",
-			RequiredBefore: "implementation",
-		}},
-	}
-	promotion, err := productworkflow.PromoteBehavioralCoverageContractWithResult(productworkflow.TDDLedger{}, contract)
-	if err != nil {
-		t.Fatalf("PromoteBehavioralCoverageContractWithResult: %v", err)
-	}
-	ledger := promotion.Ledger
-	ledger.Obligations[0].Status = "planned"
-	prd := productworkflow.PRDDocument{
-		FrontMatter: productworkflow.PRDFrontMatter{Status: "accepted"},
-		Requirements: []productworkflow.PRDRequirement{{
-			ID:             "REQ-1",
-			Priority:       "must",
-			Statement:      "Display accepted coverage in feature planning.",
-			EvidenceRefs:   []string{"EV-1"},
-			TDDObligations: []string{"TDD-1"},
-			Testability:    "go test ./internal/surfaces/tui/app",
-		}},
-	}
-	adrIdx := productworkflow.ADRIndex{ADRs: []productworkflow.ADRIndexEntry{{
-		ADRID:  "ADR-1",
-		Status: "accepted",
-		Path:   "001-coverage.md",
-	}}}
-	adrs := []productworkflow.ParsedADR{{
-		RelPath: "adrs/001-coverage.md",
-		Doc: productworkflow.ADRDocument{
-			FrontMatter: productworkflow.ADRFrontMatter{
-				ADRID:          "ADR-1",
-				Status:         "accepted",
-				EvidenceRefs:   []string{"EV-1"},
-				TDDObligations: []string{"TDD-1"},
-			},
-			BodyMarkdown: "## Decision\nCarry accepted coverage into feature planning.\n\n## Open Questions\nNone.",
-		},
-	}}
-	traceability := productworkflow.TraceabilityMatrix{Matrix: []productworkflow.TraceabilityRow{{
-		EvidenceCard:   "EV-1",
-		PRDRequirement: "REQ-1",
-		ADR:            "ADR-1",
-		TDDObligation:  "TDD-1",
-	}}}
-
-	workflowState := productworkflow.WorkflowState{LastEventID: "evt-product-coverage"}
-	implementationRecords := []productworkflow.ImplementationLedgerRecord{{
-		RecordType: productworkflow.LedgerRecordAtomPlanned,
-		TaskID:     "task-product",
-		Scope:      &productworkflow.AtomScope{ExpectedFiles: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
-	}}
-	promotionEvents := []productworkflow.BehavioralCoveragePromotionEvent{{
-		Event:   "behavioral_coverage_accepted",
-		EventID: "evt-product-coverage",
-		State:   productworkflow.BehavioralCoveragePromotionStateAccepted,
-		Digest:  productworkflow.BehavioralCoverageContractDigest(contract),
-	}}
-	brief := buildProductWorkflowBriefWithPromotionEvents(
-		effortRoot,
-		workflowState,
-		prd,
-		adrIdx,
-		adrs,
-		ledger,
-		traceability,
-		implementationRecords,
-		promotionEvents,
-	)
-
-	if brief.CoverageGatePassed {
-		t.Fatal("TUI brief should preserve real pending TDD evidence gate status")
-	}
-	if !slices.Contains(brief.CoverageBlockerKinds, "coverage_tdd_evidence_missing") {
-		t.Fatalf("expected TDD evidence blocker kind, got %#v", brief.CoverageBlockerKinds)
-	}
-	if brief.CoverageContract == nil ||
-		brief.CoverageContract.ContractID != "cov-product" ||
-		brief.CoverageContract.Status != productworkflow.BehavioralCoverageStatusAccepted {
-
-		t.Fatalf("expected accepted coverage contract ref, got %+v", brief.CoverageContract)
-	}
-	if brief.AcceptedCoverage == nil ||
-		brief.AcceptedCoverage.Authority != "product_workflow" ||
-		len(brief.AcceptedCoverage.Scenarios) != 1 ||
-		brief.AcceptedCoverage.Scenarios[0].Then[0] != "accepted coverage appears in the plan context" ||
-		len(brief.AcceptedCoverage.FaultTreeLeaves) != 1 ||
-		brief.AcceptedCoverage.FaultTreeLeaves[0].TopEvent != "accepted coverage dropped" ||
-		len(brief.AcceptedCoverage.PostMortems) != 1 ||
-		brief.AcceptedCoverage.PostMortems[0].Incident != "coverage detail was missing from planner context" ||
-		len(brief.AcceptedCoverage.FormalModels) != 1 ||
-		brief.AcceptedCoverage.FormalModels[0].Model != "accepted_coverage_boundary" ||
-		len(brief.AcceptedCoverage.TestObligations) != 1 {
-
-		t.Fatalf("expected accepted behavioral coverage in TUI brief, got %+v", brief.AcceptedCoverage)
-	}
-	if !brief.AllowsFeaturePlanDispatch() {
-		t.Fatalf("pending implementation TDD evidence should allow feature planning, blockers=%#v coverage_blockers=%#v kinds=%#v tdd=%#v", brief.Blockers, brief.CoverageBlockers, brief.CoverageBlockerKinds, brief.TDDObligations)
-	}
-
-	coverage := productworkflow.EvaluateCoverageGate(prd, adrIdx, adrs, ledger, traceability)
-	expected := featureplannerproduct.BriefFromImplementationHandoff(productworkflow.BuildImplementationHandoff(productworkflow.BriefGenerationInput{
-		EffortRoot:            effortRoot,
-		ArtifactRootPath:      effortRoot,
-		WorkflowState:         workflowState,
-		PRD:                   prd,
-		ADRIndex:              adrIdx,
-		ADRs:                  adrs,
-		TDD:                   ledger,
-		Traceability:          traceability,
-		ImplementationRecords: implementationRecords,
-		PromotionEvents:       promotionEvents,
-		CoverageEvaluation:    coverage,
-	}))
-	for _, check := range []struct {
-		name string
-		got  any
-		want any
-	}{
-		{"coverage_contract", brief.CoverageContract, expected.CoverageContract},
-		{"accepted_coverage", brief.AcceptedCoverage, expected.AcceptedCoverage},
-		{"prd_requirements", brief.PRDRequirements, expected.PRDRequirements},
-		{"accepted_adr_ids", brief.AcceptedADRIDs, expected.AcceptedADRIDs},
-		{"accepted_adr_paths", brief.AcceptedADRPaths, expected.AcceptedADRPaths},
-		{"tdd_obligations", brief.TDDObligations, expected.TDDObligations},
-		{"required_behavior", brief.RequiredBehavior, expected.RequiredBehavior},
-		{"tests", brief.Tests, expected.Tests},
-		{"acceptance", brief.Acceptance, expected.Acceptance},
-		{"decisions", brief.Decisions, expected.Decisions},
-		{"coverage_blockers", brief.CoverageBlockers, expected.CoverageBlockers},
-		{"coverage_blocker_kinds", brief.CoverageBlockerKinds, expected.CoverageBlockerKinds},
-	} {
-		if !reflect.DeepEqual(check.got, check.want) {
-			t.Fatalf("TUI product brief drifted from handoff adapter for %s:\ngot  %#v\nwant %#v", check.name, check.got, check.want)
-		}
-	}
-}
-
-func TestBuildProductWorkflowBriefBlocksUngroundedImplementationClaims(t *testing.T) {
-	brief := buildProductWorkflowBriefWithPromotionEvents(
-		filepath.Join(t.TempDir(), "effort"),
-		productworkflow.WorkflowState{},
-		productworkflow.PRDDocument{Requirements: []productworkflow.PRDRequirement{{
-			ID:        "REQ-1",
-			Statement: "Use the ExampleCloud platform for the live TUI document viewer.",
-		}}},
-		productworkflow.ADRIndex{},
-		[]productworkflow.ParsedADR{{
-			RelPath: "adrs/ADR-001.md",
-			Doc: productworkflow.ADRDocument{
-				FrontMatter:  productworkflow.ADRFrontMatter{ADRID: "ADR-001", Status: "accepted"},
-				BodyMarkdown: "## Decision\nUse the ExampleSDK tooling for the document viewer implementation.",
-			},
-		}},
-		productworkflow.TDDLedger{EffortID: "effort-1", TaskID: "task-1"},
-		productworkflow.TraceabilityMatrix{},
-		nil,
-		nil,
-	)
-
-	joined := strings.Join(brief.Blockers, "\n")
-	for _, want := range []string{
-		"implementation-affecting claim in PRD requirement REQ-1 lacks evidence_refs",
-		"implementation-affecting claim in accepted ADR ADR-001 lacks evidence_refs",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected blocker %q, got %#v", want, brief.Blockers)
-		}
-	}
-}
-
-func TestBuildProductWorkflowBriefAllowsResolvedImplementationEvidence(t *testing.T) {
-	brief := buildProductWorkflowBriefWithPromotionEvents(
-		filepath.Join(t.TempDir(), "effort"),
-		productworkflow.WorkflowState{TaskID: "task-1"},
-		productworkflow.PRDDocument{
-			FrontMatter: productworkflow.PRDFrontMatter{Status: "accepted"},
-			Requirements: []productworkflow.PRDRequirement{{
-				ID:             "REQ-1",
-				Statement:      "Use the ExampleCloud platform for the live TUI document viewer.",
-				EvidenceRefs:   []string{"EV-1"},
-				TDDObligations: []string{"TDD-1"},
-			}},
-		},
-		productworkflow.ADRIndex{ADRs: []productworkflow.ADRIndexEntry{{
-			ADRID:  "ADR-001",
-			Status: "accepted",
-			Path:   "ADR-001.md",
-		}}},
-		[]productworkflow.ParsedADR{{
-			RelPath: "adrs/ADR-001.md",
-			Doc: productworkflow.ADRDocument{
-				FrontMatter: productworkflow.ADRFrontMatter{
-					ADRID:          "ADR-001",
-					Status:         "accepted",
-					EvidenceRefs:   []string{"EV-1"},
-					TDDObligations: []string{"TDD-1"},
-				},
-				BodyMarkdown: "## Decision\nUse the ExampleSDK tooling for the document viewer implementation.\n\n## Open Questions\nNone.",
-			},
-		}},
-		productworkflow.TDDLedger{
-			EffortID: "effort-1",
-			TaskID:   "task-1",
-			Obligations: []productworkflow.TDDObligation{{
-				ID:             "TDD-1",
-				Command:        "go test ./internal/surfaces/tui/app",
-				RequiredBefore: "implementation",
-				Status:         "planned",
-			}},
-		},
-		productworkflow.TraceabilityMatrix{
-			Matrix: []productworkflow.TraceabilityRow{{
-				EvidenceCard:   "EV-1",
-				PRDRequirement: "REQ-1",
-				ADR:            "ADR-001",
-				TDDObligation:  "TDD-1",
-			}},
-		},
-		[]productworkflow.ImplementationLedgerRecord{{
-			RecordType: productworkflow.LedgerRecordAtomPlanned,
-			TaskID:     "task-1",
-			Scope:      &productworkflow.AtomScope{ExpectedFiles: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
-		}, {
-			RecordType:              productworkflow.LedgerRecordVerificationCompleted,
-			TaskID:                  "task-1",
-			EffortID:                "effort-1",
-			TDDObligationsSatisfied: []string{"TDD-1"},
-			VerificationStatus:      "pass",
-		}},
-		nil,
-	)
-
-	if len(brief.Blockers) != 0 {
-		t.Fatalf("resolved implementation evidence should not block TUI brief dispatch, got %#v", brief.Blockers)
-	}
-	if !brief.CoverageGatePassed {
-		t.Fatalf("resolved implementation evidence should pass TUI coverage gate, blockers=%#v kinds=%#v", brief.CoverageBlockers, brief.CoverageBlockerKinds)
-	}
-}
-
-func TestBuildProductWorkflowBriefUsesVerificationRecordsForCoverageGate(t *testing.T) {
-	brief := buildProductWorkflowBriefWithPromotionEvents(
-		filepath.Join(t.TempDir(), "effort"),
-		productworkflow.WorkflowState{TaskID: "task-verified"},
-		productworkflow.PRDDocument{
-			FrontMatter: productworkflow.PRDFrontMatter{Status: "accepted"},
-			Requirements: []productworkflow.PRDRequirement{{
-				ID:             "REQ-VERIFIED",
-				Statement:      "Use satisfied TDD verification evidence in TUI product brief coverage.",
-				EvidenceRefs:   []string{"EV-VERIFIED"},
-				TDDObligations: []string{"TDD-VERIFIED"},
-			}},
-		},
-		productworkflow.ADRIndex{ADRs: []productworkflow.ADRIndexEntry{{
-			ADRID:  "ADR-VERIFIED",
-			Status: "accepted",
-			Path:   "verified.md",
-		}}},
-		[]productworkflow.ParsedADR{{
-			RelPath: "adrs/verified.md",
-			Doc: productworkflow.ADRDocument{
-				FrontMatter: productworkflow.ADRFrontMatter{
-					ADRID:          "ADR-VERIFIED",
-					Status:         "accepted",
-					EvidenceRefs:   []string{"EV-VERIFIED"},
-					TDDObligations: []string{"TDD-VERIFIED"},
-				},
-				BodyMarkdown: "## Decision\nUse verification records as coverage evidence.\n\n## Open Questions\nNone.",
-			},
-		}},
-		productworkflow.TDDLedger{
-			EffortID:     "effort-verified",
-			TaskID:       "task-verified",
-			CoverageTier: "unit",
-			Obligations: []productworkflow.TDDObligation{{
-				ID:             "TDD-VERIFIED",
-				Command:        "go test ./internal/surfaces/tui/app",
-				RequiredBefore: "implementation",
-				Status:         "planned",
-			}},
-		},
-		productworkflow.TraceabilityMatrix{Matrix: []productworkflow.TraceabilityRow{{
-			EvidenceCard:   "EV-VERIFIED",
-			PRDRequirement: "REQ-VERIFIED",
-			ADR:            "ADR-VERIFIED",
-			TDDObligation:  "TDD-VERIFIED",
-		}}},
-		[]productworkflow.ImplementationLedgerRecord{{
-			RecordType: productworkflow.LedgerRecordAtomPlanned,
-			TaskID:     "task-verified",
-			Scope:      &productworkflow.AtomScope{ExpectedFiles: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
-		}, {
-			RecordType:              productworkflow.LedgerRecordVerificationCompleted,
-			TaskID:                  "task-verified",
-			EffortID:                "effort-verified",
-			TDDObligationsSatisfied: []string{"TDD-VERIFIED"},
-			VerificationStatus:      "pass",
-			VerificationCommandsRun: []string{"go test ./internal/surfaces/tui/app"},
-		}},
-		nil,
-	)
-
-	if !brief.CoverageGatePassed {
-		t.Fatalf("expected TUI coverage gate to use verification_completed records, blockers=%#v kinds=%#v", brief.CoverageBlockers, brief.CoverageBlockerKinds)
-	}
-	if slices.Contains(brief.CoverageBlockerKinds, "coverage_tdd_evidence_missing") {
-		t.Fatalf("verified TDD evidence should clear coverage_tdd_evidence_missing, got %#v", brief.CoverageBlockerKinds)
-	}
-	if !brief.AllowsFeaturePlanDispatch() {
-		t.Fatalf("verified product workflow brief should allow dispatch, blockers=%#v coverage=%#v", brief.Blockers, brief.CoverageBlockers)
 	}
 }
 

@@ -106,10 +106,6 @@ func (m *Model) View() string {
 	}
 
 	view := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	if popup := m.renderModelPopup(w, max(0, m.height)); popup != "" {
-		view = lipgloss.JoinVertical(lipgloss.Left, view, popup)
-	}
-
 	if popup := m.renderLaneSwitchPopup(w, max(0, m.height)); popup != "" {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, popup)
 	}

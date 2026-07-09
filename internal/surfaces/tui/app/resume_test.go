@@ -165,10 +165,11 @@ func TestReplaySessionMessagesReadsUserAssistantOnly(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	msgs, err := replaySessionMessages(path)
+	replay, err := replaySessionLog(path)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
+	msgs := replay.messages
 
 	if len(msgs) != 3 {
 		t.Fatalf("want 3 replayed messages (user, assistant, user), got %d: %#v", len(msgs), msgs)

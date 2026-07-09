@@ -15,11 +15,8 @@ import (
 // message so long-horizon intent survives window pressure. See
 // docs/opencode-fixes-design.md §5.
 
-// Compaction thresholds are now derived automatically from the model's
-// context-window size (LlamaServer.CtxSize). See compactionContextSize()
-// and compactionParams() below. No per-model tuning is needed — a model
-// with a 32K context window will compact earlier than one with a 128K
-// window, proportionally.
+// Compaction thresholds are derived automatically from the model's
+// context-window size (LlamaServer.CtxSize) through ContextBudget.
 
 const compactionSystemPromptPreamble = "You are producing a compact session digest. Preserve only the facts that the next turn needs to act correctly: the user's original goals, any hard constraints or boundaries, files and paths that have been read or edited, outcomes of tool calls, open questions, and the last known blocker. Write plain prose in 12 lines or fewer. Do not invent facts. Do not request tools."
 
@@ -40,72 +37,6 @@ func (m *Model) compactionContextSize() int {
 	}
 
 	return 65536
-}
-
-// compactionParams derives message-count thresholds from the model's context
-// window size. Returns (triggerThreshold, recentMessagesToKeep).
-//
-// The derivation uses a conservative chars-per-token estimate so models with
-// different context-window sizes get proportional thresholds automatically —
-// no per-model tuning needed. A 32K model compacts earlier than a 128K model.
-func compactionParams(ctxSize int) (threshold int, recentToKeep int) {
-	// Rough estimate: ~4 chars per token, ~500 chars per message avg
-	// => ~125 tokens per message.
-	const estTokensPerMsg = 125
-
-	// Fire compaction when history occupies ~40% of context window.
-	// Keep ~20% of context window as recent verbatim messages.
-	thresholdTokens := ctxSize * 40 / 100
-	recentTokens := ctxSize * 20 / 100
-
-	threshold = thresholdTokens / estTokensPerMsg
-	recentToKeep = recentTokens / estTokensPerMsg
-
-	// Clamp to sensible bounds.
-	if threshold < 10 {
-		threshold = 10
-	}
-
-	if recentToKeep < 3 {
-		recentToKeep = 3
-	}
-
-	// recentToKeep must not exceed half the threshold — otherwise compaction
-	// would fold almost nothing.
-	if recentToKeep > threshold/2 {
-		recentToKeep = threshold / 2
-	}
-
-	// Cap at reasonable maxima even for huge context windows.
-	if threshold > 200 {
-		threshold = 200
-	}
-
-	if recentToKeep > 40 {
-		recentToKeep = 40
-	}
-
-	return threshold, recentToKeep
-}
-
-// runnerContextLimitsForConversation returns generous (MaxContextMessages,
-// MaxContextChars) for conversation/read-only lanes where the model should not
-// be artificially limited by message count or character budgets. Values are
-// derived from the context window so they scale with model size.
-func runnerContextLimitsForConversation(ctxSize int) (maxMsgs int, maxChars int) {
-	if ctxSize <= 0 {
-		ctxSize = 65536
-	}
-
-	// 80% of context window for messages, using the same token estimate as
-	// compactionParams.
-	const estTokensPerMsg = 125
-
-	maxMsgs = (ctxSize * 80 / 100) / estTokensPerMsg
-	// Character limit: tokens * 4 (rough chars-per-token), at 80% of window.
-	maxChars = ctxSize * 4 * 80 / 100
-
-	return maxMsgs, maxChars
 }
 
 type historyCompactionResult struct {

@@ -2674,13 +2674,6 @@ func planExecuteRecoveryMessageContradictsSourceSatisfied(failure implementation
 		strings.Contains(lower, "please allow the planner to read")
 }
 
-func planExecuteFailureIsRepeatedCompletionGate(failure implementationDispatchPlanExecuteFailure) bool {
-	text := strings.ToLower(strings.TrimSpace(failure.Result.FailureReason + "\n" + failure.Result.PlannerAnswer))
-
-	return strings.Contains(text, "completion gate rejected") &&
-		(strings.Contains(text, "repeatedly") || strings.Contains(text, "gate retry 3/3") || strings.Contains(text, "completion_gate_repeated_rejection"))
-}
-
 func implementationDispatchRecoveryMessageIsInternal(message string) bool {
 	lower := strings.ToLower(strings.TrimSpace(message))
 	if lower == "" {

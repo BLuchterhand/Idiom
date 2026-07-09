@@ -22,7 +22,7 @@ const scopeIntakeContinuationPrompt = "please begin on your implementation"
 func TestPlanExecuteScopeIntakeClassifiesMutationTargetsAsRequiredClosedScope(t *testing.T) {
 	prompt := "Please create docs/foo.md, update docs/bar.md, and append docs/changelog.md. Do not edit any other files."
 
-	intake := classifyPlanExecuteScopeIntake(prompt, scopeIntakePlanExecutePlan())
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, scopeIntakePlanExecutePlan(), config.Config{})
 
 	for _, want := range []string{"docs/foo.md", "docs/bar.md", "docs/changelog.md"} {
 		if !slices.Contains(intake.RequiredTargets, want) {
@@ -38,7 +38,7 @@ func TestPlanExecuteScopeIntakeClassifiesMutationTargetsAsRequiredClosedScope(t 
 func TestPlanExecuteScopeIntakeDoesNotRequireReferenceOrEvidencePaths(t *testing.T) {
 	prompt := "Use docs/reference.md as evidence and read docs/context.md before updating docs/target.md."
 
-	intake := classifyPlanExecuteScopeIntake(prompt, scopeIntakePlanExecutePlan())
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, scopeIntakePlanExecutePlan(), config.Config{})
 
 	if !slices.Contains(intake.RequiredTargets, "docs/target.md") {
 		t.Fatalf("mutation target missing from required targets: %#v", intake.RequiredTargets)

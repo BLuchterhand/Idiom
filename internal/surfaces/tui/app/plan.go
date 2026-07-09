@@ -150,8 +150,6 @@ func (m *Model) invalidatePlanCache() {
 
 	m.planMTime = time.Time{}
 	m.planContent = ""
-	m.plan.cachedItemsContent = ""
-	m.plan.cachedItems = nil
 }
 
 // renderPlanPanelContent rebuilds the plan viewport from the current plan file.
@@ -286,23 +284,6 @@ func appendPlanRenderedRows(rows []planRenderedRow, rendered string, sourceLineI
 	return rows
 }
 
-// currentPlanItems returns the parsed clickable items of the plan.
-// Exposed as a helper for tests and key handlers so the parsing path
-// is shared between rendering and navigation.
-func (m *Model) currentPlanItems() []planItemMeta {
-	content := m.loadPlanContent()
-	if content == m.plan.cachedItemsContent && m.plan.cachedItems != nil {
-		return m.plan.cachedItems
-	}
-
-	items := parsePlanItems(content)
-
-	m.plan.cachedItemsContent = content
-	m.plan.cachedItems = items
-
-	return items
-}
-
 func (m *Model) currentPlanSelectableRows() []planSelectableRow {
 	return m.currentPlanSelectableRowsForContent(m.loadPlanContent())
 }
@@ -391,24 +372,6 @@ func (m *Model) normalizePlanCursor(rows []planSelectableRow) {
 	if m.plan.cursor >= len(rows) {
 		m.plan.cursor = len(rows) - 1
 	}
-}
-
-// openPlanDiffOverlay loads the diff entry referenced by the plan item
-// under the cursor and switches the panel into overlay mode. Returns
-// false when the selected item has no diff id (e.g. an unattached
-// ledger stub) so the caller can surface a nudge instead.
-func (m *Model) openPlanDiffOverlay() bool {
-	items := m.currentPlanItems()
-	if len(items) == 0 || m.plan.cursor < 0 || m.plan.cursor >= len(items) {
-		return false
-	}
-
-	item := items[m.plan.cursor]
-	if item.DiffID == "" {
-		return false
-	}
-
-	return m.openPlanDiffOverlayForItem(item)
 }
 
 func (m *Model) openPlanDiffOverlayForItem(item planItemMeta) bool {
@@ -540,12 +503,6 @@ func (m *Model) activateSelectedPlanRow() {
 			m.renderPlanPanelContent()
 		}
 	}
-}
-
-// renderPlanLine applies lightweight styling to a single plan line: checkboxes
-// get colored indicators, headings get emphasis, other lines render plain.
-func renderPlanLine(raw string, w int) string {
-	return (&Model{}).renderPlanLine(raw, -1, w)
 }
 
 func (m *Model) renderPlanLine(raw string, lineIdx int, w int) string {

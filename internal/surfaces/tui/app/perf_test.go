@@ -1,10 +1,8 @@
 package app
 
 import (
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -298,7 +296,7 @@ func TestRenderPlanLine_UsesPrecompiledStyles(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := renderPlanLine(tc.input, 40)
+			result := (&Model{}).renderPlanLine(tc.input, -1, 40)
 			if !strings.Contains(result, tc.contains) {
 				t.Errorf("renderPlanLine(%q) missing %q in:\n%s", tc.input, tc.contains, result)
 			}
@@ -312,7 +310,14 @@ func TestRenderPlanLine_UsesPrecompiledStyles(t *testing.T) {
 
 func TestParsePlanItems(t *testing.T) {
 	content := "# Plan\n- [ ] step one\n- [x] step two\n"
-	items := parsePlanItems(content)
+	rows := (&Model{}).currentPlanSelectableRowsForContent(content)
+
+	var items []planItemMeta
+	for _, row := range rows {
+		if row.Kind == planSelectableItem {
+			items = append(items, row.Item)
+		}
+	}
 
 	if len(items) != 2 {
 		t.Fatalf("expected 2 plan items, got %d", len(items))
@@ -320,65 +325,6 @@ func TestParsePlanItems(t *testing.T) {
 
 	if items[0].Checked || !items[1].Checked {
 		t.Errorf("first should be unchecked, second checked")
-	}
-}
-
-func TestCurrentPlanItems_CacheHitOnFileUnchanged(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/plan.md"
-	content := "# Plan\n- [ ] step one\n"
-	os.WriteFile(path, []byte(content), 0o644)
-
-	m := &Model{planPath: path}
-	items1 := m.currentPlanItems()
-
-	if len(items1) != 1 {
-		t.Fatalf("first call: expected 1 item, got %d", len(items1))
-	}
-
-	if m.plan.cachedItemsContent != content {
-		t.Errorf("cache content not set")
-	}
-
-	items2 := m.currentPlanItems()
-	if len(items2) != 1 {
-		t.Fatalf("cached call: expected 1 item, got %d", len(items2))
-	}
-
-	if items1[0].RawText != items2[0].RawText {
-		t.Errorf("cached items should match")
-	}
-}
-
-func TestCurrentPlanItems_ReparsesOnFileChange(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/plan.md"
-	os.WriteFile(path, []byte("# Old\n- [ ] old\n"), 0o644)
-
-	m := &Model{planPath: path}
-	items1 := m.currentPlanItems()
-
-	if len(items1) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items1))
-	}
-
-	newContent := "# New\n- [x] done\n"
-	os.WriteFile(path, []byte(newContent), 0o644)
-
-	modTime := time.Now().Add(2 * time.Second)
-	os.Chtimes(path, modTime, modTime)
-
-	items2 := m.currentPlanItems()
-	if len(items2) != 1 {
-		t.Fatalf("expected 1 item after change, got %d", len(items2))
-	}
-
-	if items2[0].RawText != "- [x] done" {
-		t.Errorf("expected re-parsed item, got %q", items2[0].RawText)
-	}
-
-	if !items2[0].Checked {
-		t.Errorf("expected checked item after re-parse")
 	}
 }
 

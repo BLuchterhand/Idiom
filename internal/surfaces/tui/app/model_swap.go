@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -80,8 +81,13 @@ func (m *Model) slashModel(_ string, args []string) bool {
 	}
 
 	if len(args) <= 1 {
-		m.openModelPopup()
+		aliases := m.collectAllAliases()
+		if len(aliases) == 0 {
+			m.status = "No models discovered. Check .idiom/backends.json or server status."
+			return true
+		}
 
+		m.status = "Available models: " + strings.Join(aliases, ", ")
 		return true
 	}
 
@@ -99,6 +105,47 @@ func (m *Model) slashModel(_ string, args []string) bool {
 	}
 
 	return true
+}
+
+func (m *Model) collectAllAliases() []string {
+	seen := make(map[string]bool)
+
+	var names []string
+
+	if file, found, err := backends.LoadFromProjectRoot(m.workspace.Root()); err == nil && found {
+		if prof, ok := file.Profile(""); ok {
+			for _, model := range prof.Models {
+				if alias := strings.TrimSpace(model.Alias); alias != "" && !seen[alias] {
+					seen[alias] = true
+					names = append(names, alias)
+				}
+			}
+		}
+
+		for _, prof := range file.Profiles {
+			for _, model := range prof.Models {
+				if alias := strings.TrimSpace(model.Alias); alias != "" && !seen[alias] {
+					seen[alias] = true
+					names = append(names, alias)
+				}
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if models, err := m.client.ListModels(ctx); err == nil {
+		for _, mi := range models {
+			id := strings.TrimSpace(mi.ID)
+			if id != "" && !seen[id] {
+				seen[id] = true
+				names = append(names, id)
+			}
+		}
+	}
+
+	return names
 }
 
 func modelSwapDisplayID(model backends.Model, spec config.LlamaServer, fallback string) string {

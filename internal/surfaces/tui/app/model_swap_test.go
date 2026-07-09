@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
@@ -78,12 +76,14 @@ func TestSlashModelShowsCurrentModel(t *testing.T) {
 
 	m.slashModel("/model", []string{"/model"})
 
-	if !m.modelPopup.open {
-		t.Fatal("expected model popup to be open")
+	if m.status == "" {
+		t.Fatal("expected non-empty status for /model")
 	}
 
-	if len(m.modelPopup.roles) == 0 {
-		t.Fatal("expected popup roles to be populated")
+	for _, name := range []string{"glm-5.1", "local-qwen", "minimax-m2.7", "local-no-max"} {
+		if !containsSubstring(m.status, name) {
+			t.Fatalf("expected /model to include %q, got %q", name, m.status)
+		}
 	}
 }
 
@@ -746,16 +746,10 @@ func newTestModelWithMultiProfile(t *testing.T) *Model {
 	}
 }
 
-func TestModelPopupCollectsAllProfileModels(t *testing.T) {
+func TestModelAliasDiscoveryCollectsAllProfileModels(t *testing.T) {
 	m := newTestModelWithMultiProfile(t)
 
 	m.modelID = "qwen3.6-35b"
-
-	m.openModelPopup()
-
-	if !m.modelPopup.open {
-		t.Fatal("expected popup open")
-	}
 
 	aliases := m.collectAllAliases()
 
@@ -772,58 +766,5 @@ func TestModelPopupCollectsAllProfileModels(t *testing.T) {
 		if !found {
 			t.Errorf("expected alias %q in collected aliases, got %v", want, aliases)
 		}
-	}
-
-	for _, role := range m.modelPopup.roles {
-		hasMiniMax := false
-
-		for _, a := range role.aliases {
-			if a == "MiniMax-M2.7" {
-				hasMiniMax = true
-				break
-			}
-		}
-
-		if !hasMiniMax {
-			t.Errorf("role %q missing MiniMax-M2.7 in aliases: %v", role.name, role.aliases)
-		}
-	}
-}
-
-func TestModelPopupTabCyclesModels(t *testing.T) {
-	m := newTestModelWithMultiProfile(t)
-
-	m.modelID = "qwen3.6-35b"
-	m.openModelPopup()
-
-	plannerIdx := m.modelPopup.modelIdx["planner"]
-	initialAlias := m.modelPopup.roles[0].aliases[plannerIdx]
-
-	_, handled := m.handleModelPopupKey(tea.KeyMsg{Type: tea.KeyTab})
-	if !handled {
-		t.Fatal("expected Tab to be handled")
-	}
-
-	newIdx := m.modelPopup.modelIdx["planner"]
-	newAlias := m.modelPopup.roles[0].aliases[newIdx]
-
-	if newAlias == initialAlias {
-		t.Fatal("expected Tab to change the selected model")
-	}
-}
-
-func TestModelPopupEscCloses(t *testing.T) {
-	m := newTestModelWithMultiProfile(t)
-
-	m.modelID = "qwen3.6-35b"
-	m.openModelPopup()
-
-	_, handled := m.handleModelPopupKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if !handled {
-		t.Fatal("expected Esc to be handled")
-	}
-
-	if m.modelPopup.open {
-		t.Fatal("expected popup to be closed after Esc")
 	}
 }

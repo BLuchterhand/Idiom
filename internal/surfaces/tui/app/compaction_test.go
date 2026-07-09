@@ -168,7 +168,7 @@ func TestSlashCompactCommandRejectsArgsAndStreaming(t *testing.T) {
 	}
 }
 
-func TestCompactionParamsScalesWithContextSize(t *testing.T) {
+func TestContextBudgetCompactionScalesWithContextSize(t *testing.T) {
 	tests := []struct {
 		ctxSize       int
 		wantThreshold int
@@ -183,22 +183,22 @@ func TestCompactionParamsScalesWithContextSize(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		gotThreshold, gotRecent := compactionParams(tc.ctxSize)
-		if gotThreshold != tc.wantThreshold {
-			t.Errorf("ctxSize=%d: threshold = %d, want %d", tc.ctxSize, gotThreshold, tc.wantThreshold)
+		budget := NewContextBudget(tc.ctxSize)
+		if budget.CompactionThreshold != tc.wantThreshold {
+			t.Errorf("ctxSize=%d: threshold = %d, want %d", tc.ctxSize, budget.CompactionThreshold, tc.wantThreshold)
 		}
 
-		if gotRecent != tc.wantRecent {
-			t.Errorf("ctxSize=%d: recentToKeep = %d, want %d", tc.ctxSize, gotRecent, tc.wantRecent)
+		if budget.CompactionRecentKeep != tc.wantRecent {
+			t.Errorf("ctxSize=%d: recentToKeep = %d, want %d", tc.ctxSize, budget.CompactionRecentKeep, tc.wantRecent)
 		}
 
 		// Invariants: recentToKeep must be at least 3 and at most threshold/2
-		if gotRecent < 3 {
-			t.Errorf("ctxSize=%d: recentToKeep %d < 3 (minimum)", tc.ctxSize, gotRecent)
+		if budget.CompactionRecentKeep < 3 {
+			t.Errorf("ctxSize=%d: recentToKeep %d < 3 (minimum)", tc.ctxSize, budget.CompactionRecentKeep)
 		}
 
-		if gotRecent > gotThreshold/2 {
-			t.Errorf("ctxSize=%d: recentToKeep %d > threshold/2 (%d)", tc.ctxSize, gotRecent, gotThreshold/2)
+		if budget.CompactionRecentKeep > budget.CompactionThreshold/2 {
+			t.Errorf("ctxSize=%d: recentToKeep %d > threshold/2 (%d)", tc.ctxSize, budget.CompactionRecentKeep, budget.CompactionThreshold/2)
 		}
 	}
 }
@@ -208,7 +208,7 @@ func TestCompactionParamsForNilModel(t *testing.T) {
 	var m *Model
 
 	threshold := m.compactionThreshold()
-	wantThreshold, _ := compactionParams(65536)
+	wantThreshold := NewContextBudget(65536).CompactionThreshold
 
 	if threshold != wantThreshold {
 		t.Errorf("nil Model threshold = %d, want %d", threshold, wantThreshold)
@@ -322,7 +322,7 @@ func TestCompactionMaxHistoryEdgeCase(t *testing.T) {
 	}
 }
 
-func TestRunnerContextLimitsForConversationScales(t *testing.T) {
+func TestContextBudgetConversationLimitsScale(t *testing.T) {
 	tests := []struct {
 		ctxSize   int
 		wantMsgs  int
@@ -335,25 +335,25 @@ func TestRunnerContextLimitsForConversationScales(t *testing.T) {
 		{ctxSize: 2000, wantMsgs: 12, wantChars: 6400},
 	}
 	for _, tc := range tests {
-		gotMsgs, gotChars := runnerContextLimitsForConversation(tc.ctxSize)
-		if gotMsgs != tc.wantMsgs {
-			t.Errorf("ctxSize=%d: maxMsgs = %d, want %d", tc.ctxSize, gotMsgs, tc.wantMsgs)
+		budget := NewContextBudget(tc.ctxSize)
+		if budget.ConvMaxMessages != tc.wantMsgs {
+			t.Errorf("ctxSize=%d: maxMsgs = %d, want %d", tc.ctxSize, budget.ConvMaxMessages, tc.wantMsgs)
 		}
 
-		if gotChars != tc.wantChars {
-			t.Errorf("ctxSize=%d: maxChars = %d, want %d", tc.ctxSize, gotChars, tc.wantChars)
+		if budget.ConvMaxChars != tc.wantChars {
+			t.Errorf("ctxSize=%d: maxChars = %d, want %d", tc.ctxSize, budget.ConvMaxChars, tc.wantChars)
 		}
 
 		// Invariant: values must never exceed raw context capacity
 		rawMsgs := tc.ctxSize / 125
 		rawChars := tc.ctxSize * 4
 
-		if gotMsgs > rawMsgs {
-			t.Errorf("ctxSize=%d: maxMsgs %d exceeds raw capacity %d", tc.ctxSize, gotMsgs, rawMsgs)
+		if budget.ConvMaxMessages > rawMsgs {
+			t.Errorf("ctxSize=%d: maxMsgs %d exceeds raw capacity %d", tc.ctxSize, budget.ConvMaxMessages, rawMsgs)
 		}
 
-		if gotChars > rawChars {
-			t.Errorf("ctxSize=%d: maxChars %d exceeds raw capacity %d", tc.ctxSize, gotChars, rawChars)
+		if budget.ConvMaxChars > rawChars {
+			t.Errorf("ctxSize=%d: maxChars %d exceeds raw capacity %d", tc.ctxSize, budget.ConvMaxChars, rawChars)
 		}
 	}
 }
@@ -364,10 +364,10 @@ func TestCompactionParamsRecentToKeepClampedByThreshold(t *testing.T) {
 	for _, tc := range []struct{ ctxSize int }{
 		{2000}, {4096}, {8192}, {16384}, {32768}, {65536}, {131072},
 	} {
-		threshold, recentToKeep := compactionParams(tc.ctxSize)
-		if recentToKeep > threshold/2 {
+		budget := NewContextBudget(tc.ctxSize)
+		if budget.CompactionRecentKeep > budget.CompactionThreshold/2 {
 			t.Errorf("ctxSize=%d: recentToKeep %d > threshold/2 %d — clamp failed",
-				tc.ctxSize, recentToKeep, threshold/2)
+				tc.ctxSize, budget.CompactionRecentKeep, budget.CompactionThreshold/2)
 		}
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/jsonl"
 	"idiom/internal/platform/textutil"
-	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/workflows/featureplanner"
 )
@@ -242,46 +241,6 @@ func featurePlannerStatePathMatchIsRelative(content string, start int) bool {
 	default:
 		return true
 	}
-}
-
-// replaySessionMessages reads one JSONL log and returns the
-// user/assistant messages in order. Mirrors LoadHistoryFromSession but
-// returns the slice instead of appending so ResumeSession can swap
-// history atomically.
-func replaySessionMessages(path string) ([]llama.ChatMessage, error) {
-	var out []llama.ChatMessage
-
-	err := jsonl.ScanFile(path, func(raw json.RawMessage) error {
-		var rec map[string]any
-
-		if err := json.Unmarshal(raw, &rec); err != nil {
-			return nil
-		}
-
-		if rec["type"] != "message" {
-			return nil
-		}
-
-		role, _ := rec["role"].(string)
-		content, _ := rec["content"].(string)
-
-		if role != "user" && role != "assistant" {
-			return nil
-		}
-
-		if strings.TrimSpace(content) == "" {
-			return nil
-		}
-
-		out = append(out, llama.ChatMessage{Role: role, Content: content})
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("read session log: %w", err)
-	}
-
-	return out, nil
 }
 
 // rehydratePlanState reads the session's plan markdown and diffs log

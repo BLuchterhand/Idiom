@@ -9,13 +9,18 @@ import (
 	"idiom/internal/capabilities/workspace"
 )
 
-// TestParsePlanItemsCoversBothAnchors verifies the parser recognizes
-// both anchor flavors (diff id, ledger tid) and correctly flags the
-// checked state. Non-checkbox lines are filtered so headings and
-// prose don't show up as cursor stops.
-func TestParsePlanItemsCoversBothAnchors(t *testing.T) {
+// TestCurrentPlanSelectableRowsCoversItems verifies navigation rows recognize
+// checkbox anchors and checked state while ignoring prose.
+func TestCurrentPlanSelectableRowsCoversItems(t *testing.T) {
 	plan := "## Session x\n\n### Planned\n- [ ] rename foo <!-- tid:t1 -->\n- [x] rename bar <!-- tid:t2 --> <!-- id:abc123 -->\n\nregular text\n### Unplanned\n- [x] drive-by <!-- id:def456 -->\n"
-	got := parsePlanItems(plan)
+	rows := (&Model{}).currentPlanSelectableRowsForContent(plan)
+
+	var got []planItemMeta
+	for _, row := range rows {
+		if row.Kind == planSelectableItem {
+			got = append(got, row.Item)
+		}
+	}
 
 	if len(got) != 3 {
 		t.Fatalf("want 3 items, got %d: %#v", len(got), got)
@@ -34,35 +39,29 @@ func TestParsePlanItemsCoversBothAnchors(t *testing.T) {
 	}
 }
 
-func TestParsePlanItemsTolerantOfWhitespaceInAnchor(t *testing.T) {
-	plan := "- [ ] task <!--  tid:  spaced  -->"
-	got := parsePlanItems(plan)
-
-	if len(got) != 1 || got[0].TaskID != "spaced" {
+func TestParsePlanItemLineTolerantOfWhitespaceInAnchor(t *testing.T) {
+	got, ok := parsePlanItemLine(0, "- [ ] task <!--  tid:  spaced  -->")
+	if !ok || got.TaskID != "spaced" {
 		t.Fatalf("whitespace-tolerant parsing broken: %#v", got)
 	}
 }
 
-func TestParsePlanItemsSupportsStarBullet(t *testing.T) {
-	plan := "* [x] starred <!-- id:zz -->\n"
-	got := parsePlanItems(plan)
-
-	if len(got) != 1 || !got[0].Checked || got[0].DiffID != "zz" {
+func TestParsePlanItemLineSupportsStarBullet(t *testing.T) {
+	got, ok := parsePlanItemLine(0, "* [x] starred <!-- id:zz -->")
+	if !ok || !got.Checked || got.DiffID != "zz" {
 		t.Fatalf("star-bullet form not recognized: %#v", got)
 	}
 }
 
-func TestParsePlanItemsSupportsPlanApprovalAction(t *testing.T) {
-	plan := "- [ ] Approve all edits <!-- plan-approval:all -->\n"
-	got := parsePlanItems(plan)
-
-	if len(got) != 1 || got[0].PlanApprovalAction != "all" {
+func TestParsePlanItemLineSupportsPlanApprovalAction(t *testing.T) {
+	got, ok := parsePlanItemLine(0, "- [ ] Approve all edits <!-- plan-approval:all -->")
+	if !ok || got.PlanApprovalAction != "all" {
 		t.Fatalf("plan approval action not recognized: %#v", got)
 	}
 }
 
-func TestParsePlanItemsIgnoresEmpty(t *testing.T) {
-	if got := parsePlanItems(""); len(got) != 0 {
+func TestCurrentPlanSelectableRowsIgnoresEmpty(t *testing.T) {
+	if got := (&Model{}).currentPlanSelectableRowsForContent(""); len(got) != 0 {
 		t.Fatalf("empty plan should parse to no items, got %#v", got)
 	}
 }
@@ -176,22 +175,25 @@ func TestOpenPlanDiffOverlayLoadsSelectedItem(t *testing.T) {
 	writeFile(t, root, "a.txt", "y\n")
 	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
 
-	items := m.currentPlanItems()
-	if len(items) != 1 {
-		t.Fatalf("want 1 plan item, got %d", len(items))
+	rows := m.currentPlanSelectableRows()
+	selected := -1
+	diffID := ""
+	for i, row := range rows {
+		if row.Kind == planSelectableItem && row.Item.DiffID != "" {
+			selected = i
+			diffID = row.Item.DiffID
+			break
+		}
+	}
+	if selected < 0 {
+		t.Fatalf("plan item with diff id should be selectable: %#v", rows)
 	}
 
-	if items[0].DiffID == "" {
-		t.Fatalf("plan item should have a diff id")
-	}
+	m.plan.cursor = selected
+	m.activateSelectedPlanRow()
 
-	m.plan.cursor = 0
-	if !m.openPlanDiffOverlay() {
-		t.Fatal("openPlanDiffOverlay returned false for valid item")
-	}
-
-	if m.plan.overlayID != items[0].DiffID {
-		t.Errorf("overlay id mismatch: %q vs %q", m.plan.overlayID, items[0].DiffID)
+	if m.plan.overlayID != diffID {
+		t.Errorf("overlay id mismatch: %q vs %q", m.plan.overlayID, diffID)
 	}
 
 	if !strings.Contains(m.plan.overlayBody, "-x") || !strings.Contains(m.plan.overlayBody, "+y") {
@@ -216,12 +218,26 @@ func TestOpenPlanDiffOverlayFalseForUnattachedLedgerItem(t *testing.T) {
 		workspace.ToolResult{Summary: "ok"},
 	)
 
-	if got := m.openPlanDiffOverlay(); got {
-		t.Fatal("unattached ledger item should not open overlay")
+	rows := m.currentPlanSelectableRows()
+	selected := -1
+	for i, row := range rows {
+		if row.Kind == planSelectableItem && row.Item.DiffID == "" {
+			selected = i
+			break
+		}
 	}
+	if selected < 0 {
+		t.Fatalf("unattached ledger item should be selectable: %#v", rows)
+	}
+
+	m.plan.cursor = selected
+	m.activateSelectedPlanRow()
 
 	if m.plan.overlayID != "" {
 		t.Errorf("overlay id should remain empty, got %q", m.plan.overlayID)
+	}
+	if m.status != "No diff attached to this item." {
+		t.Fatalf("expected unattached item status, got %q", m.status)
 	}
 }
 
