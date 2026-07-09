@@ -5,8 +5,8 @@ import (
 
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/platform/config"
+	"idiom/internal/runtime/localops"
 	"idiom/internal/runtime/readiness"
-	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 )
 
 func laneStartTelemetryFields(opts laneOptions, cfg config.Config) map[string]any {
@@ -16,7 +16,7 @@ func laneStartTelemetryFields(opts laneOptions, cfg config.Config) map[string]an
 		"backend_profile":         strings.TrimSpace(opts.BackendProfile),
 		"metadata_only_contract":  true,
 		"contains_prompt_content": false,
-		"local_ops":               cmdtelemetry.LocalOpsFields(cfg, opts.Mode),
+		"local_ops":               localops.TelemetryFields(cfg, opts.Mode),
 	}
 	profile, ok := laneDoctorReadinessProfile(opts)
 

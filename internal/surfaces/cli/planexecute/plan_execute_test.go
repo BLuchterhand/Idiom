@@ -3704,7 +3704,7 @@ func runReviewRepairPhaseForTest(
 		executorReport,
 		opts,
 		stdout,
-		adaptPromptRunner(promptRun),
+		AdaptPromptRunner(promptRun),
 		rec,
 		planexecuteadapters.Dependencies(),
 	)

@@ -1,4 +1,4 @@
-package cmdtelemetry
+package localops
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 	"idiom/internal/platform/config"
 )
 
-func LocalOpsFields(cfg config.Config, lane string) map[string]any {
+func TelemetryFields(cfg config.Config, lane string) map[string]any {
 	ctxSize := cfg.LlamaServer.CtxSize
 	maxOutput := cfg.Chat.MaxTokens
 	contextState := "pass"
@@ -38,9 +38,14 @@ func LocalOpsFields(cfg config.Config, lane string) map[string]any {
 		backendState = "pass"
 	}
 
+	backendKind := strings.TrimSpace(cfg.LlamaServer.Kind)
+	if backendKind == "" {
+		backendKind = "llama"
+	}
+
 	return map[string]any{
 		"lane":                         strings.TrimSpace(lane),
-		"backend_kind":                 firstNonEmpty("llama", cfg.LlamaServer.Kind),
+		"backend_kind":                 backendKind,
 		"backend_configured":           strings.TrimSpace(cfg.LlamaServer.Model) != "",
 		"backend_state":                backendState,
 		"backend_port":                 cfg.LlamaServer.Port,
@@ -57,14 +62,4 @@ func LocalOpsFields(cfg config.Config, lane string) map[string]any {
 		"classifier_autostart_enabled": cfg.RouteClassifier.AutoStartServer,
 		"degraded":                     contextState != "pass" || classifierState != "configured",
 	}
-}
-
-func firstNonEmpty(fallback string, values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-
-	return fallback
 }

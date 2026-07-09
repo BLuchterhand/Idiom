@@ -544,9 +544,9 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedReviewedCompletion(t *testi
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
-				if testContainsString(args, "-skip-review-repair") {
-					t.Fatalf("feature-planner atom dispatch must not bypass plan-execute review-repair, args=%+v", args)
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, _ io.Writer) int {
+				if opts.SkipReviewRepair {
+					t.Fatalf("feature-planner atom dispatch must not bypass plan-execute review-repair, opts=%+v", opts)
 				}
 
 				_, _ = stdout.Write([]byte(strings.Join([]string{
@@ -555,7 +555,7 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedReviewedCompletion(t *testi
 				}, "\n")))
 
 				return 0
-			},
+			}),
 		},
 	}
 
@@ -588,7 +588,7 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedReviewedCompletion(t *testi
 }
 
 func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T) {
-	var gotArgs []string
+	var gotOptions coreplanexecute.Options
 
 	req := featurePlannerRequest{
 		ConfigPath:                   "config.json",
@@ -597,12 +597,12 @@ func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T
 		ProductWriteEnvelope:         []string{"native/src/core/colony_sim.h", "native/tests/generated/**"},
 		ProductWriteEnvelopeExplicit: true,
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
-				gotArgs = append([]string(nil), args...)
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, _ io.Writer) int {
+				gotOptions = opts
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete"}` + "\n"))
 
 				return 0
-			},
+			}),
 		},
 	}
 
@@ -611,34 +611,34 @@ func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T
 	}
 
 	for _, want := range []string{"native/src/core/colony_sim.h", "native/tests/generated/**"} {
-		if !featurePlannerArgsContainPair(gotArgs, "-write-allowed-path", want) {
-			t.Fatalf("missing write envelope path %q in args %#v", want, gotArgs)
+		if !testContainsString([]string(gotOptions.WriteAllowedPaths), want) {
+			t.Fatalf("missing write envelope path %q in options %#v", want, gotOptions.WriteAllowedPaths)
 		}
 	}
 
-	if featurePlannerArgsContainPair(gotArgs, "-allowed-edit-path", "native/src/core/colony_sim.h") {
-		t.Fatalf("write envelope must not be passed as candidate edit scope: %#v", gotArgs)
+	if testContainsString([]string(gotOptions.AllowedEditPaths), "native/src/core/colony_sim.h") {
+		t.Fatalf("write envelope must not be passed as candidate edit scope: %#v", gotOptions.AllowedEditPaths)
 	}
 
-	if !featurePlannerArgsContainFlag(gotArgs, "-write-allowed-paths-explicit") {
-		t.Fatalf("product write envelope must be marked explicit: %#v", gotArgs)
+	if !gotOptions.WriteAllowedPathsExplicit {
+		t.Fatalf("product write envelope must be marked explicit: %#v", gotOptions)
 	}
 }
 
 func TestDefaultFeaturePlannerPlanExecuteForwardsResolvedModelOverride(t *testing.T) {
-	var gotArgs []string
+	var gotOptions coreplanexecute.Options
 
 	req := featurePlannerRequest{
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Config:     config.Config{LlamaServer: config.LlamaServer{Model: "deepseek-v4-flash"}},
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
-				gotArgs = append([]string(nil), args...)
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, _ io.Writer) int {
+				gotOptions = opts
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete"}` + "\n"))
 
 				return 0
-			},
+			}),
 		},
 	}
 
@@ -646,24 +646,24 @@ func TestDefaultFeaturePlannerPlanExecuteForwardsResolvedModelOverride(t *testin
 		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
 	}
 
-	if !featurePlannerArgsContainPair(gotArgs, "-model", "deepseek-v4-flash") {
-		t.Fatalf("resolved feature-planner model must be forwarded to nested plan-execute: %#v", gotArgs)
+	if gotOptions.Model != "deepseek-v4-flash" {
+		t.Fatalf("resolved feature-planner model must be forwarded to nested plan-execute: %#v", gotOptions)
 	}
 }
 
 func TestDefaultFeaturePlannerPlanExecutePassesTypedAuthorizedNewFiles(t *testing.T) {
-	var gotArgs []string
+	var gotOptions coreplanexecute.Options
 
 	req := featurePlannerRequest{
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
-				gotArgs = append([]string(nil), args...)
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, _ io.Writer) int {
+				gotOptions = opts
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete"}` + "\n"))
 
 				return 0
-			},
+			}),
 		},
 	}
 	prompt := strings.Join([]string{
@@ -678,25 +678,25 @@ func TestDefaultFeaturePlannerPlanExecutePassesTypedAuthorizedNewFiles(t *testin
 		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
 	}
 
-	if !featurePlannerArgsContainPair(gotArgs, "-authorized-new-file", "pkg/new_helper.go") {
-		t.Fatalf("typed authorized new file missing from args %#v", gotArgs)
+	if !testContainsString(gotOptions.AuthorizedNewFiles, "pkg/new_helper.go") {
+		t.Fatalf("typed authorized new file missing from options %#v", gotOptions.AuthorizedNewFiles)
 	}
 }
 
 func TestDefaultFeaturePlannerPlanExecutePassesExplicitEmptyProductWriteEnvelope(t *testing.T) {
-	var gotArgs []string
+	var gotOptions coreplanexecute.Options
 
 	req := featurePlannerRequest{
 		ConfigPath:                   "config.json",
 		SessionID:                    "feature-session",
 		ProductWriteEnvelopeExplicit: true,
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
-				gotArgs = append([]string(nil), args...)
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, _ io.Writer) int {
+				gotOptions = opts
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.source_satisfied","status":"source-satisfied","outcome":"source_satisfied","phase":"complete"}` + "\n"))
 
 				return 0
-			},
+			}),
 		},
 	}
 
@@ -704,12 +704,12 @@ func TestDefaultFeaturePlannerPlanExecutePassesExplicitEmptyProductWriteEnvelope
 		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
 	}
 
-	if !featurePlannerArgsContainFlag(gotArgs, "-write-allowed-paths-explicit") {
-		t.Fatalf("empty product write envelope must still be marked explicit: %#v", gotArgs)
+	if !gotOptions.WriteAllowedPathsExplicit {
+		t.Fatalf("empty product write envelope must still be marked explicit: %#v", gotOptions)
 	}
 
-	if featurePlannerArgsContainFlag(gotArgs, "-write-allowed-path") {
-		t.Fatalf("empty product write envelope should not synthesize path flags: %#v", gotArgs)
+	if len(gotOptions.WriteAllowedPaths) != 0 {
+		t.Fatalf("empty product write envelope should not synthesize path options: %#v", gotOptions.WriteAllowedPaths)
 	}
 }
 
@@ -718,10 +718,10 @@ func TestDefaultFeaturePlannerPlanExecuteMarksMissingTypedStatusAmbiguous(t *tes
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(_ []string, stdout io.Writer, _ io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(_ coreplanexecute.Options, stdout io.Writer, _ io.Writer) int {
 				_, _ = stdout.Write([]byte("plain nested stdout without typed completion status"))
 				return 0
-			},
+			}),
 		},
 	}
 
@@ -750,12 +750,12 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedFailureCompletion(t *testin
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(_ []string, stdout io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(_ coreplanexecute.Options, stdout io.Writer, stderr io.Writer) int {
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"review_repair","status":"degraded","review_status":"degraded","state_path":".idiom/plan-execute/session/state.json"}`))
 				_, _ = stderr.Write([]byte("review repair degraded"))
 
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -791,16 +791,10 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesAnchorRefreshBlocker(t *testing.
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) int {
 				calls++
 				if calls == 2 {
-					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
-						body, err := os.ReadFile(path)
-						if err != nil {
-							t.Fatalf("read retry prompt: %v", err)
-						}
-						retryPrompt = string(body)
-					}
+					retryPrompt = opts.Prompt
 					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
 					return 0
 				}
@@ -811,7 +805,7 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesAnchorRefreshBlocker(t *testing.
 				}, "\n")))
 				_, _ = stderr.Write([]byte("planner blocked"))
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -857,16 +851,10 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesTruncatedAnchorRefreshBlocker(t 
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) int {
 				calls++
 				if calls == 2 {
-					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
-						body, err := os.ReadFile(path)
-						if err != nil {
-							t.Fatalf("read retry prompt: %v", err)
-						}
-						retryPrompt = string(body)
-					}
+					retryPrompt = opts.Prompt
 					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
 					return 0
 				}
@@ -874,7 +862,7 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesTruncatedAnchorRefreshBlocker(t 
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"planning","status":"failed","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","required_edit_paths":["native/src/core/colony_sim_tick.cpp","native/src/simulation/world/collapse_event.h"],"state_path":".idiom/plan-execute/session/state.json","next_valid_action":"answer_blocker"}`))
 				_, _ = stderr.Write([]byte("planner blocked"))
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -911,12 +899,12 @@ func TestDefaultFeaturePlannerPlanExecuteDoesNotRetryHumanPlannerBlocker(t *test
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(_ []string, stdout io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(_ coreplanexecute.Options, stdout io.Writer, stderr io.Writer) int {
 				calls++
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"planning","status":"failed","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: product owner must approve broad new behavior","required_edit_paths":["docs/design.md"],"state_path":".idiom/plan-execute/session/state.json"}`))
 				_, _ = stderr.Write([]byte("planner blocked"))
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -951,16 +939,10 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesTypedRetryActionWithoutAnchorPro
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) int {
 				calls++
 				if calls == 2 {
-					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
-						body, err := os.ReadFile(path)
-						if err != nil {
-							t.Fatalf("read retry prompt: %v", err)
-						}
-						retryPrompt = string(body)
-					}
+					retryPrompt = opts.Prompt
 					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
 					return 0
 				}
@@ -968,7 +950,7 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesTypedRetryActionWithoutAnchorPro
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"planning","status":"failed","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: source refresh needed","next_valid_action":"retry_plan_execute","required_edit_paths":["native/src/core/colony_sim_tick.cpp","native/src/simulation/world/collapse_event.h"],"state_path":".idiom/plan-execute/session/state.json"}`))
 				_, _ = stderr.Write([]byte("planner blocked"))
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -1010,16 +992,10 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesFromDurableTerminalCompletion(t 
 		Config:     cfg,
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) int {
 				calls++
 				if calls == 2 {
-					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
-						body, err := os.ReadFile(path)
-						if err != nil {
-							t.Fatalf("read retry prompt: %v", err)
-						}
-						retryPrompt = string(body)
-					}
+					retryPrompt = opts.Prompt
 					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
 					return 0
 				}
@@ -1038,7 +1014,7 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesFromDurableTerminalCompletion(t 
 				}
 				_, _ = stderr.Write([]byte("planner blocked"))
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -1096,11 +1072,11 @@ func TestDefaultFeaturePlannerPlanExecuteIgnoresStaleDurableTerminalCompletion(t
 		Config:     cfg,
 		SessionID:  "feature-session",
 		Deps: Dependencies{
-			RunPlanExecute: func(_ []string, _ io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(_ coreplanexecute.Options, _ io.Writer, stderr io.Writer) int {
 				calls++
 				_, _ = stderr.Write([]byte("planner blocked without terminal sidecar"))
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -1130,12 +1106,12 @@ func TestDefaultFeaturePlannerPlanExecuteEmitsBlockedTelemetryForFailure(t *test
 		SessionID:  "feature-session",
 		JSONEvents: true,
 		Deps: Dependencies{
-			RunPlanExecute: func(_ []string, stdout io.Writer, stderr io.Writer) int {
+			RunPlanExecute: featurePlannerPlanExecuteRunner(func(_ coreplanexecute.Options, stdout io.Writer, stderr io.Writer) int {
 				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"review_repair","status":"failed","review_status":"review_model_error","state_path":".idiom/plan-execute/session/state.json"}`))
 				_, _ = stderr.Write([]byte("review model error"))
 
 				return 1
-			},
+			}),
 		},
 	}
 
@@ -1408,24 +1384,10 @@ func testContainsString(values []string, want string) bool {
 	return false
 }
 
-func featurePlannerArgsContainPair(args []string, flag string, value string) bool {
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == flag && args[i+1] == value {
-			return true
-		}
+func featurePlannerPlanExecuteRunner(run func(coreplanexecute.Options, io.Writer, io.Writer) int) PlanExecuteRunner {
+	return func(_ context.Context, _ config.Config, opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) coreplanexecute.RunResult {
+		return coreplanexecute.RunResult{ExitCode: run(opts, stdout, stderr)}
 	}
-
-	return false
-}
-
-func featurePlannerArgsContainFlag(args []string, flag string) bool {
-	for _, arg := range args {
-		if arg == flag {
-			return true
-		}
-	}
-
-	return false
 }
 
 func featurePlannerPlanExecuteDispatchPlanJSON() string {
@@ -2049,14 +2011,4 @@ func TestEmitFeaturePlannerJSONEventRejectsUnknownContractEvent(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Fatalf("unexpected JSON output for rejected event: %s", stdout.String())
 	}
-}
-
-func featurePlannerArgValue(args []string, flag string) string {
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == flag {
-			return args[i+1]
-		}
-	}
-
-	return ""
 }

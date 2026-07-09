@@ -15,10 +15,10 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/jsonevents"
 	"idiom/internal/platform/sessionid"
+	"idiom/internal/runtime/localops"
 	"idiom/internal/runtime/queueadmission"
 	"idiom/internal/runtime/writerrouting"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
-	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 )
 
 type implementOptions struct {
@@ -66,7 +66,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		"json_events": opts.JSONEvents,
 		"resume":      strings.TrimSpace(opts.Resume) != "",
 		"session_id":  cfg.Workspace.SessionID,
-		"local_ops":   cmdtelemetry.LocalOpsFields(cfg, "implement"),
+		"local_ops":   localops.TelemetryFields(cfg, "implement"),
 	})
 
 	decision := writerrouting.BuildDecision(cfg, writerrouting.DecisionOptions{

@@ -70,8 +70,10 @@ type featurePlannerResult struct {
 type Dependencies struct {
 	NewSessionID            func() string
 	LocalOpsTelemetryFields func(config.Config, string) map[string]any
-	RunPlanExecute          func(args []string, stdout io.Writer, stderr io.Writer) int
+	RunPlanExecute          PlanExecuteRunner
 }
+
+type PlanExecuteRunner func(context.Context, config.Config, coreplanexecute.Options, io.Writer, io.Writer) coreplanexecute.RunResult
 
 type featurePlannerRunner func(context.Context, featurePlannerRequest, io.Writer) (featurePlannerResult, error)
 
@@ -391,25 +393,7 @@ func defaultFeaturePlannerModelTurn(ctx context.Context, req featurePlannerReque
 	return answer, nil
 }
 
-func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerRequest, prompt string, stdout io.Writer) (string, error) {
-	promptFile, err := os.CreateTemp("", "idiom-feature-planner-atom-*.md")
-	if err != nil {
-		return "", fmt.Errorf("create plan-execute prompt file: %w", err)
-	}
-
-	promptPath := promptFile.Name()
-
-	defer os.Remove(promptPath)
-
-	if _, err := promptFile.WriteString(prompt); err != nil {
-		_ = promptFile.Close()
-		return "", fmt.Errorf("write plan-execute prompt file: %w", err)
-	}
-
-	if err := promptFile.Close(); err != nil {
-		return "", fmt.Errorf("close plan-execute prompt file: %w", err)
-	}
-
+func defaultFeaturePlannerPlanExecute(ctx context.Context, req featurePlannerRequest, prompt string, stdout io.Writer) (string, error) {
 	configPath := strings.TrimSpace(req.ConfigPath)
 	if configPath == "" {
 		configPath = "config.json"
@@ -424,55 +408,40 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		return "", fmt.Errorf("plan-execute atom dispatch is unavailable")
 	}
 
-	args := []string{
-		"-config", configPath,
-		"-prompt-file", promptPath,
-		"-json",
-	}
-	if model := strings.TrimSpace(req.Config.LlamaServer.Model); model != "" {
-		args = append(args, "-model", model)
-	}
 	planExecuteSessionID := featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt)
-	if planExecuteSessionID != "" {
-		args = append(args, "-session", planExecuteSessionID)
+	opts := coreplanexecute.Options{
+		Context:                   ctx,
+		ConfigPath:                configPath,
+		Prompt:                    prompt,
+		JSONEvents:                true,
+		Model:                     strings.TrimSpace(req.Config.LlamaServer.Model),
+		SessionID:                 planExecuteSessionID,
+		WriteAllowedPaths:         coreplanexecute.MultiFlag(appendUniqueFeaturePlannerStrings(nil, req.ProductWriteEnvelope...)),
+		WriteAllowedPathsExplicit: req.ProductWriteEnvelopeExplicit,
+		AuthorizedNewFiles:        plancontract.AuthorizedNewFilePathsFromPrompt(prompt),
 	}
 
-	for _, path := range appendUniqueFeaturePlannerStrings(nil, req.ProductWriteEnvelope...) {
-		args = append(args, "-write-allowed-path", path)
+	runPlanExecute := func() (int, featureplanner.PlanExecuteCompletionSummary) {
+		planStdout.Reset()
+		planStderr.Reset()
+		startedAt := time.Now().UTC()
+		result := req.Deps.RunPlanExecute(ctx, req.Config, opts, &planStdout, &planStderr)
+		if req.JSONEvents && stdout != nil {
+			_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
+		}
+
+		completion := featureplanner.PlanExecuteCompletionSummaryFromOutput(planStdout.String())
+		completion = mergeFeaturePlannerPlanExecuteRunCompletion(completion, result)
+		completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion, startedAt)
+
+		return result.ExitCode, completion
 	}
 
-	for _, path := range plancontract.AuthorizedNewFilePathsFromPrompt(prompt) {
-		args = append(args, "-authorized-new-file", path)
-	}
-
-	if req.ProductWriteEnvelopeExplicit {
-		args = append(args, "-write-allowed-paths-explicit")
-	}
-
-	planExecuteStartedAt := time.Now().UTC()
-	code := req.Deps.RunPlanExecute(args, &planStdout, &planStderr)
-	if req.JSONEvents && stdout != nil {
-		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
-	}
-
-	completion := featureplanner.PlanExecuteCompletionSummaryFromOutput(planStdout.String())
-	completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion, planExecuteStartedAt)
+	code, completion := runPlanExecute()
 	if code != 0 {
 		if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPromptForSummary(prompt, completion); ok {
-			if err := os.WriteFile(promptPath, []byte(retryPrompt), 0o600); err != nil {
-				return "", fmt.Errorf("write plan-execute retry prompt file: %w", err)
-			}
-
-			planStdout.Reset()
-			planStderr.Reset()
-			planExecuteStartedAt = time.Now().UTC()
-			code = req.Deps.RunPlanExecute(args, &planStdout, &planStderr)
-			if req.JSONEvents && stdout != nil {
-				_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
-			}
-
-			completion = featureplanner.PlanExecuteCompletionSummaryFromOutput(planStdout.String())
-			completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion, planExecuteStartedAt)
+			opts.Prompt = retryPrompt
+			code, completion = runPlanExecute()
 		}
 	}
 
@@ -507,6 +476,17 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	completion = featureplanner.TrustObservedPlanExecuteCompletionSummary(completion)
 
 	return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
+}
+
+func mergeFeaturePlannerPlanExecuteRunCompletion(summary featureplanner.PlanExecuteCompletionSummary, result coreplanexecute.RunResult) featureplanner.PlanExecuteCompletionSummary {
+	if result.Completion == nil {
+		return summary
+	}
+
+	return featureplanner.MergePlanExecuteCompletionSummaries(
+		summary,
+		featureplanner.PlanExecuteCompletionSummaryFromFields(plancontract.PlanExecuteTerminalCompletionEventFields(*result.Completion, result.CompletionPath)),
+	)
 }
 
 func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Writer, completion featureplanner.PlanExecuteCompletionSummary) (string, error) {

@@ -76,15 +76,15 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 			return 1
 		}
 
-		return runPlanExecuteIntentLoop(cfg, opts, loopOpts, adaptPromptRunner(promptRun), rec, stdout, stderr)
+		return runPlanExecuteIntentLoop(cfg, opts, loopOpts, AdaptPromptRunner(promptRun), rec, stdout, stderr)
 	}
 
-	result := planexecute.RunWithDependencies(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr, planexecuteadapters.Dependencies())
+	result := planexecute.RunWithDependencies(cfg, opts, AdaptPromptRunner(promptRun), rec, stdout, stderr, planexecuteadapters.Dependencies())
 
 	return result.ExitCode
 }
 
-func adaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunner {
+func AdaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunner {
 	return func(cfg config.Config, prompt string, opts planexecute.RunOptions, stdout io.Writer) (string, error) {
 		return promptRun(cfg, prompt, cmdruntime.RunOptions{
 			JSONEvents:                  opts.JSONEvents,
