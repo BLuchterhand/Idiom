@@ -13012,37 +13012,52 @@ func (p delegatedDiscoveryPlan) consumableSourceBodyCandidatePaths(results []wor
 	best := map[string]delegatedDiscoveryConsumableCandidate{}
 	seenIndex := 0
 
-	for _, summary := range delegatedDiscoverySummaries(results) {
-		for _, evidence := range summary.Evidence {
-			layerName := strings.TrimSpace(evidence.Name)
-			summaryText := strings.TrimSpace(evidence.Summary)
-			text := normalizeWorkspacePathScanText(strings.TrimSpace(evidence.Summary + "\n" + evidence.OutputExcerpt))
+	addCandidate := func(path string, layerName string, line string, summaryText string) {
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+		if !delegatedDiscoveryConsumableSourcePath(path) {
+			return
+		}
 
-			for _, rawLine := range strings.Split(text, "\n") {
-				line := strings.TrimSpace(rawLine)
-				if line == "" {
-					continue
-				}
+		score := p.consumableCandidateScore(path, layerName, line, summaryText, terms)
+		if score <= 0 {
+			return
+		}
 
-				for _, path := range delegatedDiscoveryLineCandidatePaths(line) {
-					path = normalizeDelegatedDiscoveryEvidencePath(path)
-					if !delegatedDiscoveryConsumableSourcePath(path) {
+		candidate := delegatedDiscoveryConsumableCandidate{path: path, score: score, firstIndex: seenIndex}
+		seenIndex++
+
+		if prior, ok := best[path]; ok && (prior.score > score || (prior.score == score && prior.firstIndex <= candidate.firstIndex)) {
+			return
+		}
+
+		best[path] = candidate
+	}
+
+	if facts := discoveryQueryCandidateEvidenceFacts(results); len(facts) > 0 {
+		for _, fact := range facts {
+			addCandidate(
+				fact.Path,
+				strings.TrimSpace(fact.LayerName),
+				strings.TrimSpace(fact.EvidenceLine),
+				strings.TrimSpace(fact.Summary),
+			)
+		}
+	} else {
+		for _, summary := range delegatedDiscoverySummaries(results) {
+			for _, evidence := range summary.Evidence {
+				layerName := strings.TrimSpace(evidence.Name)
+				summaryText := strings.TrimSpace(evidence.Summary)
+				text := normalizeWorkspacePathScanText(strings.TrimSpace(evidence.Summary + "\n" + evidence.OutputExcerpt))
+
+				for _, rawLine := range strings.Split(text, "\n") {
+					line := strings.TrimSpace(rawLine)
+					if line == "" {
 						continue
 					}
 
-					score := p.consumableCandidateScore(path, layerName, line, summaryText, terms)
-					if score <= 0 {
-						continue
+					for _, path := range delegatedDiscoveryLineCandidatePaths(line) {
+						addCandidate(path, layerName, line, summaryText)
 					}
-
-					candidate := delegatedDiscoveryConsumableCandidate{path: path, score: score, firstIndex: seenIndex}
-					seenIndex++
-
-					if prior, ok := best[path]; ok && (prior.score > score || (prior.score == score && prior.firstIndex <= candidate.firstIndex)) {
-						continue
-					}
-
-					best[path] = candidate
 				}
 			}
 		}

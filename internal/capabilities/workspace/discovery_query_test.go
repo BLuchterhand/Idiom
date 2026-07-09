@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/config"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
@@ -334,6 +335,58 @@ func TestDiscoveryQueryCheckpointsArtifactAfterCompletedLayer(t *testing.T) {
 	}
 	if packet.Status != "" {
 		t.Fatalf("completed checkpoint should not classify a long-running query as failure/interruption: %#v", packet)
+	}
+}
+
+func TestDiscoveryQueryFactsRankTextAnchorCandidates(t *testing.T) {
+	requireContentSearchBackend(t)
+
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "internal", "runtime", "agent", "runner.go"), "package agent\nfunc TargetSourceOnly() {}\n")
+	writeWorkspaceFile(t, filepath.Join(root, "internal", "runtime", "agent", "runner_test.go"), "package agent\nfunc TestRunner() {}\n")
+	writeWorkspaceFile(t, filepath.Join(root, "internal", "runtime", "modepolicy", "modes.go"), "package modepolicy\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+	})
+	runner := &discoveryQueryRunner{
+		manager: mgr,
+		ctx:     context.Background(),
+		seen:    make(map[string]struct{}),
+		packet: discoveryQueryPacket{
+			SchemaVersion: discoveryQuerySchemaVersion,
+			ID:            "facts-test",
+			Purpose:       DiscoveryQueryPurposeArchitectureBoundary,
+			Target:        ".",
+			ArtifactPath:  ".idiom/discovery/queries/facts-test.json",
+		},
+	}
+
+	if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "internal", Recursive: true, MaxDepth: 4}); !ok || result.Error != "" {
+		t.Fatalf("target listing layer failed, ok=%t result=%#v", ok, result)
+	}
+	if result, ok := runner.addLayerResult(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: ".", Pattern: "TargetSourceOnly"}); !ok || result.Error != "" {
+		t.Fatalf("text anchor layer failed, ok=%t result=%#v", ok, result)
+	}
+
+	facts := runner.toolResultFacts()
+	if facts == nil {
+		t.Fatal("discovery_query facts were nil")
+	}
+	if facts.DiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner || !facts.SourceOwnerFound {
+		t.Fatalf("discovery_query facts should identify source-owner candidates, got %#v", facts)
+	}
+	if got, want := facts.CandidatePaths[0], "internal/runtime/agent/runner.go"; got != want {
+		t.Fatalf("expected text-anchor source file to rank first, got paths=%#v ranked=%#v raw=%#v", facts.CandidatePaths, facts.RankedDiscoveryCandidates, runner.candidates)
+	}
+	if got := facts.RankedDiscoveryCandidates[0]; got.Path != "internal/runtime/agent/runner.go" || got.LayerName != DiscoveryLayerTextAnchorSearch {
+		t.Fatalf("ranked discovery candidate = %#v, want text-anchor runner.go first", got)
+	}
+	if slices.Contains(facts.CandidatePaths, ".idiom/discovery/queries/facts-test.json") {
+		t.Fatalf("discovery artifact should not become a source candidate: %#v", facts.CandidatePaths)
 	}
 }
 

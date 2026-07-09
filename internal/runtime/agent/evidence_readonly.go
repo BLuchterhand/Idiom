@@ -15,6 +15,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
@@ -4299,7 +4300,84 @@ func delegatedDiscoveryEvidenceLinePriority(line string) int {
 	}
 }
 
-func delegatedDiscoveryQueryEvidencePaths(results []workspace.ToolResult, limit int) []string {
+func discoveryQueryCandidateEvidenceFacts(results []workspace.ToolResult) []toolfacts.DiscoveryCandidateEvidence {
+	var candidates []toolfacts.DiscoveryCandidateEvidence
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameDiscoveryQuery ||
+			strings.TrimSpace(result.Error) != "" ||
+			result.Facts == nil {
+
+			continue
+		}
+
+		if len(result.Facts.RankedDiscoveryCandidates) > 0 {
+			for _, candidate := range result.Facts.RankedDiscoveryCandidates {
+				candidate.Path = normalizeDelegatedDiscoveryEvidencePath(candidate.Path)
+				if !discoveryQueryCandidateEvidencePath(candidate.Path) {
+					continue
+				}
+
+				candidates = append(candidates, candidate)
+			}
+			continue
+		}
+
+		for _, path := range result.Facts.CandidatePaths {
+			path = normalizeDelegatedDiscoveryEvidencePath(path)
+			if !discoveryQueryCandidateEvidencePath(path) {
+				continue
+			}
+
+			candidates = append(candidates, toolfacts.DiscoveryCandidateEvidence{Path: path})
+		}
+	}
+
+	return candidates
+}
+
+func discoveryQueryCandidatePaths(results []workspace.ToolResult, limit int) []string {
+	if limit <= 0 {
+		limit = 4
+	}
+
+	facts := discoveryQueryCandidateEvidenceFacts(results)
+	if len(facts) == 0 {
+		return legacyDelegatedDiscoveryQueryEvidencePaths(results, limit)
+	}
+
+	paths := make([]string, 0, len(facts))
+	seen := make(map[string]struct{}, len(facts))
+	for _, fact := range facts {
+		path := normalizeDelegatedDiscoveryEvidencePath(fact.Path)
+		if !discoveryQueryCandidateEvidencePath(path) {
+			continue
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	return textutil.Prefix(preferNonTestEvidencePaths(paths), limit)
+}
+
+func discoveryQueryCandidateEvidencePath(path string) bool {
+	path = normalizeDelegatedDiscoveryEvidencePath(path)
+	if path == "" || strings.HasPrefix(path, ".idiom/") || strings.HasPrefix(path, ".") {
+		return false
+	}
+
+	if !delegatedDiscoveryLooksLikeEvidencePath(path) {
+		return false
+	}
+
+	return strings.Contains(path, "/") || strings.HasSuffix(path, ".go")
+}
+
+func legacyDelegatedDiscoveryQueryEvidencePaths(results []workspace.ToolResult, limit int) []string {
 	if limit <= 0 {
 		limit = 4
 	}
@@ -4312,15 +4390,7 @@ func delegatedDiscoveryQueryEvidencePaths(results []workspace.ToolResult, limit 
 	best := make(map[string]int)
 	addCandidate := func(path string, layerName string, line string) {
 		path = normalizeDelegatedDiscoveryEvidencePath(path)
-		if path == "" || strings.HasPrefix(path, ".idiom/") || strings.HasPrefix(path, ".") {
-			return
-		}
-
-		if !delegatedDiscoveryLooksLikeEvidencePath(path) {
-			return
-		}
-
-		if !strings.Contains(path, "/") && !strings.HasSuffix(path, ".go") {
+		if !discoveryQueryCandidateEvidencePath(path) {
 			return
 		}
 

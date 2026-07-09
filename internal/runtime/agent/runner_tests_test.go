@@ -21,6 +21,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
@@ -15729,6 +15730,12 @@ func TestSearchEvidenceSurvivesFailedGuessedReadWithoutBlockingFollowupSearch(t 
 			Tool:    "search_files",
 			Summary: "Found 2 matching file(s).",
 			Output:  "internal/surfaces/tui/app/model.go\ninternal/surfaces/tui/app/view.go",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/surfaces/tui/app/model.go", "internal/surfaces/tui/app/view.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+			},
 		},
 		"",
 		nil,
@@ -26183,17 +26190,39 @@ func TestSynthesizeDelegatedReadOnlyAnswerBuildsGroundedPacket(t *testing.T) {
 	}
 }
 
-func TestDelegatedDiscoveryQueryEvidencePathsFeedSynthesizedAnswer(t *testing.T) {
+func TestDiscoveryQueryCandidatePathsPreferProducerFacts(t *testing.T) {
 	results := []workspace.ToolResult{
 		{
 			Tool:    "discovery_query",
 			Summary: "Ran architecture_boundary discovery query with 10 layer(s); artifact: .idiom/discovery/queries/query.json",
 			Output:  `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"target_listing","summary":"Listed internal/runtime/agent.","output_excerpt":"internal/runtime/agent/implementation_flow.go\ninternal/runtime/agent/discovery_redirect.go\ninternal/runtime/instructions/attacher.go"},{"name":"text_anchor_search","summary":"Found subagent handoff implementation paths.","output_excerpt":"internal/runtime/agent/implementation_flow.go:95: For broad architecture questions, prefer discovery_query first.\ninternal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)\n.idiom/discovery/queries/query.json"}]}`,
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths: []string{"internal/runtime/agent/runner_core.go", "internal/runtime/agent/implementation_flow.go"},
+				RankedDiscoveryCandidates: []toolfacts.DiscoveryCandidateEvidence{
+					{
+						Path:         "internal/runtime/agent/runner_core.go",
+						LayerName:    "text_anchor_search",
+						Tool:         "search_content",
+						Summary:      "Found subagent handoff implementation paths.",
+						EvidenceLine: "internal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)",
+					},
+					{
+						Path:         "internal/runtime/agent/implementation_flow.go",
+						LayerName:    "text_anchor_search",
+						Tool:         "search_content",
+						Summary:      "Found subagent handoff implementation paths.",
+						EvidenceLine: "internal/runtime/agent/implementation_flow.go:95: For broad architecture questions, prefer discovery_query first.",
+					},
+				},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+			},
 		},
 		readFileSourceBodyResult("internal/runtime/agent/implementation_flow.go", 1, 120, 0, "package agent\nfunc (r *Runner) runChildTask() {}\n"),
 	}
 
-	paths := delegatedDiscoveryQueryEvidencePaths(results, 4)
+	paths := discoveryQueryCandidatePaths(results, 4)
 	if len(paths) < 2 || paths[0] != "internal/runtime/agent/runner_core.go" || paths[1] != "internal/runtime/agent/implementation_flow.go" {
 		t.Fatalf("expected text-anchor evidence paths to outrank target listing paths, got %#v", paths)
 	}
@@ -26233,25 +26262,6 @@ func TestDelegatedDiscoveryQueryEvidencePathsFeedSynthesizedAnswer(t *testing.T)
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("synthesized answer should not dump raw discovery JSON %q, got:\n%s", forbidden, answer)
 		}
-	}
-}
-
-func TestDelegatedDiscoveryQueryEvidencePathsPreferCoreRunnerFiles(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:    "discovery_query",
-		Summary: "Ran architecture_boundary discovery query with 10 layer(s); artifact: .idiom/discovery/queries/query.json",
-		Output:  `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery implementation paths.","output_excerpt":"internal/runtime/modepolicy/modes.go:1: package modepolicy\ninternal/runtime/instructions/attacher.go:1: package instructions\ninternal/runtime/agent/implementation_flow.go:1: package agent\ninternal/runtime/agent/implementation_flow.go:18: func (AnswerComposer) Compose\ninternal/runtime/agent/runner_core.go:128: finish := func\ninternal/runtime/agent/runner_core.go:637: delegatedReadOnlyAnswerReadyAfterResult\ninternal/runtime/agent/discovery_redirect.go:1: package agent\ninternal/runtime/agent/runner_tests_test.go:1: package agent"}]}`,
-	}}
-
-	paths := delegatedDiscoveryQueryEvidencePaths(results, 2)
-	for _, want := range []string{"internal/runtime/agent/implementation_flow.go", "internal/runtime/agent/runner_core.go"} {
-		if !slices.Contains(paths, want) {
-			t.Fatalf("expected core path %q in top evidence paths, got %#v", want, paths)
-		}
-	}
-
-	if slices.Contains(paths, "internal/runtime/modepolicy/modes.go") {
-		t.Fatalf("incidental path displaced core runner evidence: %#v", paths)
 	}
 }
 
@@ -30235,6 +30245,12 @@ func TestReadOnlySourceGroundingRecoveryPromptIncludesLedgerGuidance(t *testing.
 			Tool:    "search_files",
 			Summary: "Found internal/runtime/llama/client.go",
 			Output:  "internal/runtime/llama/client.go\n",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/runtime/llama/client.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+			},
 		},
 	}
 

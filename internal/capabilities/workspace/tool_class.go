@@ -57,17 +57,6 @@ func IsSearchToolName(name string) bool {
 	return ClassifyTool(name) == CategorySearch || name == legacyGrepToolName
 }
 
-// IsTextSearchToolName reports whether search output contains text matches
-// that can be broad or truncated. File-name searches are intentionally excluded.
-func IsTextSearchToolName(name string) bool {
-	switch strings.TrimSpace(name) {
-	case ToolNameSearchContent, ToolNameRg, legacyGrepToolName:
-		return true
-	default:
-		return false
-	}
-}
-
 // ToolActionClass returns the canonical autonomy action class for a workspace
 // tool name. The workspace catalog owns this projection because it owns tool
 // categories, language-tool registration, and built-in tool metadata.

@@ -43,20 +43,33 @@ type SourceBodyEvidence struct {
 	Truncated  bool   `json:"truncated,omitempty"`
 }
 
+// DiscoveryCandidateEvidence records producer-owned discovery evidence for a
+// candidate path. The slice order is the producer's rank.
+type DiscoveryCandidateEvidence struct {
+	Path         string `json:"path,omitempty"`
+	LayerName    string `json:"layer_name,omitempty"`
+	Tool         string `json:"tool,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	EvidenceLine string `json:"evidence_line,omitempty"`
+}
+
 // ToolResultFacts carries producer-owned evidence facts that consumers should
 // not re-derive from model-facing result text.
 type ToolResultFacts struct {
-	DiagnosticEvidencePaths []string             `json:"diagnostic_evidence_paths,omitempty"`
-	SourceBodies            []SourceBodyEvidence `json:"source_bodies,omitempty"`
-	CandidatePaths          []string             `json:"candidate_paths,omitempty"`
-	CandidateSymbols        []string             `json:"candidate_symbols,omitempty"`
-	HasDiscoveryTargets     bool                 `json:"has_discovery_targets,omitempty"`
-	DiscoveryStrength       DiscoveryStrength    `json:"discovery_strength,omitempty"`
-	SourceOwnerFound        bool                 `json:"source_owner_found,omitempty"`
-	LocalizationConfidence  string               `json:"localization_confidence,omitempty"`
-	GitHistoryPath          string               `json:"git_history_path,omitempty"`
-	GitHistoryStatus        GitHistoryStatus     `json:"git_history_status,omitempty"`
-	ShellCommand            string               `json:"shell_command,omitempty"`
+	DiagnosticEvidencePaths   []string                     `json:"diagnostic_evidence_paths,omitempty"`
+	SourceBodies              []SourceBodyEvidence         `json:"source_bodies,omitempty"`
+	CandidatePaths            []string                     `json:"candidate_paths,omitempty"`
+	CandidateSymbols          []string                     `json:"candidate_symbols,omitempty"`
+	RankedDiscoveryCandidates []DiscoveryCandidateEvidence `json:"ranked_discovery_candidates,omitempty"`
+	HasDiscoveryTargets       bool                         `json:"has_discovery_targets,omitempty"`
+	DiscoveryStrength         DiscoveryStrength            `json:"discovery_strength,omitempty"`
+	SourceOwnerFound          bool                         `json:"source_owner_found,omitempty"`
+	LocalizationConfidence    string                       `json:"localization_confidence,omitempty"`
+	SearchHitCount            int                          `json:"search_hit_count,omitempty"`
+	SearchHighCardinality     bool                         `json:"search_high_cardinality,omitempty"`
+	GitHistoryPath            string                       `json:"git_history_path,omitempty"`
+	GitHistoryStatus          GitHistoryStatus             `json:"git_history_status,omitempty"`
+	ShellCommand              string                       `json:"shell_command,omitempty"`
 }
 
 // NewSourceBodyFacts returns normalized source-body evidence facts, or nil when
@@ -78,17 +91,20 @@ func (facts *ToolResultFacts) Clone() *ToolResultFacts {
 	}
 
 	return &ToolResultFacts{
-		DiagnosticEvidencePaths: append([]string(nil), facts.DiagnosticEvidencePaths...),
-		SourceBodies:            append([]SourceBodyEvidence(nil), facts.SourceBodies...),
-		CandidatePaths:          append([]string(nil), facts.CandidatePaths...),
-		CandidateSymbols:        append([]string(nil), facts.CandidateSymbols...),
-		HasDiscoveryTargets:     facts.HasDiscoveryTargets,
-		DiscoveryStrength:       facts.DiscoveryStrength,
-		SourceOwnerFound:        facts.SourceOwnerFound,
-		LocalizationConfidence:  facts.LocalizationConfidence,
-		GitHistoryPath:          facts.GitHistoryPath,
-		GitHistoryStatus:        facts.GitHistoryStatus,
-		ShellCommand:            facts.ShellCommand,
+		DiagnosticEvidencePaths:   append([]string(nil), facts.DiagnosticEvidencePaths...),
+		SourceBodies:              append([]SourceBodyEvidence(nil), facts.SourceBodies...),
+		CandidatePaths:            append([]string(nil), facts.CandidatePaths...),
+		CandidateSymbols:          append([]string(nil), facts.CandidateSymbols...),
+		RankedDiscoveryCandidates: append([]DiscoveryCandidateEvidence(nil), facts.RankedDiscoveryCandidates...),
+		HasDiscoveryTargets:       facts.HasDiscoveryTargets,
+		DiscoveryStrength:         facts.DiscoveryStrength,
+		SourceOwnerFound:          facts.SourceOwnerFound,
+		LocalizationConfidence:    facts.LocalizationConfidence,
+		SearchHitCount:            facts.SearchHitCount,
+		SearchHighCardinality:     facts.SearchHighCardinality,
+		GitHistoryPath:            facts.GitHistoryPath,
+		GitHistoryStatus:          facts.GitHistoryStatus,
+		ShellCommand:              facts.ShellCommand,
 	}
 }
 

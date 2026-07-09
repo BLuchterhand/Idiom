@@ -9,9 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
@@ -22,6 +25,7 @@ const (
 	discoveryQuerySchemaVersion = 1
 	discoveryQueryOutputLines   = 80
 	discoveryQueryOutputChars   = 12000
+	discoveryQueryFactTextChars = 240
 )
 
 const (
@@ -104,11 +108,13 @@ type discoveryQuerySummary struct {
 }
 
 type discoveryQueryRunner struct {
-	manager *Manager
-	ctx     context.Context
-	packet  discoveryQueryPacket
-	seen    map[string]struct{}
-	stopped bool
+	manager          *Manager
+	ctx              context.Context
+	packet           discoveryQueryPacket
+	seen             map[string]struct{}
+	candidates       []toolfacts.DiscoveryCandidateEvidence
+	candidateSymbols []string
+	stopped          bool
 }
 
 func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResult {
@@ -167,6 +173,7 @@ func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResul
 		Tool:    ToolNameDiscoveryQuery,
 		Summary: fmt.Sprintf("Ran %s discovery query with %d layer(s); artifact: %s", purpose, len(runner.packet.Layers), artifactRel),
 		Output:  runner.summaryJSON(),
+		Facts:   runner.toolResultFacts(),
 	}
 }
 
@@ -544,10 +551,72 @@ func (r *discoveryQueryRunner) addLayerResult(name string, req ToolRequest) (Too
 	}
 
 	r.packet.Layers = append(r.packet.Layers, layer)
+	r.addLayerCandidateFacts(layer, result)
 	r.checkpointArtifact()
 	r.stopAfterLayer(name)
 
 	return result, true
+}
+
+func (r *discoveryQueryRunner) addLayerCandidateFacts(layer discoveryQueryLayer, result ToolResult) {
+	if strings.TrimSpace(result.Error) != "" {
+		return
+	}
+
+	if result.Facts != nil {
+		r.candidateSymbols = textutil.Merge(r.candidateSymbols, result.Facts.CandidateSymbols)
+		for _, path := range result.Facts.CandidatePaths {
+			r.addCandidateEvidence(toolfacts.DiscoveryCandidateEvidence{
+				Path:      path,
+				LayerName: layer.Name,
+				Tool:      layer.Tool,
+				Summary:   result.Summary,
+			})
+		}
+		for _, candidate := range result.Facts.RankedDiscoveryCandidates {
+			if strings.TrimSpace(candidate.Path) == "" {
+				continue
+			}
+			if strings.TrimSpace(candidate.LayerName) == "" {
+				candidate.LayerName = layer.Name
+			}
+			if strings.TrimSpace(candidate.Tool) == "" {
+				candidate.Tool = layer.Tool
+			}
+			if strings.TrimSpace(candidate.Summary) == "" {
+				candidate.Summary = result.Summary
+			}
+			r.addCandidateEvidence(candidate)
+		}
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(layer.Summary+"\n"+layer.OutputExcerpt), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		for _, path := range pathparse.MentionedWorkspacePaths(line) {
+			r.addCandidateEvidence(toolfacts.DiscoveryCandidateEvidence{
+				Path:         path,
+				LayerName:    layer.Name,
+				Tool:         layer.Tool,
+				Summary:      layer.Summary,
+				EvidenceLine: line,
+			})
+		}
+	}
+}
+
+func (r *discoveryQueryRunner) addCandidateEvidence(candidate toolfacts.DiscoveryCandidateEvidence) {
+	candidate.Path = discoveryQueryFactPath(candidate.Path)
+	if candidate.Path == "" {
+		return
+	}
+	candidate.LayerName = strings.TrimSpace(candidate.LayerName)
+	candidate.Tool = strings.TrimSpace(candidate.Tool)
+	candidate.Summary = textutil.TruncateBytes(strings.TrimSpace(candidate.Summary), discoveryQueryFactTextChars, "...")
+	candidate.EvidenceLine = textutil.TruncateBytes(strings.TrimSpace(candidate.EvidenceLine), discoveryQueryFactTextChars, "...")
+	r.candidates = append(r.candidates, candidate)
 }
 
 func (r *discoveryQueryRunner) stopBeforeLayer(name string) bool {
@@ -670,6 +739,165 @@ func (r *discoveryQueryRunner) summaryJSON() string {
 	}
 
 	return string(data)
+}
+
+type discoveryQueryRankedCandidate struct {
+	candidate toolfacts.DiscoveryCandidateEvidence
+	score     int
+	index     int
+}
+
+func (r *discoveryQueryRunner) toolResultFacts() *toolfacts.ToolResultFacts {
+	ranked := r.rankedCandidateFacts()
+	paths := make([]string, 0, len(ranked))
+	for _, candidate := range ranked {
+		paths = append(paths, candidate.Path)
+	}
+
+	symbols := textutil.Unique(r.candidateSymbols)
+	if len(paths) == 0 && len(symbols) == 0 {
+		return nil
+	}
+
+	facts := &toolfacts.ToolResultFacts{
+		CandidatePaths:            paths,
+		CandidateSymbols:          symbols,
+		RankedDiscoveryCandidates: ranked,
+		HasDiscoveryTargets:       len(paths) > 0 || len(symbols) > 0,
+		DiscoveryStrength:         toolfacts.DiscoveryStrengthSourceOwner,
+		SourceOwnerFound:          len(paths) > 0,
+	}
+	if len(paths) == 0 {
+		facts.DiscoveryStrength = toolfacts.DiscoveryStrengthCandidateOnly
+	}
+
+	return facts
+}
+
+func (r *discoveryQueryRunner) rankedCandidateFacts() []toolfacts.DiscoveryCandidateEvidence {
+	if len(r.candidates) == 0 {
+		return nil
+	}
+
+	best := map[string]discoveryQueryRankedCandidate{}
+	for i, candidate := range r.candidates {
+		path := discoveryQueryFactPath(candidate.Path)
+		if path == "" {
+			continue
+		}
+		candidate.Path = path
+		score := discoveryQueryCandidateScore(candidate)
+		ranked := discoveryQueryRankedCandidate{candidate: candidate, score: score, index: i}
+		if prior, ok := best[path]; ok && (prior.score < score || (prior.score == score && prior.index <= i)) {
+			continue
+		}
+		best[path] = ranked
+	}
+
+	ranked := make([]discoveryQueryRankedCandidate, 0, len(best))
+	for _, candidate := range best {
+		ranked = append(ranked, candidate)
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score < ranked[j].score
+		}
+		if ranked[i].index != ranked[j].index {
+			return ranked[i].index < ranked[j].index
+		}
+		return ranked[i].candidate.Path < ranked[j].candidate.Path
+	})
+
+	out := make([]toolfacts.DiscoveryCandidateEvidence, 0, len(ranked))
+	for _, candidate := range ranked {
+		out = append(out, candidate.candidate)
+	}
+
+	return out
+}
+
+func discoveryQueryCandidateScore(candidate toolfacts.DiscoveryCandidateEvidence) int {
+	return discoveryQueryLayerRank(candidate.LayerName, candidate.Tool)*100 +
+		discoveryQueryEvidenceLineRank(candidate.EvidenceLine)*10 +
+		discoveryQueryPathRank(candidate.Path)
+}
+
+func discoveryQueryLayerRank(layerName string, tool string) int {
+	switch strings.TrimSpace(layerName) {
+	case DiscoveryLayerTextAnchorSearch, DiscoveryLayerSecurityTextSweep:
+		return 0
+	case DiscoveryLayerFileRead, DiscoveryLayerFileOutline:
+		return 1
+	case DiscoveryLayerRelatedFiles:
+		return 5
+	case DiscoveryLayerDependencyGraph:
+		return 6
+	case DiscoveryLayerCtagsSymbols:
+		return 7
+	case DiscoveryLayerTargetListing:
+		return 20
+	case DiscoveryLayerProjectBehaviorDigest, DiscoveryLayerProjectContextDigest:
+		return 30
+	}
+
+	switch strings.TrimSpace(tool) {
+	case ToolNameSearchContent, ToolNameRg, ToolNameStructuralSearch:
+		return 0
+	case ToolNameContextPack, ToolNameContextQuery, ToolNameContextZoom, ToolNameContextImpact:
+		return 2
+	case ToolNameSearchFiles:
+		return 5
+	default:
+		return 10
+	}
+}
+
+func discoveryQueryEvidenceLineRank(line string) int {
+	line = strings.TrimSpace(line)
+	lower := strings.ToLower(line)
+	switch {
+	case line == "":
+		return 5
+	case strings.Contains(lower, "package "):
+		return 5
+	case strings.Contains(lower, "func "):
+		return 1
+	case strings.Contains(lower, "type "):
+		return 2
+	default:
+		return 3
+	}
+}
+
+func discoveryQueryPathRank(path string) int {
+	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	switch {
+	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && strings.HasPrefix(path, "internal/"):
+		return 0
+	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go"):
+		return 1
+	case strings.HasPrefix(path, "internal/"):
+		return 2
+	case strings.HasSuffix(path, "_test.go"):
+		return 3
+	default:
+		return 4
+	}
+}
+
+func discoveryQueryFactPath(path string) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	path = strings.Trim(path, "`'\"()[]{}<>,.;")
+	if path == "" || strings.HasPrefix(path, ".idiom/") || strings.HasPrefix(path, ".") {
+		return ""
+	}
+
+	normalized := pathparse.NormalizeWorkspaceRelativePath(path)
+	if normalized == "" || !pathparse.HasWorkspaceFileExtension(normalized) {
+		return ""
+	}
+
+	return normalized
 }
 
 func NormalizeDiscoveryQueryPurpose(value string) string {

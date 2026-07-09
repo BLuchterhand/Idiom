@@ -30,13 +30,22 @@ func TestToolResultFactsCloneCopiesSlices(t *testing.T) {
 		SourceBodies:            []SourceBodyEvidence{{Path: "a.go", StartLine: 1, EndLine: 2}},
 		CandidatePaths:          []string{"b.go"},
 		CandidateSymbols:        []string{"Run"},
-		HasDiscoveryTargets:     true,
-		DiscoveryStrength:       DiscoveryStrengthSourceOwner,
-		SourceOwnerFound:        true,
-		LocalizationConfidence:  "high",
-		GitHistoryPath:          "a.go",
-		GitHistoryStatus:        GitHistoryStatusCommitDescriptions,
-		ShellCommand:            "go test ./...",
+		RankedDiscoveryCandidates: []DiscoveryCandidateEvidence{{
+			Path:         "b.go",
+			LayerName:    "text_anchor_search",
+			Tool:         "search_content",
+			Summary:      "Found b",
+			EvidenceLine: "b.go:1:func Run",
+		}},
+		HasDiscoveryTargets:    true,
+		DiscoveryStrength:      DiscoveryStrengthSourceOwner,
+		SourceOwnerFound:       true,
+		LocalizationConfidence: "high",
+		SearchHitCount:         12,
+		SearchHighCardinality:  true,
+		GitHistoryPath:         "a.go",
+		GitHistoryStatus:       GitHistoryStatusCommitDescriptions,
+		ShellCommand:           "go test ./...",
 	}
 
 	clone := original.Clone()
@@ -48,11 +57,15 @@ func TestToolResultFactsCloneCopiesSlices(t *testing.T) {
 	clone.SourceBodies[0].Path = "changed.go"
 	clone.CandidatePaths[0] = "changed_candidate.go"
 	clone.CandidateSymbols[0] = "Changed"
+	clone.RankedDiscoveryCandidates[0].Path = "changed_ranked.go"
 
 	if original.DiagnosticEvidencePaths[0] != "diagnostic.log" ||
 		original.SourceBodies[0].Path != "a.go" ||
 		original.CandidatePaths[0] != "b.go" ||
-		original.CandidateSymbols[0] != "Run" {
+		original.CandidateSymbols[0] != "Run" ||
+		original.RankedDiscoveryCandidates[0].Path != "b.go" ||
+		original.SearchHitCount != 12 ||
+		!original.SearchHighCardinality {
 
 		t.Fatalf("Clone shared slice backing arrays with original: original=%#v clone=%#v", original, clone)
 	}

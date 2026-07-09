@@ -875,7 +875,7 @@ func (projection toolResultEvidenceProjection) promptEvidencePaths(max int) []st
 	}
 
 	paths = append(paths, projection.delegatedReadOnlyInspectedImplementationPaths()...)
-	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(projection.results, max*4)...)
+	paths = append(paths, discoveryQueryCandidatePaths(projection.results, max*4)...)
 	paths = append(paths, typedDiscoveryCandidatePathsFromResults(projection.results, max*4)...)
 	paths = append(paths, projection.pinnedPaths(max*6)...)
 	paths = projection.prioritizedClosureEvidencePaths(paths, max*3)
@@ -1023,7 +1023,7 @@ func (projection toolResultEvidenceProjection) delegatedClosureEvidencePaths(obj
 	}
 
 	paths = append(paths, projection.delegatedReadOnlyInspectedImplementationPaths()...)
-	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(projection.results, max*4)...)
+	paths = append(paths, discoveryQueryCandidatePaths(projection.results, max*4)...)
 	paths = append(paths, projection.pinnedPaths(max*4)...)
 	paths = projection.prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), max)
 
@@ -1055,7 +1055,7 @@ func (projection toolResultEvidenceProjection) delegatedReadOnlyFallbackEvidence
 
 	paths = append(paths, answerability.CandidatePaths...)
 	paths = append(paths, projection.delegatedReadOnlyInspectedImplementationPaths()...)
-	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(projection.results, max)...)
+	paths = append(paths, discoveryQueryCandidatePaths(projection.results, max)...)
 	paths = append(paths, projection.pinnedPaths(max)...)
 	paths = projection.prioritizedClosureEvidencePaths(paths, max)
 
@@ -1385,13 +1385,8 @@ func (record toolResultEvidenceRecord) CandidatePaths(max int) []string {
 
 	switch {
 	case record.tool == workspace.ToolNameDiscoveryQuery:
-		if paths := delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{record.result}, max); len(paths) > 0 {
-			return paths
-		}
-		return sourceLikePathsFromText(record.summary+"\n"+record.output, max)
+		return discoveryQueryCandidatePaths([]workspace.ToolResult{record.result}, max)
 	case toolResultEvidenceDiscoveryCandidateTool(record.tool):
-		return sourceLikePathsFromText(record.summary+"\n"+record.output, max)
-	case workspace.IsSearchToolName(record.tool):
 		return sourceLikePathsFromText(record.summary+"\n"+record.output, max)
 	default:
 		return nil

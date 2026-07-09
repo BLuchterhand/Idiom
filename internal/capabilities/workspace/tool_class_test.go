@@ -50,20 +50,6 @@ func TestSearchToolNameIncludesWorkspaceSearchAndLegacyGrep(t *testing.T) {
 	}
 }
 
-func TestTextSearchToolNameExcludesFileSearch(t *testing.T) {
-	for _, name := range []string{ToolNameSearchContent, ToolNameRg, "grep"} {
-		if !IsTextSearchToolName(name) {
-			t.Fatalf("IsTextSearchToolName(%q) = false, want true", name)
-		}
-	}
-
-	for _, name := range []string{ToolNameSearchFiles, ToolNameReadFile, ToolNameContextQuery, "go_workspace_symbol"} {
-		if IsTextSearchToolName(name) {
-			t.Fatalf("IsTextSearchToolName(%q) = true, want false", name)
-		}
-	}
-}
-
 func TestImplementationAttemptToolUsesWorkspaceActionClasses(t *testing.T) {
 	for _, tool := range []string{
 		ToolNameEditFile,

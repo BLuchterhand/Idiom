@@ -197,6 +197,26 @@ func TestToolResultEvidenceProjectionCandidateBoundaries(t *testing.T) {
 	if outcome.Strength != toolfacts.DiscoveryStrengthSourceOwner || !slices.Equal(outcome.Candidates, []string{sourcePath}) {
 		t.Fatalf("discovery outcome should come from facts, got %#v", outcome)
 	}
+
+	searchResult := workspace.ToolResult{
+		Tool:    workspace.ToolNameSearchContent,
+		Summary: "Found 1 matching line.",
+		Output:  "internal/runtime/agent/wrong.go:1: wrong",
+		Facts: &toolfacts.ToolResultFacts{
+			CandidatePaths:        []string{sourcePath},
+			HasDiscoveryTargets:   true,
+			DiscoveryStrength:     toolfacts.DiscoveryStrengthCandidateOnly,
+			SearchHitCount:        75,
+			SearchHighCardinality: true,
+		},
+	}
+	outcome = discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: workspace.ToolNameSearchContent}, searchResult, 4)
+	if outcome.Strength != toolfacts.DiscoveryStrengthCandidateOnly ||
+		outcome.SearchHitCount != 75 ||
+		!outcome.HighCardinalitySearch ||
+		!slices.Equal(outcome.Candidates, []string{sourcePath}) {
+		t.Fatalf("text-search discovery outcome should come from facts, got %#v", outcome)
+	}
 }
 
 func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {
@@ -329,11 +349,31 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 			Tool:    workspace.ToolNameSearchContent,
 			Summary: "Found 75 matching lines",
 			Output:  searchPath + ":12: read-only observation\n",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:        []string{searchPath},
+				HasDiscoveryTargets:   true,
+				DiscoveryStrength:     toolfacts.DiscoveryStrengthCandidateOnly,
+				SearchHitCount:        75,
+				SearchHighCardinality: true,
+			},
 		},
 		{
 			Tool:    workspace.ToolNameDiscoveryQuery,
 			Summary: "Discovery query produced a candidate.",
 			Output:  discoveryPath + ": semantic discovery candidate\n",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths: []string{discoveryPath},
+				RankedDiscoveryCandidates: []toolfacts.DiscoveryCandidateEvidence{{
+					Path:         discoveryPath,
+					LayerName:    "text_anchor_search",
+					Tool:         workspace.ToolNameSearchContent,
+					Summary:      "Discovery query produced a candidate.",
+					EvidenceLine: discoveryPath + ": semantic discovery candidate",
+				}},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+			},
 		},
 		{
 			Tool:  workspace.ToolNameReadFile,

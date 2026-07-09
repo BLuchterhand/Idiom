@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
@@ -278,6 +279,13 @@ func TestRunnerEndToEndAllowsContextQueryAfterBroadTextSearch(t *testing.T) {
 						"internal/contracts/workflowstate/machine.go:3:type Machine struct{}",
 						"internal/runtime/agent/discovery_consumption.go:15:type discoveryResultOutcome struct",
 					}, "\n"),
+					Facts: &toolfacts.ToolResultFacts{
+						CandidatePaths:        []string{"internal/contracts/workflowstate/machine.go", "internal/runtime/agent/discovery_consumption.go"},
+						HasDiscoveryTargets:   true,
+						DiscoveryStrength:     toolfacts.DiscoveryStrengthCandidateOnly,
+						SearchHitCount:        400,
+						SearchHighCardinality: true,
+					},
 				}
 			case "context_query":
 				return &workspace.ToolResult{

@@ -3093,6 +3093,13 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresReturnedCandidateRead
 			Tool:    "search_content",
 			Summary: "Found 178 matching line(s) (showing first 50).",
 			Output:  "internal/runtime/agent/runner_core.go:420: completion gate\n",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:        []string{"internal/runtime/agent/runner_core.go"},
+				HasDiscoveryTargets:   true,
+				DiscoveryStrength:     toolfacts.DiscoveryStrengthCandidateOnly,
+				SearchHitCount:        178,
+				SearchHighCardinality: true,
+			},
 		},
 		readFileSourceBodyResult(
 			"internal/surfaces/tui/app/model_state.go",
@@ -3145,6 +3152,13 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresObjectiveRelevantCand
 			Tool:    "search_content",
 			Summary: "Found 400 matching line(s) (showing first 50).",
 			Output:  "internal/platform/config/config.go:390: redacted\ninternal/evidence/transcript/debuglog.go:18: DebugLogModeRedacted\n",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:        []string{"internal/platform/config/config.go", "internal/evidence/transcript/debuglog.go"},
+				HasDiscoveryTargets:   true,
+				DiscoveryStrength:     toolfacts.DiscoveryStrengthCandidateOnly,
+				SearchHitCount:        400,
+				SearchHighCardinality: true,
+			},
 		},
 		readFileSourceBodyResult(
 			"internal/platform/config/config.go",
@@ -5585,11 +5599,25 @@ func TestReadOnlySourceBodyEvidenceSummary(t *testing.T) {
 			Tool:    "search_content",
 			Summary: "Found 5 matching line(s).",
 			Output:  candidatePath + ":42: func Render() {}",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{candidatePath},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+				SearchHitCount:      5,
+			},
 		},
 		{
 			Tool:    "search_content",
 			Summary: "Found 3 more candidates",
 			Output:  "internal/surfaces/tui/app/model_state.go:10: type Model struct{}",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/surfaces/tui/app/model_state.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+				SearchHitCount:      3,
+			},
 		},
 	}
 
@@ -5644,6 +5672,13 @@ func TestReadOnlySourceBodyEvidenceSummary(t *testing.T) {
 				Tool:    "search_content",
 				Summary: "Found 2 matching line(s).",
 				Output:  "internal/surfaces/tui/app/panel.go:5: type Panel struct{}",
+				Facts: &toolfacts.ToolResultFacts{
+					CandidatePaths:      []string{"internal/surfaces/tui/app/panel.go"},
+					HasDiscoveryTargets: true,
+					DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+					SourceOwnerFound:    true,
+					SearchHitCount:      2,
+				},
 			},
 		}
 		summary := readOnlySourceBodyEvidenceSummary(candidateOnly)
@@ -5956,6 +5991,13 @@ func TestBuildReadOnlyEvidencePacketFromChildResultsAndAnswerText(t *testing.T) 
 			Tool:    "search_content",
 			Summary: "Found 1 matching line(s).",
 			Output:  "internal/runtime/agent/evidence_readonly.go:55: func readOnlyAnswerabilityForResults\n",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/runtime/agent/evidence_readonly.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+				SearchHitCount:      1,
+			},
 		},
 	}
 	answer := "- `internal/runtime/agent/runner_core.go` checks whether read-only analysis has grounded source evidence.\n"
@@ -31942,6 +31984,13 @@ func TestDiscoveryConsumptionBroadTextSearchAllowsStructuredContextQuery(t *test
 				"internal/contracts/workflowstate/machine.go:1:package workflowstate",
 				"internal/runtime/agent/discovery_consumption.go:15:type discoveryResultOutcome struct",
 			}, "\n"),
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:        []string{"internal/contracts/workflowstate/machine.go", "internal/runtime/agent/discovery_consumption.go"},
+				HasDiscoveryTargets:   true,
+				DiscoveryStrength:     toolfacts.DiscoveryStrengthCandidateOnly,
+				SearchHitCount:        400,
+				SearchHighCardinality: true,
+			},
 		},
 		"",
 		nil,
@@ -31974,6 +32023,13 @@ func TestDiscoveryConsumptionFocusedTextSearchStillBlocksBroadRediscovery(t *tes
 				"internal/runtime/agent/runner_core.go:12607:\tpendingDiscoveryConsumption bool",
 				"internal/runtime/agent/runner_core.go:12671:\t\ts.pendingDiscoveryConsumption = true",
 			}, "\n"),
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/runtime/agent/runner_core.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+				SearchHitCount:      2,
+			},
 		},
 		"",
 		nil,
@@ -32073,6 +32129,13 @@ func TestReadOnlyCompletionGateCandidateOnlyRecoveryNamesSourceBody(t *testing.T
 		Tool:    "search_content",
 		Summary: "Found 1 matching line(s).",
 		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+		Facts: &toolfacts.ToolResultFacts{
+			CandidatePaths:      []string{"internal/labels/labels.go"},
+			HasDiscoveryTargets: true,
+			DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+			SourceOwnerFound:    true,
+			SearchHitCount:      1,
+		},
 	}}, 1, nil, false)
 
 	if !rejected {
@@ -32097,6 +32160,13 @@ func TestReadOnlyCompletionGateCandidateOnlyRecoveryNamesSourceBody(t *testing.T
 		Tool:    "search_content",
 		Summary: "Found 1 matching line(s).",
 		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+		Facts: &toolfacts.ToolResultFacts{
+			CandidatePaths:      []string{"internal/labels/labels.go"},
+			HasDiscoveryTargets: true,
+			DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+			SourceOwnerFound:    true,
+			SearchHitCount:      1,
+		},
 	}}, 1, nil, false); rejected {
 		t.Fatal("candidate-only recovery must not reject an explicit blocker terminal outcome")
 	}
@@ -32140,6 +32210,12 @@ func TestReadOnlyCompletionGateDiagnosticLogCitationDoesNotSatisfySourceFailureQ
 			Tool:    "search_files",
 			Summary: "Found candidate path internal/runtime/agent/runner_core.go",
 			Output:  "internal/runtime/agent/runner_core.go",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/runtime/agent/runner_core.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+			},
 		},
 		{
 			Tool:    "read_file",
@@ -34440,6 +34516,13 @@ func TestPresentableNoToolsFallbackDoesNotUseSearchHitAsSourceBody(t *testing.T)
 		Tool:    "search_content",
 		Summary: "Found 1 matching line(s).",
 		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+		Facts: &toolfacts.ToolResultFacts{
+			CandidatePaths:      []string{"internal/labels/labels.go"},
+			HasDiscoveryTargets: true,
+			DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+			SourceOwnerFound:    true,
+			SearchHitCount:      1,
+		},
 	}}
 	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
 
@@ -34693,6 +34776,13 @@ func TestDecorateFinalAnswerSanitizesSynthesizedReadOnlyQuestionBlocker(t *testi
 			Tool:    "search_content",
 			Summary: "Found 1 matching line(s).",
 			Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/labels/labels.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+				SearchHitCount:      1,
+			},
 		}},
 		UserFacing: true,
 	})
@@ -34727,6 +34817,13 @@ func TestDecorateFinalAnswerLabelsCandidateOnlyReadOnlyBlocker(t *testing.T) {
 			Tool:    "search_content",
 			Summary: "Found 1 matching line(s).",
 			Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+			Facts: &toolfacts.ToolResultFacts{
+				CandidatePaths:      []string{"internal/labels/labels.go"},
+				HasDiscoveryTargets: true,
+				DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+				SourceOwnerFound:    true,
+				SearchHitCount:      1,
+			},
 		}},
 		UserFacing: true,
 	})

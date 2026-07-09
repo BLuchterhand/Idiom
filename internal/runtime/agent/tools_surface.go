@@ -1429,7 +1429,7 @@ func generatedEvidenceArtifactReadRedirectRequest(req workspace.ToolRequest, res
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	paths := delegatedDiscoveryQueryEvidencePaths(results, 6)
+	paths := discoveryQueryCandidatePaths(results, 6)
 	if len(paths) == 0 {
 		paths = newToolResultEvidenceProjection(results).promptEvidencePaths(6)
 	}

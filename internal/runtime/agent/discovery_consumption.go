@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"regexp"
-	"strconv"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
@@ -11,10 +9,6 @@ import (
 	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/workerruntime"
 )
-
-const discoveryBroadSearchMatchThreshold = 50
-
-var textSearchFoundMatchingLinePattern = regexp.MustCompile(`found\s+(\d+)\s+matching\s+line`)
 
 type discoveryResultOutcome struct {
 	Strength              toolfacts.DiscoveryStrength
@@ -48,6 +42,9 @@ func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspac
 	outcome.Candidates = record.CandidatePaths(maxCandidates)
 
 	if hasDiscoveryFacts {
+		outcome.SearchHitCount = result.Facts.SearchHitCount
+		outcome.HighCardinalitySearch = result.Facts.SearchHighCardinality
+
 		switch result.Facts.DiscoveryStrength {
 		case toolfacts.DiscoveryStrengthCandidateOnly:
 			outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
@@ -71,22 +68,6 @@ func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspac
 		}
 
 		outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
-	case workspace.IsTextSearchToolName(tool):
-		if len(outcome.Candidates) == 0 {
-			return outcome
-		}
-
-		broad, count, countOK := textSearchDiscoveryResultBreadth(result)
-		if countOK {
-			outcome.SearchHitCount = count
-			outcome.HighCardinalitySearch = count > discoveryBroadSearchMatchThreshold
-		}
-
-		if broad {
-			outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
-		} else {
-			outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
-		}
 	case tool == workspace.ToolNameSearchFiles ||
 		languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) ||
 		tool == workspace.ToolNameStructuralSearch ||
@@ -101,31 +82,4 @@ func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspac
 	}
 
 	return outcome
-}
-
-func textSearchDiscoveryResultBreadth(result workspace.ToolResult) (broad bool, count int, countOK bool) {
-	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
-	if text == "" {
-		return false, 0, false
-	}
-
-	if strings.Contains(text, "showing first") ||
-		strings.Contains(text, "truncated") ||
-		strings.Contains(text, "too many matches") ||
-		strings.Contains(text, "more matches") {
-
-		broad = true
-	}
-
-	matches := textSearchFoundMatchingLinePattern.FindStringSubmatch(text)
-	if len(matches) != 2 {
-		return broad, 0, false
-	}
-
-	count, err := strconv.Atoi(matches[1])
-	if err != nil {
-		return broad, 0, false
-	}
-
-	return broad || count >= discoveryBroadSearchMatchThreshold, count, true
 }

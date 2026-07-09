@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
@@ -126,6 +127,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	type searchContentMatch struct {
 		formatted string
 		display   string
+		factPath  string
 		line      int
 		truncated bool
 		termScore int
@@ -146,9 +148,16 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 		totalMatches++
 
-		absPath := filepath.Clean(filepath.Join(workdir, parts[0]))
+		absPath := filepath.Clean(parts[0])
+		if !filepath.IsAbs(absPath) {
+			absPath = filepath.Clean(filepath.Join(workdir, absPath))
+		}
 		handle := m.rememberPath(absPath)
 		display := m.pathAccess.DisplayPath(absPath)
+		factPath := ""
+		if rel, ok := m.pathAccess.RelativeWorkspacePath(absPath); ok && rel != "." {
+			factPath = filepath.ToSlash(rel)
+		}
 		lineNumber, _ := strconv.Atoi(parts[1])
 		rawLine := strings.TrimRight(parts[2], "\r\n")
 		renderedLine := textutil.TruncateBytes(rawLine, searchContentLineCap, lineTruncationMarker)
@@ -156,6 +165,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		matches = append(matches, searchContentMatch{
 			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], renderedLine),
 			display:   display,
+			factPath:  factPath,
 			line:      lineNumber,
 			truncated: renderedLine != rawLine,
 			termScore: searchContentTermScore(display, parts[2], rankingTerms),
@@ -193,6 +203,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	formatted := make([]string, 0, min(len(matches), searchContentDisplayCap)+1)
 	capped := false
 	truncatedDisplayed := 0
+	candidatePaths := make([]string, 0, min(len(matches), searchContentDisplayCap))
 
 	for _, match := range matches {
 		if len(formatted) >= searchContentDisplayCap {
@@ -201,6 +212,9 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		}
 
 		formatted = append(formatted, match.formatted)
+		if match.factPath != "" {
+			candidatePaths = append(candidatePaths, match.factPath)
+		}
 		if match.truncated {
 			truncatedDisplayed++
 		}
@@ -228,10 +242,32 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		}
 	}
 
+	factPaths := discoveryFactCandidatePaths(candidatePaths)
+	highCardinality := totalMatches >= searchContentDisplayCap
+	discoveryStrength := toolfacts.DiscoveryStrength("")
+	sourceOwnerFound := false
+	if len(factPaths) > 0 {
+		if highCardinality {
+			discoveryStrength = toolfacts.DiscoveryStrengthCandidateOnly
+		} else {
+			discoveryStrength = toolfacts.DiscoveryStrengthSourceOwner
+			sourceOwnerFound = true
+		}
+	}
+	facts := &toolfacts.ToolResultFacts{
+		CandidatePaths:        factPaths,
+		HasDiscoveryTargets:   len(factPaths) > 0,
+		DiscoveryStrength:     discoveryStrength,
+		SourceOwnerFound:      sourceOwnerFound,
+		SearchHitCount:        totalMatches,
+		SearchHighCardinality: highCardinality,
+	}
+
 	return ToolResult{
 		Tool:    toolName,
 		Summary: summary,
 		Output:  strings.Join(formatted, "\n"),
+		Facts:   facts,
 	}
 }
 

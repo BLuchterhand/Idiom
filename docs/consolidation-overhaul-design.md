@@ -1463,6 +1463,33 @@ Reviewer-updated estimate:
   `/Users/ben/go/bin/deadcode -test ./...`;
   `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`;
   `git diff --check`.
+- Text search and `discovery_query` candidate authority now live in producer
+  facts rather than runtime prose parsers. `search_content` publishes
+  workspace-relative ranked candidates, hit count, high-cardinality, and
+  discovery strength; `discovery_query` publishes ranked candidate evidence
+  from child facts and completed layer evidence. Runtime discovery consumption,
+  prompt evidence, generated-artifact redirects, delegated read-only packet
+  construction, and candidate-consumption recovery now consume these facts
+  first, with the old `discovery_query` JSON candidate scanner retained only
+  as a factless packet fallback until the remaining delegated-read-only
+  fixtures and transcript compatibility path migrate. Deleted the text-search
+  hit-count regex parser, the text-search classifier predicate, and stale
+  text-parser tests. Production Go changed `+435 / -132`, net `+303`; test Go
+  changed `+308 / -43`, net `+265`. This is accepted as a setup slice because
+  it removes competing text-search parser authority and makes live
+  `discovery_query` producer facts authoritative when present; it is not a
+  LOC-reduction slice by itself. The retained JSON fallback is the next
+  deletion target, not a desired long-term authority. With this worktree
+  included, the branch is production Go `+26,675 / -32,713`, net `-6,038`
+  versus `main`. Focused verification:
+  `go test ./internal/contracts/toolfacts ./internal/capabilities/workspace -run 'TestToolResultFactsCloneCopiesSlices|TestSearchContent(PrioritizesSourceFilesOverTests|FactsClassifyDisplayCapAsHighCardinality|TruncatesLongMatchingLines)|TestDiscoveryQueryFactsRankTextAnchorCandidates|TestSearchToolNameIncludesWorkspaceSearchAndLegacyGrep' -count=1`;
+  `go test ./internal/runtime/agent -run 'TestDiscoveryQueryCandidatePathsPreferProducerFacts|TestToolResultEvidenceProjectionCandidateBoundaries|TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries|TestReadOnlySourceBodyEvidenceSummary|TestBuildReadOnlyEvidencePacketFromChildResultsAndAnswerText|TestSearchEvidenceSurvivesFailedGuessedReadWithoutBlockingFollowupSearch' -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/capabilities/workspace ./internal/runtime/agent ./internal/contracts/toolfacts`.
+  Full verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./...` as inventory, with
+  only unrelated pre-existing runtime dead-code findings after deleting the
+  newly stale text-search predicate; `git diff --check`.
 
 ## Review And Regression Protocol
 

@@ -3218,6 +3218,52 @@ func TestSearchContentPrioritizesSourceFilesOverTests(t *testing.T) {
 	if len(lines) == 0 || !strings.Contains(lines[0], "internal/runtime/agent/runner.go") {
 		t.Fatalf("expected source file hit to rank ahead of test file, got output: %q", result.Output)
 	}
+	if result.Facts == nil ||
+		result.Facts.SearchHitCount != 2 ||
+		result.Facts.SearchHighCardinality {
+
+		t.Fatalf("search_content facts = %#v, want two untruncated hits", result.Facts)
+	}
+	if got, want := result.Facts.CandidatePaths, []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_test.go"}; !slices.Equal(got, want) {
+		t.Fatalf("search_content candidate facts = %#v, want ranked paths %#v", got, want)
+	}
+}
+
+func TestSearchContentFactsClassifyDisplayCapAsHighCardinality(t *testing.T) {
+	requireContentSearchBackend(t)
+
+	dir := t.TempDir()
+	lines := []string{"package agent"}
+	for i := 0; i < 50; i++ {
+		lines = append(lines, fmt.Sprintf("func Target%d() {}", i))
+	}
+	mustWriteOverview(t, filepath.Join(dir, "internal", "runtime", "agent", "runner.go"), strings.Join(lines, "\n")+"\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "Target",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_content failed: %#v", result)
+	}
+
+	if result.Facts == nil {
+		t.Fatal("search_content facts were nil")
+	}
+	if result.Facts.SearchHitCount != 50 ||
+		!result.Facts.SearchHighCardinality ||
+		result.Facts.DiscoveryStrength != toolfacts.DiscoveryStrengthCandidateOnly ||
+		result.Facts.SourceOwnerFound {
+
+		t.Fatalf("search_content high-cardinality facts = %#v", result.Facts)
+	}
 }
 
 func TestSearchContentSkipsSuiteManifestByDefaultButAllowsExplicitPath(t *testing.T) {
@@ -3285,6 +3331,12 @@ func TestSearchContentTruncatesLongMatchingLines(t *testing.T) {
 
 	if !strings.Contains(result.Output, lineTruncationMarker) {
 		t.Fatalf("expected long matching line to be truncated, got output: %q", result.Output)
+	}
+	if result.Facts == nil ||
+		result.Facts.SearchHitCount != 1 ||
+		result.Facts.SearchHighCardinality {
+
+		t.Fatalf("search_content truncation facts = %#v, want one truncated hit", result.Facts)
 	}
 
 	for _, want := range []string{"displayed matching line(s) were truncated", "truncated output is not an exact old_text anchor", "read_file", "line-range edit shape"} {
