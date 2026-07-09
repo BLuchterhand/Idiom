@@ -391,22 +391,22 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 func buildFreshnessReport(packet Packet, views []contextViewSummary) *FreshnessReport {
 	report := &FreshnessReport{}
 	if packet.Workspace.Root != "" {
-		report.GitHead = gitOutput(packet.Workspace.Root, "rev-parse", "--verify", "HEAD")
+		snapshot, err := gitstate.Current(context.Background(), filepath.Clean(packet.Workspace.Root))
+		if err == nil {
+			report.GitHead = snapshot.Head
+			if snapshot.Dirty {
+				dirty := true
 
-		status := gitOutput(packet.Workspace.Root, "status", "--porcelain")
+				report.Dirty = &dirty
 
-		if status != "" {
-			dirty := true
+				sum := sha256.Sum256([]byte(snapshot.Status))
 
-			report.Dirty = &dirty
+				report.DirtyFingerprint = hex.EncodeToString(sum[:8])
+			} else if report.GitHead != "" {
+				dirty := false
 
-			sum := sha256.Sum256([]byte(status))
-
-			report.DirtyFingerprint = hex.EncodeToString(sum[:8])
-		} else if report.GitHead != "" {
-			dirty := false
-
-			report.Dirty = &dirty
+				report.Dirty = &dirty
+			}
 		}
 	}
 
@@ -796,15 +796,6 @@ func stableHandlePart(value string) string {
 	sum := sha256.Sum256([]byte(value))
 
 	return hex.EncodeToString(sum[:6])
-}
-
-func gitOutput(root string, args ...string) string {
-	data, err := gitstate.Output(context.Background(), filepath.Clean(root), args...)
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(data)
 }
 
 func precisionTier(confidence string) string {

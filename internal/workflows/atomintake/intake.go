@@ -1,12 +1,14 @@
 package atomintake
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 
 	atomintakecontract "idiom/internal/contracts/atomintake"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/gitstate"
 )
 
 type IntakeOptions struct {
@@ -164,7 +166,9 @@ func EvaluateIntake(specBody, specPath, projectRoot string, allowDirty bool, sco
 	}
 
 	if !allowDirty {
-		report.Dirty = dirtyAtomScopePaths(projectRoot, report.ScopePaths)
+		if dirty, err := gitstate.DirtyPaths(context.Background(), projectRoot, gitstate.DirtyPathOptions{Pathspecs: report.ScopePaths}); err == nil {
+			report.Dirty = dirty
+		}
 		if len(report.Dirty) > 0 {
 			report.State = atomintakecontract.StateBlockedDirty
 			report.Reasons = append(report.Reasons, "existing scoped paths have uncommitted changes")

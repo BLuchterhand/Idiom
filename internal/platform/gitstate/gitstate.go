@@ -23,6 +23,7 @@ type Snapshot struct {
 // repository-relative paths.
 type DirtyPathOptions struct {
 	IgnorePrefixes []string
+	Pathspecs      []string
 	Sort           bool
 }
 
@@ -103,12 +104,69 @@ func Output(ctx context.Context, root string, args ...string) (string, error) {
 // DirtyPaths returns normalized repository-relative paths from git status
 // porcelain output, including every untracked file.
 func DirtyPaths(ctx context.Context, root string, opts DirtyPathOptions) ([]string, error) {
-	output, err := Output(ctx, root, "status", "--porcelain", "--untracked-files=all")
+	args := []string{"status", "--porcelain", "--untracked-files=all"}
+	var pathspecs []string
+	for _, path := range opts.Pathspecs {
+		path = strings.TrimSpace(filepath.ToSlash(path))
+		if path != "" {
+			pathspecs = append(pathspecs, path)
+		}
+	}
+	if len(pathspecs) > 0 {
+		args = append(args, "--")
+		args = append(args, pathspecs...)
+	}
+
+	output, err := Output(ctx, root, args...)
 	if err != nil {
 		return nil, err
 	}
 
 	return dirtyPathsFromPorcelain(output, opts), nil
+}
+
+// ChangedPathsSinceFirstPathCommit returns repo-relative paths changed between
+// HEAD and the commit before the first commit that touched pathspec. The
+// pathspec selects the baseline commit; the diff remains repository-wide so
+// callers can apply their own relevance policy.
+func ChangedPathsSinceFirstPathCommit(ctx context.Context, root string, pathspec string) ([]string, error) {
+	args := []string{"log", "--reverse", "--format=%H"}
+	pathspec = strings.TrimSpace(filepath.ToSlash(pathspec))
+	if pathspec != "" && pathspec != "." {
+		args = append(args, "--", pathspec)
+	}
+
+	output, err := Output(ctx, root, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	commits := nonEmptyOutputLines(output)
+	if len(commits) == 0 {
+		return nil, nil
+	}
+
+	paths, err := changedPathsBetween(ctx, root, commits[0]+"^", "HEAD")
+	if err != nil {
+		paths, err = changedPathsBetween(ctx, root, commits[0], "HEAD")
+	}
+
+	return paths, err
+}
+
+// CommitChangedPaths returns repo-relative paths named by a commit.
+func CommitChangedPaths(ctx context.Context, root string, commit string) ([]string, error) {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return nil, fmt.Errorf("commit is required")
+	}
+
+	output, err := Output(ctx, root, "show", "--name-only", "--format=", commit)
+	if err != nil {
+		return nil, err
+	}
+
+	return nonEmptyOutputLines(output), nil
 }
 
 func FilterPorcelainStatusByPathPrefix(output string, ignorePrefixes ...string) string {
@@ -129,6 +187,15 @@ func FilterPorcelainStatusByPathPrefix(output string, ignorePrefixes ...string) 
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func changedPathsBetween(ctx context.Context, root string, from string, to string) ([]string, error) {
+	output, err := Output(ctx, root, "diff", "--name-only", from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	return nonEmptyOutputLines(output), nil
 }
 
 func CombinedOutput(ctx context.Context, root string, args ...string) commandexec.Result {
@@ -270,10 +337,11 @@ func (r Runner) BlameRange(ctx context.Context, rel string, startLine int, endLi
 	return r.run(ctx, args...)
 }
 
-func HasMetadataAncestor(root string) bool {
+// MetadataRoot returns the absolute nearest ancestor containing Git metadata.
+func MetadataRoot(root string) (string, bool) {
 	root = strings.TrimSpace(root)
 	if root == "" {
-		return false
+		return "", false
 	}
 
 	dir, err := filepath.Abs(root)
@@ -284,16 +352,21 @@ func HasMetadataAncestor(root string) bool {
 	for {
 		gitPath := filepath.Join(dir, ".git")
 		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-			return true
+			return dir, true
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return false
+			return "", false
 		}
 
 		dir = parent
 	}
+}
+
+func HasMetadataAncestor(root string) bool {
+	_, ok := MetadataRoot(root)
+	return ok
 }
 
 func PorcelainLines(output string) []string {
@@ -335,6 +408,18 @@ func dirtyPathsFromPorcelain(output string, opts DirtyPathOptions) []string {
 	}
 
 	return paths
+}
+
+func nonEmptyOutputLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, filepath.ToSlash(line))
+		}
+	}
+
+	return lines
 }
 
 func PathFromPorcelainLine(line string) string {

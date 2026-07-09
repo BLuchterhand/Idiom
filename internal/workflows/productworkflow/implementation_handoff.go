@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 )
 
@@ -317,7 +318,16 @@ func PrepareBriefGenerationInput(input BriefGenerationInput) BriefGenerationInpu
 
 func artifactRootPathForEffort(effortRoot string) string {
 	root := filepath.Clean(effortRoot)
-	workspaceRoot := implementationHandoffWorkspaceRoot(root)
+	workspaceRoot := root
+	if gitRoot, ok := gitstate.MetadataRoot(root); ok {
+		workspaceRoot = gitRoot
+		if filepath.IsAbs(gitRoot) {
+			if absRoot, err := filepath.Abs(root); err == nil {
+				root = absRoot
+			}
+		}
+	}
+
 	if rel, err := filepath.Rel(workspaceRoot, root); err == nil && rel != "." && !strings.HasPrefix(filepath.ToSlash(rel), "../") {
 		return filepath.ToSlash(rel)
 	}
@@ -532,7 +542,10 @@ func copyHandoffStringMap(in map[string]string) map[string]string {
 
 func implementationHandoffExistingWorkspacePaths(effortRoot string, workflowState WorkflowState, records []ImplementationLedgerRecord) map[string]bool {
 	out := map[string]bool{}
-	workspaceRoot := implementationHandoffWorkspaceRoot(effortRoot)
+	workspaceRoot := filepath.Clean(effortRoot)
+	if gitRoot, ok := gitstate.MetadataRoot(effortRoot); ok {
+		workspaceRoot = gitRoot
+	}
 
 	for _, rec := range records {
 		if rec.RecordType != LedgerRecordAtomPlanned || rec.Scope == nil {
@@ -563,22 +576,6 @@ func implementationHandoffExistingPathCandidates(path string, aliases map[string
 	}
 
 	return candidates
-}
-
-func implementationHandoffWorkspaceRoot(effortRoot string) string {
-	dir := filepath.Clean(effortRoot)
-	for {
-		next := filepath.Dir(dir)
-		if next == dir {
-			return filepath.Clean(effortRoot)
-		}
-
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
-		}
-
-		dir = next
-	}
 }
 
 func handoffAuthorizedNewPackageRoots(actions map[string]string) []string {

@@ -179,6 +179,90 @@ func TestDirtyPathsIncludesAllUntrackedFiles(t *testing.T) {
 	}
 }
 
+func TestDirtyPathsSupportsPathspecs(t *testing.T) {
+	root := initGitStateRepo(t)
+	writeGitStateFile(t, filepath.Join(root, "other.txt"), "other\n")
+	gitStateGit(t, root, "add", "other.txt")
+	gitStateGit(t, root, "commit", "-m", "add other")
+
+	writeGitStateFile(t, filepath.Join(root, "tracked.txt"), "changed\n")
+	writeGitStateFile(t, filepath.Join(root, "other.txt"), "changed\n")
+	writeGitStateFile(t, filepath.Join(root, "nested", "new.txt"), "new\n")
+
+	got, err := DirtyPaths(t.Context(), root, DirtyPathOptions{
+		Pathspecs: []string{"tracked.txt", "nested"},
+		Sort:      true,
+	})
+	if err != nil {
+		t.Fatalf("DirtyPaths: %v", err)
+	}
+
+	want := []string{"nested/new.txt", "tracked.txt"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("DirtyPaths scoped = %#v, want %#v", got, want)
+	}
+}
+
+func TestChangedPathsSinceFirstPathCommitUsesPathspecForBaseline(t *testing.T) {
+	root := initGitStateRepo(t)
+	writeGitStateFile(t, filepath.Join(root, "effort", "initial.go"), "package effort\n")
+	gitStateGit(t, root, "add", "effort/initial.go")
+	gitStateGit(t, root, "commit", "-m", "add effort")
+	writeGitStateFile(t, filepath.Join(root, "outside.go"), "package outside\n")
+	gitStateGit(t, root, "add", "outside.go")
+	gitStateGit(t, root, "commit", "-m", "add outside")
+	writeGitStateFile(t, filepath.Join(root, "effort", "later.go"), "package effort\n")
+	gitStateGit(t, root, "add", "effort/later.go")
+	gitStateGit(t, root, "commit", "-m", "add later effort")
+
+	got, err := ChangedPathsSinceFirstPathCommit(t.Context(), root, "effort")
+	if err != nil {
+		t.Fatalf("ChangedPathsSinceFirstPathCommit: %v", err)
+	}
+
+	want := []string{"effort/initial.go", "effort/later.go", "outside.go"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("ChangedPathsSinceFirstPathCommit = %#v, want %#v", got, want)
+	}
+}
+
+func TestCommitChangedPathsReturnsCommitNameOnlyPaths(t *testing.T) {
+	root := initGitStateRepo(t)
+	writeGitStateFile(t, filepath.Join(root, "nested", "new.go"), "package nested\n")
+	gitStateGit(t, root, "add", "nested/new.go")
+	gitStateGit(t, root, "commit", "-m", "add nested")
+	head := strings.TrimSpace(gitStateGit(t, root, "rev-parse", "HEAD"))
+
+	got, err := CommitChangedPaths(t.Context(), root, head)
+	if err != nil {
+		t.Fatalf("CommitChangedPaths: %v", err)
+	}
+
+	want := []string{"nested/new.go"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("CommitChangedPaths = %#v, want %#v", got, want)
+	}
+}
+
+func TestMetadataRootFindsAncestorGitMetadata(t *testing.T) {
+	root := initGitStateRepo(t)
+	nested := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("MkdirAll nested: %v", err)
+	}
+
+	got, ok := MetadataRoot(nested)
+	if !ok {
+		t.Fatalf("MetadataRoot did not find ancestor")
+	}
+	if got != root {
+		t.Fatalf("MetadataRoot = %q, want %q", got, root)
+	}
+	if !HasMetadataAncestor(nested) {
+		t.Fatalf("HasMetadataAncestor should use MetadataRoot result")
+	}
+}
+
 func TestFilterPorcelainStatusByPathPrefixUsesParsedPath(t *testing.T) {
 	status := strings.Join([]string{
 		" M .idiom/recovery/packet.json",

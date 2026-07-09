@@ -188,19 +188,21 @@ whole-result concrete-source classifier, read-file-specific body helper, and
 context-zoom JSON body detector were deleted. Source body is accepted only when
 the projection can derive path-backed source-body evidence from typed producer
 facts, while read-only answerability remains the objective-scoped policy owner.
-	The next evidence pass should replace repeated raw-result branching in
-	`readOnlyAnswerabilityForResults` with a cached normalized projection model,
-	not add more single-call helper wrappers. The first observation-model pass now
-	has `readOnlyAnswerabilityForResults` consuming projection-owned evidence
-	observations for generated artifacts, diagnostics, source/external bodies, plan
-	artifacts, outlines, context packets, search hits, and semantic discovery
-	candidates. The next projection pass made each `ToolResult` a normalized
-	evidence record, deleting the old tool-surface read-path helper, candidate-only
-	result helper, routed-source body detector, plan-execute source-evidence
-	classifier, and zero-value per-result projection calls. The remaining
-	projection target is wider reuse: many runtime callers still construct fresh
-	projections over the same result slice instead of carrying one turn-level read
-	model.
+The next evidence pass should replace repeated raw-result branching in
+`readOnlyAnswerabilityForResults` with a cached normalized projection model,
+not add more single-call helper wrappers. The first observation-model pass now
+has `readOnlyAnswerabilityForResults` consuming projection-owned evidence
+observations for generated artifacts, diagnostics, source/external bodies, plan
+artifacts, outlines, context packets, search hits, and semantic discovery
+candidates. The next projection pass made each `ToolResult` a normalized
+evidence record, deleting the old tool-surface read-path helper, candidate-only
+result helper, routed-source body detector, plan-execute source-evidence
+classifier, and zero-value per-result projection calls. The remaining
+projection target is wider reuse: many runtime callers still construct fresh
+projections over the same result slice instead of carrying one turn-level read
+model. Git metadata/root, scoped dirty status, commit path extraction, and
+architect freshness snapshots now route through `gitstate`; product workflow
+keeps effort coverage policy but no longer owns git root/history parsers.
 
 ### 5. Product Workflow Projection
 

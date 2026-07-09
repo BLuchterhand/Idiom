@@ -19,6 +19,10 @@ func LintEffortFolder(root string) LintSummaryResult {
 		CheckedFiles: []string{},
 		Findings:     []LintSummaryFinding{},
 	}
+	absRoot := filepath.Clean(root)
+	if resolvedRoot, err := filepath.Abs(root); err == nil {
+		absRoot = resolvedRoot
+	}
 	addFinding := func(code, relPath, message string) {
 		result.Findings = append(result.Findings, LintSummaryFinding{
 			Code:    code,
@@ -325,8 +329,8 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	{
-		repoRoot := findGitRepoRoot(root)
-		if repoRoot == "" {
+		repoRoot, ok := gitstate.MetadataRoot(root)
+		if !ok {
 			repoRoot = root
 		}
 
@@ -411,13 +415,19 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	if len(atoms) > 0 {
-		gitPaths := gitChangedPaths(root)
-		if len(gitPaths) > 0 {
-			rel, _ := filepath.Rel(findGitRepoRoot(root), root)
-			coverageFindings := ValidateLedgerCoverage(atoms, gitPaths, rel)
+		if repoRoot, ok := gitstate.MetadataRoot(root); ok {
+			if rel, err := filepath.Rel(repoRoot, absRoot); err == nil {
+				gitPaths, err := gitstate.ChangedPathsSinceFirstPathCommit(context.Background(), repoRoot, rel)
+				if err != nil {
+					gitPaths = nil
+				}
+				if len(gitPaths) > 0 {
+					coverageFindings := ValidateLedgerCoverage(atoms, gitPaths, rel)
 
-			for _, f := range coverageFindings {
-				addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
+					for _, f := range coverageFindings {
+						addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
+					}
+				}
 			}
 		}
 	}
@@ -446,11 +456,13 @@ func LintEffortFolder(root string) LintSummaryResult {
 		}
 
 		if len(commitAtoms) > 0 {
-			repoRoot := findGitRepoRoot(root)
 			commitPaths := map[string][]string{}
 
-			if repoRoot != "" {
-				effortRel, _ := filepath.Rel(repoRoot, root)
+			if repoRoot, ok := gitstate.MetadataRoot(root); ok {
+				effortRel, relErr := filepath.Rel(repoRoot, absRoot)
+				if relErr != nil {
+					effortRel = ""
+				}
 				hashes := make([]string, 0, len(commitHashSet))
 
 				for h := range commitHashSet {
@@ -459,10 +471,14 @@ func LintEffortFolder(root string) LintSummaryResult {
 
 				sort.Strings(hashes)
 
-				rawCommitPaths := gitCommitPaths(repoRoot, hashes)
 				prefix := effortRel + "/"
 
-				for hash, paths := range rawCommitPaths {
+				for _, hash := range hashes {
+					paths, err := gitstate.CommitChangedPaths(context.Background(), repoRoot, hash)
+					if err != nil {
+						continue
+					}
+
 					var stripped []string
 
 					for _, p := range paths {
@@ -536,87 +552,4 @@ func knownTDDIDSet(ledger *TDDLedger, records []ImplementationLedgerRecord) map[
 		return BuildKnownTDDObligationIDs(TDDLedger{}, records)
 	}
 	return BuildKnownTDDObligationIDs(*ledger, records)
-}
-
-func gitChangedPaths(effortRoot string) []string {
-	repoRoot := findGitRepoRoot(effortRoot)
-	if repoRoot == "" {
-		return nil
-	}
-
-	rel, err := filepath.Rel(repoRoot, effortRoot)
-	if err != nil {
-		return nil
-	}
-
-	out, err := gitstate.Output(context.Background(), repoRoot, "log", "--reverse", "--format=%H", "--", rel)
-	if err != nil {
-		return nil
-	}
-
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return nil
-	}
-
-	firstCommit := lines[0]
-
-	diffOut, err := gitstate.Output(context.Background(), repoRoot, "diff", "--name-only", firstCommit+"^", "HEAD")
-	if err != nil {
-		diffOut, err = gitstate.Output(context.Background(), repoRoot, "diff", "--name-only", firstCommit, "HEAD")
-		if err != nil {
-			return nil
-		}
-	}
-
-	var paths []string
-
-	for _, line := range strings.Split(strings.TrimSpace(diffOut), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			paths = append(paths, line)
-		}
-	}
-
-	return paths
-}
-
-func gitCommitPaths(repoRoot string, hashes []string) map[string][]string {
-	result := make(map[string][]string)
-
-	for _, h := range hashes {
-		out, err := gitstate.Output(context.Background(), repoRoot, "show", "--name-only", "--format=", h)
-		if err != nil {
-			continue
-		}
-
-		var paths []string
-
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				paths = append(paths, line)
-			}
-		}
-
-		result[h] = paths
-	}
-
-	return result
-}
-
-func findGitRepoRoot(start string) string {
-	dir := start
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-
-		dir = parent
-	}
 }
