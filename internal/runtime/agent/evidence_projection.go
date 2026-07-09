@@ -10,6 +10,7 @@ import (
 	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 type toolResultEvidenceProjection struct {
@@ -433,6 +434,77 @@ func (projection toolResultEvidenceProjection) ReadOnlyEvidenceObservations() []
 	return observations
 }
 
+func (projection toolResultEvidenceProjection) ValidationStatusEvidenceLedgerPaths() []string {
+	var paths []string
+	add := func(path string) {
+		normalized := NormalizeRunnerPath(path)
+		if normalized != "" {
+			paths = textutil.AppendUnique(paths, normalized)
+		}
+	}
+
+	for _, path := range projection.ChangedPathList() {
+		add(path)
+	}
+
+	for _, record := range projection.records {
+		if record.failed {
+			continue
+		}
+		if record.tool != workspace.ToolNameSourceSanity && !semanticlanguage.IsDiagnosticToolName(record.tool) {
+			continue
+		}
+		for _, path := range record.ReadPaths() {
+			add(path)
+		}
+		if record.result.Facts != nil {
+			for _, path := range record.result.Facts.DiagnosticEvidencePaths {
+				add(path)
+			}
+		}
+	}
+
+	return paths
+}
+
+func (projection toolResultEvidenceProjection) MentionedEvidencePathsForObjective(objective string, max int) []string {
+	var paths []string
+
+	for _, record := range projection.records {
+		if !record.AcceptedMentionedEvidenceForObjective(objective) {
+			continue
+		}
+
+		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(record.summary))
+		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(record.output))
+		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(record.result.Error))
+
+		if len(paths) >= max {
+			break
+		}
+	}
+
+	return closurePromptEvidencePaths(paths, max)
+}
+
+func (record toolResultEvidenceRecord) AcceptedMentionedEvidenceForObjective(objective string) bool {
+	if record.failed {
+		return false
+	}
+
+	diagnostic := record.result.Facts != nil && len(readOnlySourceLikePaths(record.result.Facts.DiagnosticEvidencePaths, 8)) > 0
+	if len(record.SourceBodyPaths()) > 0 || diagnostic {
+		return true
+	}
+
+	fact, ok := readOnlyDelegatedEvidenceFactFromResult(record.result)
+	if !ok || fact.Output == "" {
+		return false
+	}
+
+	return readOnlyDelegatedEvidenceDecisionForObjective(objective, fact).AcceptedMentionedEvidenceForObjective
+}
+
 func (record toolResultEvidenceRecord) ReadOnlyEvidenceObservations() []readOnlyEvidenceObservation {
 	if record.failed {
 		return nil
@@ -719,10 +791,15 @@ func (record toolResultEvidenceRecord) CandidatePaths(max int) []string {
 	switch {
 	case record.tool == workspace.ToolNameContextPack:
 		return contextPackCandidatePathsFromResults([]workspace.ToolResult{record.result}, max)
+	case record.tool == workspace.ToolNameDiscoveryQuery:
+		if paths := delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{record.result}, max); len(paths) > 0 {
+			return paths
+		}
+		return sourceLikePathsFromText(record.summary+"\n"+record.output, max)
 	case toolResultEvidenceDiscoveryCandidateTool(record.tool):
-		return discoveryConsumptionCandidatesFromResult(record.result, max)
+		return sourceLikePathsFromText(record.summary+"\n"+record.output, max)
 	case workspace.IsSearchToolName(record.tool):
-		return sourceLikePathsFromText(record.result.Summary+"\n"+record.result.Output, max)
+		return sourceLikePathsFromText(record.summary+"\n"+record.output, max)
 	default:
 		return nil
 	}

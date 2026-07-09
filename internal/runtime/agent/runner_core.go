@@ -5219,48 +5219,6 @@ func uppercaseFirstSentence(value string) string {
 	return value
 }
 
-func mentionedEvidencePathsFromToolResults(results []workspace.ToolResult, max int) []string {
-	return mentionedEvidencePathsFromToolResultsForObjective(results, "", max)
-}
-
-func mentionedEvidencePathsFromToolResultsForObjective(results []workspace.ToolResult, objective string, max int) []string {
-	var paths []string
-
-	for _, result := range results {
-		if !acceptedMentionedEvidenceResultForObjective(result, objective) {
-			continue
-		}
-
-		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(result.Summary))
-		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(result.Output))
-		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(result.Error))
-
-		if len(paths) >= max {
-			break
-		}
-	}
-
-	return closurePromptEvidencePaths(paths, max)
-}
-
-func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, objective string) bool {
-	if strings.TrimSpace(result.Error) != "" {
-		return false
-	}
-
-	diagnostic := result.Facts != nil && len(readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)) > 0
-	if len(newToolResultEvidenceRecord(result).SourceBodyPaths()) > 0 || diagnostic {
-		return true
-	}
-
-	fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
-	if !ok || fact.Output == "" {
-		return false
-	}
-
-	return readOnlyDelegatedEvidenceDecisionForObjective(objective, fact).AcceptedMentionedEvidenceForObjective
-}
-
 // verificationContractSkipsGate reports whether the brief's
 // VerificationContract value declares the post-mutation verification
 // gate inapplicable. The gate is the right shape for atoms that
@@ -21747,7 +21705,7 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 
 		paths = textutil.Merge(paths, delegatedReadOnlyInspectedImplementationPaths(results))
 		if len(paths) == 0 {
-			paths = textutil.Merge(paths, mentionedEvidencePathsFromToolResultsForObjective(results, brief.Objective, 24))
+			paths = textutil.Merge(paths, newToolResultEvidenceProjection(results).MentionedEvidencePathsForObjective(brief.Objective, 24))
 		}
 
 		paths = prioritizedClosureEvidencePaths(paths, results, 8)

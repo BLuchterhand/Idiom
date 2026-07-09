@@ -2666,7 +2666,7 @@ func TestFailedReadFileMissingPathIsNotAcceptedEvidence(t *testing.T) {
 
 	for name, paths := range map[string][]string{
 		"direct probes":           directProbePathsFromToolResults(results, 8),
-		"mentioned evidence":      mentionedEvidencePathsFromToolResults(results, 8),
+		"mentioned evidence":      newToolResultEvidenceProjection(results).MentionedEvidencePathsForObjective("", 8),
 		"implementation evidence": acceptedImplementationEvidencePaths(results),
 	} {
 		if slices.Contains(paths, missingPath) {

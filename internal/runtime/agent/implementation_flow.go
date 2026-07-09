@@ -1465,7 +1465,7 @@ func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAns
 	}
 
 	if len(paths) == 0 && ledger.DiagnosticRelevant {
-		paths = textutil.Merge(paths, mentionedEvidencePathsFromToolResults(results, 8))
+		paths = textutil.Merge(paths, newToolResultEvidenceProjection(results).MentionedEvidencePathsForObjective("", 8))
 	}
 
 	return readOnlyEvidenceDisplayPaths(paths, 8)

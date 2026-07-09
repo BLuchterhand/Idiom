@@ -202,7 +202,10 @@ projection target is wider reuse: many runtime callers still construct fresh
 projections over the same result slice instead of carrying one turn-level read
 model. Git metadata/root, scoped dirty status, commit path extraction, and
 architect freshness snapshots now route through `gitstate`; product workflow
-keeps effort coverage policy but no longer owns git root/history parsers.
+keeps effort coverage policy but no longer owns git root/history parsers. The
+projection now also owns validation-status evidence ledger paths, accepted
+mentioned evidence paths, and discovery candidate paths; discovery consumption
+keeps only strength/breadth decisions over the projected candidates.
 
 ### 5. Product Workflow Projection
 

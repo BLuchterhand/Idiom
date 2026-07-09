@@ -109,7 +109,7 @@ func validationStatusPathBackedByLedger(rawPath string, canonicalPath string, re
 		return false
 	}
 
-	for _, path := range validationStatusEvidenceLedgerPaths(results) {
+	for _, path := range newToolResultEvidenceProjection(results).ValidationStatusEvidenceLedgerPaths() {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
@@ -337,42 +337,8 @@ func latestObservedVerificationSummary(results []workspace.ToolResult) (string, 
 
 func validationStatusEvidencePaths(results []workspace.ToolResult) []string {
 	var paths []string
-	for _, path := range validationStatusEvidenceLedgerPaths(results) {
+	for _, path := range newToolResultEvidenceProjection(results).ValidationStatusEvidenceLedgerPaths() {
 		paths = textutil.AppendUnique(paths, path)
 	}
 	return closurePromptEvidencePathsPreservingTests(paths, 8)
-}
-
-func validationStatusEvidenceLedgerPaths(results []workspace.ToolResult) []string {
-	var paths []string
-	add := func(path string) {
-		normalized := NormalizeRunnerPath(path)
-		if normalized == "" {
-			return
-		}
-		paths = textutil.AppendUnique(paths, normalized)
-	}
-
-	for _, path := range newToolResultEvidenceProjection(results).ChangedPathList() {
-		add(path)
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameSourceSanity && !semanticlanguage.IsDiagnosticToolName(result.Tool) {
-			continue
-		}
-		for _, path := range newToolResultEvidenceRecord(result).ReadPaths() {
-			add(path)
-		}
-		if result.Facts != nil {
-			for _, path := range result.Facts.DiagnosticEvidencePaths {
-				add(path)
-			}
-		}
-	}
-
-	return paths
 }

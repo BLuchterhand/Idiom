@@ -26,7 +26,8 @@ type discoveryResultOutcome struct {
 func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspace.ToolResult, maxCandidates int) discoveryResultOutcome {
 	var outcome discoveryResultOutcome
 
-	if strings.TrimSpace(result.Error) != "" || workerruntime.IsZeroHitSearchResult(result) {
+	record := newToolResultEvidenceRecord(result)
+	if record.failed || workerruntime.IsZeroHitSearchResult(result) {
 		return outcome
 	}
 
@@ -35,15 +36,15 @@ func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspac
 		tool = strings.TrimSpace(result.Tool)
 	}
 
-	if len(newToolResultEvidenceRecord(result).SourceBodyPaths()) > 0 {
+	if len(record.SourceBodyPaths()) > 0 {
 		return outcome
 	}
 
-	if strings.TrimSpace(result.Output) == "" && strings.TrimSpace(result.Summary) == "" {
+	if strings.TrimSpace(record.output) == "" && strings.TrimSpace(record.summary) == "" {
 		return outcome
 	}
 
-	outcome.Candidates = discoveryConsumptionCandidatesFromResult(result, maxCandidates)
+	outcome.Candidates = record.CandidatePaths(maxCandidates)
 
 	switch {
 	case tool == workspace.ToolNameContextPack:
@@ -150,20 +151,4 @@ func discoveryConsumptionResultHasReadableSourceOwner(result workspace.ToolResul
 	}
 
 	return len(readOnlySourceLikePaths(sourceLikePathsFromText(text, 4), 1)) > 0
-}
-
-func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 4
-	}
-
-	if strings.TrimSpace(result.Error) != "" {
-		return nil
-	}
-
-	if strings.TrimSpace(result.Tool) == workspace.ToolNameContextPack {
-		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
-	}
-
-	return promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, max)
 }
