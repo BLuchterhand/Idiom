@@ -274,35 +274,18 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		return report.Exit
 	}
 
-	result, err := brieflint.RunEmbeddedPreflight(context.Background(), briefPath, "", 0)
+	run, err := brieflint.RunText(context.Background(), briefPath, "", 0, stdout, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "brief lint: %v\n", err)
 
 		return 2
 	}
 
-	if result.Stdout != "" {
-		fmt.Fprint(stdout, result.Stdout)
-	}
-	if result.Stderr != "" {
-		fmt.Fprint(stderr, result.Stderr)
+	if run.Log {
+		telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": run.Exit})
 	}
 
-	if result.Err != nil {
-		if result.ExitError {
-			telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": result.ExitCode})
-
-			return result.ExitCode
-		}
-
-		fmt.Fprintf(stderr, "brief lint: failed to run python3: %v\n", result.Err)
-
-		return result.ExitCode
-	}
-
-	telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": 0})
-
-	return 0
+	return run.Exit
 }
 
 func runBriefPreview(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

@@ -29,16 +29,15 @@ func TestLaneRunsBriefLintByDefault(t *testing.T) {
 
 	var lintCalls int32
 
-	stubLaneBriefLint(t, func(args []string, _, _ io.Writer) int {
+	stubLaneBriefLint(t, laneBriefLintStub(func(path string) int {
 		atomic.AddInt32(&lintCalls, 1)
 
-		// Validate the lint runner saw the brief path.
-		if len(args) != 1 || args[0] != briefPath {
-			t.Errorf("lint runner expected [%q], got %v", briefPath, args)
+		if path != briefPath {
+			t.Errorf("lint runner expected %q, got %q", briefPath, path)
 		}
 
 		return 0
-	})
+	}))
 
 	var stdout, stderr bytes.Buffer
 
@@ -77,11 +76,11 @@ func TestLaneNoLintBypassesPreflight(t *testing.T) {
 
 	var lintCalls int32
 
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int {
+	stubLaneBriefLint(t, laneBriefLintStub(func(string) int {
 		atomic.AddInt32(&lintCalls, 1)
 
 		return 0
-	})
+	}))
 
 	var stdout, stderr bytes.Buffer
 
@@ -104,7 +103,7 @@ func TestLaneNoLintBypassesPreflight(t *testing.T) {
 // runLaneMainTest's auto-stub for the same reason as the test above.
 func TestLaneAbortsOnLintFailure(t *testing.T) {
 	briefPath := writeBrief(t, "# Bad brief\n")
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 7 })
+	stubLaneBriefLint(t, laneBriefLintStub(func(string) int { return 7 }))
 
 	var stdout, stderr bytes.Buffer
 
@@ -358,7 +357,7 @@ func TestAnalyzeLaneOutputSkipsNoEditWhenSubcommandFailed(t *testing.T) {
 // signal-emission path Colony's wrapper subscribes to.
 func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 	briefPath := writeBrief(t, "# Test\n")
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	plan := func(args []string, stdout io.Writer, _ io.Writer, _ cmdruntime.PromptRunner) int {
 		_, _ = stdout.Write([]byte(`{"type":"route_plan","contract":"verification_only"}` + "\n"))
@@ -392,7 +391,7 @@ func runLaneMainWithCustomRunners(t *testing.T, args []string, stdout, stderr io
 	plan, implement laneSubcommandRunner) int {
 
 	t.Helper()
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	cfg := config.Default()
 
@@ -410,7 +409,7 @@ func runLaneMainWithCustomRunners(t *testing.T, args []string, stdout, stderr io
 
 func TestLanePostflightFlagRunsAfterDispatch(t *testing.T) {
 	briefPath := writeBrief(t, "# Test\n")
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	// Stub git diff so the test doesn't need an actual git repo in
 	// the temp workspace; an empty diff is the postflight input.
@@ -455,7 +454,7 @@ func TestLanePostflightFlagRunsAfterDispatch(t *testing.T) {
 
 func TestLanePostflightFlagPassesBrief(t *testing.T) {
 	briefPath := writeBrief(t, "# Test\n")
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	origGitDiff := laneGitDiff
 

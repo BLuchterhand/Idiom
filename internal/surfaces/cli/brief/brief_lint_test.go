@@ -136,6 +136,33 @@ func TestRunLintPlainReportsPythonLaunchFailure(t *testing.T) {
 	}
 }
 
+func TestRunLintJSONFlagEmitsEnvelope(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available on PATH")
+	}
+
+	root := t.TempDir()
+	briefPath := writeLintBrief(t, root, "# Title\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `x.go` | MODIFY |\n")
+
+	var stdout, stderr bytes.Buffer
+
+	_ = RunLint([]string{briefPath, "--json"}, &stdout, &stderr, nil)
+
+	out := stdout.String()
+	if !strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Fatalf("expected JSON envelope on stdout, got: %s", out)
+	}
+
+	var report brieflint.Report
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("expected valid JSON envelope, got: %v\n%s", err, out)
+	}
+
+	if report.Brief != briefPath {
+		t.Fatalf("expected brief field = %q, got %q", briefPath, report.Brief)
+	}
+}
+
 func TestRunLintPlainTelemetryRecordsSuccessAndExitFailure(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available on PATH")

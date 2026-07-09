@@ -17,7 +17,6 @@ import (
 
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
-	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
 )
@@ -400,7 +399,7 @@ func TestRefineProjectRootFromIterDirWalksUpFourLevels(t *testing.T) {
 }
 
 func TestRunLaneRefineDoesNotAcceptStaleDraftOutput(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -1401,7 +1400,7 @@ func TestParseTrapFrontmatterExtractsAppliesTo(t *testing.T) {
 // refine appends them to the final brief on ship-as-is. Bare repos
 // (no overlay dir) see zero behavior change.
 func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	overlayDir := filepath.Join(root, refineOverlayDir)
@@ -1510,16 +1509,16 @@ func TestRefineLintIgnoresProjectOverlayGuidance(t *testing.T) {
 
 	var lintInput string
 
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		body, err := os.ReadFile(args[0])
+	stubRefineLint(t, func(path string) (brieflint.Report, error) {
+		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read lint input: %v", err)
 		}
 
 		lintInput = string(body)
 
-		return 0
-	})
+		return refineLintReport(path, 0), nil
+	}, nil)
 
 	var stderr bytes.Buffer
 
@@ -1544,10 +1543,12 @@ func TestRefineLintIgnoresProjectOverlayGuidance(t *testing.T) {
 // the patcher targets BLOCKs directly instead of relying on the
 // reviewer to transcribe every finding.
 func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		_, _ = stdout.Write([]byte("BLOCK: unfilled <placeholder> in Files To Modify row\nWARN: append-to-end-of-file edit shape\n"))
-		return 1
-	})
+	stubRefineLint(t, func(path string) (brieflint.Report, error) {
+		return refineLintReport(path, 1,
+			brieflint.Finding{Severity: "BLOCK", Category: "unfilled-placeholder", Message: "unfilled <placeholder> in Files To Modify row"},
+			brieflint.Finding{Severity: "WARN", Category: "edit-shape", Message: "append-to-end-of-file edit shape"},
+		), nil
+	}, nil)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -1581,7 +1582,7 @@ func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
 		t.Fatalf("read meta-patch: %v", err)
 	}
 
-	if !strings.Contains(string(body), "BLOCK: unfilled <placeholder>") {
+	if !strings.Contains(string(body), "[BLOCK] (unfilled-placeholder) unfilled <placeholder>") {
 		t.Fatalf("expected lint BLOCK inlined in patch meta-brief, got:\n%s", body)
 	}
 
@@ -1824,27 +1825,16 @@ func TestRefinePatchSourceEvidencePrioritizesBoundaryAnchors(t *testing.T) {
 	}
 }
 
-// TestRenderRefineLintFindingsFromJSONEnvelope locks in §6.1 Gap 5
-// (Colony shipped 2026-05-11): refine consumes the structured JSON
-// output of `idiom brief lint --json` and renders BLOCK+WARN
-// findings for the reviewer. INFO is dropped (Q1 signal-to-noise);
-// malformed JSON falls back to ok=false so the caller can switch
-// to plain-text capture.
-func TestRenderRefineLintFindingsFromJSONEnvelope(t *testing.T) {
-	envelope := `{
-  "brief": "/tmp/test.md",
-  "exit": 1,
-  "findings": [
-    {"severity": "BLOCK", "category": "anchor-specificity", "brief": "/tmp/test.md", "message": "exact-anchor failed for x.go"},
-    {"severity": "WARN", "category": "missing-current-state", "brief": "/tmp/test.md", "message": "no verified state"},
-    {"severity": "INFO", "category": "other", "brief": "/tmp/test.md", "message": "informational note (dropped)"}
-  ]
-}`
-	out, ok := renderRefineLintFindings([]byte(envelope))
-
-	if !ok {
-		t.Fatalf("expected ok=true on well-formed envelope")
-	}
+func TestRenderRefineLintReportRendersBlockAndWarn(t *testing.T) {
+	out := renderRefineLintReport(brieflint.Report{
+		Brief: "/tmp/test.md",
+		Exit:  1,
+		Findings: []brieflint.Finding{
+			{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/tmp/test.md", Message: "exact-anchor failed for x.go"},
+			{Severity: "WARN", Category: "missing-current-state", Brief: "/tmp/test.md", Message: "no verified state"},
+			{Severity: "INFO", Category: "other", Brief: "/tmp/test.md", Message: "informational note (dropped)"},
+		},
+	})
 
 	if !strings.Contains(out, "[BLOCK] (anchor-specificity) exact-anchor failed for x.go") {
 		t.Fatalf("expected BLOCK rendered with severity+category+message, got:\n%s", out)
@@ -1864,12 +1854,7 @@ func TestRenderRefineLintFindingsFromJSONEnvelope(t *testing.T) {
 // reviewer never sees an empty preload (which would look like
 // silent failure).
 func TestRenderRefineLintFindingsCleanPassEmitsClearNote(t *testing.T) {
-	envelope := `{"brief": "/tmp/test.md", "exit": 0, "findings": []}`
-	out, ok := renderRefineLintFindings([]byte(envelope))
-
-	if !ok {
-		t.Fatalf("expected ok=true")
-	}
+	out := renderRefineLintReport(brieflint.Report{Brief: "/tmp/test.md", Exit: 0})
 
 	if !strings.Contains(out, "no BLOCK/WARN findings") {
 		t.Fatalf("expected clean-pass note, got: %s", out)
@@ -1928,54 +1913,6 @@ func TestWriteFallbackRefineReviewSkipsWithoutLintBlocks(t *testing.T) {
 
 	if _, err := os.Stat(reviewPath); !os.IsNotExist(err) {
 		t.Fatalf("review path should not exist, stat err=%v", err)
-	}
-}
-
-// TestRenderRefineLintFindingsMalformedJSONReturnsNotOK: junk
-// envelope yields ok=false so captureRefineLintOutput can fall back
-// gracefully.
-func TestRenderRefineLintFindingsMalformedJSONReturnsNotOK(t *testing.T) {
-	_, ok := renderRefineLintFindings([]byte("idiom brief preflight: FAIL /path\n"))
-	if ok {
-		t.Fatalf("expected ok=false for non-JSON output")
-	}
-}
-
-// TestRunBriefLintJSONFlagEmitsEnvelope is the end-to-end binding:
-// the CLI `idiom brief lint --json <path>` returns a JSON envelope
-// on stdout matching the schema, with the underlying preflight's
-// exit code propagated.
-func TestRunBriefLintJSONFlagEmitsEnvelope(t *testing.T) {
-	root := t.TempDir()
-	briefPath := filepath.Join(root, "tiny.md")
-	body := "# Title\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `x.go` | MODIFY |\n"
-
-	if err := os.WriteFile(briefPath, []byte(body), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	exit := briefcmd.RunLint([]string{briefPath, "--json"}, &stdout, &stderr, nil)
-	// The python preflight is expected to return non-zero on this
-	// minimal brief (missing anchors etc.) — we don't care about the
-	// exact exit, just that the JSON envelope is well-formed.
-	_ = exit
-
-	out := stdout.String()
-
-	if !strings.HasPrefix(strings.TrimSpace(out), "{") {
-		t.Fatalf("expected JSON envelope on stdout, got: %s", out)
-	}
-
-	var report brieflint.Report
-
-	if err := json.Unmarshal([]byte(out), &report); err != nil {
-		t.Fatalf("expected valid JSON envelope, got: %v\n%s", err, out)
-	}
-
-	if report.Brief != briefPath {
-		t.Fatalf("expected brief field = %q, got %q", briefPath, report.Brief)
 	}
 }
 
@@ -2097,12 +2034,7 @@ func TestPersistRefineLintJSONLogsButContinuesOnError(t *testing.T) {
 // alongside metrics.json so orchestrators can read both with one
 // directory listing.
 func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		// Emit a well-formed JSON envelope so persistRefineLintJSON fires.
-		// (The test --json flag bypasses the real python preflight.)
-		_, _ = stdout.Write([]byte(`{"brief":"x.md","exit":0,"findings":[]}`))
-		return 0
-	})
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -2564,19 +2496,15 @@ func TestFinalizeRefineLintsInjectedFinalBody(t *testing.T) {
 
 	var lintedBody string
 
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		if len(args) != 1 {
-			t.Fatalf("expected lint temp path only, got args=%v", args)
-		}
-
-		blob, err := os.ReadFile(args[0])
+	stubRefineLint(t, nil, func(path string, stdout, stderr io.Writer) (brieflint.TextRun, error) {
+		blob, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read lint temp: %v", err)
 		}
 
 		lintedBody = string(blob)
 
-		return 0
+		return brieflint.TextRun{Exit: 0}, nil
 	})
 
 	var stderr bytes.Buffer
@@ -2622,18 +2550,18 @@ func TestFinalizeRefineFailsShipAsIsWhenProjectOverlayBreaksLint(t *testing.T) {
 
 	var lintedBody string
 
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		blob, err := os.ReadFile(args[0])
+	stubRefineLint(t, nil, func(path string, stdout, stderr io.Writer) (brieflint.TextRun, error) {
+		blob, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read lint temp: %v", err)
 		}
 
 		lintedBody = string(blob)
 		if strings.Contains(lintedBody, "```cpp") {
-			return 1
+			return brieflint.TextRun{Exit: 1}, nil
 		}
 
-		return 0
+		return brieflint.TextRun{Exit: 0}, nil
 	})
 
 	var stderr bytes.Buffer
@@ -2775,7 +2703,7 @@ func TestBriefLintJSONEnvelopeSchemaIsStable(t *testing.T) {
 // a hard-prohibitions overlay should produce a final brief that
 // uses the custom template body AND carries the prohibitions block.
 func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	refineOverride := filepath.Join(root, ".idiom", "prompts", "refine")
@@ -2855,7 +2783,7 @@ func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
 // applied so the orchestrator-inspectable artifact is the hardened
 // version (with WARNING header on top).
 func TestRunLaneRefineFailsoftPreservesOverlay(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	overlayDir := filepath.Join(root, refineOverlayDir)
@@ -2965,7 +2893,7 @@ func TestLoadProjectTrapsWarnsOnOrphanAppliesToTag(t *testing.T) {
 // TestRunLaneRefineBareRepoSkipsOverlay confirms zero behavior
 // change for projects without an .idiom/prompts/brief/ directory.
 func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir() // bare — no overlay dir
 	specPath := filepath.Join(root, "spec.md")
@@ -3333,7 +3261,7 @@ func TestRefinePatchTemplateClosesSourceUncertaintyIntoDraft(t *testing.T) {
 // containing the canonical artifact closure with the destination path
 // substituted in.
 func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
@@ -3401,7 +3329,7 @@ func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
 // override at .idiom/prompts/refine/draft-notebook.md, invoked with
 // --mode notebook, produces a meta-draft built from the override.
 func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
@@ -3499,7 +3427,7 @@ func TestRefineDetectModeClassifiesSpecShape(t *testing.T) {
 // "## Inline content" headings) rather than the anchored template
 // (containing "## Verified Current State" + "## Required Behavior").
 func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -3548,7 +3476,7 @@ func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
 // --mode flag overrides the auto-detected mode. A markdown-shaped
 // spec with opts.Mode="anchored" routes to the anchored template.
 func TestRunLaneRefineModeOverrideForcesAnchored(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -3594,10 +3522,12 @@ func TestRunLaneRefineModeOverrideForcesAnchored(t *testing.T) {
 // evidence and the verdict rules require zero BLOCKs for
 // ship-as-is — convergence on a lint-passing brief by construction.
 func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		_, _ = stdout.Write([]byte("BLOCK: anchor at foo.go:42 doesn't match source\nWARN: append-to-end-of-file edit is wedge-prone\n"))
-		return 1
-	})
+	stubRefineLint(t, func(path string) (brieflint.Report, error) {
+		return refineLintReport(path, 1,
+			brieflint.Finding{Severity: "BLOCK", Category: "anchor-specificity", Message: "anchor at foo.go:42 doesn't match source"},
+			brieflint.Finding{Severity: "WARN", Category: "edit-shape", Message: "append-to-end-of-file edit is wedge-prone"},
+		), nil
+	}, nil)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -3629,7 +3559,7 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 		t.Fatalf("read meta-review: %v", err)
 	}
 
-	if !strings.Contains(string(body), "BLOCK: anchor at foo.go:42 doesn't match source") {
+	if !strings.Contains(string(body), "[BLOCK] (anchor-specificity) anchor at foo.go:42 doesn't match source") {
 		t.Fatalf("expected lint BLOCK to be inlined in review meta, got:\n%s", body)
 	}
 
@@ -3658,27 +3588,21 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 func TestRunLaneRefinePreloadsFinalShapeLintFindings(t *testing.T) {
 	var lintedCandidate string
 
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		isJSON := len(args) > 1 && args[1] == "--json"
-		if !isJSON {
-			return 0
-		}
-
-		body, err := os.ReadFile(args[0])
+	stubRefineLint(t, func(path string) (brieflint.Report, error) {
+		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read lint input: %v", err)
 		}
 
 		lintedCandidate = string(body)
 		if strings.Contains(lintedCandidate, "native/foo.cpp") && !strings.Contains(lintedCandidate, refineDeliverableMarker) {
-			_, _ = stdout.Write([]byte(`{"brief":"candidate.md","exit":1,"findings":[{"severity":"BLOCK","category":"exact-anchor","brief":"candidate.md","message":"exact-anchor specificity failed for native/foo.cpp"}]}`))
-			return 1
+			return refineLintReport(path, 1,
+				brieflint.Finding{Severity: "BLOCK", Category: "exact-anchor", Message: "exact-anchor specificity failed for native/foo.cpp"},
+			), nil
 		}
 
-		_, _ = stdout.Write([]byte(`{"brief":"candidate.md","exit":0,"findings":[]}`))
-
-		return 0
-	})
+		return refineLintReport(path, 0), nil
+	}, nil)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -3728,12 +3652,10 @@ func TestRunLaneRefinePreloadsFinalShapeLintFindings(t *testing.T) {
 
 // TestRunLaneRefineHandlesCleanLintGracefully checks the empty-lint
 // path: when lint exits 0 with no findings, the {{LINT_OUTPUT}}
-// substitution falls back to a "no findings" note so the reviewer
+// substitution carries an explicit clean-lint note so the reviewer
 // doesn't silently treat empty as "clean by default".
 func TestRunLaneRefineHandlesCleanLintGracefully(t *testing.T) {
-	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
-		return 0
-	})
+	stubRefineLintPass(t)
 
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
@@ -3769,8 +3691,8 @@ func TestRunLaneRefineHandlesCleanLintGracefully(t *testing.T) {
 		t.Fatalf("read meta-review: %v", err)
 	}
 
-	if !strings.Contains(string(body), "no findings") {
-		t.Fatalf("expected 'no findings' fallback in review meta, got:\n%s", body)
+	if !strings.Contains(string(body), "no BLOCK/WARN findings; lint pass clean") {
+		t.Fatalf("expected clean lint note in review meta, got:\n%s", body)
 	}
 }
 

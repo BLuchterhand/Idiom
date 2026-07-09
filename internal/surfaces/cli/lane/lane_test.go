@@ -23,6 +23,7 @@ import (
 	"idiom/internal/runtime/readiness"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/workflows/atomintake"
+	"idiom/internal/workflows/brieflint"
 	canonicalprompts "idiom/prompts"
 )
 
@@ -528,7 +529,7 @@ func TestRunLaneMainInjectsAutomaticContextPackBeforeBrief(t *testing.T) {
 	cfg.Workspace.Root = filepath.Dir(briefPath)
 	cfg.Workspace.EnableWrites = true
 
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	deps := laneDeps{
 		loadConfig:     func(string) (config.Config, error) { return cfg, nil },
@@ -668,7 +669,7 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 
 	fake := &laneFakeRunner{}
 
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	deps := laneDeps{
 		loadConfig:     config.Load,
@@ -808,7 +809,7 @@ func TestRunLaneMainNoContextPackSkipsAutomaticContextPack(t *testing.T) {
 	fake := &laneFakeRunner{}
 	cfg := config.Default()
 
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	calls := 0
 	deps := laneDeps{
@@ -856,7 +857,7 @@ func TestRunLaneMainSkipsContextPackForRefineScratchpadMetaBrief(t *testing.T) {
 
 	cfg.Workspace.Root = root
 
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	calls := 0
 	deps := laneDeps{
@@ -2465,7 +2466,7 @@ func flagValues(args []string, flag string) []string {
 // environment, and dispatches to the fake runner the test owns.
 func runLaneMainTest(t *testing.T, args []string, stdout, stderr io.Writer, fake *laneFakeRunner) int {
 	t.Helper()
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	cfg := config.Default()
 
@@ -2485,7 +2486,7 @@ func runLaneMainTest(t *testing.T, args []string, stdout, stderr io.Writer, fake
 // restores the production one on cleanup. Tests that want to
 // exercise the lint preflight reassign before calling
 // runLaneMainTest; the helper installs a no-op stub by default.
-func stubLaneBriefLint(t *testing.T, stub func(args []string, stdout, stderr io.Writer) int) {
+func stubLaneBriefLint(t *testing.T, stub func(context.Context, string, string, time.Duration, io.Writer, io.Writer) (brieflint.TextRun, error)) {
 	t.Helper()
 
 	orig := laneBriefLintRunner
@@ -2493,6 +2494,16 @@ func stubLaneBriefLint(t *testing.T, stub func(args []string, stdout, stderr io.
 	laneBriefLintRunner = stub
 
 	t.Cleanup(func() { laneBriefLintRunner = orig })
+}
+
+func passingLaneBriefLint(context.Context, string, string, time.Duration, io.Writer, io.Writer) (brieflint.TextRun, error) {
+	return brieflint.TextRun{Exit: 0}, nil
+}
+
+func laneBriefLintStub(run func(path string) int) func(context.Context, string, string, time.Duration, io.Writer, io.Writer) (brieflint.TextRun, error) {
+	return func(_ context.Context, path string, _ string, _ time.Duration, _ io.Writer, _ io.Writer) (brieflint.TextRun, error) {
+		return brieflint.TextRun{Exit: run(path)}, nil
+	}
 }
 
 func stubLanePostflightRunner(t *testing.T, stub func(args []string, stdout, stderr io.Writer) int) {

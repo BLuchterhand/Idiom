@@ -210,7 +210,7 @@ func TestRunLanePlanExecuteRecoveryDoesNotWriteLaneImplementRecord(t *testing.T)
 
 func runLaneRecoveryTest(t *testing.T, root string, args []string, implement laneSubcommandRunner, plan laneSubcommandRunner, stdout, stderr io.Writer) int {
 	t.Helper()
-	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	stubLaneBriefLint(t, passingLaneBriefLint)
 
 	cfg := config.Default()
 

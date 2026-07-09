@@ -17,7 +17,6 @@ import (
 
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/commandexec"
-	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
@@ -93,9 +92,9 @@ type Options struct {
 // inject a fake.
 type DispatchFunc func(metaBriefPath string, stdout, stderr io.Writer) int
 
-var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
-	return briefcmd.RunLint(args, stdout, stderr, nil)
-}
+var refineBuildLintReport = brieflint.BuildReport
+
+var refineRunLintText = brieflint.RunText
 
 // Refine routes all phases to the primary 35B-A3B backend. The
 // command path owns scratchpad materialization through artifact
@@ -1428,56 +1427,53 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
-// captureRefineLintOutput runs `idiom brief lint --json` on the
-// just-produced draft and returns the exit code + a review-ready
-// rendering of the JSON findings (§2.3 + §6.1 Gap 5). When persistDir
-// is non-empty AND the JSON parsed cleanly, the raw envelope is also
-// written to <persistDir>/lint.json (Colony §8 recommendation) so
-// orchestrators can inspect lint findings without re-running.
-//
-// The returned text is BLOCK + WARN findings formatted as a compact
-// human/LLM-readable list. INFO findings are dropped (signal-to-noise
-// per Colony Q1). When the JSON path can't be parsed (older lint
-// versions, json marshal failed, etc.), falls back to the text
-// envelope so the reviewer never silently treats lint as clean.
+// captureRefineLintOutput renders the typed brieflint report for the
+// reviewer and persists the same report as lint.json when requested.
+// If report construction fails, it falls back to text lint output.
 func captureRefineLintOutput(draftPath, persistDir, projectRoot, mode string, deliverableTargets []string, stderr io.Writer) (int, string) {
-	var out bytes.Buffer
-
 	lintPath, cleanup := refineLintInputPath(draftPath, projectRoot, mode, deliverableTargets, stderr)
 
 	defer cleanup()
 
-	code := laneBriefLintRunner([]string{lintPath, "--json"}, &out, stderr)
-	rawJSON := bytes.TrimSpace(out.Bytes())
-	rendered, ok := renderRefineLintFindings(rawJSON)
-
-	if !ok {
-		// Fall back: try plain-text capture so the reviewer at least
-		// sees something. If even that is empty, emit the fallback
-		// "treat as BLOCK" message so empty + exit-non-zero doesn't
-		// look like "clean lint" to downstream consumers.
-		var plain bytes.Buffer
-
-		_ = laneBriefLintRunner([]string{lintPath}, &plain, stderr)
-
-		text := plain.String()
-
-		if code != 0 && strings.TrimSpace(text) == "" {
-			text = fmt.Sprintf("(lint exited %d with no parseable findings — treat as BLOCK)", code)
-		}
-
-		return code, text
+	report, err := refineBuildLintReport(context.Background(), lintPath, "", 0)
+	if err != nil {
+		return captureRefineLintText(lintPath, 2, stderr)
 	}
 
+	rawJSON, err := json.Marshal(report)
+	if err != nil {
+		return captureRefineLintText(lintPath, report.Exit, stderr)
+	}
+
+	rawJSON = bytes.TrimSpace(rawJSON)
 	if persistDir != "" && len(rawJSON) > 0 {
 		persistRefineLintJSON(persistDir, rawJSON, stderr)
 	}
 
-	if code != 0 && strings.TrimSpace(rendered) == "" {
+	rendered := renderRefineLintReport(report)
+	if report.Exit != 0 && strings.TrimSpace(rendered) == "" {
 		rendered = "(lint exited non-zero but emitted zero BLOCK/WARN findings — investigate manually)"
 	}
 
-	return code, rendered
+	return report.Exit, rendered
+}
+
+func captureRefineLintText(lintPath string, fallbackExit int, stderr io.Writer) (int, string) {
+	var plain bytes.Buffer
+
+	run, err := refineRunLintText(context.Background(), lintPath, "", 0, &plain, stderr)
+	code := run.Exit
+	if err != nil {
+		fmt.Fprintf(stderr, "brief lint: %v\n", err)
+		code = fallbackExit
+	}
+
+	text := plain.String()
+	if code != 0 && strings.TrimSpace(text) == "" {
+		text = fmt.Sprintf("(lint exited %d with no parseable findings — treat as BLOCK)", code)
+	}
+
+	return code, text
 }
 
 // refineLintInputPath renders the harness-owned final shape that brief
@@ -1619,17 +1615,7 @@ func persistRefineLintJSON(iterDir string, raw []byte, stderr io.Writer) {
 	}
 }
 
-// renderRefineLintFindings parses the JSON envelope from `idiom
-// brief lint --json` and renders BLOCK + WARN findings as a compact
-// list (INFO dropped). Returns ok=false if the JSON is malformed so
-// the caller can fall back gracefully.
-func renderRefineLintFindings(raw []byte) (string, bool) {
-	var report brieflint.Report
-
-	if err := json.Unmarshal(bytes.TrimSpace(raw), &report); err != nil {
-		return "", false
-	}
-
+func renderRefineLintReport(report brieflint.Report) string {
 	var out strings.Builder
 
 	count := 0
@@ -1648,7 +1634,7 @@ func renderRefineLintFindings(raw []byte) (string, bool) {
 		out.WriteString("(no BLOCK/WARN findings; lint pass clean)\n")
 	}
 
-	return strings.TrimRight(out.String(), "\n"), true
+	return strings.TrimRight(out.String(), "\n")
 }
 
 func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath, lintOutput string, evidencePaths []string) error {
@@ -2450,7 +2436,14 @@ func lintRefineFinalBody(body []byte, stderr io.Writer) int {
 	}
 	defer cleanup()
 
-	return laneBriefLintRunner([]string{tmpPath}, io.Discard, stderr)
+	run, err := refineRunLintText(context.Background(), tmpPath, "", 0, io.Discard, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "brief lint: %v\n", err)
+
+		return 2
+	}
+
+	return run.Exit
 }
 
 func writeRefineTempBody(body []byte, pattern string) (string, func(), error) {

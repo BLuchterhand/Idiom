@@ -32,13 +32,13 @@ import (
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/writerrouting"
-	briefcmd "idiom/internal/surfaces/cli/brief"
 	implementcmd "idiom/internal/surfaces/cli/implement"
 	planexecutecmd "idiom/internal/surfaces/cli/planexecute"
 	refinecmd "idiom/internal/surfaces/cli/refine"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/atomintake"
+	"idiom/internal/workflows/brieflint"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -131,15 +131,8 @@ type laneOptions struct {
 	explicitCoderRequested bool
 }
 
-// laneBriefLintRunner is the package-level indirection tests stub
-// out so the lane wrapper's default-on lint preflight doesn't need
-// python3 in the test environment. Production callers leave it as
-// briefcmd.RunLint; tests reassign before exercising the lane and
-// restore on cleanup. Mirrors the backendLaunch / backendStop
-// pattern from internal/surfaces/cli/backend/backend.go.
-var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
-	return briefcmd.RunLint(args, stdout, stderr, nil)
-}
+// laneBriefLintRunner lets tests bypass python; production uses brieflint directly.
+var laneBriefLintRunner = brieflint.RunText
 
 var lanePostflightRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
 	return runLanePostflight(args, stdout, stderr)
@@ -287,7 +280,13 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	// dispatch. --no-lint is the escape hatch for callers that
 	// already lint upstream or want to test bypass.
 	if !opts.NoLint {
-		if code := laneBriefLintRunner([]string{opts.BriefPath}, stdout, stderr); code != 0 {
+		lintRun, err := laneBriefLintRunner(context.Background(), opts.BriefPath, "", 0, stdout, stderr)
+		if err != nil {
+			fmt.Fprintf(stderr, "brief lint: %v\n", err)
+			lintRun.Exit = 2
+		}
+
+		if code := lintRun.Exit; code != 0 {
 			fmt.Fprintf(stderr, "lane: brief lint failed (exit %d); use --no-lint to skip preflight\n", code)
 
 			return code

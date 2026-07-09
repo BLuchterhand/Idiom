@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,11 @@ type Report struct {
 	Findings []Finding `json:"findings"`
 }
 
+type TextRun struct {
+	Exit int
+	Log  bool
+}
+
 func BuildReport(ctx context.Context, briefPath string, workdir string, timeout time.Duration) (Report, error) {
 	result, err := RunEmbeddedPreflight(ctx, briefPath, workdir, timeout)
 	if err != nil {
@@ -45,6 +51,28 @@ func BuildReport(ctx context.Context, briefPath string, workdir string, timeout 
 		Exit:     result.ExitCode,
 		Findings: ParseFindings(briefPath, combined),
 	}, nil
+}
+
+func RunText(ctx context.Context, briefPath string, workdir string, timeout time.Duration, stdout io.Writer, stderr io.Writer) (TextRun, error) {
+	result, err := RunEmbeddedPreflight(ctx, briefPath, workdir, timeout)
+	if err != nil {
+		return TextRun{Exit: 2}, err
+	}
+
+	fmt.Fprint(stdout, result.Stdout)
+	fmt.Fprint(stderr, result.Stderr)
+
+	if result.Err != nil {
+		if result.ExitError {
+			return TextRun{Exit: result.ExitCode, Log: true}, nil
+		}
+
+		fmt.Fprintf(stderr, "brief lint: failed to run python3: %v\n", result.Err)
+
+		return TextRun{Exit: result.ExitCode}, nil
+	}
+
+	return TextRun{Log: true}, nil
 }
 
 func RunEmbeddedPreflight(ctx context.Context, briefPath string, workdir string, timeout time.Duration) (commandexec.Result, error) {

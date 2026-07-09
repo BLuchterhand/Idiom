@@ -1,7 +1,7 @@
 package product
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"idiom/internal/evidence/telemetry"
-	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/workflows/brieflint"
 	"idiom/internal/workflows/productworkflow"
 )
@@ -2922,22 +2921,15 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		if err := os.WriteFile(briefPathForLint, []byte(gen.RenderedBrief), 0o644); err != nil {
 			allBlockers = append(allBlockers, fmt.Sprintf("failed to stage brief for lint: %v", err))
 		} else {
-			var (
-				lintStdout bytes.Buffer
-				lintStderr bytes.Buffer
-			)
-
-			lintCode := briefcmd.RunLint([]string{briefPathForLint, "--json"}, &lintStdout, &lintStderr, rec)
-
-			var lintReport brieflint.Report
-
-			if unmarshalErr := json.Unmarshal(lintStdout.Bytes(), &lintReport); unmarshalErr != nil {
-				allBlockers = append(allBlockers, fmt.Sprintf("brief lint output parse failed: %v", unmarshalErr))
+			lintReport, lintErr := brieflint.BuildReport(context.Background(), briefPathForLint, "", 0)
+			if lintErr != nil {
+				allBlockers = append(allBlockers, fmt.Sprintf("brief lint failed: %v", lintErr))
 			} else {
 				out.Lint = &lintReport
+				telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": lintReport.Exit, "json": true, "findings": len(lintReport.Findings)})
 
-				if lintCode != 0 {
-					allBlockers = append(allBlockers, fmt.Sprintf("brief lint failed (exit %d)", lintCode))
+				if lintReport.Exit != 0 {
+					allBlockers = append(allBlockers, fmt.Sprintf("brief lint failed (exit %d)", lintReport.Exit))
 				}
 			}
 		}
