@@ -23,6 +23,9 @@ type ShellCommandAnalysis struct {
 	Verification     ShellVerificationFamily
 	FullSuite        bool
 	SideEffect       autonomy.SideEffectClass
+	ExploreAllowed   bool
+	ExploreRejection string
+	ActionClass      autonomy.ActionClass
 	Replacement      *ShellReplacementCandidate
 }
 
@@ -42,15 +45,13 @@ var shellCommandPolicy = struct {
 	broadInspectionHeads    []string
 	narrowingHeads          []string
 	exploreHeads            []string
-	exploreGitSubcommands   []string
 	readOnlyChildPrefixes   []string
 	workbranchChildPrefixes []string
 	childDeniedFragments    []string
 }{
-	broadInspectionHeads:  []string{"ls", "find", "tree"},
-	narrowingHeads:        []string{"rg", "grep", "awk", "sed", "cat", "head", "tail"},
-	exploreHeads:          []string{"ls", "find", "rg", "grep", "awk", "sed", "cat", "head", "tail", "wc", "file", "pwd", "tree"},
-	exploreGitSubcommands: []string{"status", "log", "diff", "show", "grep", "branch", "rev-parse"},
+	broadInspectionHeads: []string{"ls", "find", "tree"},
+	narrowingHeads:       []string{"rg", "grep", "awk", "sed", "cat", "head", "tail"},
+	exploreHeads:         []string{"ls", "find", "rg", "grep", "awk", "sed", "cat", "head", "tail", "wc", "file", "pwd", "tree"},
 	readOnlyChildPrefixes: []string{
 		"rg ", "grep ", "awk ", "sed -n", "cat ", "head ", "tail ", "wc ",
 		"pwd", "ls ", "find ",
@@ -73,6 +74,8 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 		SideEffect: autonomy.SideEffectUnknown,
 	}
 	if command == "" {
+		analysis.ExploreRejection = "command is required"
+		analysis.ActionClass = autonomy.ActionClassGenericProbe
 		return analysis
 	}
 
@@ -96,45 +99,10 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 		analysis.SideEffect = autonomy.SideEffectReadOnly
 	}
 
+	analysis.ExploreRejection = shellExploreRejection(analysis)
+	analysis.ExploreAllowed = analysis.ExploreRejection == ""
+	analysis.ActionClass = shellCommandActionClass(analysis)
 	return analysis
-}
-
-func validateExploreShellCommand(command string) error {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return fmt.Errorf("command is required")
-	}
-
-	if strings.ContainsAny(command, "\n\r><`") || strings.Contains(command, "$(") {
-		return fmt.Errorf("redirection, command substitution, and multiline shell are not allowed")
-	}
-
-	for _, segment := range splitShellSegments(command) {
-		fields := shellCommandFields(segment)
-		if len(fields) == 0 {
-			continue
-		}
-
-		if shellHeadInSet(fields[0], shellCommandPolicy.exploreHeads...) {
-			continue
-		}
-
-		if fields[0] == "git" {
-			if len(fields) < 2 {
-				return fmt.Errorf("git command requires a read-only subcommand")
-			}
-
-			if shellHeadInSet(fields[1], shellCommandPolicy.exploreGitSubcommands...) {
-				continue
-			}
-
-			return fmt.Errorf("git %s is not allowed in explore mode", fields[1])
-		}
-
-		return fmt.Errorf("%s is not an allowed explore-mode shell command", fields[0])
-	}
-
-	return nil
 }
 
 type ChildShellPolicy struct {
@@ -177,6 +145,52 @@ func WorkbranchChildShellPolicy(forbiddenTools []string) ChildShellPolicy {
 
 	policy.DeniedPrefixes = textutil.Merge(policy.DeniedPrefixes)
 	return policy
+}
+
+func shellExploreRejection(analysis ShellCommandAnalysis) string {
+	if len(analysis.Fields) == 0 {
+		return "command is required"
+	}
+
+	if analysis.HasControlSyntax {
+		return "redirection, command substitution, control operators, and multiline shell are not allowed"
+	}
+
+	if analysis.Head == "git" {
+		if len(analysis.Args) == 0 {
+			return "git command requires a read-only subcommand"
+		}
+		if readOnlyGitArgs(analysis.Args) {
+			return ""
+		}
+
+		if analysis.Args[0] == "diff" && gitDiffArgsWriteOutput(analysis.Args[1:]) {
+			return "git diff output files are not allowed in explore mode"
+		}
+
+		return fmt.Sprintf("git %s is not allowed in explore mode", analysis.Args[0])
+	}
+
+	if !shellHeadInSet(analysis.Head, shellCommandPolicy.exploreHeads...) {
+		return fmt.Sprintf("%s is not an allowed explore-mode shell command", analysis.Head)
+	}
+
+	if !exploreInspectionArgsAreReadOnly(analysis.Head, analysis.Args) {
+		return fmt.Sprintf("%s arguments are not allowed in explore mode", analysis.Head)
+	}
+
+	return ""
+}
+
+func shellCommandActionClass(analysis ShellCommandAnalysis) autonomy.ActionClass {
+	if analysis.Verification != ShellVerificationNone {
+		return autonomy.ActionClassVerify
+	}
+	if analysis.SideEffect == autonomy.SideEffectReadOnly || analysis.ExploreAllowed {
+		return autonomy.ActionClassRead
+	}
+
+	return autonomy.ActionClassGenericProbe
 }
 
 func shellCommandBuildOrTest(command string) bool {
@@ -301,7 +315,7 @@ func readOnlyShellCommand(head string, args []string) bool {
 	case "git":
 		return readOnlyGitArgs(args)
 	case "go":
-		return len(args) > 0 && shellHeadInSet(args[0], "test", "build")
+		return readOnlyGoArgs(args)
 	case "make":
 		return len(args) > 0 && shellHeadInSet(args[0], "test", "build")
 	case "npm":
@@ -382,6 +396,26 @@ func pythonArgsAreTest(args []string) bool {
 	return false
 }
 
+func readOnlyGoArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+
+	switch args[0] {
+	case "test", "build", "list":
+		return true
+	case "env":
+		for _, arg := range args[1:] {
+			if arg == "-w" || arg == "-u" {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func readOnlyGitArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -391,16 +425,81 @@ func readOnlyGitArgs(args []string) bool {
 	case "status":
 		return true
 	case "diff":
-		for _, arg := range args[1:] {
-			if arg == "--output" || strings.HasPrefix(arg, "--output=") {
-				return false
-			}
-		}
-
+		return !gitDiffArgsWriteOutput(args[1:])
+	case "log", "show", "grep", "rev-parse":
 		return true
+	case "branch":
+		return readOnlyGitBranchArgs(args[1:])
 	default:
 		return false
 	}
+}
+
+func gitDiffArgsWriteOutput(args []string) bool {
+	for _, arg := range args {
+		if arg == "--output" || strings.HasPrefix(arg, "--output=") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func readOnlyGitBranchArgs(args []string) bool {
+	for _, arg := range args {
+		if arg == "" {
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return false
+		}
+		switch arg {
+		case "-d", "-D", "-m", "-M", "-c", "-C":
+			return false
+		}
+		if strings.HasPrefix(arg, "--delete") ||
+			strings.HasPrefix(arg, "--move") ||
+			strings.HasPrefix(arg, "--copy") ||
+			strings.HasPrefix(arg, "--set-upstream-to") ||
+			strings.HasPrefix(arg, "--unset-upstream") ||
+			strings.HasPrefix(arg, "--edit-description") {
+
+			return false
+		}
+	}
+
+	return true
+}
+
+func exploreInspectionArgsAreReadOnly(head string, args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--output") {
+			return false
+		}
+	}
+
+	switch head {
+	case "find":
+		for _, arg := range args {
+			if shellHeadInSet(arg, "-delete", "-exec", "-execdir", "-ok", "-okdir") {
+				return false
+			}
+		}
+	case "sed":
+		for _, arg := range args {
+			if arg == "-i" || strings.HasPrefix(arg, "-i.") || strings.HasPrefix(arg, "-i'") || strings.HasPrefix(arg, `-i"`) {
+				return false
+			}
+		}
+	case "tree":
+		for _, arg := range args {
+			if arg == "-o" {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func shellHeadInSet(value string, candidates ...string) bool {

@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -1516,14 +1517,45 @@ func TestExploreShellClassificationAndValidation(t *testing.T) {
 		t.Fatal("expected rg shell command to be narrowing")
 	}
 
-	if err := validateExploreShellCommand("git status --short"); err != nil {
-		t.Fatalf("expected git status to be allowed: %v", err)
+	if analysis := AnalyzeShellCommand("git status --short"); !analysis.ExploreAllowed {
+		t.Fatalf("expected git status to be allowed: %#v", analysis)
 	}
 
-	for _, command := range []string{"git checkout main", "python3 script.py", "rg TODO > out.txt", "cat $(pwd)"} {
-		if err := validateExploreShellCommand(command); err == nil {
-			t.Fatalf("expected command %q to be rejected", command)
+	for _, command := range []string{"git checkout main", "git diff --output=report.txt", "git diff --output report.txt", "python3 script.py", "rg TODO > out.txt", "cat $(pwd)"} {
+		if analysis := AnalyzeShellCommand(command); analysis.ExploreAllowed {
+			t.Fatalf("expected command %q to be rejected: %#v", command, analysis)
 		}
+	}
+}
+
+func TestExploreShellRejectsWriteCapableGitDiffBeforeExecution(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"left.txt":  "left\n",
+		"right.txt": "right\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", name, err)
+		}
+	}
+
+	mgr := NewManager(config.Workspace{
+		Root:        dir,
+		CWD:         dir,
+		Shell:       "/bin/sh",
+		EnableShell: true,
+	})
+	if err := mgr.SetMode(ModeExplore); err != nil {
+		t.Fatalf("SetMode: %v", err)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: ToolNameShell, Command: "git diff --no-index --output=report.txt left.txt right.txt"})
+	if result.Error == "" || !strings.Contains(result.Error, "explore mode only allows read-only inspection shell commands") {
+		t.Fatalf("expected explore shell rejection, got %#v", result)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "report.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write-capable git diff should not create report.txt before rejection; stat err=%v", err)
 	}
 }
 

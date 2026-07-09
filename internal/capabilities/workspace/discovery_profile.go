@@ -85,76 +85,25 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 }
 
 func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
-	routed := req
-
-	routed.Tool = ToolNameCodeNavigate
-
-	switch normalizeReadOnlyCapabilityID(req.Capability) {
-	case string(ReadOnlyCapabilityFileOutline):
-		routed.Capability = string(semanticlanguage.CapFileOutline)
-	case string(ReadOnlyCapabilityInspectSymbol):
-		routed.Capability = string(semanticlanguage.CapReadSymbol)
-	case string(ReadOnlyCapabilitySymbolLookup):
-		routed.Capability = string(semanticlanguage.CapFindSymbol)
-	case string(ReadOnlyCapabilityDefinition):
-		routed.Capability = string(semanticlanguage.CapDefinition)
-	case string(ReadOnlyCapabilityReferences):
-		routed.Capability = string(semanticlanguage.CapReferences)
-	case string(ReadOnlyCapabilityCallsFrom):
-		routed.Capability = string(semanticlanguage.CapCallsFrom)
-	case string(ReadOnlyCapabilityCallsInto):
-		routed.Capability = string(semanticlanguage.CapCallsInto)
-	case string(ReadOnlyCapabilityRelatedFiles):
-		routed.Capability = string(semanticlanguage.CapRelatedFiles)
-	default:
-		return discoveryProfile(ToolNameReadOnlyCapability, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
+	if entry, ok := readOnlyLanguageCapabilityEntryFor(req.Capability); ok && len(entry.Capabilities) > 0 {
+		routed := req
+		routed.Tool = ToolNameCodeNavigate
+		routed.Capability = string(entry.Capabilities[0])
+		return codeNavigationDiscoveryProfile(routed)
 	}
 
-	return codeNavigationDiscoveryProfile(routed)
+	return discoveryProfile(ToolNameReadOnlyCapability, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
 }
 
 func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	class := "language_symbol"
 	cost := "low"
-
-	switch normalizeCodeNavigationCapability(req.Capability) {
-	case string(semanticlanguage.CapDefinition), string(semanticlanguage.CapReferences), string(semanticlanguage.CapCallsFrom), string(semanticlanguage.CapCallsInto), string(semanticlanguage.CapImplementations), string(semanticlanguage.CapRelatedFiles):
-		class = "language_relationship"
-		cost = "medium"
+	if spec, err := languagetools.CodeNavigationSpecFor(req.Capability); err == nil {
+		class = spec.Class
+		cost = spec.Cost
 	}
 
 	return discoveryProfile(class, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), cost, true)
-}
-
-func normalizeCodeNavigationCapability(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, "-", "_")
-	value = strings.ReplaceAll(value, " ", "_")
-
-	switch value {
-	case "outline":
-		return string(semanticlanguage.CapFileOutline)
-	case "symbol", "symbol_lookup", "lookup":
-		return string(semanticlanguage.CapFindSymbol)
-	case "workspace_symbols", "find_symbol_workspace":
-		return string(semanticlanguage.CapWorkspaceSymbol)
-	case "inspect_symbol", "symbol_body":
-		return string(semanticlanguage.CapReadSymbol)
-	case "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition":
-		return string(semanticlanguage.CapDefinition)
-	case "reference", "usages", "find_references", "find_reference":
-		return string(semanticlanguage.CapReferences)
-	case "callees":
-		return string(semanticlanguage.CapCallsFrom)
-	case "callers":
-		return string(semanticlanguage.CapCallsInto)
-	case "implementation", "impls":
-		return string(semanticlanguage.CapImplementations)
-	case "related":
-		return string(semanticlanguage.CapRelatedFiles)
-	default:
-		return value
-	}
 }
 
 func discoveryProfile(class string, scope string, cost string, generic bool) ToolDiscoveryProfile {

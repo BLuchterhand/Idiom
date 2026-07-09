@@ -20,6 +20,7 @@ func TestDiscoveryProfileClassifiesGenericToolsForBalance(t *testing.T) {
 		{name: "read-only inspect symbol capability", req: ToolRequest{Tool: "read_only_capability", Capability: "inspect-symbol", Path: "src/app.cpp", Pattern: "Run"}, wantClass: "language_symbol", wantScope: "targeted", wantCost: "low"},
 		{name: "read-only calls-from capability", req: ToolRequest{Tool: "read_only_capability", Capability: "calls-from", Path: "src/app.cpp", Pattern: "Run"}, wantClass: "language_relationship", wantScope: "targeted", wantCost: "medium"},
 		{name: "read-only calls-into capability", req: ToolRequest{Tool: "read_only_capability", Capability: "calls-into", Path: "src/app.cpp", Pattern: "Run"}, wantClass: "language_relationship", wantScope: "targeted", wantCost: "medium"},
+		{name: "read-only implementations capability", req: ToolRequest{Tool: "read_only_capability", Capability: "find-implementations", Path: "src/app.cpp", Pattern: "Run"}, wantClass: "language_relationship", wantScope: "targeted", wantCost: "medium"},
 		{name: "source sanity", req: ToolRequest{Tool: "source_sanity", Path: "src/app.cpp"}, wantClass: "diagnostics", wantScope: "targeted", wantCost: "medium"},
 		{name: "structural", req: ToolRequest{Tool: "structural_search", Path: "internal", Pattern: "if $X { $Y }"}, wantClass: "ast_search", wantScope: "targeted", wantCost: "medium"},
 		{name: "dependency root", req: ToolRequest{Tool: "dependency_graph", Path: "."}, wantClass: "dependency_graph", wantScope: "broad", wantCost: "medium"},

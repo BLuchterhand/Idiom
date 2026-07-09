@@ -123,11 +123,12 @@ func (m *Manager) captureWorkspaceShell(ctx context.Context, req ToolRequest, to
 		return workspaceShellExecution{}, toolInvalidArgumentResult(tool, workspaceShellRejectedSummary(tool), "directory changes inside shell commands do not persist; set workdir or include the command to run in that directory"), false
 	}
 
+	analysis := AnalyzeShellCommand(command)
 	if m.Mode() == ModeExplore {
-		if err := validateExploreShellCommand(command); err != nil {
-			message := "explore mode only allows read-only inspection shell commands: " + err.Error()
+		if !analysis.ExploreAllowed {
+			message := "explore mode only allows read-only inspection shell commands: " + analysis.ExploreRejection
 			if tool == ToolNameContextTracePack {
-				message = "explore mode only allows read-only inspection commands: " + err.Error()
+				message = "explore mode only allows read-only inspection commands: " + analysis.ExploreRejection
 			}
 
 			return workspaceShellExecution{}, toolPermissionPolicyResult(tool, workspaceShellRejectedSummary(tool), message), false

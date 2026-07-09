@@ -221,6 +221,27 @@ func TestAnalyzeShellCommandDetectsVerificationFamilies(t *testing.T) {
 	}
 }
 
+func TestToolRequestActionClassUsesShellVerificationFacts(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    autonomy.ActionClass
+	}{
+		{name: "verification", command: "go test ./internal/capabilities/workspace", want: autonomy.ActionClassVerify},
+		{name: "read only inspection", command: "git status --short", want: autonomy.ActionClassRead},
+		{name: "write capable git diff is only a probe", command: "git diff --output=report.txt", want: autonomy.ActionClassGenericProbe},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ToolRequest{Tool: ToolNameShell, Command: tt.command}
+			if got := ToolRequestActionClass(req); got != tt.want {
+				t.Fatalf("ToolRequestActionClass(%#v) = %q, want %q", req, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestWorkbranchChildShellPolicyProjectsAnalysisOwnedFamilies(t *testing.T) {
 	policy := WorkbranchChildShellPolicy([]string{
 		"git_push",

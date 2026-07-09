@@ -5623,80 +5623,40 @@ func renderWorkbranchChildOutput(checkout Checkout, diff Diff, answer string) st
 }
 
 func readOnlyChildTaskPermissionPolicy() toolpolicy.Policy {
-	allowTool := func(tool string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Allow}
-	}
-	allowShellPrefix := func(prefix string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Allow}
-	}
-	denyShellContains := func(value string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandContains: value, Decision: toolpolicy.Deny}
-	}
-	shellPolicy := workspace.ReadOnlyChildShellPolicy()
-	rules := make([]toolpolicy.Rule, 0, len(childAllowedTools())+len(shellPolicy.AllowedPrefixes)+len(shellPolicy.DeniedFragments))
-
-	for _, tool := range childAllowedTools() {
-		if tool == workspace.ToolNameShell {
-			continue
-		}
-
-		rules = append(rules, allowTool(tool))
-	}
-
-	for _, prefix := range shellPolicy.AllowedPrefixes {
-		rules = append(rules, allowShellPrefix(prefix))
-	}
-
-	for _, value := range shellPolicy.DeniedFragments {
-		rules = append(rules, denyShellContains(value))
-	}
-
-	return toolpolicy.Policy{
-		Default: toolpolicy.Deny,
-		Rules:   rules,
-	}
+	return childTaskPermissionPolicy(childAllowedTools(), workspace.ReadOnlyChildShellPolicy())
 }
 
 func workbranchChildTaskPermissionPolicy() toolpolicy.Policy {
-	allowTool := func(tool string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Allow}
-	}
-	allowShellPrefix := func(prefix string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Allow}
-	}
-	deny := func(tool string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Deny}
-	}
-	denyShellPrefix := func(prefix string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Deny}
-	}
-	denyShellContains := func(value string) toolpolicy.Rule {
-		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandContains: value, Decision: toolpolicy.Deny}
-	}
 	spec := workerruntime.RoleSpecFor("child_write")
-	shellPolicy := workspace.WorkbranchChildShellPolicy(spec.ForbiddenTools)
-	rules := make([]toolpolicy.Rule, 0, len(spec.AllowedTools)+len(shellPolicy.AllowedPrefixes)+len(shellPolicy.DeniedPrefixes)+len(shellPolicy.DeniedFragments)+2)
+	return childTaskPermissionPolicy(spec.AllowedTools, workspace.WorkbranchChildShellPolicy(spec.ForbiddenTools), workspace.ToolNameTask)
+}
 
-	for _, tool := range spec.AllowedTools {
+func childTaskPermissionPolicy(allowedTools []string, shellPolicy workspace.ChildShellPolicy, deniedTools ...string) toolpolicy.Policy {
+	rules := make([]toolpolicy.Rule, 0, len(allowedTools)+len(shellPolicy.AllowedPrefixes)+len(shellPolicy.DeniedPrefixes)+len(shellPolicy.DeniedFragments)+len(deniedTools))
+
+	for _, tool := range allowedTools {
 		tool = strings.TrimSpace(tool)
-		if tool == "" || tool == workspace.ToolNameTask || tool == workspace.ToolNameShell {
+		if tool == "" || tool == workspace.ToolNameShell {
 			continue
 		}
 
-		rules = append(rules, allowTool(tool))
+		rules = append(rules, toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Allow})
 	}
 
 	for _, prefix := range shellPolicy.AllowedPrefixes {
-		rules = append(rules, allowShellPrefix(prefix))
+		rules = append(rules, toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Allow})
 	}
 
-	rules = append(rules, deny(workspace.ToolNameTask))
+	for _, tool := range deniedTools {
+		rules = append(rules, toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Deny})
+	}
+
 	for _, prefix := range shellPolicy.DeniedPrefixes {
-		rules = append(rules, denyShellPrefix(prefix))
+		rules = append(rules, toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Deny})
 	}
 
 	for _, value := range shellPolicy.DeniedFragments {
-		rules = append(rules, denyShellContains(value))
+		rules = append(rules, toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandContains: value, Decision: toolpolicy.Deny})
 	}
 
 	return toolpolicy.Policy{

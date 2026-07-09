@@ -139,6 +139,14 @@ planner-allowed filtering to workspace-owned tool-surface metadata. Symbolic
 workspace, so workerruntime no longer owns tool taxonomy while the agent still
 preserves symbolic history, edit, verification, and bounded-evidence
 requirements when compiling model protocol.
+Shell command meaning now lives in workspace shell analysis for explore-mode
+acceptance, read-only side-effect facts, verification/action class projection,
+and write-capable `git diff --output` rejection. Runtime child task policies
+share one projection from workspace shell policy into generic toolpolicy rules.
+Language-backed read-only capability registry, runtime routing, evidence
+capabilities, and discovery profiling now project from a workspace catalog and
+the semantic `languagetools` code-navigation spec instead of separate
+read-only/code-navigation switches.
 
 ### 5. Product Workflow Projection
 

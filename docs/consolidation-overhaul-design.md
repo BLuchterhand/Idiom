@@ -1293,6 +1293,31 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `git diff --check`.
+- Workspace shell command authority and read-only language capability projection
+  are strengthened. `AnalyzeShellCommand` now owns explore-mode shell
+  acceptance/rejection, shell request action class, read-only git/go command
+  facts, and write-capable `git diff --output` detection; explore-mode shell
+  execution and autonomy action classification consume that single analysis
+  rather than keeping separate subcommand/action heuristics. Runtime child task
+  permission policies now use one policy builder for workspace shell-policy
+  projection instead of duplicating shell allow/deny rule construction.
+  Read-only language-backed capability registry rows, runtime-routed checks,
+  evidence-capability projection, and discovery profiles now project from one
+  workspace catalog and `languagetools.CodeNavigationSpecFor`, deleting the
+  workspace-local code-navigation normalizer and fixing the
+  `read_only_capability/find-implementations` profile drift. Production Go
+  changed `+299 / -305`, net `-6`; tests changed `+59 / -5`, net `+54`.
+  Focused verification:
+  `go test ./internal/capabilities/workspace ./internal/runtime/agent ./internal/contracts/toolpolicy -count=1`.
+  Broad verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`. Reviewer-backed next candidates remain larger than this
+  slice: read-only packet vs answerability ledger authority, tool-result
+  evidence projection vs consumer reclassification, mutation verification
+  ledger consolidation, and deletion of hidden deferred read-only capability
+  facades where tests only preserve stale compatibility.
 
 ## Review And Regression Protocol
 

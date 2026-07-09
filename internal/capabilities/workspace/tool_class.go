@@ -125,11 +125,7 @@ func ToolRequestActionClass(req ToolRequest) autonomy.ActionClass {
 	tool := strings.TrimSpace(req.Tool)
 	switch tool {
 	case ToolNameShell:
-		if AnalyzeShellCommand(req.Command).SideEffect == autonomy.SideEffectReadOnly {
-			return autonomy.ActionClassVerify
-		}
-
-		return autonomy.ActionClassGenericProbe
+		return AnalyzeShellCommand(req.Command).ActionClass
 	case ToolNameTask:
 		return autonomy.ActionClassDelegate
 	case ToolNameListFiles:

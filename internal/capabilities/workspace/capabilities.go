@@ -73,6 +73,60 @@ const (
 	ReadOnlyCapabilityVerifyEdit      ReadOnlyCapabilityID = "verify-edit"
 )
 
+type readOnlyLanguageCapabilityEntry struct {
+	ID           ReadOnlyCapabilityID
+	Description  string
+	Capabilities []semanticlanguage.Capability
+}
+
+var readOnlyLanguageCapabilityCatalog = []readOnlyLanguageCapabilityEntry{
+	{
+		ID:           ReadOnlyCapabilityFileOutline,
+		Description:  "Return declaration or structural outline evidence for one source file.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapFileOutline},
+	},
+	{
+		ID:           ReadOnlyCapabilityInspectSymbol,
+		Description:  "Read a symbol body or exact symbol range after anchoring.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapReadSymbol},
+	},
+	{
+		ID:           ReadOnlyCapabilitySymbolLookup,
+		Description:  "Find candidate symbols by name or pattern without reading or changing source.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapFindSymbol, semanticlanguage.CapWorkspaceSymbol},
+	},
+	{
+		ID:           ReadOnlyCapabilityDefinition,
+		Description:  "Locate definition evidence for a named symbol.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapDefinition},
+	},
+	{
+		ID:           ReadOnlyCapabilityReferences,
+		Description:  "Locate reference or usage evidence for a named symbol.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapReferences},
+	},
+	{
+		ID:           ReadOnlyCapabilityImplementations,
+		Description:  "Locate implementation evidence for an interface, trait, method, or abstract symbol.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapImplementations},
+	},
+	{
+		ID:           ReadOnlyCapabilityCallsFrom,
+		Description:  "Locate outgoing call evidence from a named symbol.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapCallsFrom},
+	},
+	{
+		ID:           ReadOnlyCapabilityCallsInto,
+		Description:  "Locate incoming call evidence for a named symbol.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapCallsInto},
+	},
+	{
+		ID:           ReadOnlyCapabilityRelatedFiles,
+		Description:  "Find files related to a symbol, file, or implementation topic.",
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapRelatedFiles},
+	},
+}
+
 type ReadOnlyCapabilityRegistry struct {
 	SchemaVersion          string                   `json:"schema_version"`
 	ResolverRuntimeEnabled bool                     `json:"resolver_runtime_enabled"`
@@ -282,29 +336,19 @@ func CodeNavigationEvidenceCapabilities() []string {
 }
 
 func ReadOnlyCapabilityEvidenceCapability(capability string) string {
+	if entry, ok := readOnlyLanguageCapabilityEntryFor(capability); ok {
+		for _, capability := range entry.Capabilities {
+			if evidence := evidenceCapabilityForLanguageCapability(capability); evidence != "" {
+				return evidence
+			}
+		}
+	}
+
 	switch normalizeReadOnlyCapabilityID(capability) {
 	case string(ReadOnlyCapabilityLocalizeChange):
 		return EvidenceCapabilityLocalizeChange
 	case string(ReadOnlyCapabilityQueryContext):
 		return EvidenceCapabilityQueryContext
-	case string(ReadOnlyCapabilityFileOutline):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapFileOutline)
-	case string(ReadOnlyCapabilityInspectSymbol):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapReadSymbol)
-	case string(ReadOnlyCapabilitySymbolLookup):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapFindSymbol)
-	case string(ReadOnlyCapabilityDefinition):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapDefinition)
-	case string(ReadOnlyCapabilityReferences):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapReferences)
-	case string(ReadOnlyCapabilityImplementations):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapImplementations)
-	case string(ReadOnlyCapabilityCallsFrom):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapCallsFrom)
-	case string(ReadOnlyCapabilityCallsInto):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapCallsInto)
-	case string(ReadOnlyCapabilityRelatedFiles):
-		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapRelatedFiles)
 	case string(ReadOnlyCapabilitySourceSanity):
 		return EvidenceCapabilitySourceSanity
 	case string(ReadOnlyCapabilityTraceRuntime):
@@ -319,116 +363,46 @@ func ReadOnlyCapabilityEvidenceCapability(capability string) string {
 }
 
 func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
+	capabilities := []ReadOnlyCapabilitySpec{
+		readOnlyCapability(
+			ReadOnlyCapabilityLocalizeChange,
+			"Localize candidate files, symbols, and tests for a change without choosing the model's strategy.",
+			[]ReadOnlyCapabilityAdapterSpec{
+				readOnlyAdapter(ToolNameContextPack, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+				readOnlyAdapter(ToolNameContextQuery, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+				readOnlyAdapter(ToolNameContextZoom, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+				readOnlyAdapter(ToolNameContextStatus, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+				readOnlyAdapter(ToolNameContextImpact, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+				readOnlyAdapter(ToolNameDiscoveryQuery, EvidenceCapabilityLocalizeChange, "", "discovery_orchestrator"),
+			},
+		),
+		readOnlyCapability(
+			ReadOnlyCapabilityQueryContext,
+			"Ask a graph-shaped question over indexed context without directly inspecting source.",
+			[]ReadOnlyCapabilityAdapterSpec{
+				readOnlyAdapter(ToolNameContextQuery, EvidenceCapabilityQueryContext, "", "context_graph"),
+				readOnlyAdapter(ToolNameContextZoom, EvidenceCapabilityQueryContext, "", "context_graph"),
+				readOnlyAdapter(ToolNameContextStatus, EvidenceCapabilityQueryContext, "", "context_graph"),
+			},
+		),
+	}
+	for _, entry := range readOnlyLanguageCapabilityCatalog {
+		capabilities = append(capabilities, readOnlyCapability(entry.ID, entry.Description, readOnlyLanguageCapabilityAdapters(entry.Capabilities)))
+	}
+	capabilities = append(capabilities, readOnlyCapability(
+		ReadOnlyCapabilityAuditBehavior,
+		"Inspect harness behavior, tool surface, backend, and cache status without mutating source.",
+		[]ReadOnlyCapabilityAdapterSpec{
+			readOnlyAdapter(ToolNameHarnessAudit, EvidenceCapabilityAuditBehavior, "", ToolNameHarnessAudit),
+		},
+	))
+
 	return ReadOnlyCapabilityRegistry{
 		SchemaVersion:          readOnlyCapabilitySchemaVersion,
 		ResolverRuntimeEnabled: readOnlyCapabilityResolverRuntimeEnabled(),
 		PublicStatusEnabled:    readOnlyCapabilityPublicStatusEnabled(),
 		DirectToolFallback:     true,
-		Capabilities: []ReadOnlyCapabilitySpec{
-			readOnlyCapability(
-				ReadOnlyCapabilityLocalizeChange,
-				"Localize candidate files, symbols, and tests for a change without choosing the model's strategy.",
-				[]ReadOnlyCapabilityAdapterSpec{
-					readOnlyAdapter(ToolNameContextPack, EvidenceCapabilityLocalizeChange, "", "context_graph"),
-					readOnlyAdapter(ToolNameContextQuery, EvidenceCapabilityLocalizeChange, "", "context_graph"),
-					readOnlyAdapter(ToolNameContextZoom, EvidenceCapabilityLocalizeChange, "", "context_graph"),
-					readOnlyAdapter(ToolNameContextStatus, EvidenceCapabilityLocalizeChange, "", "context_graph"),
-					readOnlyAdapter(ToolNameContextImpact, EvidenceCapabilityLocalizeChange, "", "context_graph"),
-					readOnlyAdapter(ToolNameDiscoveryQuery, EvidenceCapabilityLocalizeChange, "", "discovery_orchestrator"),
-				},
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityQueryContext,
-				"Ask a graph-shaped question over indexed context without directly inspecting source.",
-				[]ReadOnlyCapabilityAdapterSpec{
-					readOnlyAdapter(ToolNameContextQuery, EvidenceCapabilityQueryContext, "", "context_graph"),
-					readOnlyAdapter(ToolNameContextZoom, EvidenceCapabilityQueryContext, "", "context_graph"),
-					readOnlyAdapter(ToolNameContextStatus, EvidenceCapabilityQueryContext, "", "context_graph"),
-				},
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityFileOutline,
-				"Return declaration or structural outline evidence for one source file.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapFileOutline)},
-					languageCapabilityAdapters(semanticlanguage.CapFileOutline)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityInspectSymbol,
-				"Read a symbol body or exact symbol range after anchoring.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapReadSymbol)},
-					languageCapabilityAdapters(semanticlanguage.CapReadSymbol)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilitySymbolLookup,
-				"Find candidate symbols by name or pattern without reading or changing source.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{
-						codeNavigateCapabilityAdapter(semanticlanguage.CapFindSymbol),
-						codeNavigateCapabilityAdapter(semanticlanguage.CapWorkspaceSymbol),
-					},
-					append(languageCapabilityAdapters(semanticlanguage.CapFindSymbol), languageCapabilityAdapters(semanticlanguage.CapWorkspaceSymbol)...)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityDefinition,
-				"Locate definition evidence for a named symbol.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapDefinition)},
-					languageCapabilityAdapters(semanticlanguage.CapDefinition)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityReferences,
-				"Locate reference or usage evidence for a named symbol.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapReferences)},
-					languageCapabilityAdapters(semanticlanguage.CapReferences)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityImplementations,
-				"Locate implementation evidence for an interface, trait, method, or abstract symbol.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapImplementations)},
-					languageCapabilityAdapters(semanticlanguage.CapImplementations)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityCallsFrom,
-				"Locate outgoing call evidence from a named symbol.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapCallsFrom)},
-					languageCapabilityAdapters(semanticlanguage.CapCallsFrom)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityCallsInto,
-				"Locate incoming call evidence for a named symbol.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapCallsInto)},
-					languageCapabilityAdapters(semanticlanguage.CapCallsInto)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityRelatedFiles,
-				"Find files related to a symbol, file, or implementation topic.",
-				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapRelatedFiles)},
-					languageCapabilityAdapters(semanticlanguage.CapRelatedFiles)...,
-				),
-			),
-			readOnlyCapability(
-				ReadOnlyCapabilityAuditBehavior,
-				"Inspect harness behavior, tool surface, backend, and cache status without mutating source.",
-				[]ReadOnlyCapabilityAdapterSpec{
-					readOnlyAdapter(ToolNameHarnessAudit, EvidenceCapabilityAuditBehavior, "", ToolNameHarnessAudit),
-				},
-			),
-		},
+		Capabilities:           capabilities,
 	}
 }
 
@@ -1513,19 +1487,11 @@ func isReadOnlyCapabilityRuntimeRouted(id string) bool {
 	switch normalizeReadOnlyCapabilityID(id) {
 	case string(ReadOnlyCapabilityLocalizeChange),
 		string(ReadOnlyCapabilityQueryContext),
-		string(ReadOnlyCapabilityFileOutline),
-		string(ReadOnlyCapabilityInspectSymbol),
-		string(ReadOnlyCapabilitySymbolLookup),
-		string(ReadOnlyCapabilityDefinition),
-		string(ReadOnlyCapabilityReferences),
-		string(ReadOnlyCapabilityImplementations),
-		string(ReadOnlyCapabilityCallsFrom),
-		string(ReadOnlyCapabilityCallsInto),
-		string(ReadOnlyCapabilityRelatedFiles),
 		string(ReadOnlyCapabilityAuditBehavior):
 		return true
 	default:
-		return false
+		_, ok := readOnlyLanguageCapabilityEntryFor(id)
+		return ok
 	}
 }
 
@@ -1595,6 +1561,29 @@ func readOnlyCapability(id ReadOnlyCapabilityID, description string, adapters []
 
 func codeNavigateCapabilityAdapter(cap semanticlanguage.Capability) ReadOnlyCapabilityAdapterSpec {
 	return readOnlyAdapter(ToolNameCodeNavigate, string(cap), "", "capability_router")
+}
+
+func readOnlyLanguageCapabilityEntryFor(id string) (readOnlyLanguageCapabilityEntry, bool) {
+	want := normalizeReadOnlyCapabilityID(id)
+	for _, entry := range readOnlyLanguageCapabilityCatalog {
+		if string(entry.ID) == want {
+			return entry, true
+		}
+	}
+
+	return readOnlyLanguageCapabilityEntry{}, false
+}
+
+func readOnlyLanguageCapabilityAdapters(capabilities []semanticlanguage.Capability) []ReadOnlyCapabilityAdapterSpec {
+	var adapters []ReadOnlyCapabilityAdapterSpec
+	for _, capability := range capabilities {
+		adapters = append(adapters, codeNavigateCapabilityAdapter(capability))
+	}
+	for _, capability := range capabilities {
+		adapters = append(adapters, languageCapabilityAdapters(capability)...)
+	}
+
+	return adapters
 }
 
 func languageCapabilityAdapters(cap semanticlanguage.Capability) []ReadOnlyCapabilityAdapterSpec {
