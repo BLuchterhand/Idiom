@@ -34294,7 +34294,7 @@ func TestExactProbeObservationsDoNotInferChildRuntimeSemantics(t *testing.T) {
 		"12:\tRuntimeBriefForRole(\"read_only_child\")",
 		"13:\treadOnlyChildTaskPermissionPolicy()",
 		"14:\tchild.Run(ctx, request)",
-		"15:\taugmentDelegatedReadOnlyPacket(packet)",
+		"15:\tbuildReadOnlyEvidencePacket(prompt, answer, childResults)",
 		"16:}",
 	}, "\n")
 

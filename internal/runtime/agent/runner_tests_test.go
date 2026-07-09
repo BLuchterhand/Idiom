@@ -12144,7 +12144,7 @@ func TestForcedCompletionModelOwnedAnswerForReadOnlyArchitecture(t *testing.T) {
 			{
 				Tool:    "go_read_symbol",
 				Summary: "Read Runner.runChildTask in internal/runtime/agent/implementation_flow.go lines 16-132",
-				Output:  "func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {\n\tprompt = normalizeReadOnlyChildPrompt(prompt)\n\tprompt = r.augmentReadOnlyChildPrompt(prompt)\n\tchild := &Runner{\n\t\tClient: r.Client,\n\t\tWorkspace: r.Workspace,\n\t\tPolicy: childPolicy,\n\t\tAgentName: \"child:\" + agentName,\n\t\tPermissionPolicy: readOnlyChildTaskPermissionPolicy(),\n\t\tDisableTaskTool: true,\n\t}\n\tanswer, err := child.Run(ctx, []llama.ChatMessage{{Role: \"user\", Content: prompt}}, opts, nil, nil, nil)\n\tanswer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)\n\treturn workspace.ToolResult{Tool: \"task\", Summary: \"Child task completed\", Output: strings.TrimSpace(answer)}\n}\n",
+				Output:  "func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {\n\tprompt = normalizeReadOnlyChildPrompt(prompt)\n\tprompt = r.augmentReadOnlyChildPrompt(prompt)\n\tchild := &Runner{\n\t\tClient: r.Client,\n\t\tWorkspace: r.Workspace,\n\t\tPolicy: childPolicy,\n\t\tAgentName: \"child:\" + agentName,\n\t\tPermissionPolicy: readOnlyChildTaskPermissionPolicy(),\n\t\tDisableTaskTool: true,\n\t}\n\tanswer, err := child.Run(ctx, []llama.ChatMessage{{Role: \"user\", Content: prompt}}, opts, nil, nil, nil)\n\treturn workspace.ToolResult{Tool: \"task\", Summary: \"Child task completed\", Output: strings.TrimSpace(answer)}\n}\n",
 			},
 		},
 		OnEvent: func(event RunEvent) {
@@ -27001,7 +27001,7 @@ func TestFinalAnswerDecoratorUsesExactProbeEvidenceOverRetainedScopeSummary(t *t
 		{
 			Tool:    "go_read_symbol",
 			Summary: "Read Runner.runChildTask in internal/runtime/agent/implementation_flow.go lines 16-132",
-			Output:  "func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {\n\tprompt = normalizeReadOnlyChildPrompt(prompt)\n\tprompt = r.augmentReadOnlyChildPrompt(prompt)\n\tchild := &Runner{\n\t\tClient: r.Client,\n\t\tWorkspace: r.Workspace,\n\t\tPolicy: childPolicy,\n\t\tPermissionPolicy: readOnlyChildTaskPermissionPolicy(),\n\t\tDisableTaskTool: true,\n\t}\n\tanswer, err := child.Run(ctx, []llama.ChatMessage{{Role: \"user\", Content: prompt}}, opts, nil, nil, nil)\n\tanswer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)\n\treturn workspace.ToolResult{Tool: \"task\", Summary: \"Child task completed\", Output: strings.TrimSpace(answer)}\n}\n",
+			Output:  "func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {\n\tprompt = normalizeReadOnlyChildPrompt(prompt)\n\tprompt = r.augmentReadOnlyChildPrompt(prompt)\n\tchild := &Runner{\n\t\tClient: r.Client,\n\t\tWorkspace: r.Workspace,\n\t\tPolicy: childPolicy,\n\t\tPermissionPolicy: readOnlyChildTaskPermissionPolicy(),\n\t\tDisableTaskTool: true,\n\t}\n\tanswer, err := child.Run(ctx, []llama.ChatMessage{{Role: \"user\", Content: prompt}}, opts, nil, nil, nil)\n\treturn workspace.ToolResult{Tool: \"task\", Summary: \"Child task completed\", Output: strings.TrimSpace(answer)}\n}\n",
 		},
 	}
 	answer := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
@@ -29025,31 +29025,38 @@ func TestEmitDelegatedReadOnlyAnswerReadyEventCanonicalizesEvidencePaths(t *test
 	}
 }
 
-func TestAugmentDelegatedReadOnlyPacketPreservesAdditionalPaths(t *testing.T) {
-	answer := "Question: Explain how subagents work.\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/runtime/agent/implementation_flow.go`\n"
+func TestReadOnlyEvidencePacketCarriesChildResultPathsWithoutAugmentation(t *testing.T) {
+	answer := "The child found the delegated runner flow."
 	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/runtime/agent/implementation_flow.go", 1, 40, 40, "package agent\nfunc runChildTask() {}\n"),
 		{
 			Tool:    "discovery_query",
 			Summary: "Ran architecture_boundary discovery query",
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read subagent flow","output_excerpt":"internal/runtime/agent/runner_core.go:648 runChildTask\ninternal/runtime/agent/implementation_flow.go:16 runChildTask\ninternal/runtime/agent/implementation_flow.go:18 Compose"}]}`,
 		},
 	}
-	augmented := augmentDelegatedReadOnlyPacket(answer, "Explain how subagents work.", results)
+	packet, ok := buildReadOnlyEvidencePacket("Explain how subagents work.", answer, results)
+	if !ok {
+		t.Fatal("expected typed packet from child results")
+	}
 
-	for _, want := range []string{
-		"Additional inspected paths:",
-		"`internal/runtime/agent/runner_core.go`",
-		"`internal/runtime/agent/implementation_flow.go`",
-		"Exact probes already inspected:",
-		"`runChildTask`",
-	} {
-		if !strings.Contains(augmented, want) {
-			t.Fatalf("expected augmented delegated packet to contain %q, got %q", want, augmented)
+	if !slices.Contains(packet.SourceBodyPaths, "internal/runtime/agent/implementation_flow.go") {
+		t.Fatalf("typed packet missed source-body path: %#v", packet.SourceBodyPaths)
+	}
+
+	if !slices.Contains(packet.CandidatePaths, "internal/runtime/agent/runner_core.go") {
+		t.Fatalf("typed packet missed discovery candidate path: %#v", packet.CandidatePaths)
+	}
+
+	rendered := renderReadOnlyEvidencePacketForToolOutput(packet, answer)
+	for _, want := range []string{"Source body paths:", "`internal/runtime/agent/implementation_flow.go`", "Candidate paths:", "`internal/runtime/agent/runner_core.go`"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered typed packet missing %q:\n%s", want, rendered)
 		}
 	}
 }
 
-func TestAugmentDelegatedReadOnlyPacketDoesNotInjectDiscoveryUsefulnessExpectedPaths(t *testing.T) {
+func TestReadOnlyEvidencePacketDoesNotInjectDiscoveryUsefulnessExpectedPaths(t *testing.T) {
 	answer := "For `What can we add to our discovery tools in an effort at increasing their overall usefulness?`, this is grounded in `internal/capabilities/workspace/discovery_query.go`, `internal/runtime/agent/runner_core.go`."
 	results := []workspace.ToolResult{
 		{
@@ -29058,20 +29065,22 @@ func TestAugmentDelegatedReadOnlyPacketDoesNotInjectDiscoveryUsefulnessExpectedP
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/capabilities/workspace/discovery_query.go:338: func runDiscoveryQuery\ninternal/runtime/agent/runner_core.go:648: runChildTask"}]}`,
 		},
 	}
-	augmented := augmentDelegatedReadOnlyPacket(answer, "What can we add to our discovery tools in an effort at increasing their overall usefulness?", results)
+	packet, ok := buildReadOnlyEvidencePacket("What can we add to our discovery tools in an effort at increasing their overall usefulness?", answer, results)
+	if !ok {
+		t.Fatal("expected typed packet from discovery result")
+	}
 
 	for _, forbidden := range []string{
-		"Additional inspected paths:",
-		"`internal/runtime/agent/implementation_flow.go`",
+		"internal/runtime/agent/implementation_flow.go",
 	} {
-		if strings.Contains(augmented, forbidden) {
-			t.Fatalf("discovery usefulness augmentation should not inject topic-specific path %q, got %q", forbidden, augmented)
+		if slices.Contains(packet.CandidatePaths, forbidden) {
+			t.Fatalf("typed packet should not inject topic-specific path %q, got %#v", forbidden, packet.CandidatePaths)
 		}
 	}
 
-	for _, want := range []string{"`internal/capabilities/workspace/discovery_query.go`", "`internal/runtime/agent/runner_core.go`"} {
-		if !strings.Contains(augmented, want) {
-			t.Fatalf("expected augmented discovery packet to preserve actual evidence path %q, got %q", want, augmented)
+	for _, want := range []string{"internal/capabilities/workspace/discovery_query.go", "internal/runtime/agent/runner_core.go"} {
+		if !slices.Contains(packet.CandidatePaths, want) {
+			t.Fatalf("expected typed packet to preserve actual evidence path %q, got %#v", want, packet.CandidatePaths)
 		}
 	}
 }

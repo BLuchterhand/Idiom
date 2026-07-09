@@ -5167,7 +5167,6 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		}
 	}
 
-	answer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)
 	answer = normalizeDelegatedReadOnlyPacket(answer)
 
 	result := workspace.ToolResult{
@@ -5904,93 +5903,6 @@ func wrapDelegateEditResult(result workspace.ToolResult, route string) workspace
 func allowsDocumentationOnlyPacket(objective string) bool {
 	lower := " " + strings.ToLower(strings.TrimSpace(objective)) + " "
 	return ContainsAny(lower, " readme ", " doc ", " docs ", " documentation ", " markdown ")
-}
-
-func augmentDelegatedReadOnlyPacket(answer string, objective string, results []workspace.ToolResult) string {
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		return ""
-	}
-
-	projection := newToolResultEvidenceProjection(results)
-	var sourceBodyPaths []string
-	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
-		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
-		sourceBodyPaths = append(sourceBodyPaths, decision.ReadinessSourcePaths...)
-	}
-	sourceBodyPaths = readOnlySourceLikePaths(sourceBodyPaths, 16)
-	paths := projection.delegatedClosureEvidencePaths(objective, 8)
-	mentioned := normalizePostChildEvidencePaths(pathparse.MentionedWorkspacePaths(answer))
-	missing := make([]string, 0, len(paths))
-	mentionedSet := make(map[string]struct{}, len(mentioned))
-
-	for _, path := range mentioned {
-		mentionedSet[path] = struct{}{}
-	}
-
-	for _, path := range paths {
-		if _, ok := mentionedSet[path]; ok {
-			continue
-		}
-
-		missing = append(missing, path)
-	}
-
-	candidates := projection.closureProbeCandidates(4)
-	missingCandidates := make([]string, 0, len(candidates))
-	lowerAnswer := strings.ToLower(answer)
-	hasSourceBodyEvidenceSection := strings.Contains(lowerAnswer, "source-body evidence paths:") ||
-		strings.Contains(lowerAnswer, "source body evidence paths:")
-
-	for _, candidate := range candidates {
-		if strings.Contains(lowerAnswer, strings.ToLower(candidate)) {
-			continue
-		}
-
-		missingCandidates = append(missingCandidates, candidate)
-	}
-
-	if len(missing) == 0 && len(missingCandidates) == 0 {
-		if len(sourceBodyPaths) == 0 || hasSourceBodyEvidenceSection {
-			return answer
-		}
-	}
-
-	var b strings.Builder
-
-	b.WriteString(answer)
-
-	if len(sourceBodyPaths) > 0 && !hasSourceBodyEvidenceSection {
-		b.WriteString("\n\nSource-body evidence paths:\n")
-
-		for _, path := range textutil.Prefix(sourceBodyPaths, 4) {
-			b.WriteString("- `")
-			b.WriteString(path)
-			b.WriteString("`\n")
-		}
-	}
-
-	if len(missing) > 0 {
-		b.WriteString("\n\nAdditional inspected paths:\n")
-
-		for _, path := range textutil.Prefix(missing, 4) {
-			b.WriteString("- `")
-			b.WriteString(path)
-			b.WriteString("`\n")
-		}
-	}
-
-	if len(missingCandidates) > 0 {
-		b.WriteString("\nExact probes already inspected:\n")
-
-		for _, candidate := range textutil.Prefix(missingCandidates, 3) {
-			b.WriteString("- `")
-			b.WriteString(candidate)
-			b.WriteString("`\n")
-		}
-	}
-
-	return strings.TrimSpace(b.String())
 }
 
 func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.ToolResult) (string, bool) {

@@ -1426,6 +1426,19 @@ Reviewer-updated estimate:
   producer facts for discovery/source-body evidence and removal of delegated
   read-only prose round-tripping once typed packets carry all child evidence
   authority.
+- Delegated read-only packet evidence no longer round-trips through appended
+  prose headings. `runChildTask` now builds the `ReadOnlyEvidencePacket`
+  directly from the child answer and child `ToolResult`s, then renders source
+  body and candidate paths from typed packet fields. The deleted
+  `augmentDelegatedReadOnlyPacket` helper had appended "Source-body evidence
+  paths", "Additional inspected paths", and "Exact probes already inspected"
+  sections to answer text so the later packet builder could parse them back.
+  Tests now assert typed packet construction from child results preserves
+  source-body paths and discovery candidate paths without injecting
+  topic-specific paths. Production Go changed `+0 / -88`, net `-88`; tests
+  changed `+33 / -24`, net `+9`. Focused verification:
+  `go test ./internal/runtime/agent -run 'TestReadOnlyEvidencePacket|TestBuildReadOnlyEvidencePacket|TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority|TestSynthesizeBriefConversationFallback|TestFinalAnswerDecoratorUsesExactProbeEvidenceOverRetainedScopeSummary|TestExactProbeObservationsDoNotInferChildRuntimeSemantics|TestForcedCompletionModelOwnedAnswerForReadOnlyArchitecture' -count=1`;
+  `go test ./internal/runtime/agent -count=1`; `git diff --check`.
 
 ## Review And Regression Protocol
 
