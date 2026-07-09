@@ -70,6 +70,94 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 	}
 }
 
+func TestNormalizeHostedToolsDisambiguatesSanitizedNameCollisions(t *testing.T) {
+	tools, reverse := normalizeHostedTools([]Tool{
+		{Type: "function", Function: ToolFunction{Name: "mcp:read/file"}},
+		{Type: "function", Function: ToolFunction{Name: "mcp_read/file"}},
+		{Type: "function", Function: ToolFunction{Name: "mcp_read_file_2"}},
+	})
+
+	got := []string{
+		tools[0].Function.Name,
+		tools[1].Function.Name,
+		tools[2].Function.Name,
+	}
+	want := []string{"mcp_read_file", "mcp_read_file_2", "mcp_read_file_2_2"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("normalized tool names = %v, want %v", got, want)
+		}
+		if reverse[got[i]] != []string{"mcp:read/file", "mcp_read/file", "mcp_read_file_2"}[i] {
+			t.Fatalf("reverse mapping for %q = %q", got[i], reverse[got[i]])
+		}
+	}
+}
+
+func TestCompleteChatKeepsToolNameMappingRequestScoped(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Tools []Tool `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Tools) != 1 {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+
+		arrived <- struct{}{}
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"message": map[string]any{
+					"role": "assistant",
+					"tool_calls": []any{map[string]any{
+						"id":   "call-1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      request.Tools[0].Function.Name,
+							"arguments": `{}`,
+						},
+					}},
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, 5*time.Second).WithBackend(config.BackendDeepSeek)
+	type result struct {
+		index   int
+		message ChatMessage
+		err     error
+	}
+	results := make(chan result, 2)
+	originalNames := []string{"mcp:first/tool", "mcp:second/tool"}
+	for index, name := range originalNames {
+		go func() {
+			message, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+				Model: "deepseek-chat",
+				Tools: []Tool{{Type: "function", Function: ToolFunction{Name: name}}},
+			})
+			results <- result{index: index, message: message, err: err}
+		}()
+	}
+
+	<-arrived
+	<-arrived
+	close(release)
+	for range originalNames {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("request %d failed: %v", got.index, got.err)
+		}
+		if len(got.message.ToolCalls) != 1 || got.message.ToolCalls[0].Function.Name != originalNames[got.index] {
+			t.Fatalf("request %d tool calls = %#v, want name %q", got.index, got.message.ToolCalls, originalNames[got.index])
+		}
+	}
+}
+
 func TestCompleteChatParsesHostedCacheUsageAndReasoningTokens(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":13,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":5,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":2},"total_tokens":16}}`))

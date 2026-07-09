@@ -25,7 +25,6 @@ type Client struct {
 	apiKeyEnv       string
 	reasoningEffort string
 	verbosity       string
-	toolNameReverse map[string]string
 	http            *http.Client
 }
 
@@ -472,10 +471,21 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 
 	reverse := make(map[string]string)
 	normalized := make([]Tool, len(tools))
+	usedNames := make(map[string]string, len(tools))
 
 	for i, t := range tools {
 		orig := t.Function.Name
 		sanitized := hostedToolNameReplacer.Replace(orig)
+		if prior, collision := usedNames[sanitized]; collision && prior != orig {
+			base := sanitized
+			for suffix := 2; ; suffix++ {
+				sanitized = fmt.Sprintf("%s_%d", base, suffix)
+				if _, exists := usedNames[sanitized]; !exists {
+					break
+				}
+			}
+		}
+		usedNames[sanitized] = orig
 
 		if sanitized != orig {
 			reverse[sanitized] = orig
@@ -589,7 +599,6 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 	}
 
 	prepared := chatAdapter.ChatCompletionsPayload(messages, opts, true, c.requestSettings())
-	c.toolNameReverse = prepared.ToolNameReverse
 	payload := prepared.Body
 
 	data, err := json.Marshal(payload)
@@ -910,7 +919,7 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 	return ChatMessage{
 		Role:      role,
 		Content:   stripSpecialTokens(content.String()),
-		ToolCalls: remapToolCalls(toolCalls, c.toolNameReverse),
+		ToolCalls: toolCalls,
 		Usage: Usage{
 			PromptTokens:     parsed.Usage.InputTokens,
 			CompletionTokens: parsed.Usage.OutputTokens,
@@ -928,7 +937,6 @@ func (c *Client) completeMessagesChatMessage(ctx context.Context, messages []Cha
 
 	messages = repairMessageToolPairing(messages)
 	prepared := adapter.MessagesPayload(messages, opts, false, c.requestSettings())
-	c.toolNameReverse = prepared.ToolNameReverse
 
 	data, err := json.Marshal(prepared.Body)
 	if err != nil {
@@ -961,7 +969,7 @@ func (c *Client) completeMessagesChatMessage(ctx context.Context, messages []Cha
 		return ChatMessage{}, llmHTTPStatusError("messages request failed", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	return adapter.DecodeMessagesResponse(body, c.toolNameReverse)
+	return adapter.DecodeMessagesResponse(body, prepared.ToolNameReverse)
 }
 
 // remapToolCalls applies a reverse name mapping to tool calls returned
@@ -1009,7 +1017,6 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 	}
 
 	prepared := chatAdapter.ChatCompletionsPayload(messages, opts, false, c.requestSettings())
-	c.toolNameReverse = prepared.ToolNameReverse
 	payload := prepared.Body
 
 	data, err := json.Marshal(payload)
@@ -1094,7 +1101,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			Role:             role,
 			Content:          stripSpecialTokens(message.Content),
 			ReasoningContent: reasoning,
-			ToolCalls:        remapToolCalls(message.ToolCalls, c.toolNameReverse),
+			ToolCalls:        remapToolCalls(message.ToolCalls, prepared.ToolNameReverse),
 			Usage:            parsed.Usage,
 			FinishReason:     strings.TrimSpace(choice.FinishReason),
 		}, nil
