@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,7 +81,7 @@ func checkBriefStaleness(briefPath, projectRoot string, allowStale bool, stderr 
 func mostRecentChangeTime(repoRoot, path string) (time.Time, bool) {
 	var newest time.Time
 
-	if commitTime, ok := lastCommitTime(repoRoot, path); ok {
+	if commitTime, ok := gitstate.LastCommitTime(context.Background(), repoRoot, path); ok {
 		newest = commitTime
 	}
 
@@ -97,23 +96,4 @@ func mostRecentChangeTime(repoRoot, path string) (time.Time, bool) {
 	}
 
 	return newest, true
-}
-
-func lastCommitTime(repoRoot, path string) (time.Time, bool) {
-	out, err := gitstate.Output(context.Background(), repoRoot, "log", "-1", "--format=%ct", "--", path)
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	trimmed := strings.TrimSpace(out)
-	if trimmed == "" {
-		return time.Time{}, false
-	}
-
-	ts, err := strconv.ParseInt(trimmed, 10, 64)
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	return time.Unix(ts, 0), true
 }

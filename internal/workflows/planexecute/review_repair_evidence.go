@@ -19,10 +19,13 @@ func CollectReviewRepairEvidence(root string, paths []string, baseline *ReviewRe
 		return ReviewRepairEvidence{Diff: diff, DiffCheck: check, DiffCheckExit: exit}
 	}
 
+	diff, _ := gitEvidence(root, append([]string{"diff", "--"}, paths...)...)
+	diffCheck, diffCheckExit := gitEvidence(root, append([]string{"diff", "--check", "--"}, paths...)...)
+
 	return ReviewRepairEvidence{
-		Diff:          runGitEvidence(root, append([]string{"diff", "--"}, paths...)...),
-		DiffCheck:     runGitEvidence(root, append([]string{"diff", "--check", "--"}, paths...)...),
-		DiffCheckExit: runGitEvidenceExit(root, append([]string{"diff", "--check", "--"}, paths...)...),
+		Diff:          diff,
+		DiffCheck:     diffCheck,
+		DiffCheckExit: diffCheckExit,
 	}
 }
 
@@ -98,27 +101,23 @@ func collectReviewRepairDiffFromBaseline(root string, paths []string, baseline R
 	return b.String()
 }
 
-func runGitEvidence(root string, args ...string) string {
+func gitEvidence(root string, args ...string) (string, int) {
 	result := gitstate.CombinedOutput(context.Background(), root, args...)
 
-	if result.Err != nil && result.Stdout == "" {
-		return result.Err.Error()
-	}
-
-	return result.Stdout
-}
-
-func runGitEvidenceExit(root string, args ...string) int {
-	result := gitstate.CombinedOutput(context.Background(), root, args...)
+	exit := 0
 	if result.Err != nil {
 		if result.ExitError {
-			return result.ExitCode
+			exit = result.ExitCode
+		} else {
+			exit = 127
 		}
-
-		return 127
 	}
 
-	return 0
+	if result.Err != nil && result.Stdout == "" {
+		return result.Err.Error(), exit
+	}
+
+	return result.Stdout, exit
 }
 
 func planChangedPaths(plan planartifact.PlanArtifact) []string {

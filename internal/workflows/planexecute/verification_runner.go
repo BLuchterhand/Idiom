@@ -243,7 +243,8 @@ func planExecuteVerificationScopeRefs(input planExecuteVerificationAcceptanceInp
 }
 
 func planExecuteGitSHAOrUnknown(root string) string {
-	out := strings.TrimSpace(runGitEvidence(root, "rev-parse", "HEAD"))
+	out, _ := gitEvidence(root, "rev-parse", "HEAD")
+	out = strings.TrimSpace(out)
 	if len(out) >= 7 && !strings.ContainsAny(out, " \t\r\n:") {
 		return out
 	}

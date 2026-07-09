@@ -9758,34 +9758,12 @@ func (m Manager) Diff(ctx context.Context, checkout Checkout) (Diff, error) {
 		return diffWorkbranchCopy(m.Root, path)
 	}
 
-	if _, err := gitstate.CombinedOutputText(ctx, path, "add", "-N", "."); err != nil {
-		return Diff{}, err
-	}
-
-	stat, err := gitstate.CombinedOutputText(ctx, path, "diff", "--stat", base, "--")
+	worktreeDiff, err := gitstate.WorktreeDiffAgainst(ctx, path, base)
 	if err != nil {
 		return Diff{}, err
 	}
 
-	names, err := gitstate.CombinedOutputText(ctx, path, "diff", "--name-only", base, "--")
-	if err != nil {
-		return Diff{}, err
-	}
-
-	patch, err := gitstate.CombinedOutputText(ctx, path, "diff", "--binary", base, "--")
-	if err != nil {
-		return Diff{}, err
-	}
-
-	var changed []string
-
-	for _, line := range strings.Split(names, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			changed = append(changed, trimmed)
-		}
-	}
-
-	return Diff{ChangedPaths: changed, Stat: strings.TrimSpace(stat), Patch: strings.TrimSpace(patch)}, nil
+	return Diff{ChangedPaths: worktreeDiff.ChangedPaths, Stat: worktreeDiff.Stat, Patch: worktreeDiff.Patch}, nil
 }
 
 func (m Manager) Remove(ctx context.Context, checkout Checkout) error {
@@ -9803,17 +9781,7 @@ func (m Manager) Remove(ctx context.Context, checkout Checkout) error {
 		return os.RemoveAll(path)
 	}
 
-	if _, err := gitstate.CombinedOutputText(ctx, root, "worktree", "remove", "--force", path); err != nil {
-		return err
-	}
-
-	if branch := strings.TrimSpace(checkout.Branch); branch != "" {
-		if _, err := gitstate.CombinedOutputText(ctx, root, "branch", "-D", branch); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return gitstate.RemoveWorktreeBranch(ctx, root, path, checkout.Branch)
 }
 
 func workbranchCanFallbackWithoutGit(err error) bool {

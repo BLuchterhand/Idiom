@@ -572,35 +572,13 @@ func LintSWESuiteFixtures(suite SWESuite, suitePath string) []string {
 		}
 
 		if ref := strings.TrimSpace(task.FixtureGitRef); ref != "" {
-			if err := validateFixtureGitRefReachable(baseDir, ref); err != nil {
+			if err := gitstate.VerifyCommitRef(context.Background(), baseDir, ref); err != nil {
 				findings = append(findings, fmt.Sprintf("%s: fixture_git_ref invalid: %v", task.ID, err))
 			}
 		}
 	}
 
 	return findings
-}
-
-func validateFixtureGitRefReachable(repoDir string, ref string) error {
-	if strings.ContainsAny(ref, "\x00\r\n") {
-		return fmt.Errorf("contains invalid control characters")
-	}
-
-	if strings.HasPrefix(ref, "-") {
-		return fmt.Errorf("must not begin with '-'")
-	}
-
-	result := gitstate.CombinedOutput(context.Background(), repoDir, "rev-parse", "--verify", ref+"^{commit}")
-	if result.Err != nil {
-		text := strings.TrimSpace(result.Stdout)
-		if text == "" {
-			text = result.Err.Error()
-		}
-
-		return fmt.Errorf("not a reachable commit from suite repository: %s", text)
-	}
-
-	return nil
 }
 
 func EvaluateSWESuiteDefinitionWithFixtures(suite SWESuite, suitePath string) SWESuiteReport {

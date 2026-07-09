@@ -9598,8 +9598,7 @@ func (r *Runner) removedTestDeclarations(results []workspace.ToolResult) []strin
 		return nil
 	}
 
-	args := append([]string{"diff", "--unified=0", "--"}, paths...)
-	diff, err := gitstate.CombinedOutputText(context.Background(), root, args...)
+	diff, err := gitstate.WorktreeUnifiedDiff(context.Background(), root, 0, paths)
 
 	if err != nil || strings.TrimSpace(diff) == "" {
 		return nil

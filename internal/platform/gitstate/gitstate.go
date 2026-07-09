@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"idiom/internal/platform/commandexec"
 )
@@ -45,6 +46,12 @@ type HistoryApplicabilityResult struct {
 type HistoryLogResult struct {
 	Output                string
 	HasCommitDescriptions bool
+}
+
+type WorktreeDiff struct {
+	ChangedPaths []string
+	Stat         string
+	Patch        string
 }
 
 type CommandRunner func(ctx context.Context, root string, args ...string) (string, error)
@@ -167,6 +174,93 @@ func CommitChangedPaths(ctx context.Context, root string, commit string) ([]stri
 	}
 
 	return nonEmptyOutputLines(output), nil
+}
+
+func VerifyCommitRef(ctx context.Context, repoDir string, ref string) error {
+	if strings.ContainsAny(ref, "\x00\r\n") {
+		return fmt.Errorf("contains invalid control characters")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("must not begin with '-'")
+	}
+
+	result := CombinedOutput(ctx, repoDir, "rev-parse", "--verify", ref+"^{commit}")
+	if result.Err == nil {
+		return nil
+	}
+
+	text := strings.TrimSpace(result.Stdout)
+	if text == "" {
+		text = result.Err.Error()
+	}
+
+	return fmt.Errorf("not a reachable commit from suite repository: %s", text)
+}
+
+func LastCommitTime(ctx context.Context, root string, path string) (time.Time, bool) {
+	output, err := Output(ctx, root, "log", "-1", "--format=%ct", "--", filepath.ToSlash(strings.TrimSpace(path)))
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	ts, err := strconv.ParseInt(strings.TrimSpace(output), 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	return time.Unix(ts, 0), true
+}
+
+func WorktreeUnifiedDiff(ctx context.Context, root string, unified int, paths []string) (string, error) {
+	args := []string{"diff", fmt.Sprintf("--unified=%d", unified), "--"}
+	args = append(args, paths...)
+
+	return CombinedOutputText(ctx, root, args...)
+}
+
+func WorktreeDiffAgainst(ctx context.Context, root string, base string) (WorktreeDiff, error) {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "HEAD"
+	}
+
+	if _, err := CombinedOutputText(ctx, root, "add", "-N", "."); err != nil {
+		return WorktreeDiff{}, err
+	}
+
+	stat, err := CombinedOutputText(ctx, root, "diff", "--stat", base, "--")
+	if err != nil {
+		return WorktreeDiff{}, err
+	}
+
+	names, err := CombinedOutputText(ctx, root, "diff", "--name-only", base, "--")
+	if err != nil {
+		return WorktreeDiff{}, err
+	}
+
+	patch, err := CombinedOutputText(ctx, root, "diff", "--binary", base, "--")
+	if err != nil {
+		return WorktreeDiff{}, err
+	}
+
+	return WorktreeDiff{
+		ChangedPaths: nonEmptyOutputLines(names),
+		Stat:         strings.TrimSpace(stat),
+		Patch:        strings.TrimSpace(patch),
+	}, nil
+}
+
+func RemoveWorktreeBranch(ctx context.Context, root string, path string, branch string) error {
+	if _, err := CombinedOutputText(ctx, root, "worktree", "remove", "--force", path); err != nil {
+		return err
+	}
+
+	if branch = strings.TrimSpace(branch); branch != "" {
+		_, err := CombinedOutputText(ctx, root, "branch", "-D", branch)
+		return err
+	}
+
+	return nil
 }
 
 func FilterPorcelainStatusByPathPrefix(output string, ignorePrefixes ...string) string {
