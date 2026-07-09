@@ -2279,10 +2279,6 @@ func (d ReadOnlyCloseout) RecoverableTerminalCandidate(agentName string, assessm
 	return d.PresentableObjectiveAnswerCandidate(agentName, recovered)
 }
 
-func (d ReadOnlyCloseout) AllowsSourceInventoryAnswer(answer string, currentlyAccepted bool) bool {
-	return false
-}
-
 type readOnlyFinalAnswerDecision struct {
 	Status                  string
 	BlockerKind             string
@@ -3612,26 +3608,27 @@ func renderReadOnlyEvidencePacketForToolOutput(packet ReadOnlyEvidencePacket, an
 	return strings.TrimSpace(b.String())
 }
 
-func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnlyEvidencePacket) (string, bool) {
+func synthesizeReadOnlyDelegatedEvidenceAnswer(objective string, facts []readOnlyDelegatedEvidenceFact) (string, bool) {
 	var (
 		sourcePaths []string
 		findings    []ReadOnlyEvidenceFinding
 	)
 
-	for _, packet := range packets {
-		packet = normalizeReadOnlyEvidencePacket(packet)
-		if !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
+	for _, fact := range facts {
+		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
+		if !decision.TaskResultAnswerable {
 			continue
 		}
 
-		sourcePaths = textutil.Merge(sourcePaths, packet.SourceBodyPaths)
+		packet := normalizeReadOnlyEvidencePacket(fact.Packet)
+		sourcePaths = textutil.Merge(sourcePaths, decision.LedgerSourcePaths)
 
 		for _, finding := range packet.Findings {
 			if strings.TrimSpace(finding.Text) == "" {
 				continue
 			}
 
-			if finding.Path != "" && !slices.Contains(packet.SourceBodyPaths, finding.Path) {
+			if finding.Path != "" && !slices.Contains(decision.LedgerSourcePaths, finding.Path) {
 				continue
 			}
 

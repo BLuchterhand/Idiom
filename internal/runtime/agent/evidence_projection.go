@@ -636,18 +636,6 @@ func (projection toolResultEvidenceProjection) CandidatePaths() []string {
 	return paths
 }
 
-func (projection toolResultEvidenceProjection) ReadOnlyEvidencePackets() []ReadOnlyEvidencePacket {
-	packets := make([]ReadOnlyEvidencePacket, 0, 2)
-
-	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
-		if fact.HasPacket {
-			packets = append(packets, fact.Packet)
-		}
-	}
-
-	return packets
-}
-
 func (projection toolResultEvidenceProjection) ReadOnlyDelegatedEvidenceFacts() []readOnlyDelegatedEvidenceFact {
 	facts := make([]readOnlyDelegatedEvidenceFact, 0, 2)
 

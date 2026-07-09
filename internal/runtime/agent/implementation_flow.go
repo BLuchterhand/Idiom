@@ -1300,8 +1300,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 			return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonLeakedImplementationBlocker)
 		}
 
-		if !finalAnswerAcceptanceAllowsObjectiveDiagnosticNonAnswer(acceptance, answer, r) &&
-			!finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
+		if !finalAnswerAcceptanceAllowsObjectiveDiagnosticNonAnswer(acceptance, answer, r) {
 
 			return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonNonAnswerProse)
 		}
@@ -1346,15 +1345,6 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	}
 
 	return finalAnswerAcceptanceWithPolicy(acceptance)
-}
-
-func finalAnswerAcceptanceAllowsSourceInventory(acceptance finalAnswerAcceptance, answer string, r *Runner, results []workspace.ToolResult) bool {
-	if r == nil {
-		return false
-	}
-
-	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).
-		AllowsSourceInventoryAnswer(answer, acceptance.Decision == finalAnswerAcceptanceAccepted)
 }
 
 func finalAnswerAcceptanceAllowsObjectiveDiagnosticNonAnswer(acceptance finalAnswerAcceptance, answer string, r *Runner) bool {
@@ -2178,7 +2168,7 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 
 	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(input.Brief, input.Results)
 	if delegatedOwnerReady {
-		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(input.Brief.Objective, newToolResultEvidenceProjection(input.Results).ReadOnlyEvidencePackets()); ok {
+		if answer, ok := synthesizeReadOnlyDelegatedEvidenceAnswer(input.Brief.Objective, newToolResultEvidenceProjection(input.Results).ReadOnlyDelegatedEvidenceFacts()); ok {
 			return answer, true
 		}
 	}
@@ -6041,7 +6031,7 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		useful = append(useful, sanitizedResult)
 	}
 
-	if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, newToolResultEvidenceProjection(answerabilityResults).ReadOnlyEvidencePackets()); ok {
+	if answer, ok := synthesizeReadOnlyDelegatedEvidenceAnswer(objective, newToolResultEvidenceProjection(answerabilityResults).ReadOnlyDelegatedEvidenceFacts()); ok {
 		return answer, true
 	}
 

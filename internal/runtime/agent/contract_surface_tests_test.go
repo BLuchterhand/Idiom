@@ -5707,15 +5707,11 @@ func TestReadOnlyCloseoutRejectsLowValueSourceInventoryAcrossConsumers(t *testin
 	answer := "For `what would it take to enable up and down arrow keys to iterate through the user's chat history?`, `internal/surfaces/tui/app/app.go` shows defines `truncateText`, defines `normalizeHistoryRole`, and `normalizeHistoryRole` returns `strings.ToUpper(value[:1]) + value[1:]`."
 
 	closeout := readOnlyClosureDecisionForResults(brief, results)
-	if closeout.AllowsSourceInventoryAnswer(answer, true) {
-		t.Fatal("closeout contract must not allow low-value source inventory as an accepted answer")
-	}
-
 	runner := &Runner{RuntimeBrief: brief}
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
 
 	if acceptance.Decision != finalAnswerAcceptanceRejected {
-		t.Fatalf("acceptance should reject low-value source inventory through closeout contract: %#v", acceptance)
+		t.Fatalf("acceptance should reject low-value source inventory: %#v", acceptance)
 	}
 
 	presented, ok := closeout.PresentableFallbackCandidate("main", answer)
@@ -6091,7 +6087,12 @@ func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t
 			packet)
 	}
 
-	answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, []ReadOnlyEvidencePacket{packet})
+	fact, ok := readOnlyDelegatedEvidenceFactFromResult(typedReadOnlyTaskResult(packet))
+	if !ok {
+		t.Fatal("expected typed packet result to project delegated evidence fact")
+	}
+
+	answer, ok := synthesizeReadOnlyDelegatedEvidenceAnswer(objective, []readOnlyDelegatedEvidenceFact{fact})
 	if !ok {
 		t.Fatal("expected synthesis from subagent packet")
 	}

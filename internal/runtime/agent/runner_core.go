@@ -16509,10 +16509,10 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 
 func delegatedClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
 	paths := make([]string, 0, max*2)
-	for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
-		paths = append(paths, packet.SourceBodyPaths...)
-		paths = append(paths, packet.InspectedPaths...)
-		paths = append(paths, packet.CandidatePaths...)
+	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
+		paths = append(paths, fact.SourceBodyPaths...)
+		paths = append(paths, fact.InspectedPaths...)
+		paths = append(paths, fact.CandidatePaths...)
 	}
 
 	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
@@ -20879,9 +20879,9 @@ func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int)
 	directPaths := directProbePathsFromToolResults(results, max)
 	projection := newToolResultEvidenceProjection(results)
 
-	for _, packet := range projection.ReadOnlyEvidencePackets() {
-		paths = append(paths, packet.SourceBodyPaths...)
-		paths = append(paths, packet.InspectedPaths...)
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		paths = append(paths, fact.SourceBodyPaths...)
+		paths = append(paths, fact.InspectedPaths...)
 	}
 
 	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
@@ -21743,11 +21743,7 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 
 	if readOnlyExplanationGateApplies(brief) {
 		paths := textutil.Merge(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
-		for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
-			if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
-				paths = textutil.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
-			}
-		}
+		paths = textutil.Merge(paths, acceptedDelegatedReadOnlyEvidencePaths(brief.Objective, results))
 
 		paths = textutil.Merge(paths, delegatedReadOnlyInspectedImplementationPaths(results))
 		if len(paths) == 0 {
@@ -21763,15 +21759,22 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 	}
 
 	paths := textutil.Merge(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
-	for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
-		if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
-			paths = textutil.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
-		}
-	}
-
+	paths = textutil.Merge(paths, acceptedDelegatedReadOnlyEvidencePaths(brief.Objective, results))
 	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
 
 	return closurePromptEvidencePaths(paths, 8)
+}
+
+func acceptedDelegatedReadOnlyEvidencePaths(objective string, results []workspace.ToolResult) []string {
+	var paths []string
+	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
+		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
+		if decision.TaskResultAnswerable {
+			paths = textutil.Merge(paths, decision.LedgerSourcePaths, decision.InspectedPaths)
+		}
+	}
+
+	return paths
 }
 
 func acceptedImplementationEvidencePaths(results []workspace.ToolResult) []string {
