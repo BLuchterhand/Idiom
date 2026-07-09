@@ -11,8 +11,11 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	lanecontract "idiom/internal/contracts/lane"
+	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
+	"idiom/internal/workflows/planexecute"
+	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 )
 
 // TestLaneRunsBriefLintByDefault verifies the Phase 6.5.1 contract:
@@ -359,7 +362,7 @@ func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 	briefPath := writeBrief(t, "# Test\n")
 	stubLaneBriefLint(t, passingLaneBriefLint)
 
-	plan := func(args []string, stdout io.Writer, _ io.Writer, _ cmdruntime.PromptRunner) int {
+	plan := func(_ config.Config, _ planexecute.Options, _ planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) int {
 		_, _ = stdout.Write([]byte(`{"type":"route_plan","contract":"verification_only"}` + "\n"))
 		return 0
 	}
@@ -388,7 +391,7 @@ func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 // when a test needs the runner to actually produce stdout the
 // post-analyzer can scan.
 func runLaneMainWithCustomRunners(t *testing.T, args []string, stdout, stderr io.Writer,
-	plan, implement laneSubcommandRunner) int {
+	plan lanePlanExecuteRunner, implement laneImplementRunner) int {
 
 	t.Helper()
 	stubLaneBriefLint(t, passingLaneBriefLint)

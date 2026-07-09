@@ -11,8 +11,11 @@ import (
 
 	recoverycontract "idiom/internal/contracts/recovery"
 
+	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
+	"idiom/internal/workflows/planexecute"
+	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -50,7 +53,9 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 
 			return 7
 		},
-		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int { return 0 },
+		func(config.Config, planexecute.Options, planexecuterunner.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
+			return 0
+		},
 		&stdout, &stderr)
 
 	if code != 7 {
@@ -146,7 +151,9 @@ func TestRunLaneImplementRecoveryCapturesPromptRunnerSessionID(t *testing.T) {
 
 			return 3
 		},
-		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int { return 0 },
+		func(config.Config, planexecute.Options, planexecuterunner.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
+			return 0
+		},
 		&stdout, &stderr)
 
 	if code != 3 {
@@ -189,7 +196,7 @@ func TestRunLanePlanExecuteRecoveryDoesNotWriteLaneImplementRecord(t *testing.T)
 
 	code := runLaneRecoveryTest(t, root, []string{"plan-execute", "--json", "--project-root", root, briefPath},
 		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int { return 0 },
-		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int {
+		func(_ config.Config, _ planexecute.Options, _ planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) int {
 			_, _ = stdout.Write([]byte(`{"type":"session_summary","session_id":"plan-session","stop_reason":"planner_failed"}` + "\n"))
 			return 5
 		},
@@ -208,7 +215,7 @@ func TestRunLanePlanExecuteRecoveryDoesNotWriteLaneImplementRecord(t *testing.T)
 	}
 }
 
-func runLaneRecoveryTest(t *testing.T, root string, args []string, implement laneSubcommandRunner, plan laneSubcommandRunner, stdout, stderr io.Writer) int {
+func runLaneRecoveryTest(t *testing.T, root string, args []string, implement laneImplementRunner, plan lanePlanExecuteRunner, stdout, stderr io.Writer) int {
 	t.Helper()
 	stubLaneBriefLint(t, passingLaneBriefLint)
 

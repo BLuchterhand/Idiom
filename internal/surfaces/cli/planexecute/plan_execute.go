@@ -1,7 +1,6 @@
 package planexecute
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -10,30 +9,9 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
-	"idiom/internal/workflows/intentloop"
 	"idiom/internal/workflows/planexecute"
-	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
+	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 )
-
-type planExecuteIntentLoopOptions struct {
-	Enabled           bool
-	MaxCycles         int
-	TotalBudgetTokens int
-}
-
-type planExecuteIntentLoopRunner func(
-	cfg config.Config,
-	opts planexecute.Options,
-	loopOpts planExecuteIntentLoopOptions,
-	promptRun planexecute.PromptRunner,
-	rec *telemetry.Recorder,
-	stdout io.Writer,
-	stderr io.Writer,
-) int
-
-var runPlanExecuteIntentLoop planExecuteIntentLoopRunner = defaultPlanExecuteIntentLoop
-
-var runPlanExecuteIntentLoopChildRunner intentloop.PlanExecuteRunner
 
 // RunMain is the CLI entry point for `idiom plan-execute`.
 //
@@ -59,29 +37,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		return 1
 	}
 
-	if strings.TrimSpace(opts.Model) != "" {
-		cfg.LlamaServer.Model = opts.Model
-		opts.UseActiveModel = true
-	} else if strings.TrimSpace(cfg.LlamaServer.Model) != "" {
-		opts.UseActiveModel = true
-	}
-	if opts.Context == nil {
-		opts.Context = context.Background()
-	}
-
-	if loopOpts.Enabled {
-		if runPlanExecuteIntentLoop == nil {
-			fmt.Fprintln(stderr, "intent-loop runner is unavailable")
-
-			return 1
-		}
-
-		return runPlanExecuteIntentLoop(cfg, opts, loopOpts, AdaptPromptRunner(promptRun), rec, stdout, stderr)
-	}
-
-	result := planexecute.RunWithDependencies(cfg, opts, AdaptPromptRunner(promptRun), rec, stdout, stderr, planexecuteadapters.Dependencies())
-
-	return result.ExitCode
+	return planexecuterunner.Run(cfg, opts, loopOpts, AdaptPromptRunner(promptRun), rec, stdout, stderr)
 }
 
 func AdaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunner {
@@ -101,52 +57,22 @@ func AdaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 	}
 }
 
-func defaultPlanExecuteIntentLoop(
-	cfg config.Config,
-	opts planexecute.Options,
-	loopOpts planExecuteIntentLoopOptions,
-	promptRun planexecute.PromptRunner,
-	rec *telemetry.Recorder,
-	stdout io.Writer,
-	stderr io.Writer,
-) int {
-	childRunner := runPlanExecuteIntentLoopChildRunner
-	if childRunner == nil {
-		childRunner = func(cfg config.Config, opts planexecute.Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) planexecute.RunResult {
-			if opts.Context == nil {
-				opts.Context = context.Background()
-			}
-			return planexecute.RunWithDependencies(cfg, opts, promptRun, rec, stdout, stderr, planexecuteadapters.Dependencies())
-		}
-	}
-	result := intentloop.Run(cfg, intentloop.IntentLoopOptions{
-		PlanExecuteOptions:          opts,
-		SessionID:                   opts.SessionID,
-		Resume:                      opts.Resume,
-		MaxCycles:                   loopOpts.MaxCycles,
-		CycleBudgetTokens:           loopOpts.TotalBudgetTokens,
-		DetectExternalScopedChanges: true,
-		RunPlanExecute:              childRunner,
-	}, promptRun, rec, stdout, stderr)
-	return result.ExitCode
-}
-
-func parsePlanExecuteCLIOptions(args []string, stderr io.Writer) (planexecute.Options, planExecuteIntentLoopOptions, error) {
+func parsePlanExecuteCLIOptions(args []string, stderr io.Writer) (planexecute.Options, planexecuterunner.Options, error) {
 	planArgs, loopOpts, err := splitPlanExecuteIntentLoopArgs(args)
 	if err != nil {
-		return planexecute.Options{}, planExecuteIntentLoopOptions{}, err
+		return planexecute.Options{}, planexecuterunner.Options{}, err
 	}
 
 	opts, err := planexecute.ParseOptions(planArgs, stderr)
 	if err != nil {
-		return planexecute.Options{}, planExecuteIntentLoopOptions{}, err
+		return planexecute.Options{}, planexecuterunner.Options{}, err
 	}
 
 	return opts, loopOpts, nil
 }
 
-func splitPlanExecuteIntentLoopArgs(args []string) ([]string, planExecuteIntentLoopOptions, error) {
-	loopOpts := planExecuteIntentLoopOptions{MaxCycles: 5}
+func splitPlanExecuteIntentLoopArgs(args []string) ([]string, planexecuterunner.Options, error) {
+	loopOpts := planexecuterunner.Options{MaxCycles: 5}
 	out := make([]string, 0, len(args))
 
 	for i := 0; i < len(args); i++ {
@@ -163,7 +89,7 @@ func splitPlanExecuteIntentLoopArgs(args []string) ([]string, planExecuteIntentL
 				}
 				enabled = parsed
 			}
-			loopOpts.Enabled = enabled
+			loopOpts.IntentLoop = enabled
 		case "-max-cycles":
 			parsed, next, err := parseIntFlagValue("--max-cycles", value, hasValue, args, i)
 			if err != nil {

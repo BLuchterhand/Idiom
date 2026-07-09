@@ -40,6 +40,7 @@ import (
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
 	"idiom/internal/workflows/planexecute"
+	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 )
 
 // briefBodyStartMarker / briefBodyEndMarker bracket the project
@@ -69,17 +70,19 @@ const (
 // (Phase 7), not the executor's per-lane rules block.
 var canonicalRuleNames = cliassets.CanonicalLaneRuleNames()
 
-// laneSubcommandRunner is the function shape the lane wrapper uses
-// for implement and plan-execute dispatch. Capturing it as a type
-// lets tests inject fakes that record what the lane wrapper forwarded.
-type laneSubcommandRunner func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int
+// laneImplementRunner is the remaining CLI-backed lane dispatch.
+// Plan-execute uses the typed workflow API; implement keeps this
+// shape until its use case moves out of the CLI package.
+type laneImplementRunner func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int
+
+type lanePlanExecuteRunner func(cfg config.Config, opts planexecute.Options, runOpts planexecuterunner.Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) int
 
 // laneDeps groups the lane wrapper's external dependencies so tests
 // can swap in fakes without touching package-level globals.
 type laneDeps struct {
 	loadConfig       func(path string) (config.Config, error)
-	runPlanExecute   laneSubcommandRunner
-	runImplement     laneSubcommandRunner
+	runPlanExecute   lanePlanExecuteRunner
+	runImplement     laneImplementRunner
 	defaultPromptRun cmdruntime.PromptRunner
 	buildContextPack laneContextPackBuilder
 	telemetry        *telemetry.Recorder
@@ -152,10 +155,8 @@ var laneGitDiff = func(projectRoot string) ([]byte, error) {
 // passing the recorder through to the underlying subcommand.
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	deps := laneDeps{
-		loadConfig: config.Load,
-		runPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int {
-			return planexecutecmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
-		},
+		loadConfig:     config.Load,
+		runPlanExecute: planexecuterunner.Run,
 		runImplement: func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int {
 			return implementcmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 		},
@@ -168,8 +169,10 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 }
 
 // runLaneMainWithDeps is the testable core. It parses args, composes
-// the prompt with project overlays, writes the composed prompt to a
-// temp file, and forwards to the underlying lane subcommand.
+// the prompt with project overlays, and dispatches to the lane use case.
+// Plan-execute receives typed workflow options; implement still receives
+// CLI args because its workflow has not been extracted from the CLI
+// surface yet.
 func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps laneDeps) int {
 	// Sub-subcommands (postflight today; later: probe, summarize)
 	// run before the mode parser since they aren't lane invocations
@@ -326,10 +329,6 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 
 		return 1
 	}
-	// composeLanePromptToFile creates a temp file under os.TempDir;
-	// this defer is the lifecycle boundary. The subcommand reads the
-	// path via --prompt-file before returning, so removing here runs
-	// strictly after the read completes — no race, no leak.
 	defer os.Remove(composedPath)
 
 	if opts.JSONEvents {
@@ -354,7 +353,6 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		}
 	}
 
-	forwardArgs := buildForwardedArgs(opts, composedPath, requiredEditPaths)
 	// Tee stdout so the post-analysis can scan the JSON event stream
 	// the subcommand emits. Without --json the subcommand still prints
 	// human-readable output that contains the same markers, so the
@@ -367,8 +365,25 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 
 	switch opts.Mode {
 	case string(lanecontract.LanePlanExecute):
-		subcode = deps.runPlanExecute(forwardArgs, tee, stderr, deps.defaultPromptRun)
+		planOpts := planexecute.Options{
+			Context:           context.Background(),
+			ConfigPath:        opts.ConfigPath,
+			PromptFile:        composedPath,
+			Model:             strings.TrimSpace(opts.Model),
+			Resume:            strings.TrimSpace(opts.Resume),
+			JSONEvents:        opts.JSONEvents,
+			DisableThinking:   opts.DisableThinking,
+			MaxTokens:         opts.MaxTokens,
+			RequiredEditPaths: planexecute.MultiFlag(plancontract.UniqueScopePaths(requiredEditPaths)),
+		}
+		runOpts := planexecuterunner.Options{
+			IntentLoop:        opts.IntentLoop,
+			MaxCycles:         opts.IntentLoopMaxCycles,
+			TotalBudgetTokens: opts.IntentLoopBudgetTokens,
+		}
+		subcode = deps.runPlanExecute(cfg, planOpts, runOpts, planexecutecmd.AdaptPromptRunner(deps.defaultPromptRun), deps.telemetry, tee, stderr)
 	case string(lanecontract.LaneImplement):
+		forwardArgs := buildImplementArgs(opts, composedPath)
 		subcode = deps.runImplement(forwardArgs, tee, stderr, sessionCapture.wrap(deps.defaultPromptRun))
 	default:
 		// parseLaneOptions already rejects unknown modes; defensive
@@ -1373,11 +1388,9 @@ func writeLaneContextGaps(b *strings.Builder, gaps []string, limit int) {
 	}
 }
 
-// composeLanePromptToFile builds the composed prompt and writes it to
-// a temp file the underlying subcommand reads via --prompt-file. The
-// caller MUST defer os.Remove on the returned path — see
-// runLaneMainWithDeps where that defer is wired. Error paths inside
-// this function clean up after themselves before returning.
+// composeLanePromptToFile builds the prompt shared by lane dispatch
+// modes and writes it to the temp-file boundary still consumed by the
+// downstream workflow options.
 //
 // Layer order (top-to-bottom in the composed prompt):
 //  1. canonical generic rules  (internal/surfaces/cliassets/lanes/rules/*.md, embed; project
@@ -1435,15 +1448,13 @@ func composeLanePromptToFile(opts laneOptions, contextPackSection string) (strin
 		parts = append(parts, post)
 	}
 
-	composed := strings.Join(parts, "\n\n")
-
 	f, err := os.CreateTemp("", "idiom-lane-*.md")
 	if err != nil {
 		return "", fmt.Errorf("lane: create composed prompt file: %w", err)
 	}
 	defer f.Close()
 
-	if _, err := f.WriteString(composed); err != nil {
+	if _, err := f.WriteString(strings.Join(parts, "\n\n")); err != nil {
 		os.Remove(f.Name())
 
 		return "", fmt.Errorf("lane: write composed prompt: %w", err)
@@ -1679,19 +1690,12 @@ func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredE
 	})
 }
 
-// buildForwardedArgs constructs the args the lane wrapper hands to
-// the underlying idiom subcommand. The composed prompt is passed via
-// --prompt-file; required edit paths and other relevant flags are
-// forwarded if set.
-func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths []string) []string {
+// buildImplementArgs constructs the args the lane wrapper hands to
+// the remaining CLI-backed implement subcommand.
+func buildImplementArgs(opts laneOptions, composedPath string) []string {
 	out := []string{
 		"--config", opts.ConfigPath,
 		"--prompt-file", composedPath,
-	}
-	if opts.Mode == string(lanecontract.LanePlanExecute) {
-		for _, path := range plancontract.UniqueScopePaths(requiredEditPaths) {
-			out = append(out, "--required-edit-path", path)
-		}
 	}
 
 	if model := strings.TrimSpace(opts.Model); model != "" {
@@ -1716,13 +1720,6 @@ func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths
 
 	if opts.MaxTokens > 0 {
 		out = append(out, "--max-tokens", strconv.Itoa(opts.MaxTokens))
-	}
-
-	if opts.Mode == string(lanecontract.LanePlanExecute) && opts.IntentLoop {
-		out = append(out, "--intent-loop", "--max-cycles", strconv.Itoa(opts.IntentLoopMaxCycles))
-		if opts.IntentLoopBudgetTokens > 0 {
-			out = append(out, "--total-budget-tokens", strconv.Itoa(opts.IntentLoopBudgetTokens))
-		}
 	}
 
 	return out

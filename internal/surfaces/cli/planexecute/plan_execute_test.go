@@ -29,6 +29,7 @@ import (
 	"idiom/internal/workflows/intentloop"
 	"idiom/internal/workflows/planexecute"
 	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
+	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 )
 
 func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
@@ -65,12 +66,6 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 
 func TestRunPlanExecuteMainDefaultDoesNotRouteIntentLoop(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
-	originalRunner := runPlanExecuteIntentLoop
-	runPlanExecuteIntentLoop = func(config.Config, planexecute.Options, planExecuteIntentLoopOptions, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
-		t.Fatal("intent-loop runner must not be called without --intent-loop")
-		return 99
-	}
-	t.Cleanup(func() { runPlanExecuteIntentLoop = originalRunner })
 
 	var stdout, stderr bytes.Buffer
 
@@ -89,46 +84,25 @@ func TestRunPlanExecuteMainDefaultDoesNotRouteIntentLoop(t *testing.T) {
 	}
 }
 
-func TestRunPlanExecuteMainIntentLoopFlagsRouteToLoopRunner(t *testing.T) {
+func TestParsePlanExecuteIntentLoopFlags(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
-	originalRunner := runPlanExecuteIntentLoop
-	var (
-		gotOpts     planexecute.Options
-		gotLoopOpts planExecuteIntentLoopOptions
-	)
-	runPlanExecuteIntentLoop = func(_ config.Config, opts planexecute.Options, loopOpts planExecuteIntentLoopOptions, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) int {
-		gotOpts = opts
-		gotLoopOpts = loopOpts
-		return 7
-	}
-	t.Cleanup(func() { runPlanExecuteIntentLoop = originalRunner })
 
-	var stdout, stderr bytes.Buffer
+	var stderr bytes.Buffer
+	gotOpts, gotLoopOpts, err := parsePlanExecuteCLIOptions([]string{
+		"-config", configPath,
+		"-prompt", "loop this",
+		"-intent-loop",
+		"-max-cycles", "3",
+		"-total-budget-tokens", "12000",
+	}, &stderr)
 
-	code := RunMainWithTelemetry(
-		[]string{
-			"-config", configPath,
-			"-prompt", "loop this",
-			"-intent-loop",
-			"-max-cycles", "3",
-			"-total-budget-tokens", "12000",
-		},
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("single-cycle prompt runner must not be called for --intent-loop")
-			return "", nil
-		},
-		nil,
-	)
-
-	if code != 7 {
-		t.Fatalf("expected loop runner exit 7, got %d stderr=%s", code, stderr.String())
+	if err != nil {
+		t.Fatalf("parse intent-loop flags: %v stderr=%s", err, stderr.String())
 	}
 	if gotOpts.Prompt != "loop this" {
 		t.Fatalf("prompt = %q, want loop this", gotOpts.Prompt)
 	}
-	if !gotLoopOpts.Enabled || gotLoopOpts.MaxCycles != 3 || gotLoopOpts.TotalBudgetTokens != 12000 {
+	if !gotLoopOpts.IntentLoop || gotLoopOpts.MaxCycles != 3 || gotLoopOpts.TotalBudgetTokens != 12000 {
 		t.Fatalf("loop opts = %#v, want enabled max=3 budget=12000", gotLoopOpts)
 	}
 }
@@ -183,14 +157,12 @@ Typed plan execution contract:
   }]
 }`
 
-	originalChildRunner := runPlanExecuteIntentLoopChildRunner
-	t.Cleanup(func() { runPlanExecuteIntentLoopChildRunner = originalChildRunner })
-
 	var (
 		childSessions []string
 		childPrompts  []string
 	)
-	runPlanExecuteIntentLoopChildRunner = func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+	runOpts := planexecuterunner.Options{IntentLoop: true, MaxCycles: 4}
+	runOpts.ChildRunner = func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
 		childSessions = append(childSessions, opts.SessionID)
 		childPrompts = append(childPrompts, opts.Prompt)
 
@@ -219,29 +191,30 @@ Typed plan execution contract:
 		}
 	}
 
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
 	var stdout, stderr bytes.Buffer
-	code := RunMainWithTelemetry(
-		[]string{
-			"-config", configPath,
-			"-prompt", prompt,
-			"-json",
-			"-intent-loop",
-			"-max-cycles", "4",
-		},
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+	code := planexecuterunner.Run(
+		cfg,
+		planexecute.Options{ConfigPath: configPath, Prompt: prompt, JSONEvents: true},
+		runOpts,
+		AdaptPromptRunner(func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("scripted child runner should avoid live model calls")
 			return "", nil
-		},
+		}),
 		nil,
+		&stdout,
+		&stderr,
 	)
 
 	t.Logf("scripted intent-loop stdout:\n%s", stdout.String())
 	t.Logf("scripted intent-loop stderr:\n%s", stderr.String())
 
 	if code != 0 {
-		t.Fatalf("RunMain exit = %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		t.Fatalf("runner exit = %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	if len(childSessions) != 3 {
 		t.Fatalf("child session count = %d, want 3 (%#v)", len(childSessions), childSessions)

@@ -24,16 +24,20 @@ import (
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
+	"idiom/internal/workflows/planexecute"
+	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 	canonicalprompts "idiom/prompts"
 )
 
-// laneFakeRunner captures the arguments handed to the underlying
-// idiom subcommand so tests can assert on what the wrapper forwarded.
+// laneFakeRunner captures typed plan-execute options and remaining
+// implement CLI args so tests assert on the active dispatch contract.
 type laneFakeRunner struct {
-	calledMode   string
-	calledArgs   []string
-	calledPrompt string
-	exitCode     int
+	calledMode        string
+	calledArgs        []string
+	calledPlanOptions planexecute.Options
+	calledRunOptions  planexecuterunner.Options
+	calledPrompt      string
+	exitCode          int
 }
 
 func TestLaneBriefIntakeProjectionRequiresTypedDispatchableScopeForLegacyHeadings(t *testing.T) {
@@ -114,11 +118,15 @@ func TestLaneAtomIntakeReportFieldsProjectFinalNonDispatchableStates(t *testing.
 	}
 }
 
-func (f *laneFakeRunner) plan(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int {
+func (f *laneFakeRunner) plan(_ config.Config, opts planexecute.Options, runOpts planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) int {
 	f.calledMode = "plan-execute"
 
-	f.calledArgs = append([]string(nil), args...)
-	f.calledPrompt = readPromptFromArgs(args)
+	f.calledPlanOptions = opts
+	f.calledRunOptions = runOpts
+	f.calledPrompt = opts.Prompt
+	if f.calledPrompt == "" {
+		f.calledPrompt = readPromptFromFile(opts.PromptFile)
+	}
 
 	emitFakeEditAttempt(stdout, "submit_plan")
 
@@ -154,16 +162,20 @@ func emitFakeEditAttempt(stdout io.Writer, tool string) {
 func readPromptFromArgs(args []string) string {
 	for i, a := range args {
 		if a == "--prompt-file" && i+1 < len(args) {
-			body, err := os.ReadFile(args[i+1])
-			if err != nil {
-				return ""
-			}
-
-			return string(body)
+			return readPromptFromFile(args[i+1])
 		}
 	}
 
 	return ""
+}
+
+func readPromptFromFile(path string) string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	return string(body)
 }
 
 func writeBrief(t *testing.T, body string) string {
@@ -267,11 +279,11 @@ func TestRunLaneMainPlanExecuteForwardsRequiredEditPathsFromBrief(t *testing.T) 
 		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 
-	got := flagValues(fake.calledArgs, "--required-edit-path")
+	got := []string(fake.calledPlanOptions.RequiredEditPaths)
 	want := []string{"src/foo.go", ".planning/tracker.md"}
 
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("forwarded required edit paths = %#v, want %#v; args=%v", got, want, fake.calledArgs)
+		t.Fatalf("plan-execute required edit paths = %#v, want %#v; opts=%+v", got, want, fake.calledPlanOptions)
 	}
 }
 
@@ -300,11 +312,11 @@ func TestRunLaneMainPlanExecuteForwardsAtomIntakeScopePaths(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 
-	got := flagValues(fake.calledArgs, "--required-edit-path")
+	got := []string(fake.calledPlanOptions.RequiredEditPaths)
 	want := []string{"src/foo.go", ".planning/tracker.md"}
 
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("forwarded required edit paths = %#v, want %#v; args=%v", got, want, fake.calledArgs)
+		t.Fatalf("plan-execute required edit paths = %#v, want %#v; opts=%+v", got, want, fake.calledPlanOptions)
 	}
 
 	if !strings.Contains(stdout.String(), `"state":"dispatchable"`) {
@@ -1033,8 +1045,8 @@ func TestRunLaneMainPlanExecuteHonorsBackendsJSONExecutor(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 
-	if !argsContain(fake.calledArgs, "--model", "custom-coder-7b") {
-		t.Fatalf("plan-execute auto-route must use backends.json default_executor; forwarded: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Model != "custom-coder-7b" {
+		t.Fatalf("plan-execute auto-route must use backends.json default_executor; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1090,10 +1102,8 @@ func TestRunLaneMainOmitsModelFlagWhenNoBackendsJSON(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
 
-	for i, a := range fake.calledArgs {
-		if a == "--model" {
-			t.Fatalf("absent backends.json, plan-execute must NOT inject a --model flag; got %v at index %d", fake.calledArgs, i)
-		}
+	if fake.calledPlanOptions.Model != "" {
+		t.Fatalf("absent backends.json, plan-execute must not inject a model override; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1126,8 +1136,8 @@ func TestRunLaneMainBackendProfileFlagSelectsProfile(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 
-	if !argsContain(fake.calledArgs, "--model", "dev-coder") {
-		t.Fatalf("--backend-profile dev must resolve to dev-coder; forwarded: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Model != "dev-coder" {
+		t.Fatalf("--backend-profile dev must resolve to dev-coder; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1158,8 +1168,8 @@ func TestRunLaneMainBackendProfilePlannerSelectsPlanExecutePrimary(t *testing.T)
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 
-	if !argsContain(fake.calledArgs, "--model", "qwen3.6-27b") {
-		t.Fatalf("--backend-profile qwen-27b-pair must resolve plan-execute to planner; forwarded: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Model != "qwen3.6-27b" {
+		t.Fatalf("--backend-profile qwen-27b-pair must resolve plan-execute to planner; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1190,8 +1200,8 @@ func TestRunLaneMainExplicitCoderUsesExecutorWithPlannerProfile(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 
-	if !argsContain(fake.calledArgs, "--model", "qwen3-coder-30b") {
-		t.Fatalf("--coder must keep using the executor role; forwarded: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Model != "qwen3-coder-30b" {
+		t.Fatalf("--coder must keep using the executor role; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1222,8 +1232,8 @@ func TestRunLaneMainExplicitModelBeatsBackendsJSON(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
 
-	if !argsContain(fake.calledArgs, "--model", "operator-override") {
-		t.Fatalf("--model must beat backends.json default_executor; forwarded: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Model != "operator-override" {
+		t.Fatalf("--model must beat backends.json default_executor; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1768,8 +1778,8 @@ func TestRunLaneMainHonorsIdiomConfigEnv(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 
-	if !argsContain(fake.calledArgs, "--config", "/custom/idiom-config.json") {
-		t.Fatalf("IDIOM_CONFIG env must override the default --config; got: %v", fake.calledArgs)
+	if fake.calledPlanOptions.ConfigPath != "/custom/idiom-config.json" {
+		t.Fatalf("IDIOM_CONFIG env must override the default config; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1789,8 +1799,8 @@ func TestRunLaneMainConfigFlagBeatsEnv(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 
-	if !argsContain(fake.calledArgs, "--config", "/from/flag.json") {
-		t.Fatalf("--config must beat IDIOM_CONFIG env; got: %v", fake.calledArgs)
+	if fake.calledPlanOptions.ConfigPath != "/from/flag.json" {
+		t.Fatalf("--config must beat IDIOM_CONFIG env; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1823,8 +1833,8 @@ func TestRunLaneMainAutoRoutesPlanExecuteToBackendsExecutor(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 
-	if !argsContain(fake.calledArgs, "--model", "tagged-executor") {
-		t.Fatalf("plan-execute must auto-route to backends.json executor role; forwarded: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Model != "tagged-executor" {
+		t.Fatalf("plan-execute must auto-route to backends.json executor role; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -1842,8 +1852,8 @@ func TestRunLaneMainHonorsExplicitModelOverride(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
 
-	if !argsContain(fake.calledArgs, "--model", "qwen3.6-35b") {
-		t.Fatalf("--model override must reach the underlying subcommand; got: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Model != "qwen3.6-35b" {
+		t.Fatalf("--model override must reach plan-execute options; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -2133,8 +2143,8 @@ func TestRunLaneMainResumeForwards(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
 
-	if !argsContain(fake.calledArgs, "--resume", "20260509-180015.118") {
-		t.Fatalf("--resume must forward to the underlying subcommand; got: %v", fake.calledArgs)
+	if fake.calledPlanOptions.Resume != "20260509-180015.118" {
+		t.Fatalf("--resume must reach plan-execute options; opts=%+v", fake.calledPlanOptions)
 	}
 }
 
@@ -2149,8 +2159,8 @@ func TestRunLaneMainDefaultDoesNotForwardIntentLoopFlags(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
 
-	if argsContainFlag(fake.calledArgs, "--intent-loop") || argsContainFlag(fake.calledArgs, "--max-cycles") || argsContainFlag(fake.calledArgs, "--total-budget-tokens") {
-		t.Fatalf("default plan-execute must not forward intent-loop flags; got: %v", fake.calledArgs)
+	if fake.calledRunOptions.IntentLoop || fake.calledRunOptions.MaxCycles != 5 || fake.calledRunOptions.TotalBudgetTokens != 0 {
+		t.Fatalf("default plan-execute must not enable intent-loop; run opts=%+v", fake.calledRunOptions)
 	}
 }
 
@@ -2172,10 +2182,10 @@ func TestRunLaneMainIntentLoopFlagsForward(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d stderr=%s", got, stderr.String())
 	}
 
-	if !argsContainFlag(fake.calledArgs, "--intent-loop") ||
-		!argsContain(fake.calledArgs, "--max-cycles", "4") ||
-		!argsContain(fake.calledArgs, "--total-budget-tokens", "24000") {
-		t.Fatalf("intent-loop flags must forward to plan-execute; got: %v", fake.calledArgs)
+	if !fake.calledRunOptions.IntentLoop ||
+		fake.calledRunOptions.MaxCycles != 4 ||
+		fake.calledRunOptions.TotalBudgetTokens != 24000 {
+		t.Fatalf("intent-loop flags must reach typed lane runner options; run opts=%+v", fake.calledRunOptions)
 	}
 }
 
@@ -2445,18 +2455,6 @@ func argsContainFlag(args []string, flag string) bool {
 	}
 
 	return false
-}
-
-func flagValues(args []string, flag string) []string {
-	var values []string
-
-	for i, a := range args {
-		if a == flag && i+1 < len(args) {
-			values = append(values, args[i+1])
-		}
-	}
-
-	return values
 }
 
 // runLaneMainTest is the test-friendly entry to the lane wrapper. It
