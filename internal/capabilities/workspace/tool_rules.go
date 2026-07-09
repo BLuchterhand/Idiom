@@ -75,7 +75,7 @@ func (m *Manager) EvaluateConfiguredToolRule(req ToolRequest) toolpolicy.Decisio
 		return toolpolicy.None
 	}
 
-	return toolpolicy.Match(strings.TrimSpace(req.Tool), toolPolicyRequest(req), config.ToolPolicyRules(m.cfg.ToolRules))
+	return toolpolicy.Match(strings.TrimSpace(req.Tool), ToolPolicyRequest(req), config.ToolPolicyRules(m.cfg.ToolRules))
 }
 
 // EvaluateToolRule applies absolute project-configured deny rules first,
@@ -100,7 +100,7 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) toolpolicy.Decision {
 	m.mu.Unlock()
 
 	if len(modeRules) > 0 {
-		if decision := toolpolicy.Match(tool, toolPolicyRequest(req), modeRules); decision != toolpolicy.None {
+		if decision := toolpolicy.Match(tool, ToolPolicyRequest(req), modeRules); decision != toolpolicy.None {
 			if decision != toolpolicy.Deny && m.protectedWritePathMatched(req) {
 				return toolpolicy.Ask
 			}
@@ -171,10 +171,13 @@ func protectedWriteRequestPaths(req ToolRequest) []string {
 }
 
 func extractToolRuleTarget(tool string, req ToolRequest) string {
-	return toolpolicy.ExtractTarget(tool, toolPolicyRequest(req))
+	return toolpolicy.ExtractTarget(tool, ToolPolicyRequest(req))
 }
 
-func toolPolicyRequest(req ToolRequest) toolpolicy.Request {
+// ToolPolicyRequest projects a workspace tool request into the pure policy
+// matcher contract. Workspace owns this shape because it owns ToolRequest
+// fields such as declaration moves and MCP/raw arguments.
+func ToolPolicyRequest(req ToolRequest) toolpolicy.Request {
 	return toolpolicy.Request{
 		Tool:        req.Tool,
 		Command:     req.Command,

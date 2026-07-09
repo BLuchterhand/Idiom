@@ -323,7 +323,7 @@ func TestToolPolicyMatch_MCPGlobFallback(t *testing.T) {
 		"mcp:*": {{Pattern: "*", Decision: toolpolicy.Ask}},
 	}
 	req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"go 1.24"}`)}
-	got := toolpolicy.Match(req.Tool, toolPolicyRequest(req), rules)
+	got := toolpolicy.Match(req.Tool, ToolPolicyRequest(req), rules)
 
 	if got != toolpolicy.Ask {
 		t.Fatalf("got %q, want %q", got, toolpolicy.Ask)
@@ -336,7 +336,7 @@ func TestToolPolicyMatch_MCPSpecificBeatsGlob(t *testing.T) {
 		"mcp:*":                  {{Pattern: "*", Decision: toolpolicy.Ask}},
 	}
 	req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"x"}`)}
-	got := toolpolicy.Match(req.Tool, toolPolicyRequest(req), rules)
+	got := toolpolicy.Match(req.Tool, ToolPolicyRequest(req), rules)
 
 	if got != toolpolicy.Allow {
 		t.Fatalf("got %q, want %q (specific rule should win)", got, toolpolicy.Allow)
@@ -352,12 +352,12 @@ func TestToolPolicyMatch_MCPPatternAgainstURL(t *testing.T) {
 	}
 	allowed := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://github.com/sst/opencode"}`)}
 
-	if got := toolpolicy.Match(allowed.Tool, toolPolicyRequest(allowed), rules); got != toolpolicy.Allow {
+	if got := toolpolicy.Match(allowed.Tool, ToolPolicyRequest(allowed), rules); got != toolpolicy.Allow {
 		t.Fatalf("github URL: got %q, want allow", got)
 	}
 
 	other := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://random.example/"}`)}
-	if got := toolpolicy.Match(other.Tool, toolPolicyRequest(other), rules); got != toolpolicy.Ask {
+	if got := toolpolicy.Match(other.Tool, ToolPolicyRequest(other), rules); got != toolpolicy.Ask {
 		t.Fatalf("non-github URL: got %q, want ask", got)
 	}
 }

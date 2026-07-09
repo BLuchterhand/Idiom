@@ -27,18 +27,17 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 	taskFamily := strings.TrimSpace(plan.route.Family)
 	reasonCodes := []writerroute.ReasonCode{writerroute.ReasonReadOnlyQuestion}
 	verificationOwner := writerroute.VerificationOwner("")
+	profile, hasRuntimeProfile := workerruntime.RuntimeProfileForTaskFamily(taskFamily)
 
-	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(taskFamily) {
+	if hasRuntimeProfile && profile.PlanSubmission {
 		mode = writerroute.ModePlanSubmission
 		lane = string(lanecontract.LanePlanExecute)
 		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonPlanExecutePlanner}
-		verificationOwner = writerroute.VerificationOwnerPlannerOwned
-	} else if workerruntime.TaskFamilyIsPlanThenExecuteReview(taskFamily) {
-		mode = writerroute.ModePlanSubmission
-		lane = string(lanecontract.LanePlanExecute)
-		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonPlanExecuteReviewRepair}
-		verificationOwner = writerroute.VerificationOwnerPlannerOwned
-	} else if workerruntime.TaskFamilyMutationCapable(plan.route.Family) {
+		if workerruntime.TaskFamilyIsPlanThenExecuteReview(profile.TaskFamily) {
+			reasonCodes = []writerroute.ReasonCode{writerroute.ReasonPlanExecuteReviewRepair}
+		}
+		verificationOwner = writerroute.VerificationOwner(profile.VerificationOwner)
+	} else if hasRuntimeProfile && profile.MutationCapable {
 		mode = writerroute.ModeAgenticGuarded
 		lane = "implement"
 		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonLocalModelDefault}
@@ -50,7 +49,7 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		if m.plannerOwnedVerification {
 			verificationOwner = writerroute.VerificationOwnerPlannerOwned
 		} else {
-			verificationOwner = writerroute.VerificationOwnerExecutor
+			verificationOwner = writerroute.VerificationOwner(profile.VerificationOwner)
 		}
 	}
 

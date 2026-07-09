@@ -9317,7 +9317,7 @@ type GitCheckpoint struct {
 }
 
 func permissionPolicyDecision(policy toolpolicy.Policy, req workspace.ToolRequest) PermissionDecisionSnapshot {
-	decision := policy.Decide(toolPolicyRequest(req))
+	decision := policy.Decide(workspace.ToolPolicyRequest(req))
 	return PermissionDecisionSnapshot{
 		Tool:     decision.Tool,
 		Target:   decision.Target,
@@ -9352,32 +9352,7 @@ func permissionRuleRef(r toolpolicy.Rule) string {
 }
 
 func PermissionTarget(req workspace.ToolRequest) string {
-	return toolpolicy.Target(toolPolicyRequest(req))
-}
-
-func toolPolicyRequest(req workspace.ToolRequest) toolpolicy.Request {
-	return toolpolicy.Request{
-		Tool:        req.Tool,
-		Command:     req.Command,
-		Path:        req.Path,
-		Destination: req.Destination,
-		Workdir:     req.Workdir,
-		Moves:       toolPolicyMoves(req.Moves),
-		Args:        req.Args,
-	}
-}
-
-func toolPolicyMoves(moves []workspace.GoDeclarationMove) []toolpolicy.Move {
-	if len(moves) == 0 {
-		return nil
-	}
-
-	out := make([]toolpolicy.Move, 0, len(moves))
-	for _, move := range moves {
-		out = append(out, toolpolicy.Move{Destination: move.Destination})
-	}
-
-	return out
+	return toolpolicy.Target(workspace.ToolPolicyRequest(req))
 }
 
 func (s PermissionDecisionSnapshot) ToolResult() workspace.ToolResult {

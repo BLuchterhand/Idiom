@@ -67,3 +67,63 @@ func TestRuntimeProfileRejectsUnknownTaskFamily(t *testing.T) {
 		t.Fatalf("unknown family returned profile: %#v", profile)
 	}
 }
+
+func TestRuntimeProfileProjectsFromCanonicalContractCatalog(t *testing.T) {
+	for _, family := range []string{
+		ArtifactFinalAnswerTaskFamily,
+		string(autonomy.TaskFamilyConversation),
+		string(autonomy.TaskFamilyDirectQuestion),
+		string(autonomy.TaskFamilyDebugLogs),
+		"verification_only",
+		"locate",
+		"locate_then_implement",
+		"explore_then_implement",
+		"investigate_then_implement",
+		"review_then_implement",
+		"security_review",
+		"performance_review",
+		"architecture",
+		"architecture_then_implement",
+		"implementation",
+		"test_authoring",
+		"config_edit",
+		"script_edit",
+		"gdscript_edit",
+		"docs_edit",
+		"prompt_edit_security",
+		"failure_injection",
+		"plan_execute",
+		"plan_execute_planner",
+		"plan_then_execute",
+		string(autonomy.TaskFamilyPlanThenExecutePlanner),
+		string(autonomy.TaskFamilyPlanThenExecuteReview),
+		"multi_turn_state",
+	} {
+		t.Run(family, func(t *testing.T) {
+			profile, ok := RuntimeProfileForTaskFamily(family)
+			if !ok {
+				t.Fatalf("RuntimeProfileForTaskFamily(%q) returned !ok", family)
+			}
+
+			spec := RuntimeContractForTaskFamily(profile.TaskFamily)
+			if profile.Contract != spec.Contract {
+				t.Fatalf("profile contract = %q, catalog contract for canonical family %q = %q", profile.Contract, profile.TaskFamily, spec.Contract)
+			}
+		})
+	}
+}
+
+func TestRuntimeProfileRouteOnlyAliasesDoNotBroadenContractLookup(t *testing.T) {
+	for _, alias := range []string{"plan_execute", "plan_execute_planner", "plan_then_execute", "multi_turn_state"} {
+		t.Run(alias, func(t *testing.T) {
+			if _, ok := RuntimeProfileForTaskFamily(alias); !ok {
+				t.Fatalf("route alias %q should remain accepted by RuntimeProfileForTaskFamily", alias)
+			}
+
+			spec := RuntimeContractForTaskFamily(alias)
+			if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer {
+				t.Fatalf("RuntimeContractForTaskFamily(%q) = %#v, want conversation fallback", alias, spec)
+			}
+		})
+	}
+}
