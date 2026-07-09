@@ -61,13 +61,6 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&modeFlag, "mode", "all", "which probe(s) to run: implement | plan-execute | all")
 	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/config.json (defaults to cwd; matches `idiom lane` resolution)")
 	fs.StringVar(&configPath, "config", "", "explicit path to an idiom config (overrides --project-root resolution)")
-
-	// --coder is accepted for surface parity with Colony's
-	// idiom_route_probe.sh, which used it to switch the model alias.
-	// In-process the routing decision doesn't depend on which model
-	// answers, so the flag is intentionally a no-op; we still log
-	// that it was set so operators don't think it's silently ignored.
-	coderFlag := fs.Bool("coder", false, "request the coder alias (no-op for in-process routing; accepted for spec parity)")
 	if err := fs.Parse(args); err != nil {
 		// flag.ErrHelp means the user asked for help (`-h` / `--help`).
 		// The flag library already printed the usage block to stderr
@@ -78,10 +71,6 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 
 		return 2
-	}
-
-	if *coderFlag {
-		fmt.Fprintln(stderr, "probe lane: --coder accepted; in-process routing doesn't depend on the model alias.")
 	}
 
 	resolved, source, err := resolveProbeConfigPath(projectRoot, configPath)
@@ -285,7 +274,7 @@ func printProbeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: idiom probe <subcommand> [flags]")
 	fmt.Fprintln(stderr, "subcommands:")
 	fmt.Fprintln(stderr, "  lane            synthetic-brief route probe")
-	fmt.Fprintln(stderr, "                  flags: --mode implement|plan-execute|all  --project-root <path>  --config <path>  --coder")
+	fmt.Fprintln(stderr, "                  flags: --mode implement|plan-execute|all  --project-root <path>  --config <path>")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Replaces Colony/scripts/idiom_route_probe.sh.")
 }

@@ -92,25 +92,6 @@ func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 	}
 }
 
-// TestRunProbeLaneAcceptsCoderFlagAsNoOp verifies the spec-parity
-// flag added in the post-Phase-6 audit. --coder is accepted (the
-// design doc lists it) but the in-process probe doesn't depend on
-// the model alias, so the only observable effect is a stderr note
-// confirming the flag landed.
-func TestRunProbeLaneAcceptsCoderFlagAsNoOp(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := RunWithTelemetry([]string{"lane", "--coder"}, &stdout, &stderr, nil)
-
-	if code != 0 {
-		t.Fatalf("--coder must not affect exit code; got %d", code)
-	}
-
-	if !strings.Contains(stderr.String(), "--coder accepted") {
-		t.Fatalf("stderr should acknowledge --coder explicitly: %s", stderr.String())
-	}
-}
-
 // TestRunProbeLaneResolvesConfigUnderProjectRoot closes the gap I
 // originally dodged: the probe should match `idiom lane`'s config
 // resolution so an operator running it from any cwd hits the same

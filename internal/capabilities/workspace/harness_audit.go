@@ -551,7 +551,7 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 		report.BackendAvailability = m.auditBackendAvailability(report.LanguageTooling)
 		report.Findings = append(report.Findings, toolSurfaceFindings(toolSurface)...)
 		report.Findings = append(report.Findings, backendFindings(report.BackendAvailability)...)
-		report.ConsolidationCandidates = append(report.ConsolidationCandidates, staticConsolidationCandidates(m.cfg.Root)...)
+		report.ConsolidationCandidates = append(report.ConsolidationCandidates, staticConsolidationCandidates()...)
 	}
 
 	if purpose == "all" || purpose == "behavior" || purpose == "planning_quality" {
@@ -4694,27 +4694,13 @@ func auditTopCounts(values map[string]int, limit int) []harnessAuditCount {
 	return out
 }
 
-func staticConsolidationCandidates(root string) []harnessAuditQuestion {
-	candidates := []harnessAuditQuestion{
-		{
-			Area:      "language_tooling",
-			Question:  "Can repeated per-language capability schemas and examples be derived from LanguageRegistry?",
-			Evidence:  "Go, C/C++, Python, TypeScript, Rust, and Java expose the same standard capability matrix with language-prefixed tools.",
-			Candidate: "Generate conformance checks and manifest examples from the capability registry before generating implementation code.",
-		},
-	}
-	if fileExists(filepath.Join(root, "cmd", "idiom-analyze", "main.go")) &&
-		fileExists(filepath.Join(root, "cmd", "idiom-perf-eval", "main.go")) {
-
-		candidates = append(candidates, harnessAuditQuestion{
-			Area:      "behavior_logs",
-			Question:  "Should legacy log-shape mining and perf anti-pattern reporting converge behind one audit command?",
-			Evidence:  "Both cmd/idiom-analyze and cmd/idiom-perf-eval inspect JSONL behavior logs for improvement opportunities.",
-			Candidate: "Keep specialized CLIs while harness_audit becomes the shared evidence packet for agents.",
-		})
-	}
-
-	return candidates
+func staticConsolidationCandidates() []harnessAuditQuestion {
+	return []harnessAuditQuestion{{
+		Area:      "language_tooling",
+		Question:  "Can repeated per-language capability schemas and examples be derived from LanguageRegistry?",
+		Evidence:  "Go, C/C++, Python, TypeScript, Rust, and Java expose the same standard capability matrix with language-prefixed tools.",
+		Candidate: "Generate conformance checks and manifest examples from the capability registry before generating implementation code.",
+	}}
 }
 
 func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {

@@ -144,6 +144,10 @@ Shell command meaning now lives in workspace shell analysis for explore-mode
 acceptance, read-only side-effect facts, verification/action class projection,
 and write-capable `git diff --output` rejection. Runtime child task policies
 share one projection from workspace shell policy into generic toolpolicy rules.
+The stale standalone `idiom-analyze` log-shape miner was deleted after shell
+replacement redirects were removed; its main purpose was proposing
+shell-to-structured-tool redirect rules that no longer align with the harness
+north star.
 Language-backed read-only capability registry, runtime routing, evidence
 capabilities, and discovery profiling now project from a workspace catalog and
 the semantic `languagetools` code-navigation spec instead of separate
