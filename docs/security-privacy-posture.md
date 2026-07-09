@@ -36,6 +36,7 @@ Idiom's posture is contract-first:
 | Telemetry minimization | Local-ops privacy evidence has `metadata_only:true`, raw prompt/file-body capture flags false, and hosted telemetry defaults false; telemetry argument redaction is tested. | Local diagnostic JSONL can be written when telemetry is enabled; it is not a hosted analytics pipeline or formal DLP system. |
 | Side-effect policy | Discovery profile tests deny writes, shell, destructive/open-world effects, unknown effects, and local context-artifact writes before execution. | CLI sidecar behavior is covered; MCP/app parity remains later review scope. |
 | MCP/resource containment | MCP integration and classification-parity tests cover stdio replay, roots/resources metadata, protected-resource denial, caller metadata, and CLI/MCP parity evidence without raw protocol body export. | Current evidence supports fixture-level stdio/resource containment only; broader MCP resource body export, non-stdio authorization, and formal conformance remain no-go until reviewed. |
+| Hosted MCP HTTP network containment | HTTP endpoint validation is repeated for redirects and at connection time; the transport dials the validated IP directly, denies private/link-local/loopback destinations unless explicitly enabled, disables unpoliceable environment proxies in deny-private mode, and strips endpoint credentials from cross-origin redirects. MCP pending calls are cleared on cancellation, stream failure, reader termination, and close. | Private endpoints require `allow_private_network`; hosted authorization and formal MCP transport conformance remain deployment-specific. |
 
 ## Classification Coverage
 
@@ -66,6 +67,7 @@ go test ./internal/surfaces/cli/tool -run TestP75
 go test ./internal/surfaces/cli/localops -run TestLocalOpsBenchmark
 go test ./internal/surfaces/cli/root -run TestRunMainWritesTelemetryForRejectedDirectToolInput
 go test ./internal/surfaces/cli/mcp -run 'TestP86|TestP85'
+go test ./internal/capabilities/mcp -run 'TestHTTP|TestClient(CanceledCalls|ReaderTermination|CloseFailsPendingCall)'
 go test ./internal/contracts/autonomy ./internal/capabilities/workspace ./internal/evidence/telemetry
 ```
 

@@ -148,6 +148,37 @@
           "check_id": "p85-mcp-classification-parity"
         }
       ]
+    },
+    {
+      "id": "mcp_http_network_containment",
+      "claim": "Hosted MCP HTTP connections enforce the private-network policy at URL validation, every redirect, and the actual IP-pinned network dial; endpoint credentials are removed from cross-origin redirects.",
+      "mvp_limitations": "Environment proxies are disabled while private-network access is denied because proxy-side resolution cannot satisfy the local dial invariant. Private endpoints require the explicit allow_private_network override; this is not formal MCP transport conformance.",
+      "evidence": [
+        {
+          "kind": "go_test",
+          "command": "go test ./internal/capabilities/mcp -run '^TestHTTPNetworkPolicy'",
+          "path": "internal/capabilities/mcp/ssrf_test.go",
+          "check_id": "mcp-http-private-network-dial-containment"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./internal/capabilities/mcp -run '^TestHTTPTransport_(RedirectPolicy|CrossOriginRedirect|PublicPolicy|DoesNotDepend)'",
+          "path": "internal/capabilities/mcp/http_test.go",
+          "check_id": "mcp-http-redirect-proxy-containment"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./internal/capabilities/mcp -run 'TestClient(CanceledCalls|ReaderTermination|CloseFailsPendingCall)'",
+          "path": "internal/capabilities/mcp/client_test.go",
+          "check_id": "mcp-client-pending-lifecycle-containment"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./internal/capabilities/mcp -run '^TestHTTPTransport_(EmptyExpectedEventStream|OversizedEventStream|StreamFailure|JSONResponseSizeLimit|CloseCancelsRequest)'",
+          "path": "internal/capabilities/mcp/http_test.go",
+          "check_id": "mcp-http-stream-failure-containment"
+        }
+      ]
     }
   ],
   "client_classification_coverage": [
@@ -161,7 +192,8 @@
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
         "side_effect_policy_read_only_discovery",
-        "mcp_resource_containment"
+        "mcp_resource_containment",
+        "mcp_http_network_containment"
       ],
       "limitation": "No regulated finance compliance or FINRA-specific product claim."
     },
@@ -175,7 +207,8 @@
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
         "side_effect_policy_read_only_discovery",
-        "mcp_resource_containment"
+        "mcp_resource_containment",
+        "mcp_http_network_containment"
       ],
       "limitation": "No HIPAA compliance claim or PHI-processing attestation."
     },
@@ -189,7 +222,8 @@
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
         "side_effect_policy_read_only_discovery",
-        "mcp_resource_containment"
+        "mcp_resource_containment",
+        "mcp_http_network_containment"
       ],
       "limitation": "No FedRAMP, DoD, or NIST certification claim."
     },
@@ -203,7 +237,8 @@
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
         "side_effect_policy_read_only_discovery",
-        "mcp_resource_containment"
+        "mcp_resource_containment",
+        "mcp_http_network_containment"
       ],
       "limitation": "Buyer-value, retained-use, and paid-signal claims remain P7.11/P9.7 scope."
     },
@@ -215,7 +250,8 @@
         "redaction_no_raw_prompt_or_file_body",
         "telemetry_minimization_no_hosted_default",
         "side_effect_policy_read_only_discovery",
-        "mcp_resource_containment"
+        "mcp_resource_containment",
+        "mcp_http_network_containment"
       ],
       "limitation": "MCP resource parity remains P8.4/P8.5/P9.9 scope."
     },

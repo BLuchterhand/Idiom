@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -59,11 +60,25 @@ type rawError struct {
 	Message string `json:"message"`
 }
 
+type pendingCallResult struct {
+	response rawResponse
+	err      error
+}
+
+// TransportMessage is one inbound transport event. RequestError is scoped to
+// RequestID and does not terminate unrelated calls; a non-nil error returned by
+// Receive means the transport itself is no longer usable.
+type TransportMessage struct {
+	Payload      []byte
+	RequestID    int64
+	RequestError error
+}
+
 // Transport is the narrow interface the client needs from a stdio pair, so
 // tests can inject an in-memory pipe without starting a real process.
 type Transport interface {
 	Send(ctx context.Context, payload []byte) error
-	Receive(ctx context.Context) ([]byte, error)
+	Receive(ctx context.Context) (TransportMessage, error)
 	Close() error
 }
 
@@ -76,10 +91,11 @@ type Client struct {
 	writeMu sync.Mutex
 
 	pendingMu sync.Mutex
-	pending   map[int64]chan rawResponse
+	pending   map[int64]chan pendingCallResult
+	readErr   error
 
 	once       sync.Once
-	startErr   error
+	started    atomic.Bool
 	readerDone chan struct{}
 }
 
@@ -87,7 +103,7 @@ type Client struct {
 func NewClient(transport Transport) *Client {
 	return &Client{
 		transport:  transport,
-		pending:    make(map[int64]chan rawResponse),
+		pending:    make(map[int64]chan pendingCallResult),
 		readerDone: make(chan struct{}),
 	}
 }
@@ -95,24 +111,32 @@ func NewClient(transport Transport) *Client {
 // Start launches the reader goroutine. Safe to call multiple times.
 func (c *Client) Start(ctx context.Context) error {
 	c.once.Do(func() {
+		c.started.Store(true)
 		go c.readLoop(ctx)
 	})
 
-	return c.startErr
+	return nil
 }
 
 func (c *Client) readLoop(ctx context.Context) {
 	defer close(c.readerDone)
 
 	for {
-		payload, err := c.transport.Receive(ctx)
+		message, err := c.transport.Receive(ctx)
 		if err != nil {
+			c.failPending(fmt.Errorf("mcp response reader stopped: %w", err))
 			return
+		}
+		if message.RequestError != nil {
+			if ch, ok := c.takePending(message.RequestID); ok {
+				ch <- pendingCallResult{err: message.RequestError}
+			}
+			continue
 		}
 
 		var resp rawResponse
 
-		if err := json.Unmarshal(payload, &resp); err != nil {
+		if err := json.Unmarshal(message.Payload, &resp); err != nil {
 			// Ignore garbage; the protocol doesn't define recovery so just
 			// drop the frame and keep going.
 			continue
@@ -123,18 +147,59 @@ func (c *Client) readLoop(ctx context.Context) {
 			continue
 		}
 
-		c.pendingMu.Lock()
-
-		ch, ok := c.pending[resp.ID]
-		if ok {
-			delete(c.pending, resp.ID)
+		if ch, ok := c.takePending(resp.ID); ok {
+			ch <- pendingCallResult{response: resp}
 		}
+	}
+}
 
-		c.pendingMu.Unlock()
+func (c *Client) registerPending(id int64, ch chan pendingCallResult) error {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
 
-		if ok {
-			ch <- resp
-		}
+	if c.readErr != nil {
+		return c.readErr
+	}
+	c.pending[id] = ch
+	return nil
+}
+
+func (c *Client) takePending(id int64) (chan pendingCallResult, bool) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+
+	ch, ok := c.pending[id]
+	if ok {
+		delete(c.pending, id)
+	}
+	return ch, ok
+}
+
+func (c *Client) removePending(id int64, ch chan pendingCallResult) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+
+	if current, ok := c.pending[id]; ok && current == ch {
+		delete(c.pending, id)
+	}
+}
+
+func (c *Client) failPending(err error) {
+	if err == nil {
+		err = io.EOF
+	}
+
+	c.pendingMu.Lock()
+	if c.readErr == nil {
+		c.readErr = err
+	}
+	terminalErr := c.readErr
+	pending := c.pending
+	c.pending = make(map[int64]chan pendingCallResult)
+	c.pendingMu.Unlock()
+
+	for _, ch := range pending {
+		ch <- pendingCallResult{err: terminalErr}
 	}
 }
 
@@ -162,33 +227,34 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		return nil, fmt.Errorf("marshal %s: %w", method, err)
 	}
 
-	ch := make(chan rawResponse, 1)
-
-	c.pendingMu.Lock()
-
-	c.pending[id] = ch
-	c.pendingMu.Unlock()
+	ch := make(chan pendingCallResult, 1)
+	if err := c.registerPending(id, ch); err != nil {
+		return nil, fmt.Errorf("%s: %w", method, err)
+	}
 	c.writeMu.Lock()
 
 	sendErr := c.transport.Send(ctx, payload)
 	c.writeMu.Unlock()
 
 	if sendErr != nil {
-		c.pendingMu.Lock()
-		delete(c.pending, id)
-		c.pendingMu.Unlock()
+		c.removePending(id, ch)
 
 		return nil, fmt.Errorf("send %s: %w", method, sendErr)
 	}
 
 	select {
-	case resp := <-ch:
+	case result := <-ch:
+		if result.err != nil {
+			return nil, fmt.Errorf("%s: %w", method, result.err)
+		}
+		resp := result.response
 		if resp.Error != nil {
 			return nil, fmt.Errorf("%s: server error %d: %s", method, resp.Error.Code, resp.Error.Message)
 		}
 
 		return resp.Result, nil
 	case <-ctx.Done():
+		c.removePending(id, ch)
 		return nil, ctx.Err()
 	}
 }
@@ -308,13 +374,17 @@ func (c *Client) Close() error {
 		return nil
 	}
 
+	c.failPending(io.ErrClosedPipe)
 	err := c.transport.Close()
+	if !c.started.Load() {
+		return err
+	}
 	select {
 	case <-c.readerDone:
+		return err
 	case <-time.After(2 * time.Second):
+		return errors.Join(err, errors.New("timed out waiting for MCP response reader shutdown"))
 	}
-
-	return err
 }
 
 // StdioTransport speaks MCP's newline-delimited JSON-RPC over a child
@@ -361,16 +431,16 @@ func (t *StdioTransport) Send(ctx context.Context, payload []byte) error {
 }
 
 // Receive reads one newline-terminated JSON-RPC frame.
-func (t *StdioTransport) Receive(ctx context.Context) ([]byte, error) {
+func (t *StdioTransport) Receive(ctx context.Context) (TransportMessage, error) {
 	_ = ctx
 
 	line, err := t.stdout.ReadBytes('\n')
 
 	if err != nil && len(line) == 0 {
-		return nil, err
+		return TransportMessage{}, err
 	}
 
-	return line, nil
+	return TransportMessage{Payload: line}, nil
 }
 
 // Close tears down stdio and waits briefly for the child to exit.

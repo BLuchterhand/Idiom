@@ -1073,9 +1073,10 @@ func (t *testMCPStdioTransport) Send(ctx context.Context, payload []byte) error 
 	return nil
 }
 
-func (t *testMCPStdioTransport) Receive(ctx context.Context) ([]byte, error) {
+func (t *testMCPStdioTransport) Receive(ctx context.Context) (mcppkg.TransportMessage, error) {
 	_ = ctx
-	return t.stdout.ReadBytes('\n')
+	payload, err := t.stdout.ReadBytes('\n')
+	return mcppkg.TransportMessage{Payload: payload}, err
 }
 
 func (t *testMCPStdioTransport) Close() error {

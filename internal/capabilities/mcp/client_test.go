@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,16 +51,16 @@ func (t *fakeTransport) Send(ctx context.Context, payload []byte) error {
 	}
 }
 
-func (t *fakeTransport) Receive(ctx context.Context) ([]byte, error) {
+func (t *fakeTransport) Receive(ctx context.Context) (TransportMessage, error) {
 	select {
 	case payload, ok := <-t.incoming:
 		if !ok {
-			return nil, io.EOF
+			return TransportMessage{}, io.EOF
 		}
 
-		return payload, nil
+		return TransportMessage{Payload: payload}, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return TransportMessage{}, ctx.Err()
 	}
 }
 
@@ -243,6 +244,104 @@ func TestClientInitializeListCallRoundTrip(t *testing.T) {
 	}
 }
 
+func TestClientCanceledCallsDoNotAccumulatePendingState(t *testing.T) {
+	transport := newFakeTransport()
+	client := NewClient(transport)
+	readerContext, stopReader := context.WithCancel(context.Background())
+	defer stopReader()
+	if err := client.Start(readerContext); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer client.Close()
+
+	for i := 0; i < 8; i++ {
+		callContext, cancelCall := context.WithCancel(context.Background())
+		cancelCall()
+		if _, err := client.call(callContext, "test/cancel", map[string]any{"index": i}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("call %d error = %v, want context cancellation", i, err)
+		}
+	}
+
+	client.pendingMu.Lock()
+	pendingCount := len(client.pending)
+	client.pendingMu.Unlock()
+	if pendingCount != 0 {
+		t.Fatalf("pending calls after cancellation = %d, want 0", pendingCount)
+	}
+}
+
+func TestClientReaderTerminationFailsPendingCall(t *testing.T) {
+	transport := newFakeTransport()
+	client := NewClient(transport)
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer client.Close()
+
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := client.call(context.Background(), "test/wait", nil)
+		callDone <- err
+	}()
+
+	select {
+	case <-transport.outgoing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pending call did not send its request")
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("close transport: %v", err)
+	}
+
+	select {
+	case err := <-callDone:
+		if err == nil || !strings.Contains(err.Error(), "response reader stopped") || !errors.Is(err, io.EOF) {
+			t.Fatalf("pending call error = %v, want wrapped reader EOF", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("pending call remained blocked after reader termination")
+	}
+
+	client.pendingMu.Lock()
+	pendingCount := len(client.pending)
+	client.pendingMu.Unlock()
+	if pendingCount != 0 {
+		t.Fatalf("pending calls after reader termination = %d, want 0", pendingCount)
+	}
+}
+
+func TestClientCloseFailsPendingCall(t *testing.T) {
+	transport := newFakeTransport()
+	client := NewClient(transport)
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := client.call(context.Background(), "test/wait", nil)
+		callDone <- err
+	}()
+
+	select {
+	case <-transport.outgoing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pending call did not send its request")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case err := <-callDone:
+		if !errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("pending call error = %v, want closed pipe", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("pending call remained blocked after client close")
+	}
+}
+
 func TestClientResourcesListAndReadRoundTrip(t *testing.T) {
 	transport := newFakeTransport()
 	respondInitializeToolsAndResources(t, transport)
@@ -301,8 +400,8 @@ func TestStartStdioRoundTripsFramesAndEnv(t *testing.T) {
 		t.Fatalf("Receive failed: %v", err)
 	}
 
-	if !containsBytes(json.RawMessage(got), `"echo":true`) || !containsBytes(json.RawMessage(got), `"env":"env-ok"`) {
-		t.Fatalf("unexpected stdio response: %s", got)
+	if !containsBytes(json.RawMessage(got.Payload), `"echo":true`) || !containsBytes(json.RawMessage(got.Payload), `"env":"env-ok"`) {
+		t.Fatalf("unexpected stdio response: %s", got.Payload)
 	}
 }
 
