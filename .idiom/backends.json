@@ -20,7 +20,6 @@
       ],
       "proxy": {
         "default_alias": "deepseek-v4-flash",
-        "default_coder": "deepseek-v4-flash",
         "default_planner": "deepseek-v4-flash",
         "default_executor": "deepseek-v4-flash",
         "default_classifier": "deepseek-v4-flash"
@@ -43,7 +42,6 @@
       ],
       "proxy": {
         "default_alias": "claude-sonnet",
-        "default_coder": "claude-sonnet",
         "default_planner": "claude-sonnet",
         "default_executor": "claude-sonnet",
         "default_classifier": "claude-sonnet"
@@ -70,7 +68,6 @@
       "proxy": {
         "listen": 47680,
         "default_alias": "local-coder",
-        "default_coder": "local-coder",
         "default_planner": "local-coder",
         "default_executor": "local-coder",
         "default_classifier": "local-coder"

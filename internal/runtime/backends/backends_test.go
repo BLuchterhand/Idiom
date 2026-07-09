@@ -481,21 +481,6 @@ func TestAliasForRoleEmptyOnMiss(t *testing.T) {
 	}
 }
 
-// TestAliasForRoleLegacyDefaultCoderAliasesExecutor verifies the
-// back-compat shim: a project that set proxy.default_coder before the
-// roles refactor still resolves the executor role to that alias.
-func TestAliasForRoleLegacyDefaultCoderAliasesExecutor(t *testing.T) {
-	prof := Profile{
-		Models: []Model{{Alias: "model-a"}, {Alias: "model-b"}},
-		Proxy:  Proxy{DefaultCoder: "model-a"},
-	}
-	got, ok := prof.AliasForRole(RoleExecutor)
-
-	if !ok || got != "model-a" {
-		t.Fatalf("legacy DefaultCoder must alias executor; got (%q,%v)", got, ok)
-	}
-}
-
 // TestModelByAliasFindsAndMissesCleanly verifies the metadata lookup
 // helper that callers use after AliasForRole to fetch host/port/binary.
 func TestModelByAliasFindsAndMissesCleanly(t *testing.T) {

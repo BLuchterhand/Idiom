@@ -462,7 +462,7 @@ func formatBackendsList(stdout io.Writer, src string, file backends.File) {
 		prof := file.Profiles[name]
 		fmt.Fprintf(stdout, "profile %q\n", name)
 
-		if prof.Proxy.Listen != 0 || prof.Proxy.DefaultAlias != "" || prof.Proxy.DefaultExecutor != "" || prof.Proxy.DefaultCoder != "" {
+		if prof.Proxy.Listen != 0 || prof.Proxy.DefaultAlias != "" || prof.Proxy.DefaultExecutor != "" {
 			fmt.Fprintf(stdout, "  proxy listen=%d default=%q default_executor=%q\n", prof.Proxy.Listen, prof.Proxy.DefaultAlias, prof.Proxy.DefaultExecutor)
 		}
 

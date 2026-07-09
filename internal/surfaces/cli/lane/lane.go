@@ -101,7 +101,6 @@ type laneOptions struct {
 	JSONEvents               bool
 	Resume                   string
 	PlannerOwnedVerification bool
-	AllowBuildTests          bool
 	DisableThinking          bool
 	ProjectRoot              string // overridable for tests; defaults to filepath.Dir(BriefPath)
 	NoLint                   bool   // skip the brief lint preflight (default: lint runs)
@@ -778,7 +777,6 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id")
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", true, "delegate build/test verification to the caller (default true for lane)")
-	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag forwarded to the underlying subcommand")
 	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for the wrapped subprocess")
 	fs.StringVar(&opts.ProjectRoot, "project-root", "", "project root used to resolve .idiom/ overlays (defaults to the brief's directory)")
 	fs.BoolVar(&opts.NoLint, "no-lint", false, "skip the brief lint preflight (lint runs by default)")
@@ -787,7 +785,6 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.BoolVar(&opts.Postflight, "postflight", false, "run idiom lane postflight against git diff after the lane returns; final exit is max(lane, postflight)")
 	fs.BoolVar(&opts.AllowStaleBrief, "allow-stale-brief", false, "override the deterministic stale-brief gate (default: fail if any required edit path has commits newer than brief mtime)")
 	fs.BoolVar(&opts.AllowDirtyAtomScope, "allow-dirty", false, "allow atom dispatch when scoped existing paths have local modifications")
-	fs.BoolVar(&opts.AllowDirtyAtomScope, "allow-dirty-scope", false, "alias for --allow-dirty")
 	fs.StringVar(&opts.RefineSpecPath, "spec", "", "refine mode: path to 1-paragraph spec file")
 	fs.StringVar(&opts.RefineOutputPath, "output", "", "refine mode: where to write the converged brief")
 	fs.IntVar(&opts.RefineMaxIters, "max-iters", 3, "refine mode: max draft+review+patch iterations (default 3)")
@@ -801,7 +798,6 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.BoolVar(&opts.IntentLoop, "intent-loop", false, "plan-execute mode: iterate planner/executor/review until intent-level evidence is satisfied")
 	fs.IntVar(&opts.IntentLoopMaxCycles, "max-cycles", 5, "plan-execute mode: maximum intent-loop cycles when --intent-loop is set")
 	fs.IntVar(&opts.IntentLoopBudgetTokens, "total-budget-tokens", 0, "plan-execute mode: total intent-loop token budget across cycles; 0 means unbounded")
-	fs.IntVar(&opts.IntentLoopBudgetTokens, "budget-tokens", 0, "alias for --total-budget-tokens")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
@@ -1655,7 +1651,7 @@ func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredE
 		taskFamily = agent.PlanThenExecutePlannerTaskFamily
 		reason = writerroute.ReasonMultiFilePlanExecute
 		verificationOwner = writerroute.VerificationOwnerPlannerOwned
-	} else if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
+	} else if opts.PlannerOwnedVerification {
 		verificationOwner = writerroute.VerificationOwnerPlannerOwned
 	}
 
@@ -1686,8 +1682,7 @@ func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredE
 
 // buildForwardedArgs constructs the args the lane wrapper hands to
 // the underlying idiom subcommand. The composed prompt is passed via
-// --prompt-file; required edit paths and other relevant flags (model,
-// json, resume, planner-owned-verification, allow-build-tests) are
+// --prompt-file; required edit paths and other relevant flags are
 // forwarded if set.
 func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths []string) []string {
 	out := []string{
@@ -1712,12 +1707,8 @@ func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths
 		out = append(out, "--resume", resume)
 	}
 
-	if opts.PlannerOwnedVerification {
+	if opts.Mode == string(lanecontract.LaneImplement) && opts.PlannerOwnedVerification {
 		out = append(out, "--planner-owned-verification")
-	}
-
-	if opts.AllowBuildTests {
-		out = append(out, "--allow-build-tests")
 	}
 
 	if opts.DisableThinking {

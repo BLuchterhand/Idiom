@@ -126,34 +126,6 @@ func TestRunImplementMainCanDisableThinking(t *testing.T) {
 	}
 }
 
-func TestRunImplementMainAllowBuildTestsOverridesPlannerOwnedVerification(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotOpts        cmdruntime.RunOptions
-	)
-
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification", "-allow-build-tests"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			gotOpts = opts
-			return "done", nil
-		},
-		nil,
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotOpts.PlannerOwnedVerification {
-		t.Fatal("--allow-build-tests should leave build/test verification available to the implementation lane")
-	}
-}
-
 func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 	configPath := writeMainConfig(t)
 	promptPath := filepath.Join(t.TempDir(), "brief.md")

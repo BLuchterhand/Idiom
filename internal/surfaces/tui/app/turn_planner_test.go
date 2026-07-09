@@ -298,7 +298,7 @@ func TestImplementationDispatchDirtyAllowanceBroadFlagRequiresAffirmativeContext
 		"do not use `--allow-dirty` for this run",
 		"rerun without --allow-dirty",
 		"CLI help: --allow-dirty allows dirty atom scopes",
-		"avoid --allow-dirty-scope unless the user says so",
+		"avoid --allow-dirty unless the user says so",
 		"atom intake blocked; next: rerun with --allow-dirty",
 	} {
 		got := implementationdispatch.PlanDocumentsWithDirtyAllowance(prompt, docs)

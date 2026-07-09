@@ -101,8 +101,6 @@ type Options struct {
 	ScopeExtractionPolicy            ScopeExtractionPolicy
 	AuthorizedNewFiles               []string
 	VerificationPlanExplicitCommands []string
-	PlannerOwnedVerification         bool
-	AllowBuildTests                  bool
 	SkipReviewRepair                 bool
 	SessionID                        string
 	OnPhase                          PhaseFunc

@@ -174,7 +174,7 @@ func splitPlanExecuteIntentLoopArgs(args []string) ([]string, planExecuteIntentL
 			}
 			loopOpts.MaxCycles = parsed
 			i = next
-		case "-total-budget-tokens", "-budget-tokens":
+		case "-total-budget-tokens":
 			parsed, next, err := parseIntFlagValue("--total-budget-tokens", value, hasValue, args, i)
 			if err != nil {
 				return nil, loopOpts, err

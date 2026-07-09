@@ -1134,16 +1134,29 @@ Reviewer-updated estimate:
   `roleAliasOptions` branch, leaving `ResolveRoleAlias` / `AliasForRole` as the
   single backend role-alias authority. New generated/example configs and
   `idiom backend list` now advertise `default_executor` / `executor_alias`
-  instead of `default_coder` / `coder_alias`; the `Proxy.DefaultCoder` JSON
-  field remains as legacy read compatibility for existing `.idiom/backends.json`
-  files. This slice changed production Go by `+7 / -31`, net `-24`; tests by
-  `+41 / -78`, net `-37`; and examples by `0 / -2`.
+  instead of `default_coder` / `coder_alias`. This slice changed production Go
+  by `+7 / -31`, net `-24`; tests by `+41 / -78`, net `-37`; and examples by
+  `0 / -2`.
   Verification: `go test ./internal/runtime/backends -run 'Test(Load|AliasForRole|ResolveRoleAlias|ResolveRoleFromProjectRoot|IsHyphenBoundedToken)' -count=1`;
   `go test ./internal/surfaces/cli/backend ./internal/surfaces/cli/lane ./internal/surfaces/cli/init -count=1`;
   `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `git diff --check`.
+- Compatibility flag sunset removed the remaining `Proxy.DefaultCoder` JSON
+  read path, deleted checked-in `default_coder` examples, removed no-op
+  plan-execute `--planner-owned-verification` / `--allow-build-tests` flags,
+  removed alias-only `--allow-dirty-scope` and `--budget-tokens`, and deleted
+  the implement/lane `--allow-build-tests` override in favor of the single
+  `--planner-owned-verification` contract. Production Go changed by
+  `+11 / -35`, net `-24`; tests by `+13 / -60`, net `-47`; config by
+  `0 / -3`.
+  Verification: `go test ./internal/workflows/planexecute ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane ./internal/surfaces/cli/implement ./internal/runtime/backends ./internal/surfaces/cli/backend ./internal/workflows/implementationdispatch ./internal/surfaces/tui/app -count=1`;
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/Users/ben/go/bin/deadcode -test ./...`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`;
   `git diff --check`.
 - Command execution owner cleanup continued. Workspace command execution now
   accepts a `commandexec.Spec` and applies workspace-owned timeout, capture,

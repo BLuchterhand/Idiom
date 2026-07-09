@@ -78,12 +78,10 @@ type Model struct {
 // backends. `Listen` is the single port a client (idiom) connects to;
 // `DefaultAlias` is the alias chosen when a request doesn't name one.
 // The Default<Role> fields let callers pin a specific alias to a
-// harness role without relying on the role-tag heuristic; DefaultCoder
-// is the legacy alias for DefaultExecutor and remains supported.
+// harness role without relying on the role-tag heuristic.
 type Proxy struct {
 	Listen            int    `json:"listen,omitempty"`
 	DefaultAlias      string `json:"default_alias,omitempty"`
-	DefaultCoder      string `json:"default_coder,omitempty"`
 	DefaultPlanner    string `json:"default_planner,omitempty"`
 	DefaultExecutor   string `json:"default_executor,omitempty"`
 	DefaultClassifier string `json:"default_classifier,omitempty"`
@@ -234,7 +232,7 @@ func (f File) ModelByAlias(alias string) (Model, bool) {
 // role. Lookup order, top to bottom:
 //
 //  1. The explicit Default<Role> field on Profile.Proxy (DefaultPlanner,
-//     DefaultExecutor / DefaultCoder, DefaultClassifier).
+//     DefaultExecutor, DefaultClassifier).
 //  2. The first Model whose Roles list contains the requested role.
 //  3. The lone Model in the profile, when only one is declared. A
 //     single-model project gets every role routed to that model
@@ -299,18 +297,13 @@ func (p Profile) ResolveRoleAlias(role string) RoleAliasResolution {
 }
 
 // proxyDefaultForRole returns the Proxy.Default<Role> field value for a
-// given role, including the legacy DefaultCoder alias for executor.
-// Empty when the role has no explicit default.
+// given role. Empty when the role has no explicit default.
 func (p Profile) proxyDefaultForRole(role string) string {
 	switch role {
 	case RolePlanner:
 		return p.Proxy.DefaultPlanner
 	case RoleExecutor:
-		if alias := strings.TrimSpace(p.Proxy.DefaultExecutor); alias != "" {
-			return alias
-		}
-
-		return p.Proxy.DefaultCoder
+		return p.Proxy.DefaultExecutor
 	case RoleClassifier:
 		return p.Proxy.DefaultClassifier
 	}

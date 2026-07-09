@@ -458,25 +458,21 @@ func TestRunLaneMainAtomIntakeAllowDirtyDispatches(t *testing.T) {
 	brief := "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `src/foo.go` | Modify source. |\n"
 	briefPath := writeBriefFile(t, root, "atom.md", brief, time.Now().Add(time.Hour))
 
-	for _, flag := range []string{"--allow-dirty", "--allow-dirty-scope"} {
-		t.Run(flag, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
 
-			fake := &laneFakeRunner{}
-			code := runLaneMainTest(t, []string{"plan-execute", "--json", flag, "--project-root", root, briefPath}, &stdout, &stderr, fake)
+	fake := &laneFakeRunner{}
+	code := runLaneMainTest(t, []string{"plan-execute", "--json", "--allow-dirty", "--project-root", root, briefPath}, &stdout, &stderr, fake)
 
-			if code != 0 {
-				t.Fatalf("expected %s to dispatch, got %d stderr=%s stdout=%s", flag, code, stderr.String(), stdout.String())
-			}
+	if code != 0 {
+		t.Fatalf("expected --allow-dirty to dispatch, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
 
-			if fake.calledMode != "plan-execute" {
-				t.Fatalf("fake runner should be called, got mode %q", fake.calledMode)
-			}
+	if fake.calledMode != "plan-execute" {
+		t.Fatalf("fake runner should be called, got mode %q", fake.calledMode)
+	}
 
-			if !strings.Contains(stdout.String(), `"state":"dispatchable"`) {
-				t.Fatalf("stdout should include dispatchable atom intake event, got:\n%s", stdout.String())
-			}
-		})
+	if !strings.Contains(stdout.String(), `"state":"dispatchable"`) {
+		t.Fatalf("stdout should include dispatchable atom intake event, got:\n%s", stdout.String())
 	}
 }
 

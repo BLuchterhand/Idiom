@@ -29,7 +29,6 @@ type implementOptions struct {
 	Resume                   string
 	JSONEvents               bool
 	PlannerOwnedVerification bool
-	AllowBuildTests          bool
 	// MaxTokens overrides the per-call max_tokens cap. Zero falls
 	// through to the backend default (8192 for the shipped MLX
 	// config). Refine's per-iter dispatch passes 16384 here to give
@@ -100,7 +99,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		JSONEvents:               opts.JSONEvents,
 		Resume:                   opts.Resume,
 		TaskFamily:               string(autonomy.TaskFamilyImplementation),
-		PlannerOwnedVerification: opts.PlannerOwnedVerification && !opts.AllowBuildTests,
+		PlannerOwnedVerification: opts.PlannerOwnedVerification,
 		MaxTokensOverride:        opts.MaxTokens,
 		DisableThinking:          opts.DisableThinking,
 		Telemetry:                rec,
@@ -119,7 +118,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 }
 
 func implementWriterRouteVerificationOwner(opts implementOptions) writerroute.VerificationOwner {
-	if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
+	if opts.PlannerOwnedVerification {
 		return writerroute.VerificationOwnerPlannerOwned
 	}
 
@@ -164,7 +163,6 @@ func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, e
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id before running")
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "delegate build/test verification to the caller; implementation may only run cheap non-build sanity checks")
-	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: keep build/test shell commands available inside the implementation lane")
 	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for this run")
 	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override chat max_tokens for this implementation run; 0 uses backend default (8192)")
 

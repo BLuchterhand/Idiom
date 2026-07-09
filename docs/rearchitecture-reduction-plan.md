@@ -962,10 +962,11 @@ flowchart TD
    session/turn sequencing out of `runLegacySessionBody`.
 8. Split `harness_audit.go` by audit family behind section builders with typed
    finding IDs and severities. Keep one report DTO and command entrypoint.
-9. Prune compatibility surfaces after the new authorities are in use:
-   `default_coder` generation, no-op plan-execute flags, direct-tool legacy JSON
-   envelope fields, transport-mode aliases, languagetools test compatibility
-   facades, and `workerruntime` pass-through aliases.
+9. Prune remaining compatibility surfaces after the new authorities are in use:
+   direct-tool legacy JSON envelope fields, transport-mode aliases,
+   languagetools test compatibility facades, and `workerruntime` pass-through
+   aliases. The `default_coder` backend alias, no-op plan-execute flags, and
+   alias-only dirty/budget flags have been removed.
 
 Hold recovery legacy progress readers and featureplanner replay compatibility
 readers until a persistence horizon or migration is defined.

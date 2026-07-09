@@ -39,9 +39,7 @@ func DirtyAtomScopeAllowance(prompt string) DirtyAllowance {
 func broadDirtyAtomScopeAllowance(prompt string) bool {
 	lower := strings.ToLower(prompt)
 	markers := []string{
-		"--allow-dirty-scope",
 		"--allow-dirty",
-		"allow-dirty-scope",
 		"allow dirty atom scope",
 		"allow all dirty scoped",
 	}

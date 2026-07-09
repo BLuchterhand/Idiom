@@ -30,7 +30,7 @@ func TestPlanDocumentsWithDirtyAllowanceRejectsQuotedOrNegatedAuthority(t *testi
 		"do not explicitly allow dirty scoped path internal/contracts/writerroute/decision_test.go",
 		"atom intake blocked; next: allow dirty path internal/contracts/writerroute/decision_test.go",
 		"rerun without --allow-dirty",
-		"avoid --allow-dirty-scope unless the user says so",
+		"avoid --allow-dirty unless the user says so",
 	} {
 		got := PlanDocumentsWithDirtyAllowance(prompt, docs)
 		if got[0].AllowDirtyAtomScope {
