@@ -2,18 +2,14 @@ package featureplanner
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	featureplannercontract "idiom/internal/contracts/featureplanner"
 	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/platform/failures"
 )
 
 func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
@@ -21,7 +17,7 @@ func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
 
 	plan.Atoms[0].TestFirst.PreExecutionEventIDs = nil
 
-	err := ValidateDurablePlan(plan)
+	err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -45,250 +41,13 @@ func TestValidateDurablePlanRejectsMismatchedTDDSnapshot(t *testing.T) {
 
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"go test ./wrong"}
 
-	err := ValidateDurablePlan(plan)
+	err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 
 	if !strings.Contains(err.Error(), "planned_tdd_snapshot.test_commands") {
 		t.Fatalf("expected snapshot command mismatch, got %v", err)
-	}
-}
-
-func TestReplayRejectsStaleFeatureRevision(t *testing.T) {
-	state := durableState()
-
-	state.Revision = 3
-
-	_, err := Replay(state, []Event{
-		{
-			SchemaVersion:         FeatureEventSchemaVersion,
-			EventID:               "evt-stale",
-			IdempotencyKey:        "feature-one/rev-0/dispatch",
-			Type:                  string(featureplannercontract.LegacyEventAtomStarted),
-			SessionID:             "session",
-			FeatureID:             "feature-one",
-			FeatureRevisionBefore: 0,
-			FeatureRevisionAfter:  1,
-			FeatureFrom:           FeatureStateReady,
-			FeatureTo:             FeatureStateDispatching,
-		},
-	})
-
-	var replayErr ReplayError
-
-	if !errors.As(err, &replayErr) {
-		t.Fatalf("expected ReplayError, got %v", err)
-	}
-}
-
-func TestReplayErrorClassifiesReplayInvariantViolations(t *testing.T) {
-	state := durableState()
-
-	state.Revision = 3
-
-	_, err := Replay(state, []Event{{
-		SchemaVersion:         FeatureEventSchemaVersion,
-		EventID:               "evt-stale",
-		IdempotencyKey:        "feature-one/rev-0/dispatch",
-		Type:                  string(featureplannercontract.LegacyEventAtomStarted),
-		SessionID:             "session",
-		FeatureID:             "feature-one",
-		FeatureRevisionBefore: 0,
-		FeatureRevisionAfter:  1,
-		FeatureFrom:           FeatureStateReady,
-		FeatureTo:             FeatureStateDispatching,
-	}})
-	if err == nil {
-		t.Fatal("expected replay error")
-	}
-
-	var replayErr ReplayError
-
-	if !errors.As(err, &replayErr) {
-		t.Fatalf("expected ReplayError, got %v", err)
-	}
-
-	if got := failures.CodeOf(err); got != failures.FailedPrecondition {
-		t.Fatalf("CodeOf(err) = %v, want %v", got, failures.FailedPrecondition)
-	}
-
-	if got := failures.ReasonOf(err); got != ReplayInvariantViolation {
-		t.Fatalf("ReasonOf(err) = %v, want %v", got, ReplayInvariantViolation)
-	}
-
-	if !strings.Contains(err.Error(), "expected feature_revision_before") {
-		t.Fatalf("existing replay error message changed: %v", err)
-	}
-}
-
-func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T) {
-	state := durableState()
-
-	bundle, err := Replay(state, []Event{{
-		SchemaVersion:         FeatureEventSchemaVersion,
-		EventID:               "evt-authority",
-		IdempotencyKey:        "feature-one/rev-0/authority",
-		Type:                  featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered),
-		SessionID:             "session",
-		FeatureID:             "feature-one",
-		FeatureRevisionBefore: 0,
-		FeatureRevisionAfter:  1,
-		Fields: map[string]any{
-			"authority_delta": map[string]any{
-				"authority_kind": "new_file_authorization",
-				"affected_paths": []string{"pkg/new_file.go"},
-			},
-		},
-	}})
-	if err != nil {
-		t.Fatalf("replay should preserve malformed authority delta for validation, got %v", err)
-	}
-
-	if len(bundle.State.AuthorityDeltas) != 1 {
-		t.Fatalf("authority deltas were dropped: %#v", bundle.State.AuthorityDeltas)
-	}
-
-	err = ValidateDurableState(bundle.State)
-	if err == nil || !strings.Contains(err.Error(), "authority delta 0 missing question_id") {
-		t.Fatalf("expected durable authority delta validation error, got %v", err)
-	}
-}
-
-func TestReplayPreservesNewFileAuthorityForContractRecompile(t *testing.T) {
-	state := durableState()
-	state.Plan = durablePlan()
-	state.Plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
-	state.Plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
-	state.Plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
-
-	bundle, err := Replay(state, []Event{{
-		SchemaVersion:         FeatureEventSchemaVersion,
-		EventID:               "evt-authority",
-		IdempotencyKey:        "feature-one/rev-0/authority",
-		Type:                  featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered),
-		SessionID:             "session",
-		FeatureID:             "feature-one",
-		FeatureRevisionBefore: 0,
-		FeatureRevisionAfter:  1,
-		Fields: map[string]any{
-			"authority_delta": map[string]any{
-				"question_id":     "q-001-new-file-authorization",
-				"authority_kind":  "operator_approval",
-				"evidence_refs":   []string{"planner_question:q-001"},
-				"affected_paths":  []string{"pkg/new_helper.go", "pkg/new_helper_test.go"},
-				"affected_fields": []string{"new_file_authorization"},
-				"expected":        "missing new files require explicit operator authorization",
-				"actual":          "operator authorized creating new helper and test files",
-				"revision":        float64(1),
-				"created_at":      "2026-06-12T19:00:00Z",
-			},
-		},
-	}})
-	if err != nil {
-		t.Fatalf("Replay returned error: %v", err)
-	}
-
-	contract := CompilePlanAuthorityContract(bundle.State.Plan, bundle.State.AuthorityDeltas)
-	got := []string{}
-	for _, file := range contract.AuthorizedNewFiles {
-		got = append(got, file.Path)
-	}
-
-	if !slices.Equal(got, []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}) {
-		t.Fatalf("replayed authority did not recompile authorized new files: %#v", got)
-	}
-}
-
-func TestReplaySupersedesPlannerQuestionByRevision(t *testing.T) {
-	state := durableState()
-	state.Status = FeatureStatePlanningQuestion
-	state.PlanningLoop.State = FeatureStatePlanningQuestion
-	state.Blockers = []string{
-		`planner question "q-source" requires typed accepted_source authority answer`,
-		"source fact blocker remains",
-	}
-	state.OpenQuestions = []PlannerQuestion{{
-		ID:                "q-source",
-		Status:            "open",
-		QuestionSummary:   "Provide accepted source facts",
-		AuthorityRequired: "accepted_source",
-	}}
-
-	bundle, err := Replay(state, []Event{{
-		SchemaVersion:         FeatureEventSchemaVersion,
-		EventID:               "evt-supersede",
-		IdempotencyKey:        "feature-one/rev-0/question-supersede",
-		Type:                  featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionSupersededByRevision),
-		SessionID:             "session",
-		FeatureID:             "feature-one",
-		FeatureRevisionBefore: 0,
-		FeatureRevisionAfter:  1,
-		Fields: map[string]any{
-			"question_id": "q-source",
-		},
-	}})
-	if err != nil {
-		t.Fatalf("Replay returned error: %v", err)
-	}
-
-	if bundle.State.Status != FeatureStatePlanning || bundle.State.PlanningLoop.State != FeatureStatePlanning {
-		t.Fatalf("superseded question should resume planning, got status=%q loop=%q", bundle.State.Status, bundle.State.PlanningLoop.State)
-	}
-	if len(bundle.State.OpenQuestions) != 1 ||
-		bundle.State.OpenQuestions[0].Status != "answered" ||
-		bundle.State.OpenQuestions[0].AnswerSourceKind != "plan_revision" ||
-		!slices.Contains(bundle.State.OpenQuestions[0].EvidenceRefs, "operator_plan_revision") {
-		t.Fatalf("question was not replayed as superseded plan revision: %+v", bundle.State.OpenQuestions)
-	}
-	if len(bundle.State.AuthorityDeltas) != 0 {
-		t.Fatalf("plan revision replay must not mint authority deltas: %+v", bundle.State.AuthorityDeltas)
-	}
-	if containsString(bundle.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
-		t.Fatalf("superseded question blocker should be cleared: %+v", bundle.State.Blockers)
-	}
-	if !containsString(bundle.State.Blockers, "source fact blocker remains") {
-		t.Fatalf("unrelated blocker should remain: %+v", bundle.State.Blockers)
-	}
-}
-
-func TestSaveLoadBundleUsesStateAuthorityForAcceptedSourceSignatures(t *testing.T) {
-	plan := durablePlan()
-	plan.Atoms[0].Prompt = "Use FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) before posting fallback water haul."
-
-	state := durableState()
-	state.Plan = plan
-	state.AuthorityDeltas = []PlanAuthorityDelta{{
-		QuestionID:     "q-001",
-		AuthorityKind:  "accepted_source",
-		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
-		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
-		AffectedFields: []string{"source_localization"},
-		SourceFacts: []plancontract.SourceAuthorityFact{{
-			Path:      "native/src/simulation/economy/fluid_network_system.h",
-			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
-			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
-		}},
-		Expected:  "helper signature needs accepted source evidence",
-		Actual:    "accepted source fact approved for fluid network helper usage",
-		Revision:  1,
-		CreatedAt: "2026-06-13T12:36:17Z",
-	}}
-
-	dir := t.TempDir()
-	if err := SaveBundle(dir, Bundle{State: state, Plan: plan}); err != nil {
-		t.Fatalf("SaveBundle should use state authority deltas for durable plan validation: %v", err)
-	}
-
-	loaded, err := LoadBundle(dir)
-	if err != nil {
-		t.Fatalf("LoadBundle should use state authority deltas for durable plan validation: %v", err)
-	}
-	if len(loaded.State.AuthorityDeltas) != 1 {
-		t.Fatalf("authority deltas were not preserved: %+v", loaded.State.AuthorityDeltas)
-	}
-	if len(loaded.State.AuthorityDeltas[0].SourceFacts) != 1 {
-		t.Fatalf("source facts were not preserved: %+v", loaded.State.AuthorityDeltas[0])
 	}
 }
 
@@ -316,7 +75,7 @@ func TestApplyPlannerOutputStampsCanonicalPlanArtifactAndApproval(t *testing.T) 
 		state.Plan.Approval.WorkspaceFingerprint != state.Plan.Artifact.WorkspaceFingerprint {
 		t.Fatalf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact)
 	}
-	if err := ValidateDurablePlan(state.Plan); err != nil {
+	if err := ValidateDurablePlanWithContract(state.Plan, plancontract.PlanExecutionContract{}); err != nil {
 		t.Fatalf("stamped plan should validate: %v", err)
 	}
 
@@ -344,7 +103,7 @@ func TestValidateDurablePlanRejectsApprovalAfterPlanDigestDrift(t *testing.T) {
 
 	state.Plan.TopLevelScope.SuccessCriteria = append(state.Plan.TopLevelScope.SuccessCriteria, "unapproved new criterion")
 
-	err := ValidateDurablePlan(state.Plan)
+	err := ValidateDurablePlanWithContract(state.Plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "does not match canonical digest") {
 		t.Fatalf("expected digest drift rejection, got %v", err)
 	}
@@ -436,302 +195,6 @@ func TestValidateDurableStateRequiresReleaseDecisionForCompleteState(t *testing.
 	}
 }
 
-func TestReplayAppliesDurableDispatchEvent(t *testing.T) {
-	state := durableState()
-
-	state.Atoms = []FeatureAtomState{{
-		FeatureAtomPlan: durablePlan().Atoms[0],
-		State:           AtomStateDispatchable,
-	}}
-
-	events := []Event{
-		{
-			SchemaVersion:         FeatureEventSchemaVersion,
-			EventID:               "evt-dispatch",
-			IdempotencyKey:        "feature-one/rev-0/dispatch",
-			Type:                  string(featureplannercontract.LegacyEventAtomStarted),
-			SessionID:             "session",
-			FeatureID:             "feature-one",
-			FeatureRevisionBefore: 0,
-			FeatureRevisionAfter:  1,
-			FeatureFrom:           FeatureStateReady,
-			FeatureTo:             FeatureStateDispatching,
-			AtomID:                "atom-1",
-			AtomFrom:              AtomStateDispatchable,
-			AtomTo:                AtomStateDispatching,
-			Action:                "dispatch-atom",
-			Actor:                 "orchestrator",
-			InvariantID:           InvariantDispatchAuthority,
-			ActiveRunDeltas: []ActiveRunDelta{{
-				Op:            "insert",
-				AtomID:        "atom-1",
-				LaneSessionID: "lane-1",
-				LaneFamily:    "plan-execute",
-				AfterState:    "dispatching",
-				ProgressPath:  ".idiom/plan-execute/sessions/lane-1.json",
-				StartedAt:     "2026-05-24T21:00:00Z",
-			}},
-			LeaseDeltas: []LeaseDelta{{
-				Op:                   "acquire",
-				LeaseID:              "lease-1",
-				AfterFencingRevision: 1,
-				LeaseKind:            "path",
-				Scope:                "internal/workflows/featureplanner",
-				OwnerFeatureID:       "feature-one",
-				OwnerAtomID:          "atom-1",
-				OwnerSession:         "lane-1",
-			}},
-		},
-	}
-
-	bundle, err := Replay(state, events)
-	if err != nil {
-		t.Fatalf("replay failed: %v", err)
-	}
-
-	if bundle.State.Revision != 1 || bundle.State.Status != FeatureStateDispatching {
-		t.Fatalf("unexpected replay state: %#v", bundle.State)
-	}
-
-	if got := bundle.State.Atoms[0].State; got != AtomStateDispatching {
-		t.Fatalf("atom state = %q, want dispatching", got)
-	}
-
-	if len(bundle.State.ActiveRuns) != 1 || bundle.State.ActiveRuns[0].LaneSessionID != "lane-1" {
-		t.Fatalf("active runs not folded: %#v", bundle.State.ActiveRuns)
-	}
-
-	if len(bundle.State.Leases) != 1 || bundle.State.Leases[0].FencingRevision != 1 {
-		t.Fatalf("leases not folded: %#v", bundle.State.Leases)
-	}
-}
-
-func TestReplayAppliesFeaturePlannerDispatchAndCompletionDeltas(t *testing.T) {
-	state := durableState()
-
-	state.Status = FeatureStateDispatching
-	state.Atoms = []FeatureAtomState{{
-		FeatureAtomPlan: durablePlan().Atoms[0],
-		State:           AtomStateQueued,
-	}}
-
-	events := []Event{
-		{
-			SchemaVersion: FeatureEventSchemaVersion,
-			EventID:       "evt-feature-dispatch",
-			Type:          "idiom.feature_planner.atom_dispatched",
-			SessionID:     "session",
-			AtomID:        "atom-1",
-			AtomFrom:      AtomStateQueued,
-			AtomTo:        AtomStateImplementing,
-			AtomDeltas:    []AtomDelta{{Op: "update", AtomID: "atom-1", AtomFrom: AtomStateQueued, AtomTo: AtomStateImplementing}},
-			ActiveRunDeltas: []ActiveRunDelta{{
-				Op:            "insert",
-				AtomID:        "atom-1",
-				LaneSessionID: "atom-1-run-1",
-				LaneFamily:    "feature-planner-implementor",
-				AfterState:    ActiveRunStateRunning,
-				StartedAt:     "2026-05-24T21:00:00Z",
-			}},
-		},
-		{
-			SchemaVersion: FeatureEventSchemaVersion,
-			EventID:       "evt-feature-complete",
-			Type:          "idiom.feature_planner.atom_completed",
-			SessionID:     "session",
-			AtomID:        "atom-1",
-			AtomFrom:      AtomStateImplementing,
-			AtomTo:        AtomStateComplete,
-			AtomDeltas:    []AtomDelta{{Op: "update", AtomID: "atom-1", AtomFrom: AtomStateImplementing, AtomTo: AtomStateComplete}},
-			ActiveRunDeltas: []ActiveRunDelta{{
-				Op:            "fold_terminal",
-				AtomID:        "atom-1",
-				LaneSessionID: "atom-1-run-1",
-				BeforeState:   ActiveRunStateRunning,
-				AfterState:    AtomStateComplete,
-			}},
-		},
-	}
-
-	bundle, err := Replay(state, events)
-	if err != nil {
-		t.Fatalf("replay failed: %v", err)
-	}
-
-	if got := bundle.State.Atoms[0].State; got != AtomStateComplete {
-		t.Fatalf("atom state = %q, want complete", got)
-	}
-
-	if bundle.State.Status != FeatureStateComplete {
-		t.Fatalf("feature state = %q, want complete", bundle.State.Status)
-	}
-
-	if len(bundle.State.ActiveRuns) != 0 {
-		t.Fatalf("active run should fold terminal: %+v", bundle.State.ActiveRuns)
-	}
-}
-
-func TestReplayAppliesProductSourceSatisfiedCloseout(t *testing.T) {
-	state := durableState()
-
-	state.Status = FeatureStateDispatching
-	state.PlanningLoop.State = FeatureStateDispatching
-	state.OpenQuestions = []PlannerQuestion{{ID: "q-1", Status: "open", QuestionSummary: "stale question"}}
-	state.PlanningLoop.OpenQuestionIDs = []string{"q-1"}
-	state.OpenRecoveryPackets = []string{"recovery.json"}
-	state.ActiveRuns = []ActiveRun{{
-		RunID:         "run-1",
-		AtomID:        "atom-1",
-		LaneSessionID: "lane-1",
-		State:         ActiveRunStateRunning,
-	}}
-
-	bundle, err := Replay(state, []Event{{
-		SchemaVersion: FeatureEventSchemaVersion,
-		EventID:       "evt-product-source-satisfied",
-		Type:          "idiom.feature_planner.product_source_satisfied",
-		SessionID:     "session",
-		FeatureTo:     FeatureStateSourceSatisfied,
-		ActiveRunDeltas: []ActiveRunDelta{{
-			Op:            "fold_terminal",
-			AtomID:        "atom-1",
-			LaneSessionID: "lane-1",
-			BeforeState:   ActiveRunStateRunning,
-			AfterState:    FeatureStateSourceSatisfied,
-		}},
-	}})
-	if err != nil {
-		t.Fatalf("replay failed: %v", err)
-	}
-
-	if bundle.State.Status != FeatureStateSourceSatisfied || bundle.State.PlanningLoop.State != FeatureStateSourceSatisfied {
-		t.Fatalf("expected source-satisfied replay state, got status=%q loop=%q", bundle.State.Status, bundle.State.PlanningLoop.State)
-	}
-
-	if len(bundle.State.ActiveRuns) != 0 || len(bundle.State.OpenQuestions) != 0 || len(bundle.State.OpenRecoveryPackets) != 0 || len(bundle.State.PlanningLoop.OpenQuestionIDs) != 0 {
-		t.Fatalf("source-satisfied replay should clear terminal-incompatible work: %#v", bundle.State)
-	}
-}
-
-func TestReplayRejectsMismatchedAtomDeltaFromState(t *testing.T) {
-	state := durableState()
-
-	state.Status = FeatureStateDispatching
-	state.Atoms = []FeatureAtomState{{
-		FeatureAtomPlan: durablePlan().Atoms[0],
-		State:           AtomStateQueued,
-	}}
-
-	_, err := Replay(state, []Event{{
-		SchemaVersion: FeatureEventSchemaVersion,
-		EventID:       "evt-stale-atom",
-		Type:          "idiom.feature_planner.atom_completed",
-		SessionID:     "session",
-		AtomID:        "atom-1",
-		AtomFrom:      AtomStateImplementing,
-		AtomTo:        AtomStateComplete,
-		AtomDeltas:    []AtomDelta{{Op: "update", AtomID: "atom-1", AtomFrom: AtomStateImplementing, AtomTo: AtomStateComplete}},
-	}})
-
-	var replayErr ReplayError
-
-	if !errors.As(err, &replayErr) {
-		t.Fatalf("expected ReplayError, got %v", err)
-	}
-
-	if !strings.Contains(err.Error(), "got folded state") {
-		t.Fatalf("expected folded atom state mismatch, got %v", err)
-	}
-}
-
-func TestReplayRejectsMalformedPreExecutionTDDEvidence(t *testing.T) {
-	state := durableState()
-
-	state.Status = FeatureStateDispatching
-	state.Atoms = []FeatureAtomState{{
-		FeatureAtomPlan: durablePlan().Atoms[0],
-		State:           AtomStateQueued,
-	}}
-
-	_, err := Replay(state, []Event{{
-		SchemaVersion: FeatureEventSchemaVersion,
-		Type:          "idiom.feature_planner.tdd_pre_execution_checked",
-		SessionID:     "session",
-		AtomID:        "atom-1",
-		Fields: map[string]any{
-			"commands": []any{"go test ./..."},
-		},
-	}})
-
-	var replayErr ReplayError
-
-	if !errors.As(err, &replayErr) {
-		t.Fatalf("expected ReplayError, got %v", err)
-	}
-
-	if !strings.Contains(err.Error(), "invalid pre-execution TDD evidence") {
-		t.Fatalf("expected TDD evidence replay rejection, got %v", err)
-	}
-}
-
-func TestReplayRejectsUnknownSingularAtomEvent(t *testing.T) {
-	state := durableState()
-
-	state.Status = FeatureStateDispatching
-	state.Atoms = []FeatureAtomState{{
-		FeatureAtomPlan: durablePlan().Atoms[0],
-		State:           AtomStateQueued,
-	}}
-
-	_, err := Replay(state, []Event{{
-		SchemaVersion: FeatureEventSchemaVersion,
-		EventID:       "evt-unknown-atom",
-		Type:          string(featureplannercontract.LegacyEventAtomProgressed),
-		SessionID:     "session",
-		AtomID:        "atom-missing",
-		AtomTo:        AtomStateDispatching,
-	}})
-
-	var replayErr ReplayError
-
-	if !errors.As(err, &replayErr) {
-		t.Fatalf("expected ReplayError, got %v", err)
-	}
-
-	if !strings.Contains(err.Error(), "unknown atom") {
-		t.Fatalf("expected unknown atom replay rejection, got %v", err)
-	}
-}
-
-func TestReplayRejectsInvalidSingularAtomTo(t *testing.T) {
-	state := durableState()
-
-	state.Status = FeatureStateDispatching
-	state.Atoms = []FeatureAtomState{{
-		FeatureAtomPlan: durablePlan().Atoms[0],
-		State:           AtomStateQueued,
-	}}
-
-	_, err := Replay(state, []Event{{
-		SchemaVersion: FeatureEventSchemaVersion,
-		EventID:       "evt-invalid-atom-to",
-		Type:          string(featureplannercontract.LegacyEventAtomProgressed),
-		SessionID:     "session",
-		AtomID:        "atom-1",
-		AtomTo:        "invented",
-	}})
-
-	var replayErr ReplayError
-
-	if !errors.As(err, &replayErr) {
-		t.Fatalf("expected ReplayError, got %v", err)
-	}
-
-	if !strings.Contains(err.Error(), "invalid atom_to") {
-		t.Fatalf("expected invalid atom_to replay rejection, got %v", err)
-	}
-}
-
 func TestValidateDurableStateRejectsUnknownStatus(t *testing.T) {
 	state := durableState()
 
@@ -740,28 +203,6 @@ func TestValidateDurableStateRejectsUnknownStatus(t *testing.T) {
 	err := ValidateDurableState(state)
 	if err == nil || !strings.Contains(err.Error(), "unknown status") {
 		t.Fatalf("expected unknown status validation error, got %v", err)
-	}
-}
-
-func TestSaveLoadBundleRoundTrip(t *testing.T) {
-	bundle := Bundle{
-		State:  durableState(),
-		Plan:   durablePlan(),
-		Events: []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventStart), SessionID: "session"}},
-	}
-
-	dir := t.TempDir()
-	if err := SaveBundle(dir, bundle); err != nil {
-		t.Fatalf("save bundle: %v", err)
-	}
-
-	loaded, err := LoadBundle(dir)
-	if err != nil {
-		t.Fatalf("load bundle: %v", err)
-	}
-
-	if !reflect.DeepEqual(bundle, loaded) {
-		t.Fatalf("round trip mismatch\nwant %#v\ngot %#v", bundle, loaded)
 	}
 }
 
@@ -793,13 +234,21 @@ func TestSaveStateAndAppendEventsRoundTripDurablePaths(t *testing.T) {
 		t.Fatalf("SaveState should not leave predictable temp file, stat err=%v", err)
 	}
 
-	events, loadedEventsPath, err := LoadEvents(dir, state.SessionID)
+	body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(eventsPath)))
 	if err != nil {
-		t.Fatalf("load events: %v", err)
+		t.Fatalf("read events: %v", err)
 	}
 
-	if loadedEventsPath != eventsPath || len(events) != 1 {
-		t.Fatalf("unexpected loaded events path=%q events=%+v", loadedEventsPath, events)
+	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("unexpected event log body: %q", string(body))
+	}
+	var event Event
+	if err := json.Unmarshal([]byte(lines[0]), &event); err != nil {
+		t.Fatalf("decode event log line: %v", err)
+	}
+	if event.Type != featureplannercontract.EventName(featureplannercontract.EventStart) || event.SessionID != state.SessionID {
+		t.Fatalf("unexpected stored event: %+v", event)
 	}
 }
 

@@ -126,7 +126,7 @@ func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
 func TestPlanExecuteCompletionFieldsPreservesExitCodeForTerminalDecision(t *testing.T) {
 	output := `{"type":"idiom.plan_execute.terminal_completion","terminal_class":"success","status":"completed","exit_code":1}`
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := completionFieldInt(fields, "exit_code"); got != 1 {
 		t.Fatalf("exit_code = %#v, want 1; fields=%+v", got, fields)
@@ -167,7 +167,7 @@ func TestPlanExecuteCompletionFieldsUsesTerminalRecordAsSerializationSource(t *t
 func TestPlanExecuteCompletionFieldsIgnoresUnknownPlanExecuteEventName(t *testing.T) {
 	output := `{"type":"idiom.plan_execute.not_real","terminal_class":"success","status":"completed","phase":"complete","review_status":"passed"}`
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := CompletionFieldString(fields, "status"); got != "" {
 		t.Fatalf("status = %q, want unknown event ignored; fields=%+v", got, fields)
@@ -181,7 +181,7 @@ func TestPlanExecuteCompletionFieldsBlocksInvalidPlanExecuteEventName(t *testing
 	output := fmt.Sprintf(`{"type":%q,"terminal_class":"success","status":"completed","phase":"complete","review_status":"passed"}`,
 		plancontract.PlanExecuteInvalidEventName(plancontract.PlanExecuteEventVerification))
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("decision = %q, want blocked for invalid event; fields=%+v", got, fields)
@@ -196,7 +196,7 @@ func TestPlanExecuteCompletionFieldsTreatsSourceSatisfiedEventAsEvidenceOnly(t *
 		`{"type":"idiom.plan_execute.source_satisfied","source_satisfied_evidence_paths":["pkg/feature.go"],"reason":"planner reported requested final state already present"}`,
 	}, "\n")
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := CompletionFieldString(fields, "status"); got != "" {
 		t.Fatalf("status = %q, want no terminal status from intermediate source_satisfied event; fields=%+v", got, fields)
@@ -221,7 +221,7 @@ func TestPlanExecuteCompletionFieldsPrefersLaterConcreteReviewRepairState(t *tes
 		`{"type":"idiom.plan_execute.review_repair_blocked","ts":"2026-06-07T12:01:00Z","state_path":".idiom/plan-execute/sessions/active.json","phase":"review_repair","status":"blocked","review_status":"blocked","failure_kind":"review_repair_blocked","failure_reason":"review repair remained blocked","changed_paths":["internal/surfaces/tui/app/feature.go"]}`,
 	}, "\n")
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	for key, want := range map[string]string{
 		"status":         "blocked",
@@ -249,7 +249,7 @@ func TestPlanExecuteCompletionFieldsPreservesRecoverySidecarMetadata(t *testing.
 		`{"type":"idiom.plan_execute.recovery_decomposition_packet_written","ts":"2026-06-07T12:00:02Z","failure_id":"failure-123","packet_path":".idiom/recovery/packets/failure-123.json","next_valid_action":"review_decomposition"}`,
 	}, "\n")
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	for key, want := range map[string]string{
 		"status":            "failed",
@@ -271,7 +271,7 @@ func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *t
 		`{"type":"idiom.plan_execute.completed","state_path":".idiom/plan-execute/sessions/active.json","phase":"complete","status":"completed","review_status":"skipped","review_repair_skipped":true}`,
 	}, "\n")
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := fmt.Sprint(fields["status"]); got != "completed" {
 		t.Fatalf("status = %q, want completed; fields=%+v", got, fields)
@@ -318,7 +318,7 @@ func TestPlanExecuteCompletionFieldsKeepsTerminalCompletionSourceSatisfied(t *te
 		`{"type":"idiom.plan_execute.terminal_completion","terminal_class":"success","status":"source-satisfied","outcome":"source_satisfied","phase":"complete","required_edit_paths":["pkg/feature.go"],"source_satisfied_evidence_paths":["pkg/feature.go"],"source_satisfied_evidence":[{"path":"pkg/feature.go","kind":"harness_observed_source"}]}`,
 	}, "\n")
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := CompletionFieldString(fields, "status"); got != "source-satisfied" {
 		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
@@ -332,7 +332,7 @@ func TestPlanExecuteCompletionFieldsKeepsTerminalCompletionSourceSatisfied(t *te
 func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t *testing.T) {
 	output := `{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","scope_contract_id":"scope-123","scope_contract_hash":"scope-hash-123"}`
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	for key, want := range map[string]string{
 		"scope_contract_id":   "scope-123",
@@ -374,7 +374,7 @@ func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t 
 }
 
 func TestPlanExecuteCompletionFieldsNormalizesLegacyContractHashToSnapshot(t *testing.T) {
-	fields := PlanExecuteCompletionFields(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","contract_id":"parent-contract","contract_hash":"snapshot-hash-1"}`)
+	fields := PlanExecuteCompletionSummaryFromOutput(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","contract_id":"parent-contract","contract_hash":"snapshot-hash-1"}`).Fields()
 
 	if got := CompletionFieldString(fields, "contract_id"); got != "parent-contract" {
 		t.Fatalf("contract_id = %q, want parent-contract; fields=%+v", got, fields)
@@ -423,10 +423,13 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *test
 		"status": "completed",
 		"phase":  "complete",
 	}
-	OverlayPlanExecuteCompletionFields(fields, map[string]any{
-		"scope_contract_id":   "scope-overlay",
-		"scope_contract_hash": "scope-overlay-hash",
-	})
+	fields = MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummaryFromFields(fields),
+		PlanExecuteCompletionSummaryFromFields(map[string]any{
+			"scope_contract_id":   "scope-overlay",
+			"scope_contract_hash": "scope-overlay-hash",
+		}),
+	).Fields()
 
 	if got := CompletionFieldString(fields, "scope_contract_id"); got != "scope-overlay" {
 		t.Fatalf("overlaid scope_contract_id = %q, want scope-overlay; fields=%+v", got, fields)
@@ -469,9 +472,10 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.
 		"phase":          "complete",
 		"terminal_class": "success",
 	}
-	OverlayPlanExecuteCompletionFields(fields, map[string]any{
-		"exit_code": 1,
-	})
+	fields = MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummaryFromFields(fields),
+		PlanExecuteCompletionSummaryFromFields(map[string]any{"exit_code": 1}),
+	).Fields()
 
 	if got := fields["exit_code"]; got != 1 {
 		t.Fatalf("overlaid exit_code = %#v, want 1; fields=%+v", got, fields)
@@ -552,27 +556,11 @@ func TestPlanExecuteCompletionMergePreservesSparseSourceSanityFailure(t *testing
 }
 
 func TestPlanExecuteCompletionFieldsTrustsTerminalAcceptanceEvidence(t *testing.T) {
-	fields := PlanExecuteCompletionFields(`{"type":"idiom.plan_execute.terminal_completion","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`)
+	fields := PlanExecuteCompletionSummaryFromOutput(`{"type":"idiom.plan_execute.terminal_completion","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`).Fields()
 
 	if got := fields["acceptance_evidence_trusted"]; got != true {
 		t.Fatalf("acceptance_evidence_trusted = %#v, want true; fields=%+v", got, fields)
 	}
-}
-
-func TestTrustPlanExecuteCompletionFieldsDoesNotMintTrustForHarnessReturnSource(t *testing.T) {
-	fields := map[string]any{
-		"status":                  "completed",
-		"terminal_class":          "completed",
-		"completion_source":       "tui_plan_execute_returned",
-		"acceptance_evidence_ids": []string{"req-1"},
-	}
-
-	TrustPlanExecuteCompletionFields(fields)
-
-	if got := fields["acceptance_evidence_trusted"]; got == true {
-		t.Fatalf("consumer-side trust should not be minted from completion_source alone; fields=%+v", fields)
-	}
-
 }
 
 func TestTrustObservedPlanExecuteCompletionFieldsMarksProducerTrust(t *testing.T) {
@@ -607,14 +595,14 @@ func TestTrustObservedPlanExecuteCompletionFieldsDoesNotRegisterFailedTerminal(t
 }
 
 func TestPlanExecuteCompletionFieldsDoesNotTrustLegacyAcceptanceEvidence(t *testing.T) {
-	fields := PlanExecuteCompletionFields(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`)
+	fields := PlanExecuteCompletionSummaryFromOutput(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`).Fields()
 
 	if got := fields["acceptance_evidence_trusted"]; got == true {
 		t.Fatalf("legacy completion should not trust acceptance evidence; fields=%+v", fields)
 	}
 }
 
-func TestOverlayPlanExecuteCompletionFieldsReplacesSourceSanityEvidence(t *testing.T) {
+func TestPlanExecuteCompletionSummaryMergeReplacesSourceSanityEvidence(t *testing.T) {
 	fields := map[string]any{
 		"status": "running",
 		"source_sanity": []any{
@@ -622,14 +610,17 @@ func TestOverlayPlanExecuteCompletionFieldsReplacesSourceSanityEvidence(t *testi
 		},
 	}
 
-	OverlayPlanExecuteCompletionFields(fields, map[string]any{
-		"status":        "completed",
-		"phase":         "complete",
-		"changed_paths": []any{"pkg/feature.go"},
-		"source_sanity": []any{
-			map[string]any{"kind": "source_sanity", "path": "pkg/feature.go", "status": "ok"},
-		},
-	})
+	fields = MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummaryFromFields(fields),
+		PlanExecuteCompletionSummaryFromFields(map[string]any{
+			"status":        "completed",
+			"phase":         "complete",
+			"changed_paths": []any{"pkg/feature.go"},
+			"source_sanity": []any{
+				map[string]any{"kind": "source_sanity", "path": "pkg/feature.go", "status": "ok"},
+			},
+		}),
+	).Fields()
 
 	checks, ok := fields["source_sanity"].([]plancontract.PhaseEvidenceCheck)
 	if !ok || len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
@@ -637,17 +628,20 @@ func TestOverlayPlanExecuteCompletionFieldsReplacesSourceSanityEvidence(t *testi
 	}
 }
 
-func TestOverlayPlanExecuteCompletionFieldsReplacesAcceptanceEvidence(t *testing.T) {
+func TestPlanExecuteCompletionSummaryMergeReplacesAcceptanceEvidence(t *testing.T) {
 	fields := map[string]any{
 		"status":                      "running",
 		"acceptance_evidence_ids":     []any{"stale-acceptance"},
 		"acceptance_evidence_trusted": true,
 	}
 
-	OverlayPlanExecuteCompletionFields(fields, map[string]any{
-		"status": "completed",
-		"phase":  "complete",
-	})
+	fields = MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummaryFromFields(fields),
+		PlanExecuteCompletionSummaryFromFields(map[string]any{
+			"status": "completed",
+			"phase":  "complete",
+		}),
+	).Fields()
 
 	if _, ok := fields["acceptance_evidence_ids"]; ok {
 		t.Fatalf("stale acceptance_evidence_ids survived overlay: fields=%+v", fields)
@@ -658,17 +652,20 @@ func TestOverlayPlanExecuteCompletionFieldsReplacesAcceptanceEvidence(t *testing
 	}
 }
 
-func TestOverlayPlanExecuteCompletionFieldsReplacesWriteAllowedPaths(t *testing.T) {
+func TestPlanExecuteCompletionSummaryMergeReplacesWriteAllowedPaths(t *testing.T) {
 	fields := map[string]any{
 		"status":              "running",
 		"write_allowed_paths": []any{"pkg/stale.go"},
 	}
 
-	OverlayPlanExecuteCompletionFields(fields, map[string]any{
-		"status":              "completed",
-		"phase":               "complete",
-		"write_allowed_paths": []any{"pkg/feature.go"},
-	})
+	fields = MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummaryFromFields(fields),
+		PlanExecuteCompletionSummaryFromFields(map[string]any{
+			"status":              "completed",
+			"phase":               "complete",
+			"write_allowed_paths": []any{"pkg/feature.go"},
+		}),
+	).Fields()
 
 	paths, ok := fields["write_allowed_paths"].([]string)
 	if !ok || len(paths) != 1 || paths[0] != "pkg/feature.go" {
@@ -676,19 +673,22 @@ func TestOverlayPlanExecuteCompletionFieldsReplacesWriteAllowedPaths(t *testing.
 	}
 }
 
-func TestOverlayPlanExecuteCompletionFieldsNestedFailureOverridesWrapperCompleted(t *testing.T) {
+func TestPlanExecuteCompletionSummaryMergeNestedFailureOverridesWrapperCompleted(t *testing.T) {
 	fields := map[string]any{
 		"status":        "completed",
 		"phase":         "complete",
 		"progress_path": ".idiom/plan-execute/sessions/wrapper.json",
 	}
-	OverlayPlanExecuteCompletionFields(fields, map[string]any{
-		"status":         "failed",
-		"phase":          "planning",
-		"failure_kind":   "plan_artifact_missing",
-		"failure_reason": "nested plan-execute failed before handoff",
-		"progress_path":  ".idiom/plan-execute/sessions/nested.json",
-	})
+	fields = MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummaryFromFields(fields),
+		PlanExecuteCompletionSummaryFromFields(map[string]any{
+			"status":         "failed",
+			"phase":          "planning",
+			"failure_kind":   "plan_artifact_missing",
+			"failure_reason": "nested plan-execute failed before handoff",
+			"progress_path":  ".idiom/plan-execute/sessions/nested.json",
+		}),
+	).Fields()
 
 	for key, want := range map[string]string{
 		"status":         "failed",
@@ -713,7 +713,7 @@ func TestPlanExecuteCompletionFieldsDegradedInheritsEarlierProgressPath(t *testi
 		`{"type":"idiom.plan_execute.review_repair_degraded","phase":"review_repair","status":"degraded","review_status":"degraded","failure_kind":"review_model_error","failure_reason":"review model returned invalid JSON"}`,
 	}, "\n")
 
-	fields := PlanExecuteCompletionFields(output)
+	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
 		t.Fatalf("progress_path = %q, want inherited path; fields=%+v", got, fields)
@@ -760,7 +760,7 @@ func TestPlanExecuteCompletionFieldsPreserveOwnerTerminalProjection(t *testing.T
 }
 
 func TestPlanExecuteRecoveryRetryPromptBuildsAnchorRefreshAddendum(t *testing.T) {
-	prompt, ok := PlanExecuteRecoveryRetryPrompt("implement atom", map[string]any{
+	prompt, ok := PlanExecuteRecoveryRetryPromptForSummary("implement atom", PlanExecuteCompletionSummaryFromFields(map[string]any{
 		"failure_kind":      "planner_blocked",
 		"failure_reason":    "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h",
 		"next_valid_action": "retry_plan_execute",
@@ -768,7 +768,7 @@ func TestPlanExecuteRecoveryRetryPromptBuildsAnchorRefreshAddendum(t *testing.T)
 			"native/src/core/colony_sim_tick.cpp",
 			"native/src/simulation/world/collapse_event.h",
 		},
-	})
+	}))
 	if !ok {
 		t.Fatal("expected retry prompt")
 	}
@@ -787,12 +787,12 @@ func TestPlanExecuteRecoveryRetryPromptBuildsAnchorRefreshAddendum(t *testing.T)
 }
 
 func TestPlanExecuteRecoveryRetryPromptIgnoresHumanBlocker(t *testing.T) {
-	if prompt, ok := PlanExecuteRecoveryRetryPrompt("implement atom", map[string]any{
+	if prompt, ok := PlanExecuteRecoveryRetryPromptForSummary("implement atom", PlanExecuteCompletionSummaryFromFields(map[string]any{
 		"failure_kind":        "planner_blocked",
 		"failure_reason":      "<<QUESTION>>: product owner must clarify scope",
 		"next_valid_action":   "answer_blocker",
 		"required_edit_paths": []any{"docs/feature.md"},
-	}); ok {
+	})); ok {
 		t.Fatalf("unexpected retry prompt for human blocker:\n%s", prompt)
 	}
 }

@@ -215,10 +215,6 @@ func plannerQuestionFromAliasFields(raw string, question PlannerQuestion) Planne
 	return question
 }
 
-func ValidatePlan(plan FeaturePlan) error {
-	return validatePlan(plan, plancontract.PlanExecutionContract{})
-}
-
 func validatePlan(plan FeaturePlan, contract plancontract.PlanExecutionContract) error {
 	var errs []error
 
@@ -637,10 +633,6 @@ func featurePlanApprovalEmpty(approval FeaturePlanApproval) bool {
 		approval.PlanRevision == 0 &&
 		strings.TrimSpace(approval.PlanDigest) == "" &&
 		strings.TrimSpace(approval.WorkspaceFingerprint) == ""
-}
-
-func ValidateDurablePlan(plan FeaturePlan) error {
-	return ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 }
 
 func ValidateDurablePlanWithContract(plan FeaturePlan, contract plancontract.PlanExecutionContract) error {
@@ -2446,7 +2438,7 @@ func newFileAuthorizationsFromDeltas(deltas []PlanAuthorityDelta) []plancontract
 		for _, path := range delta.AffectedPaths {
 			files = append(files, plancontract.AuthorizedNewFile{
 				Path:   path,
-				Reason: firstNonEmpty(delta.Actual, delta.Expected),
+				Reason: textutil.FirstNonEmpty(delta.Actual, delta.Expected),
 				Source: delta.AuthorityKind,
 				Metadata: plancontract.NewFileAuthorizationMetadata{
 					Compiler: "featureplanner.typed_authority_delta",
@@ -2639,7 +2631,7 @@ func atomAcceptanceRefs(atom plancontract.AtomExecutionContract) []string {
 	var out []string
 
 	for _, obligation := range atom.AcceptanceObligations {
-		out = append(out, firstNonEmpty(obligation.ID, obligation.Description))
+		out = append(out, textutil.FirstNonEmpty(obligation.ID, obligation.Description))
 	}
 
 	return normalizedStringList(out)
@@ -2649,7 +2641,7 @@ func atomSourceEvidenceRefs(atom plancontract.AtomExecutionContract) []string {
 	var out []string
 
 	for _, obligation := range atom.SourceEvidenceObligations {
-		out = append(out, firstNonEmpty(obligation.ID, obligation.Path))
+		out = append(out, textutil.FirstNonEmpty(obligation.ID, obligation.Path))
 	}
 
 	return normalizedStringList(out)
@@ -3871,7 +3863,7 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 		DecidedAt:            strings.TrimSpace(decidedAt),
 	}
 	if decision.PlanArtifactID == "" {
-		decision.PlanArtifactID = firstNonEmpty(state.FeatureID, state.SessionID, "feature") + ":feature-plan"
+		decision.PlanArtifactID = textutil.FirstNonEmpty(state.FeatureID, state.SessionID, "feature") + ":feature-plan"
 	}
 	if decision.EventID == "" {
 		decision.EventID = stableReleaseReadinessEventID(decision.PlanArtifactID, decision.PlanRevision)
@@ -3923,13 +3915,13 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 	if len(state.OpenQuestions) > 0 {
 		for _, question := range state.OpenQuestions {
 			if strings.TrimSpace(question.Status) == "" || textutil.EqualTrimFold(question.Status, "open") {
-				addBlocker("open planner question: " + firstNonEmpty(question.ID, question.QuestionSummary, "unknown"))
+				addBlocker("open planner question: " + textutil.FirstNonEmpty(question.ID, question.QuestionSummary, "unknown"))
 			}
 		}
 	}
 	for _, run := range state.ActiveRuns {
 		if strings.TrimSpace(run.State) != "" && !textutil.EqualTrimFold(run.State, "complete") && !textutil.EqualTrimFold(run.State, "completed") && !textutil.EqualTrimFold(run.State, "source-satisfied") {
-			addBlocker("active implementation run: " + firstNonEmpty(run.AtomID, run.RunID, "unknown"))
+			addBlocker("active implementation run: " + textutil.FirstNonEmpty(run.AtomID, run.RunID, "unknown"))
 		}
 	}
 
@@ -3946,13 +3938,13 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 		switch atom.State {
 		case AtomStateComplete, AtomStateSourceSatisfied:
 		default:
-			addBlocker("atom not terminal: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("atom not terminal: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 			continue
 		}
 
 		closure, ok := closuresByAtom[atom.ID]
 		if !ok {
-			addBlocker("verification closure missing for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification closure missing for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 			continue
 		}
 
@@ -3960,30 +3952,30 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 			decision.VerificationClosureEventIDs = append(decision.VerificationClosureEventIDs, closure.EventID)
 		}
 		if !VerificationClosureStatusAllowed(closure.Status) {
-			addBlocker("verification closure not passed for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification closure not passed for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if closure.PlanArtifactID != decision.PlanArtifactID {
-			addBlocker("verification closure artifact mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification closure artifact mismatch for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if closure.PlanRevision != decision.PlanRevision {
-			addBlocker("verification closure revision mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification closure revision mismatch for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if closure.PlanDigest != decision.PlanDigest {
-			addBlocker("verification closure digest mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification closure digest mismatch for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if closure.ApprovalEventID != decision.ApprovalEventID {
-			addBlocker("verification closure approval mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification closure approval mismatch for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if closure.WorkspaceFingerprint != "" && decision.WorkspaceFingerprint != "" && closure.WorkspaceFingerprint != decision.WorkspaceFingerprint {
-			addBlocker("verification closure workspace mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification closure workspace mismatch for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if atom.State == AtomStateComplete && len(closure.RequiredTestResults) == 0 && len(closure.TDDCommandResults) == 0 {
-			addBlocker("verification command results missing for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			addBlocker("verification command results missing for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if atom.State == AtomStateComplete {
 			for _, result := range append(append([]VerificationCommandResult(nil), closure.RequiredTestResults...), closure.TDDCommandResults...) {
 				if result.Status != string(VerificationClosureStatusPassed) && result.Status != string(VerificationClosureStatusSourceSatisfied) {
-					addBlocker("verification command not passed for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+					addBlocker("verification command not passed for atom: " + textutil.FirstNonEmpty(atom.ID, atom.Title, "unknown"))
 				}
 			}
 		}
@@ -4627,7 +4619,7 @@ func hydrateDurablePlanDefaults(plan *FeaturePlan, state *FeatureState, now time
 	}
 
 	if strings.TrimSpace(plan.FeatureID) == "" {
-		plan.FeatureID = firstNonEmpty(state.FeatureID, state.SessionID)
+		plan.FeatureID = textutil.FirstNonEmpty(state.FeatureID, state.SessionID)
 	}
 
 	if strings.TrimSpace(plan.SourceTask.Kind) == "" {
@@ -4684,7 +4676,7 @@ func stampFeaturePlanArtifact(plan *FeaturePlan, state *FeatureState, now time.T
 	}
 
 	if strings.TrimSpace(plan.Artifact.ArtifactID) == "" {
-		plan.Artifact.ArtifactID = firstNonEmpty(plan.FeatureID, state.FeatureID, state.SessionID) + ":feature-plan"
+		plan.Artifact.ArtifactID = textutil.FirstNonEmpty(plan.FeatureID, state.FeatureID, state.SessionID) + ":feature-plan"
 	}
 	plan.Artifact.Revision = revision
 	if strings.TrimSpace(plan.Artifact.WorkspaceFingerprint) == "" {
@@ -4710,7 +4702,7 @@ func stampFeaturePlanApproval(plan *FeaturePlan, state *FeatureState, now time.T
 		plan.Approval.Mode = "harness_policy"
 	}
 	if strings.TrimSpace(plan.Approval.EventID) == "" {
-		plan.Approval.EventID = fmt.Sprintf("approval-%s-rev-%d", firstNonEmpty(state.SessionID, plan.FeatureID, "feature"), plan.Artifact.Revision)
+		plan.Approval.EventID = fmt.Sprintf("approval-%s-rev-%d", textutil.FirstNonEmpty(state.SessionID, plan.FeatureID, "feature"), plan.Artifact.Revision)
 	}
 	if strings.TrimSpace(plan.Approval.Actor) == "" {
 		plan.Approval.Actor = "harness"

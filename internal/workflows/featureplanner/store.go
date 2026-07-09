@@ -1,7 +1,6 @@
 package featureplanner
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,75 +8,7 @@ import (
 	"strings"
 
 	featureplannercontract "idiom/internal/contracts/featureplanner"
-	"idiom/internal/platform/atomicfile"
-	"idiom/internal/platform/jsonfile"
 )
-
-type Bundle struct {
-	State  FeatureState `json:"state"`
-	Plan   FeaturePlan  `json:"plan"`
-	Events []Event      `json:"events,omitempty"`
-}
-
-func SaveBundle(dir string, bundle Bundle) error {
-	if strings.TrimSpace(dir) == "" {
-		return fmt.Errorf("feature planner bundle dir is empty")
-	}
-
-	if err := ValidateDurableState(bundle.State); err != nil {
-		return err
-	}
-
-	if err := ValidateDurablePlanWithContract(bundle.Plan, CompilePlanAuthorityContract(bundle.Plan, bundle.State.AuthorityDeltas)); err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("mkdir feature planner bundle dir: %w", err)
-	}
-
-	if err := writeJSONAtomic(filepath.Join(dir, DefaultFeatureStateName), bundle.State); err != nil {
-		return err
-	}
-
-	if err := writeJSONAtomic(filepath.Join(dir, DefaultFeaturePlanName), bundle.Plan); err != nil {
-		return err
-	}
-
-	return writeEventsAtomic(filepath.Join(dir, DefaultEventLogName), bundle.Events)
-}
-
-func LoadBundle(dir string) (Bundle, error) {
-	if strings.TrimSpace(dir) == "" {
-		return Bundle{}, fmt.Errorf("feature planner bundle dir is empty")
-	}
-
-	var bundle Bundle
-
-	if err := jsonfile.ReadJSON(filepath.Join(dir, DefaultFeatureStateName), &bundle.State); err != nil {
-		return Bundle{}, err
-	}
-
-	if err := jsonfile.ReadJSON(filepath.Join(dir, DefaultFeaturePlanName), &bundle.Plan); err != nil {
-		return Bundle{}, err
-	}
-
-	events, err := readEvents(filepath.Join(dir, DefaultEventLogName))
-	if err != nil {
-		return Bundle{}, err
-	}
-
-	bundle.Events = events
-	if err := ValidateDurableState(bundle.State); err != nil {
-		return Bundle{}, err
-	}
-
-	if err := ValidateDurablePlanWithContract(bundle.Plan, CompilePlanAuthorityContract(bundle.Plan, bundle.State.AuthorityDeltas)); err != nil {
-		return Bundle{}, err
-	}
-
-	return bundle, nil
-}
 
 func AppendEvents(root string, sessionID string, events []Event) (string, error) {
 	if len(events) == 0 {
@@ -116,104 +47,6 @@ func AppendEvents(root string, sessionID string, events []Event) (string, error)
 	}
 
 	return relPath, nil
-}
-
-func LoadEvents(root string, sessionID string) ([]Event, string, error) {
-	fullPath, relPath, err := EventLogPath(root, sessionID)
-	if err != nil {
-		return nil, "", err
-	}
-
-	events, err := readEvents(fullPath)
-
-	return events, relPath, err
-}
-
-func writeJSONAtomic(path string, value any) error {
-	body, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal %s: %w", filepath.Base(path), err)
-	}
-
-	return writeFileAtomic(path, append(body, '\n'))
-}
-
-func writeEventsAtomic(path string, events []Event) error {
-	var body []byte
-
-	for _, event := range events {
-		if err := validateStoredEvent(event); err != nil {
-			return err
-		}
-
-		line, err := json.Marshal(event)
-		if err != nil {
-			return fmt.Errorf("marshal feature planner event: %w", err)
-		}
-
-		body = append(body, line...)
-		body = append(body, '\n')
-	}
-
-	return writeFileAtomic(path, body)
-}
-
-func writeFileAtomic(path string, body []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
-
-	if err := atomicfile.WriteFile(path, body, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
-	}
-
-	return nil
-}
-
-func readEvents(path string) ([]Event, error) {
-	file, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("open feature planner event log: %w", err)
-	}
-
-	defer file.Close()
-
-	var events []Event
-
-	scanner := bufio.NewScanner(file)
-	lineNo := 0
-
-	for scanner.Scan() {
-		lineNo++
-
-		line := strings.TrimSpace(scanner.Text())
-
-		if line == "" {
-			continue
-		}
-
-		var event Event
-
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			return nil, fmt.Errorf("decode feature planner event line %d: %w", lineNo, err)
-		}
-
-		if err := validateStoredEvent(event); err != nil {
-			return nil, fmt.Errorf("invalid feature planner event line %d: %w", lineNo, err)
-		}
-
-		events = append(events, event)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan feature planner event log: %w", err)
-	}
-
-	return events, nil
 }
 
 func validateStoredEvent(event Event) error {

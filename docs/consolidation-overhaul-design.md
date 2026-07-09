@@ -1569,6 +1569,28 @@ Reviewer-updated estimate:
   `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `git diff --check`.
+- Featureplanner replay/bundle and completion-adapter cleanup deleted the
+  unused event replay reducer, replay error type, bundle snapshot load/save
+  APIs, event-log loader, and exported map-compatibility adapters for
+  plan-execute completion fields. The live owner is now direct state mutation
+  through `ApplyPlannerOutput` / `ApplyImplementorOutput`, append-only event
+  writing through `AppendEvents`, durable state load/save through
+  `SaveState` / `LoadState`, and plan-execute completion summaries through
+  `PlanExecuteCompletionSummary`. The same pass deleted test-only forwarding
+  APIs `BuildImplementorPrompt`, `ValidatePlan`, and `ValidateDurablePlan`;
+  tests now call `BuildImplementorPromptFromContract`, `validatePlan`, and
+  `ValidateDurablePlanWithContract` directly. Production Go changed
+  `+26 / -924`, net `-898`; test Go changed `+115 / -716`, net `-601`.
+  With this worktree included, the branch is production Go
+  `+26,550 / -33,909`, net `-7,359` versus `main`. Focused verification:
+  `go test ./internal/workflows/featureplanner -count=1`;
+  `go test ./internal/workflows/featureplanner/adapters/planexecute ./internal/surfaces/cli/featureplanner ./internal/surfaces/tui/app -run 'Test(FeaturePlanner|PlanExecute|SlashFeature|RuntimeBrief)' -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/workflows/featureplanner ./internal/workflows/featureplanner/adapters/planexecute ./internal/surfaces/cli/featureplanner`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^internal/workflows/featureplanner/'`
+  as inventory, now showing no featureplanner findings. Full verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

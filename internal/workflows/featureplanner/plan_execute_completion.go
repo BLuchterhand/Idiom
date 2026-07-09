@@ -54,17 +54,6 @@ func PlanExecuteCompletionSummaryFromOutput(output string) PlanExecuteCompletion
 	return summary.normalized()
 }
 
-// PlanExecuteCompletionFields is the JSON-emission compatibility shape. New
-// workflow code should pass PlanExecuteCompletionSummary and call Fields only
-// at serialization boundaries.
-func PlanExecuteCompletionFields(output string) map[string]any {
-	return PlanExecuteCompletionSummaryFromOutput(output).Fields()
-}
-
-func PlanExecuteRecoveryRetryPrompt(prompt string, completion map[string]any) (string, bool) {
-	return PlanExecuteRecoveryRetryPromptForSummary(prompt, PlanExecuteCompletionSummaryFromFields(completion))
-}
-
 func PlanExecuteRecoveryRetryPromptForSummary(prompt string, completion PlanExecuteCompletionSummary) (string, bool) {
 	completion = completion.normalized()
 	requiredPaths := append([]string(nil), completion.RequiredEditPaths...)
@@ -93,22 +82,6 @@ func PlanExecuteRecoveryRetryPromptForSummary(prompt string, completion PlanExec
 	b.WriteString(instruction)
 
 	return b.String(), true
-}
-
-func TrustPlanExecuteCompletionFields(fields map[string]any) {
-	if fields == nil {
-		return
-	}
-
-	if len(completionFieldStableIDSlice(fields, plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs)) == 0 {
-		delete(fields, featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted)
-
-		return
-	}
-
-	if fields[featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted] != true {
-		return
-	}
 }
 
 func TrustObservedPlanExecuteCompletionFields(fields map[string]any) {
@@ -221,45 +194,6 @@ var PlanExecuteTerminalPreservedFieldKeys = []string{
 	plancontract.PlanExecuteTerminalFieldCompletionPath,
 }
 
-var planExecuteCompletionOverlayFieldKeys = []string{
-	plancontract.PlanExecuteTerminalFieldStatus,
-	plancontract.PlanExecuteTerminalFieldPhase,
-	plancontract.PlanExecuteTerminalFieldReviewStatus,
-	plancontract.PlanExecuteTerminalFieldTerminalClass,
-	plancontract.PlanExecuteTerminalFieldOutcome,
-	plancontract.PlanExecuteTerminalFieldExitCode,
-	plancontract.PlanExecuteTerminalFieldFailureKind,
-	plancontract.PlanExecuteTerminalFieldFailureReason,
-	plancontract.PlanExecuteTerminalFieldFailureID,
-	plancontract.PlanExecuteTerminalFieldRecordPath,
-	plancontract.PlanExecuteTerminalFieldPacketPath,
-	plancontract.PlanExecuteTerminalFieldNextAction,
-	plancontract.PlanExecuteTerminalFieldProgressPath,
-	plancontract.PlanExecuteTerminalFieldReviewRepairSkipped,
-	plancontract.PlanExecuteTerminalFieldChangedPaths,
-	featureplannercontract.PlanExecuteCompletionFieldLaneFamily,
-	featureplannercontract.PlanExecuteCompletionFieldSummary,
-	featureplannercontract.PlanExecuteCompletionFieldCompletionSource,
-	plancontract.PlanExecuteTerminalFieldContractID,
-	plancontract.PlanExecuteTerminalFieldContractHash,
-	plancontract.PlanExecuteTerminalFieldScopeContractID,
-	plancontract.PlanExecuteTerminalFieldScopeContractHash,
-	plancontract.PlanExecuteTerminalFieldSnapshotHash,
-	plancontract.PlanExecuteTerminalFieldRequiredEditPaths,
-	plancontract.PlanExecuteTerminalFieldAllowedEditPaths,
-	plancontract.PlanExecuteTerminalFieldWriteAllowedPaths,
-	plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths,
-	plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidence,
-	plancontract.PlanExecuteTerminalFieldSourceSanity,
-	plancontract.PlanExecuteTerminalFieldVerification,
-	plancontract.PlanExecuteTerminalFieldVerificationCommands,
-	plancontract.PlanExecuteTerminalFieldVerificationSkips,
-	plancontract.PlanExecuteTerminalFieldVerificationRejects,
-	plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs,
-	featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted,
-	plancontract.PlanExecuteTerminalFieldValidationFailures,
-}
-
 func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCompletionSummary {
 	if fields == nil {
 		return PlanExecuteCompletionSummary{}
@@ -362,24 +296,6 @@ func MergePlanExecuteCompletionSummaries(current PlanExecuteCompletionSummary, c
 	}
 
 	return current.withInheritedContext(candidate)
-}
-
-func OverlayPlanExecuteCompletionFields(fields map[string]any, candidateFields map[string]any) {
-	if fields == nil {
-		return
-	}
-
-	merged := MergePlanExecuteCompletionSummaries(
-		PlanExecuteCompletionSummaryFromFields(fields),
-		PlanExecuteCompletionSummaryFromFields(candidateFields),
-	)
-	for _, key := range planExecuteCompletionOverlayFieldKeys {
-		delete(fields, key)
-	}
-
-	for key, value := range merged.Fields() {
-		fields[key] = value
-	}
 }
 
 func (summary PlanExecuteCompletionSummary) Fields() map[string]any {

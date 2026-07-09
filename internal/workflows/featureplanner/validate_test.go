@@ -26,7 +26,7 @@ func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 
 	plan.Atoms[0].TestFirst.Commands = nil
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "missing test_first.commands") {
 		t.Fatalf("expected missing TDD command error, got %v", err)
 	}
@@ -38,7 +38,7 @@ func TestValidatePlanRequiresTDDArtifactPathsInRequiredEditScope(t *testing.T) {
 	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go"}
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil {
 		t.Fatal("expected demoted TDD test artifact path to reject feature plan")
 	}
@@ -72,7 +72,7 @@ func TestValidatePlanRejectsDemotedImplementationPathsRequiredByPlanAndAtom(t *t
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
 	plan.Atoms[0].Prompt = "First, check if the work is already satisfied. Otherwise, implement CollapseEvent struct in collapse_event.h and collapse_event.cpp with a static dispatch method, update colony_sim_tick.cpp to use it, and write unit tests in test_collapse_event.cpp."
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil {
 		t.Fatal("expected demoted implementation paths to reject feature plan")
 	}
@@ -98,7 +98,7 @@ func TestValidatePlanKeepsOptionalAllowedImplementationPathAllowed(t *testing.T)
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_extra.go"}
 	plan.Atoms[0].Prompt = "Update internal/labels/labels.go. You may update internal/labels/labels_extra.go if needed."
 
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
 		t.Fatalf("optional allowed path should remain valid: %v", err)
 	}
 }
@@ -119,7 +119,7 @@ func TestNewStateStoresBoundedPromptSummaryForResume(t *testing.T) {
 func TestValidatePlanAcceptsProductSDDRefs(t *testing.T) {
 	plan := validProductContextPlan()
 
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
 		t.Fatalf("product PRD/ADR refs should satisfy the generic SDD contract: %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestValidatePlanAcceptsStandaloneAcceptanceIDSDDRefs(t *testing.T) {
 	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
 	plan.Atoms[0].SDDRefs = []string{"SDD-COLLAPSE-EVENT-1"}
 
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
 		t.Fatalf("standalone acceptance ID should satisfy atom sdd_refs: %v", err)
 	}
 }
@@ -141,7 +141,7 @@ func TestValidatePlanRejectsUndeclaredAtomSDDRefs(t *testing.T) {
 	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
 	plan.Atoms[0].SDDRefs = []string{"REQ-001"}
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "is not declared by sdd_contract") {
 		t.Fatalf("expected undeclared sdd_refs rejection, got %v", err)
 	}
@@ -151,7 +151,7 @@ func TestValidatePlanRejectsBlankAtomSDDRefs(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].SDDRefs = []string{""}
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "missing sdd_refs") || !strings.Contains(err.Error(), "must not be blank") {
 		t.Fatalf("expected blank sdd_refs rejection, got %v", err)
 	}
@@ -1640,7 +1640,7 @@ func TestValidatePlanRejectsPromptPathOutsideDeclaredScope(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Edit internal/labels/labels.go and wire native/src/simulation/machines/machine.cpp for recipe start."
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "native/src/simulation/machines/machine.cpp") || !strings.Contains(err.Error(), "outside required_edit_paths") {
 		t.Fatalf("expected prompt path scope rejection, got %v", err)
 	}
@@ -1653,7 +1653,7 @@ func TestValidatePlanAllowsPromptPathDeclaredByVerificationCommand(t *testing.T)
 	plan.Atoms[0].TestFirst.Commands = []string{command}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{command}
 
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
 		t.Fatalf("prompt command paths declared by test commands should pass: %v", err)
 	}
 }
@@ -1662,13 +1662,13 @@ func TestValidatePlanRejectsGuessedHelperCallWithoutSignatureEvidence(t *testing
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Call find_connected_cistern_with_volume(eid) before posting fallback water haul."
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") || !strings.Contains(err.Error(), "source-verified signature") {
 		t.Fatalf("expected guessed helper-call rejection, got %v", err)
 	}
 
 	plan.Atoms[0].Prompt = "Current source evidence: exact signature is EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required). Call it only with verified arguments."
-	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
 		t.Fatalf("model-authored signature prompt must not self-authorize helper calls, got %v", err)
 	}
 }
@@ -1677,7 +1677,7 @@ func TestValidatePlanRejectsModelAuthoredSourceVerifiedSignaturesAfterMarker(t *
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Source-verified signatures:\n- MachineSystem::try_consume_inputs(EntityID machine_id, const Recipe& recipe)\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n\nCall find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required)."
 
-	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
 		t.Fatalf("model-authored signature marker must not satisfy helper calls, got %v", err)
 	}
 }
@@ -1686,7 +1686,7 @@ func TestValidatePlanDoesNotLetSignatureMarkerSelfAuthorizeLaterCalls(t *testing
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Source-verified signatures:\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n- Call missing_helper(eid) before posting fallback water haul.\n\nCall missing_helper(eid) before posting fallback water haul."
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
 		t.Fatalf("signature marker must not authorize later prose calls, got %v", err)
 	}
@@ -1703,7 +1703,7 @@ func TestValidatePlanDoesNotTreatNegatedSignatureMarkerAsAuthority(t *testing.T)
 		plan := validPlan()
 		plan.Atoms[0].Prompt = prompt
 
-		err := ValidatePlan(plan)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
 		if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
 			t.Fatalf("negated signature marker must not authorize helper calls, got %v for prompt %q", err, prompt)
 		}
@@ -1719,7 +1719,7 @@ func TestPromptSignatureDeclarationsDoNotSelfAuthorizeLanguageNeutralSuffixes(t 
 		plan := validPlan()
 		plan.Atoms[0].Prompt = prompt
 
-		if err := ValidatePlan(plan); err == nil {
+		if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil {
 			t.Fatalf("model-authored language-neutral signature must not authorize call for prompt %q", prompt)
 		}
 	}
@@ -1734,7 +1734,7 @@ func TestValidatePlanDoesNotTreatBareCallBulletAsSignatureDeclaration(t *testing
 		plan := validPlan()
 		plan.Atoms[0].Prompt = "Source-verified signatures:\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n" + bullet + "\n\nCall missing_helper(eid) before posting fallback water haul."
 
-		err := ValidatePlan(plan)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
 		if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
 			t.Fatalf("bare call-shaped bullet must not authorize helper calls, got %v for bullet %q", err, bullet)
 		}
@@ -1755,7 +1755,7 @@ func TestValidatePlanAllowsFieldDescriptorParentheticalsInAtomPrompt(t *testing.
 		plan.Atoms[0].EvidencePaths = append(plan.Atoms[0].EvidencePaths, "native/src/simulation/economy/fluid_network_system.h")
 		plan.Atoms[0].EvidencePaths = append(plan.Atoms[0].EvidencePaths, "native/src/core/components.h")
 
-		if err := ValidatePlan(plan); err != nil {
+		if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
 			t.Fatalf("field descriptor parenthetical should not require helper signature evidence, got %v for prompt %q", err, prompt)
 		}
 	}
@@ -1769,7 +1769,7 @@ func TestValidatePlanStillRejectsInventedDeductionHelper(t *testing.T) {
 		plan := validPlan()
 		plan.Atoms[0].Prompt = prompt
 
-		err := ValidatePlan(plan)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
 		if err == nil {
 			t.Fatalf("invented helper should still require signature evidence for prompt %q", prompt)
 		}
@@ -1780,7 +1780,7 @@ func TestValidatePlanRejectsGuessedHelperCallDespiteUnrelatedSourceEvidence(t *t
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Current source evidence: labels.go contains render_label(). Then call find_connected_cistern_with_volume(eid) before posting fallback water haul."
 
-	err := ValidatePlan(plan)
+	err := validatePlan(plan, plancontract.PlanExecutionContract{})
 	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") {
 		t.Fatalf("expected unrelated source evidence to not authorize guessed helper call, got %v", err)
 	}
@@ -1842,7 +1842,7 @@ func TestValidatePlanAllowsParentheticalExamplesInAtomPrompt(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "When recipe needs water(e.g., recipe.requiresWater()), skip the haul job(i.e., return true without scheduling haul) using the machine ID(e.g., from machine component)."
 
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
 		t.Fatalf("parenthetical examples must not be treated as helper calls: %v", err)
 	}
 }
@@ -1974,7 +1974,7 @@ func TestValidateStandaloneWorkspaceUsesAcceptedSourceGroundingForFET33CShape(t 
 		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
 	}})
 
-	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(network_id, volume_required)") {
+	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(network_id, volume_required)") {
 		t.Fatalf("base plan should require source signature before accepted-source grounding, got %v", err)
 	}
 	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root, Contract: contract}); err != nil {
@@ -3831,7 +3831,7 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 
 	plan.Atoms[0].Prompt = "Use exact old_text/new_text anchors from the atom brief."
 
-	prompt := BuildImplementorPrompt(FeatureAtomState{FeatureAtomPlan: plan.Atoms[0]}, plan)
+	prompt := BuildImplementorPromptFromContract(FeatureAtomState{FeatureAtomPlan: plan.Atoms[0]}, plan, CompilePlanAuthorityContract(plan, nil))
 
 	for _, want := range []string{
 		`This atom brief is consumed by plan-execute`,
@@ -5189,7 +5189,7 @@ func TestValidateDurablePlanRejectsInvalidDependencies(t *testing.T) {
 
 		plan.Atoms[0].Dependencies = []string{"missing"}
 
-		err := ValidateDurablePlan(plan)
+		err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 		if err == nil || !strings.Contains(err.Error(), "unknown atom") {
 			t.Fatalf("expected unknown dependency error, got %v", err)
 		}
@@ -5210,7 +5210,7 @@ func TestValidateDurablePlanRejectsInvalidDependencies(t *testing.T) {
 		second.Dependencies = []string{"atom-1"}
 		plan.Atoms = append(plan.Atoms, second)
 
-		err := ValidateDurablePlan(plan)
+		err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 		if err == nil || !strings.Contains(err.Error(), "dependency cycle") {
 			t.Fatalf("expected dependency cycle error, got %v", err)
 		}
@@ -5222,7 +5222,7 @@ func TestValidateDurablePlanAcceptsFullSHA256TDDSnapshotDigest(t *testing.T) {
 
 	plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = "sha256:" + strings.Repeat("a", 64)
 
-	if err := ValidateDurablePlan(plan); err != nil {
+	if err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{}); err != nil {
 		t.Fatalf("valid lowercase SHA-256 TDD snapshot digest should validate: %v", err)
 	}
 }
@@ -5290,7 +5290,7 @@ func TestValidateDurablePlanRejectsPlaceholderTDDSnapshotValues(t *testing.T) {
 			plan.Atoms[0].PlannedTDDSnapshot.SnapshotID = tt.snapshot.SnapshotID
 			plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = tt.snapshot.SnapshotDigest
 
-			err := ValidateDurablePlan(plan)
+			err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 			if err == nil {
 				t.Fatal("expected placeholder TDD snapshot validation error")
 			}
@@ -5309,7 +5309,7 @@ func TestValidateDurablePlanRejectsMismatchedTDDSnapshotEventID(t *testing.T) {
 
 	plan.Atoms[0].PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-missing"
 
-	err := ValidateDurablePlan(plan)
+	err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 	if err == nil {
 		t.Fatal("expected mismatched TDD snapshot event validation error")
 	}
@@ -5611,56 +5611,6 @@ func TestApplyImplementorOutputRejectsIdentitylessPlanExecuteCompletion(t *testi
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
 	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion is not correlated to the active plan contract snapshot")
-}
-
-func TestReplayRestoresVerificationClosureFromTerminalEvent(t *testing.T) {
-	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
-
-	atom := &state.Atoms[0]
-	atom.State = AtomStateImplementing
-	atom.LastRunID = "atom-1-run-1"
-	contractID, protocolHash := stampCompletionTestAtomRuntime(&state, atom)
-	state.ActiveRuns = []ActiveRun{{
-		RunID:                "atom-1-run-1",
-		AtomID:               atom.ID,
-		LaneSessionID:        "atom-1-run-1",
-		LaneFamily:           "plan-execute",
-		InvocationContractID: contractID,
-		RuntimeEnvelopeID:    protocolHash,
-		State:                ActiveRunStateRunning,
-	}}
-	preTerminal := state
-	preTerminal.Atoms = append([]FeatureAtomState(nil), state.Atoms...)
-	preTerminal.ActiveRuns = append([]ActiveRun(nil), state.ActiveRuns...)
-
-	events := ApplyImplementorOutput(&state, atom, testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom))
-	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("unexpected terminal events: %+v", events)
-	}
-
-	bundle, err := Replay(preTerminal, events)
-	if err != nil {
-		t.Fatalf("replay terminal event: %v", err)
-	}
-
-	if len(bundle.State.VerificationClosures) != 1 {
-		t.Fatalf("replayed verification closures = %+v, want one", bundle.State.VerificationClosures)
-	}
-	got := bundle.State.VerificationClosures[0]
-	want := state.VerificationClosures[0]
-	if got.EventID != want.EventID ||
-		got.PlanDigest != want.PlanDigest ||
-		got.ApprovalEventID != want.ApprovalEventID ||
-		len(got.TDDCommandResults) != len(want.TDDCommandResults) ||
-		len(got.Verification) != len(want.Verification) {
-		t.Fatalf("replayed closure mismatch:\ngot  %+v\nwant %+v", got, want)
-	}
-	if bundle.State.ReleaseReadiness.Status != "ready" ||
-		bundle.State.ReleaseReadiness.PlanDigest != state.ReleaseReadiness.PlanDigest ||
-		!containsString(bundle.State.ReleaseReadiness.VerificationClosureEventIDs, got.EventID) {
-		t.Fatalf("replayed release readiness mismatch:\ngot  %+v\nwant %+v", bundle.State.ReleaseReadiness, state.ReleaseReadiness)
-	}
 }
 
 func TestApplyImplementorOutputRejectsConflictingParentPlanExecuteIdentity(t *testing.T) {
@@ -7193,7 +7143,7 @@ func testPlanExecuteSourceSatisfiedJSONForAtom(atom FeatureAtomState) string {
 }
 
 func trustPlanExecuteCompletionForTest(fields map[string]any) map[string]any {
-	TrustPlanExecuteCompletionFields(fields)
+	TrustObservedPlanExecuteCompletionFields(fields)
 
 	return fields
 }

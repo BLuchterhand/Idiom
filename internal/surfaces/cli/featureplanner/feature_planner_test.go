@@ -496,7 +496,7 @@ func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T)
 		`{"type":"message","state_path":"ignored"}`,
 	}, "\n")
 
-	fields := featureplanner.PlanExecuteCompletionFields(output)
+	fields := featureplanner.PlanExecuteCompletionSummaryFromOutput(output).Fields()
 	if got := featureplanner.CompletionFieldString(fields, "progress_path"); got != ".idiom/plan-execute/final/state.json" {
 		t.Fatalf("progress path = %q", got)
 	}
@@ -524,7 +524,7 @@ func TestFeaturePlannerPlanExecuteCompletionFieldsMarksReviewDegradedWithoutStat
 		`{"type":"message","content":"review unavailable"}`,
 	}, "\n")
 
-	fields := featureplanner.PlanExecuteCompletionFields(output)
+	fields := featureplanner.PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
 	if got := fmt.Sprint(fields["status"]); got != "degraded" {
 		t.Fatalf("status = %q, want degraded; fields=%+v", got, fields)

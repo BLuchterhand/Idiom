@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"idiom/internal/platform/textutil"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -29,9 +30,9 @@ func standaloneBehavioralCoverageDraftContract(plan FeaturePlan) productworkflow
 
 	contract := productworkflow.BehavioralCoverageContract{
 		SchemaVersion: "standalone_provisional.v1",
-		ContractID:    firstNonEmpty(plan.FeatureID, "standalone-provisional"),
-		TaskID:        firstNonEmpty(plan.FeatureID, "standalone-provisional"),
-		CoverageTier:  firstNonEmpty(draft.Tier, plan.TDDContract.CoverageTier),
+		ContractID:    textutil.FirstNonEmpty(plan.FeatureID, "standalone-provisional"),
+		TaskID:        textutil.FirstNonEmpty(plan.FeatureID, "standalone-provisional"),
+		CoverageTier:  textutil.FirstNonEmpty(draft.Tier, plan.TDDContract.CoverageTier),
 		SourceRefs:    standaloneDraftSourceRefs(plan),
 	}
 

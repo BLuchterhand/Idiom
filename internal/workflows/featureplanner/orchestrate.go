@@ -842,10 +842,6 @@ func featurePlannerDispatchShouldStopAfterAtom(beforeStatus string, beforeAtomSt
 	}
 }
 
-func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
-	return BuildImplementorPromptFromContract(atom, plan, CompilePlanAuthorityContract(plan, nil))
-}
-
 func BuildImplementorPromptFromContract(atom FeatureAtomState, plan FeaturePlan, contract plancontract.PlanExecutionContract) string {
 	body, _ := json.MarshalIndent(atom.FeatureAtomPlan, "", "  ")
 	atomContract, _ := planAuthorityContractAtom(contract, atom.ID)
@@ -2806,12 +2802,12 @@ func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now 
 
 	evidenceRefs := normalizedStringList(question.EvidenceRefs)
 	if len(evidenceRefs) == 0 {
-		evidenceRefs = []string{"planner_question:" + firstNonEmpty(question.QuestionID, question.ID)}
+		evidenceRefs = []string{"planner_question:" + textutil.FirstNonEmpty(question.QuestionID, question.ID)}
 	}
 
 	delta := PlanAuthorityDelta{
-		QuestionID:     firstNonEmpty(question.QuestionID, question.ID),
-		AuthorityKind:  firstNonEmpty(question.AnswerSourceKind, question.AuthorityRequired, "operator_approval"),
+		QuestionID:     textutil.FirstNonEmpty(question.QuestionID, question.ID),
+		AuthorityKind:  textutil.FirstNonEmpty(question.AnswerSourceKind, question.AuthorityRequired, "operator_approval"),
 		EvidenceRefs:   evidenceRefs,
 		AffectedPaths:  plancontract.UniqueScopePaths(question.AffectedPaths),
 		AffectedFields: normalizedStringList(question.AffectedFields),
