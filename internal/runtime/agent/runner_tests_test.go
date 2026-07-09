@@ -30032,9 +30032,6 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 		currentAllowedTools: []string{"read_file", "code_navigate", "search_content"},
 		toolSurface:         NewActiveSurface([]string{"read_file", "code_navigate", "search_content"}, nil),
 	}
-	rejections := 0
-	turnMessages := []llama.ChatMessage{}
-
 	sourceGroundingAssessment := sourceGroundingUnsupportedDetailAssessment([]string{"src/graphics/renderer.rs"})
 	sourceGroundingErr := sourceGroundingAssessment.Message()
 	sourceGroundingResult := annotateSourceGroundingAssessment(workspace.ToolResult{Tool: "completion_gate", Summary: "Rejected", Error: sourceGroundingErr}, sourceGroundingAssessment)
@@ -30045,14 +30042,10 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 			Role:    "assistant",
 			Content: "The renderer uses src/graphics/renderer.rs.",
 		},
-		acceptance:               sourceGroundingAcceptance,
-		result:                   sourceGroundingResult,
-		collectedResults:         nil,
-		currentAllowedTools:      []string{"read_file", "code_navigate", "search_content"},
-		completionGateRejections: &rejections,
-		turnMessages:             &turnMessages,
-		runState:                 runState,
-		controller:               &runnerTurnController{},
+		acceptance: sourceGroundingAcceptance,
+		result:     sourceGroundingResult,
+		runState:   runState,
+		controller: &runnerTurnController{},
 	})
 	if !retried {
 		t.Fatal("source-grounding rejection should be retryable")
@@ -30083,21 +30076,16 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 		currentAllowedTools: []string{"search_content"},
 		toolSurface:         NewActiveSurface([]string{"search_content"}, nil),
 	}
-	noReadRejections := 0
 	retried = noReadToolRunner.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
 		stepNumber: 1,
 		assistantMessage: llama.ChatMessage{
 			Role:    "assistant",
 			Content: "The renderer uses src/graphics/renderer.rs.",
 		},
-		acceptance:               sourceGroundingAcceptance,
-		result:                   sourceGroundingResult,
-		collectedResults:         nil,
-		currentAllowedTools:      []string{"search_content"},
-		completionGateRejections: &noReadRejections,
-		turnMessages:             &turnMessages,
-		runState:                 noReadRunState,
-		controller:               &runnerTurnController{},
+		acceptance: sourceGroundingAcceptance,
+		result:     sourceGroundingResult,
+		runState:   noReadRunState,
+		controller: &runnerTurnController{},
 	})
 	if !retried {
 		t.Fatal("source-grounding rejection should still be retryable under the generic read-only retry policy")

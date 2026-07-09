@@ -701,7 +701,7 @@ func (s *runnerSession) RunStep(ctx context.Context, _ *SessionState) StepResult
 		return StepResult{Answer: s.answer, Err: s.err, Done: true}
 	}
 	s.ran = true
-	s.answer, s.err = s.runner.runLegacySessionBody(ctx, s.messages, s.opts, s.onStatus, s.onToolRequest, s.onToolResult)
+	s.answer, s.err = s.runner.runSessionLoop(ctx, s.messages, s.opts, s.onStatus, s.onToolRequest, s.onToolResult)
 	return StepResult{Answer: s.answer, Err: s.err, Done: true}
 }
 
@@ -886,16 +886,14 @@ func (r *Runner) supportsTerminalSubmitPlanNativeTools(results []workspace.ToolR
 	return r.Client.SupportsNativeTools()
 }
 
-func (r *Runner) runLegacySessionBody(
+func (r *Runner) runSessionLoop(
 	ctx context.Context,
 	messages []llama.ChatMessage,
-	opts llama.ChatOptions,
+	initialOpts llama.ChatOptions,
 	onStatus func(string),
 	onToolRequest func(ToolRequestEvent),
 	onToolResult func(ToolResultEvent),
 ) (answer string, err error) {
-
-	turnMessages := append([]llama.ChatMessage(nil), messages...)
 
 	// Ensure LanePolicy is initialized — falls back to auto-detection from RuntimeBrief.
 	if r.LanePolicy == nil {
@@ -904,7 +902,6 @@ func (r *Runner) runLegacySessionBody(
 
 	lp := r.LanePolicy
 
-	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
 	delegatedReadOnlyAnswerReadyNudged := false
 	planThenExecuteReadinessNudged := false
 	planThenExecuteSubmitOnlyReadinessNudged := false
@@ -914,14 +911,10 @@ func (r *Runner) runLegacySessionBody(
 
 	planThenExecuteCorrectionAfterRefreshNudged := false
 	planThenExecuteUnreadSourceNudgedFor := ""
-	delegatedReadOnlyAnswerReady := slices.Contains(r.RuntimeBrief.Constraints, "answer_readiness_reached")
 	delegatedReadOnlyPostReadyFollowups := 0
 	delegatedReadOnlyDiminishingNudgeStage := 0
-	postChildPacketActive := false
 	postChildFollowupReads := 0
 	postChildDiminishingNudgeStage := 0
-	implementationWriteOnlyRecoveryActive := false
-	requiredPathCompletionRecoveryActive := false
 	scopedHiddenNonWriteRecoveryUsed := false
 	scratchpadCloseoutNonWriteRejections := 0
 	// recoveryReadAllowanceUsed tracks paths that have already consumed
@@ -933,7 +926,6 @@ func (r *Runner) runLegacySessionBody(
 	recoveryReadAllowanceUsed := map[string]bool{}
 	planThenExecuteReadySourceRefreshes := 0
 	planThenExecuteNativeSubmitPlanNoCallFallbacks := 0
-	planThenExecuteNativeSubmitPlanDisabled := false
 	// postCompletionVerificationCalls counts non-write tool requests issued
 	// AFTER all required edit paths have been written. Models commonly use
 	// this phase to read the files they just wrote and confirm the edits
@@ -943,147 +935,54 @@ func (r *Runner) runLegacySessionBody(
 	// crosses postCompletionVerificationCutoff, the runner force-answers
 	// with a CLEAN success completion.
 	postCompletionVerificationCalls := 0
-	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
-	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
 	exactAnchorWriteFailures := 0
-	currentAllowedTools := []string(nil)
-	implementationTargetWriteReadyNudges := 0
 	runState := &runnerRunState{
-		ctx:                                     ctx,
-		opts:                                    opts,
-		collectedResults:                        collectedResults,
-		turnMessages:                            turnMessages,
-		executionState:                          &executionState,
-		delegatedReadOnlyAnswerReady:            delegatedReadOnlyAnswerReady,
-		postChildPacketActive:                   postChildPacketActive,
-		implementationWriteOnlyRecoveryActive:   implementationWriteOnlyRecoveryActive,
-		requiredPathCompletionRecoveryActive:    requiredPathCompletionRecoveryActive,
-		exactAnchorWriteOnlyActive:              exactAnchorWriteOnlyActive,
-		planThenExecuteNativeSubmitPlanDisabled: planThenExecuteNativeSubmitPlanDisabled,
-		implementationTargetWriteReadyNudges:    implementationTargetWriteReadyNudges,
+		ctx:                          ctx,
+		opts:                         initialOpts,
+		collectedResults:             append([]workspace.ToolResult(nil), r.SeedResults...),
+		turnMessages:                 append([]llama.ChatMessage(nil), messages...),
+		executionState:               newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects),
+		delegatedReadOnlyAnswerReady: slices.Contains(r.RuntimeBrief.Constraints, "answer_readiness_reached"),
 	}
-	syncRunState := func() {
-		runState.opts = opts
-		runState.collectedResults = collectedResults
-		runState.turnMessages = turnMessages
-		runState.currentAllowedTools = append(runState.currentAllowedTools[:0], currentAllowedTools...)
-		runState.executionState = &executionState
-		runState.delegatedReadOnlyAnswerReady = delegatedReadOnlyAnswerReady
-		runState.postChildPacketActive = postChildPacketActive
-		runState.implementationWriteOnlyRecoveryActive = implementationWriteOnlyRecoveryActive
-		runState.requiredPathCompletionRecoveryActive = requiredPathCompletionRecoveryActive
-		runState.exactAnchorWriteOnlyActive = exactAnchorWriteOnlyActive
-		runState.planThenExecuteNativeSubmitPlanDisabled = planThenExecuteNativeSubmitPlanDisabled
-		runState.implementationTargetWriteReadyNudges = implementationTargetWriteReadyNudges
-	}
-	applyRunState := func() {
-		opts = runState.opts
-		collectedResults = runState.collectedResults
-		turnMessages = runState.turnMessages
-		currentAllowedTools = runState.currentAllowedTools
-		planThenExecuteNativeSubmitPlanDisabled = runState.planThenExecuteNativeSubmitPlanDisabled
-		implementationTargetWriteReadyNudges = runState.implementationTargetWriteReadyNudges
-	}
-
+	runState.exactAnchorWriteOnlyActive = exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, runState.collectedResults)
 	defer func() {
 		r.currentAllowedTools = nil
 		r.activeAutonomy = nil
 	}()
 
-	setCurrentAllowedTools := func(tools []string) {
-		r.setCurrentAllowedTools(runState, tools)
-	}
-
-	syncCurrentAllowedToolsFromOptions := func() {
-		syncRunState()
-		r.syncCurrentAllowedToolsFromOptions(runState)
-		applyRunState()
-	}
-	rebuildTools := func() {
-		syncRunState()
-		r.rebuildRunTools(runState)
-		applyRunState()
-	}
-	terminalSubmitPlanNativeTools := func() bool {
-		syncRunState()
-
-		return r.terminalSubmitPlanNativeTools(runState)
-	}
-	syncPlanThenExecuteRecoveryAllowedTools := func() {
-		syncRunState()
-		r.syncPlanThenExecuteRecoveryAllowedTools(runState)
-		applyRunState()
-	}
-	refreshPlanThenExecuteTerminalSurface := func(reason string) {
-		syncRunState()
-		r.refreshPlanThenExecuteTerminalSurface(runState, reason)
-		applyRunState()
-	}
-	transitionPlanThenExecuteSubmitReadyTerminal := func(prompt string, eventRole string, surfaceKey string) {
-		syncRunState()
-		r.transitionPlanThenExecuteSubmitReadyTerminal(runState, prompt, eventRole, surfaceKey)
-		applyRunState()
-	}
-	forcePlanThenExecuteTerminalSurface := func(reason string) {
-		syncRunState()
-		r.forcePlanThenExecuteTerminalSurface(runState, reason)
-		applyRunState()
-	}
-
 	if r.Workspace != nil {
-		if exactAnchorWriteOnlyActive {
+		if runState.exactAnchorWriteOnlyActive {
 			runState.hideExactAnchorReadTools(r.workspaceAllowedTools())
 		}
 
-		rebuildTools()
+		r.rebuildRunTools(runState)
 	}
 
-	if strings.TrimSpace(opts.ToolChoice) == "" && len(opts.Tools) > 0 {
-		opts.ToolChoice = "auto"
+	if strings.TrimSpace(runState.opts.ToolChoice) == "" && len(runState.opts.Tools) > 0 {
+		runState.opts.ToolChoice = "auto"
 	}
 
-	policy := r.effectivePolicy()
-	metrics := runnerMetrics{startedAt: time.Now()}
-	stopReason := "completed"
-	budgetExhausted := false
+	runState.policy = r.effectivePolicy()
+	runState.metrics = runnerMetrics{startedAt: time.Now()}
+	runState.stopReason = "completed"
 	planThenExecuteLoopBudgetRecoveryUsed := false
-
-	var autonomyRecorder *runnerAutonomyRecorder
-
-	acceptedAnswerSignalsEmitted := false
-	completionStatusEmitted := false
-	completionStatusLastStatus := ""
-	completionStatusLastBlockerKind := ""
-	completionGateRejections := 0
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
-		completionStatusEmitted = true
-		completionStatusLastStatus = strings.TrimSpace(status)
-		completionStatusLastBlockerKind = strings.TrimSpace(blockerKind)
-		r.emitCompletionStatusFromParams(status, reason, blockerKind, results, userVisibleBlocker, implementationTargetWriteReadyNudges)
+		runState.completionStatusEmitted = true
+		runState.completionStatusLastStatus = strings.TrimSpace(status)
+		runState.completionStatusLastBlockerKind = strings.TrimSpace(blockerKind)
+		r.emitCompletionStatusFromParams(status, reason, blockerKind, results, userVisibleBlocker, runState.implementationTargetWriteReadyNudges)
 	}
 
 	defer func() {
-		if autonomyRecorder != nil {
-			autonomyRecorder.emitLoopCloseout(stopReason)
-			autonomyRecorder.emitBudgetGate(policy, metrics, stopReason, budgetExhausted)
+		if runState.autonomyRecorder != nil {
+			runState.autonomyRecorder.emitLoopCloseout(runState.stopReason)
+			runState.autonomyRecorder.emitBudgetGate(runState.policy, runState.metrics, runState.stopReason, runState.budgetExhausted)
 		}
 
-		r.emitBudgetLedger(policy, metrics, stopReason, budgetExhausted)
+		r.emitBudgetLedger(runState.policy, runState.metrics, runState.stopReason, runState.budgetExhausted)
 	}()
 
 	finish := func(value string, finishErr error, reason string, exhausted bool) (string, error) {
-		syncRunState()
-
-		runState.policy = policy
-		runState.metrics = metrics
-		runState.stopReason = stopReason
-		runState.budgetExhausted = budgetExhausted
-		runState.autonomyRecorder = autonomyRecorder
-		runState.completionGateRejections = completionGateRejections
-		runState.completionStatusEmitted = completionStatusEmitted
-		runState.completionStatusLastStatus = completionStatusLastStatus
-		runState.completionStatusLastBlockerKind = completionStatusLastBlockerKind
-		runState.acceptedAnswerSignalsEmitted = acceptedAnswerSignalsEmitted
 		value, finishErr = r.finish(runState, value, finishErr, reason, exhausted)
 		if finishErr == nil &&
 			strings.TrimSpace(value) != "" &&
@@ -1092,15 +991,6 @@ func (r *Runner) runLegacySessionBody(
 
 			r.LastAssistantMessage.Content = value
 		}
-
-		applyRunState()
-
-		stopReason = runState.stopReason
-		budgetExhausted = runState.budgetExhausted
-		acceptedAnswerSignalsEmitted = runState.acceptedAnswerSignalsEmitted
-		completionStatusEmitted = runState.completionStatusEmitted
-		completionStatusLastStatus = runState.completionStatusLastStatus
-		completionStatusLastBlockerKind = runState.completionStatusLastBlockerKind
 
 		return value, finishErr
 	}
@@ -1116,7 +1006,7 @@ func (r *Runner) runLegacySessionBody(
 	var activeToolCall *llama.ToolCall
 
 	replayedToolRequests := make(map[string]int)
-	declarationMovesForbidden := declarationMovesForbiddenByMessages(turnMessages)
+	declarationMovesForbidden := declarationMovesForbiddenByMessages(runState.turnMessages)
 	rejectedActions := make(map[string]int)
 	consecutiveRejectedActions := 0
 	transportRetries := 0
@@ -1141,41 +1031,41 @@ func (r *Runner) runLegacySessionBody(
 
 	taskLedger := newTaskLedgerState(taskLedgerPolicy)
 
-	r.RuntimeBrief = r.runtimeBriefWithLiveState(policy, turnMessages, collectedResults)
+	r.RuntimeBrief = r.runtimeBriefWithLiveState(runState.policy, runState.turnMessages, runState.collectedResults)
 
 	if r.Workspace != nil {
-		rebuildTools()
+		r.rebuildRunTools(runState)
 	}
 
-	visibleRuntimeBrief := r.visibleBriefForToolSurface(r.RuntimeBrief, collectedResults)
+	visibleRuntimeBrief := r.visibleBriefForToolSurface(r.RuntimeBrief, runState.collectedResults)
 
-	autonomyRecorder = newRunnerAutonomyRecorder(r, policy, visibleRuntimeBrief, collectedResults)
-	r.activeAutonomy = autonomyRecorder
+	runState.autonomyRecorder = newRunnerAutonomyRecorder(r, runState.policy, visibleRuntimeBrief, runState.collectedResults)
+	r.activeAutonomy = runState.autonomyRecorder
 
-	if autonomyRecorder != nil {
-		autonomyRecorder.emitContractStarted(visibleRuntimeBrief)
+	if runState.autonomyRecorder != nil {
+		runState.autonomyRecorder.emitContractStarted(visibleRuntimeBrief)
 	}
 
 	if initialBrief := workerruntime.RenderInitialRuntimeBrief(visibleRuntimeBrief); strings.TrimSpace(initialBrief) != "" {
-		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: initialBrief})
+		runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: initialBrief})
 	}
 
 	if protocol := r.textualToolProtocolPrompt(visibleRuntimeBrief); strings.TrimSpace(protocol) != "" {
-		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: protocol})
+		runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: protocol})
 	}
 
 	if bootstrap := r.initialBootstrapInstruction(); strings.TrimSpace(bootstrap) != "" {
-		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: bootstrap})
+		runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: bootstrap})
 	}
 
 	// Investigation lane: recommended strategy to avoid exhaustive
 	// symbol-by-symbol enumeration. One-shot at session start.
 	if lanePolicyHasName(r.lanePolicy(), lanePolicyReadOnlyInvestigation) {
-		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: readOnlyInvestigationStrategyPrompt(visibleRuntimeBrief.AllowedTools)})
+		runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: readOnlyInvestigationStrategyPrompt(visibleRuntimeBrief.AllowedTools)})
 	}
 
-	r.emitControlRailsForBrief(turnMessages, visibleRuntimeBrief)
-	r.emitBriefAudit(visibleRuntimeBrief, collectedResults)
+	r.emitControlRailsForBrief(runState.turnMessages, visibleRuntimeBrief)
+	r.emitBriefAudit(visibleRuntimeBrief, runState.collectedResults)
 
 	evidenceFirstTargetPhaseCleared := false
 	postChildReadBudget := postChildReadBudgetForBrief(r.RuntimeBrief)
@@ -1183,17 +1073,17 @@ func (r *Runner) runLegacySessionBody(
 	recorder := runnerTurnRecorder{
 		runner:                    r,
 		onToolResult:              onToolResult,
-		collectedResults:          &collectedResults,
-		turnMessages:              &turnMessages,
+		collectedResults:          &runState.collectedResults,
+		turnMessages:              &runState.turnMessages,
 		lastToolKey:               &lastToolKey,
 		lastToolResult:            &lastToolResult,
 		consecutiveRejectedAction: &consecutiveRejectedActions,
 		consecutiveNoProgress:     &consecutiveNoProgress,
-		metrics:                   &metrics,
+		metrics:                   &runState.metrics,
 		declarationMovesForbidden: declarationMovesForbidden,
 	}
 
-	collectedResults = r.maybeApplyReadOnlyNamedPathPrefetch(recorder, collectedResults)
+	runState.collectedResults = r.maybeApplyReadOnlyNamedPathPrefetch(recorder, runState.collectedResults)
 
 	// currentFingerprint is the fingerprint of the in-flight tool call,
 	// set at the top of each loop iteration. The turn controller reads it
@@ -1214,24 +1104,24 @@ func (r *Runner) runLegacySessionBody(
 	controller := runnerTurnController{
 		runner:                     r,
 		ctx:                        ctx,
-		policy:                     policy,
-		opts:                       &opts,
-		metrics:                    &metrics,
+		policy:                     runState.policy,
+		opts:                       &runState.opts,
+		metrics:                    &runState.metrics,
 		requestBudget:              &requestBudget,
 		recorder:                   &recorder,
-		autonomyRecorder:           autonomyRecorder,
-		turnMessages:               &turnMessages,
-		collectedResults:           &collectedResults,
+		autonomyRecorder:           runState.autonomyRecorder,
+		turnMessages:               &runState.turnMessages,
+		collectedResults:           &runState.collectedResults,
 		rejectedActions:            rejectedActions,
 		rejectionRecoveryNudgeUsed: &rejectionRecoveryNudgeUsed,
-		completionGateRejections:   &completionGateRejections,
+		completionGateRejections:   &runState.completionGateRejections,
 		consecutiveRejected:        &consecutiveRejectedActions,
 		consecutiveNoProgress:      &consecutiveNoProgress,
 		currentFingerprint:         &currentFingerprint,
 	}
 	finishNoProgressBudgetExhausted := func(results []workspace.ToolResult) (string, error) {
 		if blocker, ok := r.implementationContractCloseoutBlocker(results, "no_progress_budget_exhausted"); ok {
-			r.emitImplementationLifecycleState(results, "no_progress_budget_exhausted", implementationTargetWriteReadyNudges)
+			r.emitImplementationLifecycleState(results, "no_progress_budget_exhausted", runState.implementationTargetWriteReadyNudges)
 			return finish(blocker, nil, "no_progress_budget_exhausted", false)
 		}
 
@@ -1240,26 +1130,26 @@ func (r *Runner) runLegacySessionBody(
 	}
 	if answer, ok := r.runVerificationBootstrap(runnerVerificationBootstrapInput{
 		ctx:              ctx,
-		collectedResults: collectedResults,
-		metrics:          &metrics,
+		collectedResults: runState.collectedResults,
+		metrics:          &runState.metrics,
 		recorder:         &recorder,
-		executionState:   &executionState,
+		executionState:   &runState.executionState,
 		requestBudget:    &requestBudget,
-		autonomyRecorder: autonomyRecorder,
+		autonomyRecorder: runState.autonomyRecorder,
 		onToolRequest:    onToolRequest,
 	}); ok {
 		return finish(answer, nil, "verification_auto_answered", false)
 	}
 
-	for step := 0; policy.unbounded() || step < policy.MaxToolSteps; step++ {
+	for step := 0; runState.policy.unbounded() || step < runState.policy.MaxToolSteps; step++ {
 		stepNumber := step + 1
 		readiness := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
-			Policy:  policy,
-			Metrics: metrics,
+			Policy:  runState.policy,
+			Metrics: runState.metrics,
 		})
 		if readiness.Stop {
-			if blocker, ok := r.implementationContractCloseoutBlocker(collectedResults, readiness.StopReason); ok {
-				r.emitImplementationLifecycleState(collectedResults, readiness.StopReason, implementationTargetWriteReadyNudges)
+			if blocker, ok := r.implementationContractCloseoutBlocker(runState.collectedResults, readiness.StopReason); ok {
+				r.emitImplementationLifecycleState(runState.collectedResults, readiness.StopReason, runState.implementationTargetWriteReadyNudges)
 				return finish(blocker, nil, readiness.StopReason, readiness.BudgetExhausted)
 			}
 			if strings.TrimSpace(readiness.CloseoutPrompt) != "" {
@@ -1269,30 +1159,30 @@ func (r *Runner) runLegacySessionBody(
 			return finish("", nil, readiness.StopReason, readiness.BudgetExhausted)
 		}
 
-		modelCallOpts := readOnlyEvidenceAvailableTerminalChatOptions(opts, r.RuntimeBrief, collectedResults)
-		r.currentTransport = PlanExecuteRuntimeCallPolicyFromChatOptions(modelCallOpts, terminalSubmitPlanNativeTools(), false).PlanningTransport()
-		if r.compactTurnMessagesIfNeeded(&turnMessages, policy, taskLedger, collectedResults) {
-			metrics.Compactions++
+		modelCallOpts := readOnlyEvidenceAvailableTerminalChatOptions(runState.opts, r.RuntimeBrief, runState.collectedResults)
+		r.currentTransport = PlanExecuteRuntimeCallPolicyFromChatOptions(modelCallOpts, r.terminalSubmitPlanNativeTools(runState), false).PlanningTransport()
+		if r.compactTurnMessagesIfNeeded(&runState.turnMessages, runState.policy, taskLedger, runState.collectedResults) {
+			runState.metrics.Compactions++
 		}
 
 		if onStatus != nil && step > 0 {
-			if policy.unbounded() {
+			if runState.policy.unbounded() {
 				onStatus(fmt.Sprintf("Qwen is still working (%d steps).", stepNumber))
 			} else {
-				onStatus(fmt.Sprintf("Qwen is still working (%d/%d).", stepNumber, policy.MaxToolSteps))
+				onStatus(fmt.Sprintf("Qwen is still working (%d/%d).", stepNumber, runState.policy.MaxToolSteps))
 			}
 		}
 
-		modelCallNumber := metrics.ModelCalls + 1
+		modelCallNumber := runState.metrics.ModelCalls + 1
 		phaseHint := ""
 
-		if implementationWriteOnlyRecoveryActive && strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
+		if runState.implementationWriteOnlyRecoveryActive && strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
 			phaseHint = turnPhaseReviewRepairTerminal
 		}
 
 		contractID := ""
-		if autonomyRecorder != nil {
-			contractID = autonomyRecorder.activeAuthorityContractID()
+		if runState.autonomyRecorder != nil {
+			contractID = runState.autonomyRecorder.activeAuthorityContractID()
 		}
 
 		phaseContract := r.deriveCurrentTurnPhaseContract(runnerTurnPhaseContractInput{
@@ -1301,27 +1191,27 @@ func (r *Runner) runLegacySessionBody(
 			Step:                stepNumber,
 			PhaseHint:           phaseHint,
 			Brief:               r.RuntimeBrief,
-			Results:             collectedResults,
-			AllowedTools:        currentAllowedTools,
+			Results:             runState.collectedResults,
+			AllowedTools:        runState.currentAllowedTools,
 			ActiveSurface:       runState.toolSurface,
 			Options:             modelCallOpts,
-			SupportsNativeTools: terminalSubmitPlanNativeTools(),
+			SupportsNativeTools: r.terminalSubmitPlanNativeTools(runState),
 		})
-		modelProtocol, hasModelProtocol := r.compileModelProtocolProjection(r.RuntimeBrief, collectedResults, phaseContract, policy, terminalSubmitPlanNativeTools())
+		modelProtocol, hasModelProtocol := r.compileModelProtocolProjection(r.RuntimeBrief, runState.collectedResults, phaseContract, runState.policy, r.terminalSubmitPlanNativeTools(runState))
 
-		if autonomyRecorder != nil {
-			modelProtocol = autonomyRecorder.bindModelProtocolProjection(modelProtocol)
-			autonomyRecorder.emitTurnPhaseContract(phaseContract, modelProtocol)
+		if runState.autonomyRecorder != nil {
+			modelProtocol = runState.autonomyRecorder.bindModelProtocolProjection(modelProtocol)
+			runState.autonomyRecorder.emitTurnPhaseContract(phaseContract, modelProtocol)
 		}
 
 		modelStart := time.Now()
 
-		requestMessages := turnMessages
+		requestMessages := runState.turnMessages
 
 		if hasModelProtocol {
 			requestMessages = modelMessagesWithProtocolProjection(requestMessages, modelProtocol)
-			if autonomyRecorder != nil {
-				autonomyRecorder.markModelProtocolPresented(modelProtocol)
+			if runState.autonomyRecorder != nil {
+				runState.autonomyRecorder.markModelProtocolPresented(modelProtocol)
 			}
 		}
 
@@ -1329,8 +1219,8 @@ func (r *Runner) runLegacySessionBody(
 
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, modelCallOpts)
 		if err != nil {
-			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
-				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
+			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, runState.collectedResults); ok {
+				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", runState.collectedResults, true)
 
 				return finish(answer, nil, "model_error_after_partial_edit", false)
 			}
@@ -1338,7 +1228,7 @@ func (r *Runner) runLegacySessionBody(
 			if transportRetries < 1 && retryableModelTransportError(err) {
 				transportRetries++
 
-				turnMessages = append(turnMessages, llama.ChatMessage{
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 					Role:    "system",
 					Content: "The previous model request was interrupted by a temporary connection issue. Continue from where you left off, repeating any incomplete tool call or thought.",
 				})
@@ -1347,17 +1237,17 @@ func (r *Runner) runLegacySessionBody(
 				continue
 			}
 
-			if prompt, ok := r.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(err, opts, collectedResults, planThenExecuteNativeSubmitPlanNoCallFallbacks); ok {
+			if prompt, ok := r.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(err, runState.opts, runState.collectedResults, planThenExecuteNativeSubmitPlanNoCallFallbacks); ok {
 				planThenExecuteNativeSubmitPlanNoCallFallbacks++
 
-				planThenExecuteNativeSubmitPlanDisabled = true
-				opts = planThenExecuteTextualSubmitPlanFallbackChatOptions(opts, r.RuntimeBrief, collectedResults)
+				runState.planThenExecuteNativeSubmitPlanDisabled = true
+				runState.opts = planThenExecuteTextualSubmitPlanFallbackChatOptions(runState.opts, r.RuntimeBrief, runState.collectedResults)
 
-				currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
-				setCurrentAllowedTools(currentAllowedTools)
-				r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&turnMessages, collectedResults, "native_required_no_tool_call")
+				runState.currentAllowedTools = append(runState.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+				r.setCurrentAllowedTools(runState, runState.currentAllowedTools)
+				r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&runState.turnMessages, runState.collectedResults, "native_required_no_tool_call")
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
 
 				continue
@@ -1366,9 +1256,9 @@ func (r *Runner) runLegacySessionBody(
 			return finish("", err, "model_error", false)
 		}
 
-		metrics.ModelCalls++
-		metrics.addUsage(assistantMessage.Usage)
-		r.emitModelCallTraceWithOptions(stepNumber, "main_loop", requestMessages, assistantMessage, time.Since(modelStart).Milliseconds(), modelCallOpts, terminalSubmitPlanNativeTools(), collectedResults)
+		runState.metrics.ModelCalls++
+		runState.metrics.addUsage(assistantMessage.Usage)
+		r.emitModelCallTraceWithOptions(stepNumber, "main_loop", requestMessages, assistantMessage, time.Since(modelStart).Milliseconds(), modelCallOpts, r.terminalSubmitPlanNativeTools(runState), runState.collectedResults)
 
 		reply := assistantMessage.Content
 		// Capture the full message (including ReasoningContent) so the
@@ -1405,42 +1295,42 @@ func (r *Runner) runLegacySessionBody(
 		if !ok && parseErr == nil {
 			if intentReq, intentRaw, compiled := r.compilePlanIntentToolRequest(reply); compiled {
 				req, raw, ok = intentReq, intentRaw, true
-			} else if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, collectedResults); salvaged {
+			} else if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, runState.collectedResults); salvaged {
 				req, raw, ok = salvagedReq, salvagedRaw, true
 				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "visible_prose_salvage", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "visible_tool_salvage", Content: fmt.Sprintf("model wrapped parser-readable %s request in prose; executing the request", req.Tool)})
-			} else if salvagedReq, salvagedRaw, salvaged := r.salvageToolRequestFromReasoning(assistantMessage, collectedResults); salvaged {
+			} else if salvagedReq, salvagedRaw, salvaged := r.salvageToolRequestFromReasoning(assistantMessage, runState.collectedResults); salvaged {
 				req, raw, ok = salvagedReq, salvagedRaw, true
 				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "reasoning_salvage", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "reasoning_tool_salvage", Content: fmt.Sprintf("model emitted parser-readable %s request in hidden reasoning while visible content was empty; executing the request", req.Tool)})
-			} else if answerText, salvaged := r.salvageAnswerFromReasoning(assistantMessage, collectedResults); salvaged {
+			} else if answerText, salvaged := r.salvageAnswerFromReasoning(assistantMessage, runState.collectedResults); salvaged {
 				r.emitEvent(RunEvent{Role: "reasoning_answer_salvage", Content: fmt.Sprintf("model emitted answer prose in hidden reasoning while visible content was empty; extracted %d chars", len(answerText))})
 
 				return finish(answerText, nil, "reasoning_answer_salvage", false)
-			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRejectedRequiredSourceRead(reply, collectedResults); recovered {
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRejectedRequiredSourceRead(reply, runState.collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_required_source_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery ignored non-tool planner text and issued source read for unread required edit path %s", req.Path)})
-			} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRejectedRequiredPathRead(reply, collectedResults); recovered {
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRejectedRequiredPathRead(reply, runState.collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_required_source_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery ignored non-tool implementation text and issued bounded read for unread required edit path %s", req.Path)})
-			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply, collectedResults); recovered {
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply, runState.collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				deterministicPlanExecuteEvidenceRead = true
 
 				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_source_satisfied_evidence_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_source_satisfied_read", Content: fmt.Sprintf("completion recovery read source-satisfied evidence path %s before accepting the closeout", req.Path)})
-			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest(reply, collectedResults); recovered {
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest(reply, runState.collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_grounding_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_grounding", Content: fmt.Sprintf("completion recovery ignored non-tool planner text after ungrounded submit_plan and issued %s", req.Tool)})
-			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteNonToolCandidateRecovery(reply, collectedResults); recovered {
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteNonToolCandidateRecovery(reply, runState.collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_candidate_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_candidate", Content: fmt.Sprintf("completion recovery ignored non-terminal planner prose and issued %s for %s", req.Tool, planThenExecuteRequestTargetPath(req))})
 			} else if strings.TrimSpace(reply) == "" {
-				if recoveredReq, recoveredRaw, event, recovered := r.deterministicEmptyReplyRecovery(collectedResults); recovered {
+				if recoveredReq, recoveredRaw, event, recovered := r.deterministicEmptyReplyRecovery(runState.collectedResults); recovered {
 					req, raw, ok = recoveredReq, recoveredRaw, true
 
 					r.emitEvent(event)
@@ -1449,18 +1339,18 @@ func (r *Runner) runLegacySessionBody(
 
 			if !ok &&
 				normalization.EventOutcome == toolRequestNormalizerOutcomeUnsafeToInfer &&
-				r.unsafeToolShapeRecoveryBeforeCompletionGateActive(collectedResults) {
-				rebuildTools()
+				r.unsafeToolShapeRecoveryBeforeCompletionGateActive(runState.collectedResults) {
+				r.rebuildRunTools(runState)
 				if normalization.UnsafeExplicitTool {
 					controller.recordUnsafeToolShape(stepNumber, activeToolCall, normalization, activeToolCall == nil || r.supportsNativeTools())
-					if prompt := r.unsafeToolShapeRecoveryPrompt(normalization, collectedResults); prompt != "" {
-						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+					if prompt := r.unsafeToolShapeRecoveryPrompt(normalization, runState.collectedResults); prompt != "" {
+						runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 						r.emitEvent(RunEvent{Role: "unsafe_tool_shape_recovery", Content: prompt})
 					}
 					continue
 				}
-				if prompt := r.ambiguousModelOutputRecoveryPrompt(normalization, collectedResults); prompt != "" {
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				if prompt := r.ambiguousModelOutputRecoveryPrompt(normalization, runState.collectedResults); prompt != "" {
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 					r.emitEvent(RunEvent{Role: "ambiguous_model_output_recovery", Content: prompt})
 				}
 				continue
@@ -1468,13 +1358,13 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if parseErr != nil {
-			if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, collectedResults); salvaged {
+			if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, runState.collectedResults); salvaged {
 				req, raw, ok, parseErr = salvagedReq, salvagedRaw, true, nil
 				activeToolCall = nil
 
 				r.emitEvent(RunEvent{Role: "visible_tool_salvage", Content: fmt.Sprintf("model wrapped parser-readable %s request in malformed tool text; executing the safe request before recording tool_parse", req.Tool)})
 			} else if raw != reply {
-				if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(raw, collectedResults); salvaged {
+				if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(raw, runState.collectedResults); salvaged {
 					req, raw, ok, parseErr = salvagedReq, salvagedRaw, true, nil
 					activeToolCall = nil
 
@@ -1484,7 +1374,7 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if parseErr != nil {
-			if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest(reply, collectedResults); recovered {
+			if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest(reply, runState.collectedResults); recovered {
 				req, raw, ok, parseErr = recoveredReq, recoveredRaw, true, nil
 				activeToolCall = nil
 
@@ -1507,36 +1397,36 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			if strings.TrimSpace(assistantToolTurn.Role) != "" {
-				assistantToolTurn = r.assistantHistoryMessageForOptions(assistantToolTurn, opts)
-				turnMessages = append(turnMessages, assistantToolTurn)
-				r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
+				assistantToolTurn = r.assistantHistoryMessageForOptions(assistantToolTurn, runState.opts)
+				runState.turnMessages = append(runState.turnMessages, assistantToolTurn)
+				r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, runState.opts, true)
 			}
 			controller.recordParseFailure(stepNumber, activeToolCall, raw, err, normalization.EventTransport, normalization.ParserFailureClass, suppressParseFailureModelMessage)
 
-			if recoveryPlan, ok := r.planThenExecuteSubmitPlanParseRecoveryPlan(raw, err, collectedResults); ok {
+			if recoveryPlan, ok := r.planThenExecuteSubmitPlanParseRecoveryPlan(raw, err, runState.collectedResults); ok {
 				prompt := RenderPlanExecuteRecoveryPlan(recoveryPlan)
 
-				implementationWriteOnlyRecoveryActive = true
+				runState.implementationWriteOnlyRecoveryActive = true
 
-				if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
-					requiredPathCompletionRecoveryActive = true
+				if len(r.remainingRequiredEditPaths(runState.collectedResults)) > 0 {
+					runState.requiredPathCompletionRecoveryActive = true
 				}
 
 				markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 				runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
-				opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
-				opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				runState.opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
+				runState.opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-				syncPlanThenExecuteRecoveryAllowedTools()
-				refreshPlanThenExecuteTerminalSurface("parse_recovery")
+				r.syncPlanThenExecuteRecoveryAllowedTools(runState)
+				r.refreshPlanThenExecuteTerminalSurface(runState, "parse_recovery")
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitPlanExecuteSubmitPlanParseRecoveryEvent(recoveryPlan, prompt)
 			} else {
-				if prompt := r.malformedToolRecoveryPrompt(raw, err, collectedResults); prompt != "" {
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				if prompt := r.malformedToolRecoveryPrompt(raw, err, runState.collectedResults); prompt != "" {
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 					r.emitEvent(RunEvent{Role: "malformed_tool_recovery", Content: prompt})
 				}
 				r.emitPlanExecuteSubmitPlanParseRecoveryEventForParseFailure(raw, err)
@@ -1545,7 +1435,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterEvidence(req, collectedResults, currentAllowedTools); replay {
+		if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterEvidence(req, runState.collectedResults, runState.currentAllowedTools); replay {
 			originalReq := req
 			if strings.TrimSpace(originalReq.Tool) == workspace.ToolNameSourceSanity || strings.TrimSpace(originalReq.Tool) == workspace.ToolNameShell {
 				reqCopy := originalReq
@@ -1566,7 +1456,7 @@ func (r *Runner) runLegacySessionBody(
 				"reason":         "implementation_write_after_source_evidence_replay",
 			}))
 
-			turnMessages = append(turnMessages, llama.ChatMessage{
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 				Role:    "system",
 				Content: rewriteVisibilityNote(req.Tool, replayReq.Tool),
 			})
@@ -1578,11 +1468,11 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if ok && strings.TrimSpace(req.Tool) == workspace.ToolNameSubmitPlan &&
-			planThenExecuteGroundingRejectedSeen(collectedResults) &&
-			!planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, collectedResults) &&
-			len(r.ungroundedSubmitPlanEditPaths(req, collectedResults)) > 0 {
+			planThenExecuteGroundingRejectedSeen(runState.collectedResults) &&
+			!planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, runState.collectedResults) &&
+			len(r.ungroundedSubmitPlanEditPaths(req, runState.collectedResults)) > 0 {
 
-			if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest("", collectedResults); recovered {
+			if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest("", runState.collectedResults); recovered {
 				req, raw = recoveredReq, recoveredRaw
 				activeToolCall = nil
 
@@ -1595,7 +1485,7 @@ func (r *Runner) runLegacySessionBody(
 		// models a tool-call-shaped way to produce prose, matching their
 		// training bias toward tool use over spontaneous prose.
 		if !ok {
-			if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterCompletionAttempt(collectedResults, currentAllowedTools); replay {
+			if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterCompletionAttempt(runState.collectedResults, runState.currentAllowedTools); replay {
 				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
 					"agent":          r.agentName(),
 					"original_tool":  "completion",
@@ -1605,7 +1495,7 @@ func (r *Runner) runLegacySessionBody(
 					"reason":         "implementation_delete_after_source_evidence_completion_replay",
 				}))
 
-				turnMessages = append(turnMessages, llama.ChatMessage{
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 					Role:    "system",
 					Content: rewriteVisibilityNote("completion", replayReq.Tool),
 				})
@@ -1633,36 +1523,31 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			if answerContent != "" {
-				if acceptance := r.evaluateFinalAnswerAcceptance(answerContent, collectedResults); acceptance.BlockerKind != "" {
+				if acceptance := r.evaluateFinalAnswerAcceptance(answerContent, runState.collectedResults); acceptance.BlockerKind != "" {
 					blockerKind := acceptance.BlockerKind
 					reason := acceptance.Reason
 					blockerResult, ok := finalAnswerCompletionGateProjection(
 						acceptance,
 						"Answer tool rejected by blocker check",
-						r.finalAnswerBlockerErrorText(blockerKind, reason, answerContent, collectedResults),
+						r.finalAnswerBlockerErrorText(blockerKind, reason, answerContent, runState.collectedResults),
 					)
 					if !ok {
 						return finish(answerContent, nil, "model_answer_tool", false)
 					}
 
 					if r.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
-						stepNumber:               stepNumber,
-						activeToolCall:           activeToolCall,
-						assistantMessage:         assistantMessage,
-						acceptance:               acceptance,
-						result:                   blockerResult,
-						collectedResults:         collectedResults,
-						currentAllowedTools:      currentAllowedTools,
-						completionGateRejections: &completionGateRejections,
-						turnMessages:             &turnMessages,
-						controller:               &controller,
-						autonomyRecorder:         autonomyRecorder,
-						rebuildTools:             rebuildTools,
+						stepNumber:       stepNumber,
+						activeToolCall:   activeToolCall,
+						assistantMessage: assistantMessage,
+						acceptance:       acceptance,
+						result:           blockerResult,
+						runState:         runState,
+						controller:       &controller,
 					}) {
 						continue
 					}
 
-					if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, collectedResults); ok &&
+					if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, runState.collectedResults); ok &&
 						!readOnlyAnswerReportsInsufficientEvidence(answer) {
 
 						return finish(answer, nil, "deterministic_final_answer_recovery", false)
@@ -1677,23 +1562,23 @@ func (r *Runner) runLegacySessionBody(
 
 		if !ok {
 			result, rejected := workspace.ToolResult{}, false
-			if requiredPathCompletionRecoveryActive {
-				result, rejected = r.requiredPathCompletionRecoveryRejection(reply, collectedResults)
+			if runState.requiredPathCompletionRecoveryActive {
+				result, rejected = r.requiredPathCompletionRecoveryRejection(reply, runState.collectedResults)
 			}
 
 			gateReply := reply
 			if !rejected {
-				gateReply = r.decoratedReadOnlyReplyForCompletionGate(reply, collectedResults)
-				result, rejected = r.completionGateRejection(gateReply, collectedResults, stepNumber, taskLedger, declarationMovesForbidden)
+				gateReply = r.decoratedReadOnlyReplyForCompletionGate(reply, runState.collectedResults)
+				result, rejected = r.completionGateRejection(gateReply, runState.collectedResults, stepNumber, taskLedger, declarationMovesForbidden)
 			}
 
 			if rejected {
-				priorGateRejections := completionGateRejections
+				priorGateRejections := runState.completionGateRejections
 
-				result.Error = r.escalateCompletionGateResultMessage(result, priorGateRejections, collectedResults, currentAllowedTools)
+				result.Error = r.escalateCompletionGateResultMessage(result, priorGateRejections, runState.collectedResults, runState.currentAllowedTools)
 
-				if autonomyRecorder != nil {
-					autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
+				if runState.autonomyRecorder != nil {
+					runState.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), runState.collectedResults, priorGateRejections)
 				}
 
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
@@ -1702,42 +1587,42 @@ func (r *Runner) runLegacySessionBody(
 					r.LastAssistantMessage.Content = "[XML tool-call markup detected and sanitized — the model emitted its native XML format instead of a proper tool call or prose. The harness recovery path will retry with a corrected prompt.]"
 				}
 
-				completionGateRejections = priorGateRejections + 1
+				runState.completionGateRejections = priorGateRejections + 1
 
 				r.rememberCompletionGateRejection(result)
 
-				retryLimit := r.completionGateRetryLimitForResult(result, collectedResults, currentAllowedTools)
-				sourceGroundingReadRecovery := r.sourceGroundingReadRecoveryAvailable(result, currentAllowedTools) &&
+				retryLimit := r.completionGateRetryLimitForResult(result, runState.collectedResults, runState.currentAllowedTools)
+				sourceGroundingReadRecovery := r.sourceGroundingReadRecoveryAvailable(result, runState.currentAllowedTools) &&
 					priorGateRejections < retryLimit
 
 				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
 					result.Summary == "Completion gate rejected unresolved process narration" ||
-					(r.planThenExecuteCompletionGateSummaryRetryable(result.Summary, collectedResults, priorGateRejections)) ||
-					(r.textualRequiredPathCompletionRecoveryApplies(collectedResults) && priorGateRejections < retryLimit) ||
-					(r.unscopedNoWriteCompletionRecoveryApplies(collectedResults) && priorGateRejections < retryLimit) ||
-					(r.completionGateMutationRecoveryApplies(collectedResults) && priorGateRejections < retryLimit) ||
+					(r.planThenExecuteCompletionGateSummaryRetryable(result.Summary, runState.collectedResults, priorGateRejections)) ||
+					(r.textualRequiredPathCompletionRecoveryApplies(runState.collectedResults) && priorGateRejections < retryLimit) ||
+					(r.unscopedNoWriteCompletionRecoveryApplies(runState.collectedResults) && priorGateRejections < retryLimit) ||
+					(r.completionGateMutationRecoveryApplies(runState.collectedResults) && priorGateRejections < retryLimit) ||
 					// Read-only workspace lanes get the recovery prompt on every
 					// rejection — the model needs continuous guidance about what
 					// source-body evidence is required and what tools are restricted,
 					// not just on the first failed attempt.
 					(workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) && priorGateRejections < retryLimit)
 
-				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(collectedResults); ok && shouldAttachRecoveryPrompt {
-					opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(runState.collectedResults); ok && shouldAttachRecoveryPrompt {
+					runState.opts = completionGateRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-					hiddenOnlyNoWriteTerminalRecovery := mutationHiddenOnlyNoWriteTerminalRecoveryStall(r.RuntimeBrief, collectedResults, assistantMessage, priorGateRejections, terminalSubmitPlanNativeTools())
+					hiddenOnlyNoWriteTerminalRecovery := mutationHiddenOnlyNoWriteTerminalRecoveryStall(r.RuntimeBrief, runState.collectedResults, assistantMessage, priorGateRejections, r.terminalSubmitPlanNativeTools(runState))
 
 					if hiddenOnlyNoWriteTerminalRecovery {
-						opts = forceVisibleActionChatOptions(opts)
+						runState.opts = forceVisibleActionChatOptions(runState.opts)
 						prompt = hiddenOnlyNoWriteTerminalRecoveryPrompt()
 						hideReads = true
 
 						r.emitEvent(RunEvent{Role: "mutation_visible_write_mode", Content: "textual mutation recovery produced hidden-only output after concrete source evidence; retrying once with hidden thinking disabled for the terminal write/blocker action"})
-					} else if implementationRequiredPathHiddenOnlyRecoveryStall(r.RuntimeBrief, collectedResults, assistantMessage, priorGateRejections, terminalSubmitPlanNativeTools()) {
-						opts = forceVisibleActionChatOptions(opts)
+					} else if implementationRequiredPathHiddenOnlyRecoveryStall(r.RuntimeBrief, runState.collectedResults, assistantMessage, priorGateRejections, r.terminalSubmitPlanNativeTools(runState)) {
+						runState.opts = forceVisibleActionChatOptions(runState.opts)
 
-						if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, collectedResults) {
-							prompt = planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(prompt, r.RuntimeBrief, collectedResults)
+						if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, runState.collectedResults) {
+							prompt = planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(prompt, r.RuntimeBrief, runState.collectedResults)
 
 							r.emitEvent(RunEvent{Role: "plan_then_execute_submit_correction_visible_mode", Content: "submit-correction recovery produced hidden-only output; retrying once with hidden thinking disabled for the terminal submit_plan action"})
 						} else {
@@ -1748,10 +1633,10 @@ func (r *Runner) runLegacySessionBody(
 					}
 
 					if hideReads {
-						implementationWriteOnlyRecoveryActive = true
+						runState.implementationWriteOnlyRecoveryActive = true
 
-						if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
-							requiredPathCompletionRecoveryActive = true
+						if len(r.remainingRequiredEditPaths(runState.collectedResults)) > 0 {
+							runState.requiredPathCompletionRecoveryActive = true
 						}
 
 						markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
@@ -1762,43 +1647,43 @@ func (r *Runner) runLegacySessionBody(
 							runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 						}
 
-						rebuildTools()
+						r.rebuildRunTools(runState)
 
-						opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
-						opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+						runState.opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
+						runState.opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-						syncPlanThenExecuteRecoveryAllowedTools()
+						r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 					}
 
-					refreshPlanThenExecuteTerminalSurface("completion_gate_recovery")
+					r.refreshPlanThenExecuteTerminalSurface(runState, "completion_gate_recovery")
 
-					if card := r.renderRecoveryCardForRejectedActionWithTransport(workspace.ToolRequest{Tool: "completion_gate"}, result, collectedResults, currentAllowedTools, r.currentPlanningTransport()); card != "" {
+					if card := r.renderRecoveryCardForRejectedActionWithTransport(workspace.ToolRequest{Tool: "completion_gate"}, result, runState.collectedResults, runState.currentAllowedTools, r.currentPlanningTransport()); card != "" {
 						prompt = appendRecoveryCardToMessage(prompt, card)
 					}
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 					r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
 				}
 
 				if priorGateRejections >= retryLimit {
-					if recovered, _, ok := r.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), collectedResults); ok {
-						emitCompletionStatus("accepted", "read_only_terminal_recovery", "", collectedResults, false)
+					if recovered, _, ok := r.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), runState.collectedResults); ok {
+						emitCompletionStatus("accepted", "read_only_terminal_recovery", "", runState.collectedResults, false)
 
 						return finish(recovered, nil, "read_only_terminal_recovery", false)
 					}
 
-					answer := r.completionGateRepeatedBlockerAnswer(result, collectedResults)
-					blockerKind := string(r.completionGateRepeatedViolation(collectedResults).Kind)
-					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+					answer := r.completionGateRepeatedBlockerAnswer(result, runState.collectedResults)
+					blockerKind := string(r.completionGateRepeatedViolation(runState.collectedResults).Kind)
+					emitCompletionStatus("blocked", blockerKind, blockerKind, runState.collectedResults, true)
 
 					return finish(answer, nil, blockerKind, true)
 				}
 
 				if sourceGroundingReadRecovery {
-					runState.hideNonSourceBodyReadTools(OwnerSourceGrounding, currentAllowedTools)
-					rebuildTools()
+					runState.hideNonSourceBodyReadTools(OwnerSourceGrounding, runState.currentAllowedTools)
+					r.rebuildRunTools(runState)
 
-					turnMessages = append(turnMessages, llama.ChatMessage{
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 						Role:    "system",
 						Content: "Your response was rejected because it cites source evidence that has not been read as source-body support. Your next visible action must be exactly one bounded `read_file` or `code_navigate` call for a cited unread path, or `<<QUESTION>>:` with the specific blocker if that path cannot be read. Do not answer in prose again until the cited path has source-body evidence or is explicitly qualified as unverified.",
 					})
@@ -1807,14 +1692,14 @@ func (r *Runner) runLegacySessionBody(
 					continue
 				}
 
-				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					return finishNoProgressBudgetExhausted(collectedResults)
+				if runState.policy.shouldStopForNoProgress(consecutiveNoProgress) {
+					return finishNoProgressBudgetExhausted(runState.collectedResults)
 				}
 
 				continue
 			}
 
-			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, modelCallOpts, collectedResults, &metrics)
+			answer, err := r.ensureNonEmptyAnswer(ctx, runState.turnMessages, assistantMessage, modelCallOpts, runState.collectedResults, &runState.metrics)
 			if strings.TrimSpace(gateReply) != "" &&
 				strings.TrimSpace(gateReply) != strings.TrimSpace(reply) &&
 				strings.TrimSpace(answer) == strings.TrimSpace(reply) &&
@@ -1823,7 +1708,7 @@ func (r *Runner) runLegacySessionBody(
 				answer = gateReply
 			}
 
-			if acceptance := r.evaluateFinalAnswerAcceptance(answer, collectedResults); acceptance.BlockerKind != "" {
+			if acceptance := r.evaluateFinalAnswerAcceptance(answer, runState.collectedResults); acceptance.BlockerKind != "" {
 				blockerKind := acceptance.BlockerKind
 				reason := acceptance.Reason
 				// Override only fires when the model fabricates
@@ -1841,29 +1726,24 @@ func (r *Runner) runLegacySessionBody(
 					blockerResult, ok := finalAnswerCompletionGateProjection(
 						acceptance,
 						"Final answer rejected by blocker check",
-						r.finalAnswerBlockerErrorText(blockerKind, reason, answer, collectedResults),
+						r.finalAnswerBlockerErrorText(blockerKind, reason, answer, runState.collectedResults),
 					)
 					if !ok {
 						return finish(answer, err, "model_final", false)
 					}
 					if r.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
-						stepNumber:               stepNumber,
-						activeToolCall:           activeToolCall,
-						assistantMessage:         assistantMessage,
-						acceptance:               acceptance,
-						result:                   blockerResult,
-						collectedResults:         collectedResults,
-						currentAllowedTools:      currentAllowedTools,
-						completionGateRejections: &completionGateRejections,
-						turnMessages:             &turnMessages,
-						controller:               &controller,
-						autonomyRecorder:         autonomyRecorder,
-						rebuildTools:             rebuildTools,
+						stepNumber:       stepNumber,
+						activeToolCall:   activeToolCall,
+						assistantMessage: assistantMessage,
+						acceptance:       acceptance,
+						result:           blockerResult,
+						runState:         runState,
+						controller:       &controller,
 					}) {
 						continue
 					}
 
-					if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, collectedResults); ok &&
+					if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, runState.collectedResults); ok &&
 						!readOnlyAnswerReportsInsufficientEvidence(answer) {
 
 						return finish(answer, nil, "deterministic_final_answer_recovery", false)
@@ -1891,11 +1771,11 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		assistantToolTurn = r.assistantHistoryMessageForOptions(assistantToolTurn, modelCallOpts)
-		turnMessages = append(turnMessages, assistantToolTurn)
+		runState.turnMessages = append(runState.turnMessages, assistantToolTurn)
 		r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, modelCallOpts, true)
 
-		if r.shouldForceAnswerForPostCompletionVerification(req, collectedResults, &postCompletionVerificationCalls) {
-			emitCompletionStatus("completed", "post_completion_verification_cutoff", "", collectedResults, false)
+		if r.shouldForceAnswerForPostCompletionVerification(req, runState.collectedResults, &postCompletionVerificationCalls) {
+			emitCompletionStatus("completed", "post_completion_verification_cutoff", "", runState.collectedResults, false)
 			r.emitEvent(RunEvent{
 				Role:    "post_completion_verification_cutoff",
 				Content: fmt.Sprintf("all required edit paths written; cutting off self-verification after %d non-write call(s) to avoid false budget-exhausted failure signal", postCompletionVerificationCalls),
@@ -1909,8 +1789,8 @@ func (r *Runner) runLegacySessionBody(
 		preflight := r.applyLanePreflight(runnerLanePreflightInput{
 			Request:               req,
 			Raw:                   raw,
-			Results:               collectedResults,
-			VerificationAttempted: executionState.verificationAttempted,
+			Results:               runState.collectedResults,
+			VerificationAttempted: runState.executionState.verificationAttempted,
 		})
 
 		req = preflight.Request
@@ -1930,17 +1810,17 @@ func (r *Runner) runLegacySessionBody(
 			// model's signal entirely. A visible note keeps the contract
 			// (the rewritten call still runs) while letting the model
 			// learn the routing rule for next time.
-			turnMessages = append(turnMessages, llama.ChatMessage{
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 				Role:    "system",
 				Content: rewriteVisibilityNote(preflight.OriginalRequest.Tool, preflight.Request.Tool),
 			})
 		}
 
-		if redirected, redirectedRaw, ok := repeatedDiagnosticLogReadFileBackfill(req, collectedResults); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "repeated_diagnostic_log_read_previous_window")
+		if redirected, redirectedRaw, ok := repeatedDiagnosticLogReadFileBackfill(req, runState.collectedResults); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "repeated_diagnostic_log_read_previous_window")
 		}
 
-		if summary, errorText, reject := diagnosticLogUnboundedReadCoverageRejection(req, collectedResults); reject {
+		if summary, errorText, reject := diagnosticLogUnboundedReadCoverageRejection(req, runState.collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "diagnostic_log_read_coverage_rejected", true)
@@ -1949,7 +1829,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if redirected, redirectedRaw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, collectedResults); ok {
+		if redirected, redirectedRaw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, runState.collectedResults); ok {
 			r.emitEvent(marshalRunEvent("generated_evidence_artifact_read_redirect", map[string]any{
 				"from_path": NormalizeRunnerPath(req.Path),
 				"to_path":   NormalizeRunnerPath(redirected.Path),
@@ -1961,27 +1841,27 @@ func (r *Runner) runLegacySessionBody(
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if redirected, redirectedRaw, reason, ok := structuredSourceReadRewriteRequest(req, r.Workspace, currentAllowedTools, r.RuntimeBrief); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
+		if redirected, redirectedRaw, reason, ok := structuredSourceReadRewriteRequest(req, r.Workspace, runState.currentAllowedTools, r.RuntimeBrief); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if redirected, redirectedRaw, reason, ok := pathlessReadSymbolAfterOutlineRewriteRequest(req, collectedResults); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
+		if redirected, redirectedRaw, reason, ok := pathlessReadSymbolAfterOutlineRewriteRequest(req, runState.collectedResults); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if redirected, redirectedRaw, reason, ok := repeatedFileOutlineToReadSymbolRewriteRequest(req, collectedResults, r.RuntimeBrief); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
+		if redirected, redirectedRaw, reason, ok := repeatedFileOutlineToReadSymbolRewriteRequest(req, runState.collectedResults, r.RuntimeBrief); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
 		if redirected, redirectedRaw, reason, ok := readOnlyDefinitionToReadSymbolRewriteRequest(req, r.RuntimeBrief); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if summary, errorText, reject := repeatedDiagnosticLogReadFilePreviouslyReadRejection(req, collectedResults); reject {
+		if summary, errorText, reject := repeatedDiagnosticLogReadFilePreviouslyReadRejection(req, runState.collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "repeated_diagnostic_log_window_rejected", true)
@@ -1990,30 +1870,30 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if redirected, redirectedRaw, ok := r.repeatedRangeLessReadFileRedirect(req, collectedResults, currentAllowedTools); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "repeated_rangeless_read_file_bounded_source")
+		if redirected, redirectedRaw, ok := r.repeatedRangeLessReadFileRedirect(req, runState.collectedResults, runState.currentAllowedTools); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "repeated_rangeless_read_file_bounded_source")
 		}
 
 		currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 
-		if workspace.IsWorkspaceWriteTool(req.Tool) && implementationTargetSourceWriteTargetsHaveEvidence(req, collectedResults) {
+		if workspace.IsWorkspaceWriteTool(req.Tool) && implementationTargetSourceWriteTargetsHaveEvidence(req, runState.collectedResults) {
 			clearRejectedFingerprintSummary(requestBudget.fingerprint.rejected, currentFingerprint, "Write rejected before source-body evidence")
 			delete(rejectedActions, toolActionClass(req))
 		}
 
-		if !exactAnchorWriteOnlyActive {
-			requestBudget.setRecoveryContext(r.RuntimeBrief, collectedResults)
+		if !runState.exactAnchorWriteOnlyActive {
+			requestBudget.setRecoveryContext(r.RuntimeBrief, runState.collectedResults)
 			decision := attachLoopPolicyDecision(requestBudget.earlyRejectedFingerprintDecision(req, currentFingerprint))
-			if result, prompt, ok := r.mutationRejectedRetryWriteRecovery(decision, req, collectedResults); ok {
+			if result, prompt, ok := r.mutationRejectedRetryWriteRecovery(decision, req, runState.collectedResults); ok {
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
-				implementationWriteOnlyRecoveryActive = true
+				runState.implementationWriteOnlyRecoveryActive = true
 
 				markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 				runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "mutation_rejected_retry_write_recovery", Content: prompt})
 
 				continue
@@ -2038,7 +1918,7 @@ func (r *Runner) runLegacySessionBody(
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
 				if preflight.ForceAnswer.Reason == "conversation_evidence_sufficient" {
-					if presentable, ok := r.presentableFallbackCandidate(collectedResults, "The retained source context identifies the relevant implementation surface."); ok {
+					if presentable, ok := r.presentableFallbackCandidate(runState.collectedResults, "The retained source context identifies the relevant implementation surface."); ok {
 						return finish(presentable, nil, preflight.ForceAnswer.Reason, true)
 					}
 				}
@@ -2058,7 +1938,7 @@ func (r *Runner) runLegacySessionBody(
 
 		recoveryReadAllowanceGrantedThisRequest := false
 
-		if summary, errorText, prompt, target, reject := r.scratchpadDeliverableCloseoutNonWriteRecovery(req, collectedResults); reject {
+		if summary, errorText, prompt, target, reject := r.scratchpadDeliverableCloseoutNonWriteRecovery(req, runState.collectedResults); reject {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
@@ -2069,20 +1949,20 @@ func (r *Runner) runLegacySessionBody(
 			scratchpadCloseoutNonWriteRejections++
 			if scratchpadCloseoutNonWriteRejections >= 2 {
 				blockerKind := "scratchpad_deliverable_closeout_non_write_repeated"
-				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+				emitCompletionStatus("blocked", blockerKind, blockerKind, runState.collectedResults, true)
 
 				answer := fmt.Sprintf("<<QUESTION>>: completion gate rejected a prose-only response for %s, but the model kept selecting non-write tools. The deliverable-write contract must be satisfied, recording uncertainty in the file, or the lane must be rerun with corrected evidence.", target)
 
 				return finish(answer, nil, blockerKind, true)
 			}
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_closeout_recovery", Content: prompt})
 
 			continue
 		}
 
-		if summary, errorText, prompt, reject := r.scratchpadDeliverableSourceDiscoveryRecovery(req, collectedResults); reject {
+		if summary, errorText, prompt, reject := r.scratchpadDeliverableSourceDiscoveryRecovery(req, runState.collectedResults); reject {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
@@ -2090,7 +1970,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_source_discovery_recovery", Content: prompt})
 
 			continue
@@ -2102,7 +1982,7 @@ func (r *Runner) runLegacySessionBody(
 		if !recoveryReadAllowanceGrantedThisRequest && workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 			target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 			if target != "" && isPlanExecuteContextDocPath(target) &&
-				planExecuteContextDocReadCount(collectedResults) < planThenExecuteContextDocReadCap {
+				planExecuteContextDocReadCount(runState.collectedResults) < planThenExecuteContextDocReadCap {
 				recoveryReadAllowanceGrantedThisRequest = true
 			}
 		}
@@ -2112,27 +1992,27 @@ func (r *Runner) runLegacySessionBody(
 			recoveryReadAllowanceGrantedThisRequest = true
 		}
 
-		if redirected, redirectedRaw, ok := r.planThenExecuteMissingTargetReadRedirect(req, collectedResults); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
+		if redirected, redirectedRaw, ok := r.planThenExecuteMissingTargetReadRedirect(req, runState.collectedResults); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if summary, errorText, prompt, reject := planThenExecuteReadinessNudgedNonSubmitRejection(req, r.RuntimeBrief, collectedResults, planThenExecuteSubmitOnlyReadinessNudged); reject && !recoveryReadAllowanceGrantedThisRequest {
+		if summary, errorText, prompt, reject := planThenExecuteReadinessNudgedNonSubmitRejection(req, r.RuntimeBrief, runState.collectedResults, planThenExecuteSubmitOnlyReadinessNudged); reject && !recoveryReadAllowanceGrantedThisRequest {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
 				Error:   errorText,
 			}
 			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
-			refreshPlanThenExecuteTerminalSurface("readiness_non_submit_rejection")
+			r.refreshPlanThenExecuteTerminalSurface(runState, "readiness_non_submit_rejection")
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-			rebuildTools()
+			r.rebuildRunTools(runState)
 
-			opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			runState.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-			syncPlanThenExecuteRecoveryAllowedTools()
+			r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
 
 			continue
@@ -2142,12 +2022,12 @@ func (r *Runner) runLegacySessionBody(
 			!planThenExecuteSubmitOnlyReadinessNudged &&
 			r.planThenExecutePlannerPhase() &&
 			strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan &&
-			successfulSubmitPlanResultCount(collectedResults) == 0 {
+			successfulSubmitPlanResultCount(runState.collectedResults) == 0 {
 
 			planThenExecuteCandidateReadinessNonSubmitTools++
 			if planThenExecuteCandidateReadinessNonSubmitTools >= 12 {
 				blockerKind := "plan_execute_candidate_readiness_tool_budget_exhausted"
-				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+				emitCompletionStatus("blocked", blockerKind, blockerKind, runState.collectedResults, true)
 
 				answer := "<<QUESTION>>: plan-execute gathered candidate source evidence and made `submit_plan` available, but the planner kept requesting additional tools instead of producing a terminal plan artifact, source-satisfied decision, or exact blocker. Rerun with a narrower objective or exact edit anchor if a plan artifact is still required."
 
@@ -2155,7 +2035,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if r.implementationTargetWriteReadySourceReadAllowed(req, collectedResults, implementationTargetWriteReadySourceRefreshes) {
+		if r.implementationTargetWriteReadySourceReadAllowed(req, runState.collectedResults, implementationTargetWriteReadySourceRefreshes) {
 			recoveryReadAllowanceGrantedThisRequest = true
 			implementationTargetWriteReadySourceRefreshes++
 
@@ -2163,23 +2043,23 @@ func (r *Runner) runLegacySessionBody(
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
 				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), NormalizeRunnerPath(req.Path)),
 			})
-		} else if prompt, ok := r.implementationTargetWriteReadyNonWritePrompt(req, collectedResults); ok {
-			implementationTargetWriteReadyNudges++
+		} else if prompt, ok := r.implementationTargetWriteReadyNonWritePrompt(req, runState.collectedResults); ok {
+			runState.implementationTargetWriteReadyNudges++
 
 			requestBudget.writeReadyNudgeActive = true
 
-			nudgeMsg := targetWriteReadyStagedNudge(prompt, req, implementationTargetWriteReadyNudges)
+			nudgeMsg := targetWriteReadyStagedNudge(prompt, req, runState.implementationTargetWriteReadyNudges)
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
 			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_recovery", Content: nudgeMsg})
 			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_nudge", Content: nudgeMsg})
-			r.emitImplementationLifecycleState(collectedResults, "target_write_ready", implementationTargetWriteReadyNudges)
+			r.emitImplementationLifecycleState(runState.collectedResults, "target_write_ready", runState.implementationTargetWriteReadyNudges)
 		}
 
 		requestedTool := strings.TrimSpace(req.Tool)
 		toolHiddenByActiveSurface := runState.surfaceHidesTool(requestedTool)
 		scopedHiddenNonWrite := runState.surfaceHiddenByOwner(OwnerImplementationScoped, requestedTool) && !workspace.IsWorkspaceWriteTool(req.Tool)
-		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, collectedResults); reject && !(scopedHiddenNonWrite && scopedHiddenNonWriteRecoveryUsed) {
+		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, runState.collectedResults); reject && !(scopedHiddenNonWrite && scopedHiddenNonWriteRecoveryUsed) {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
@@ -2191,16 +2071,16 @@ func (r *Runner) runLegacySessionBody(
 				scopedHiddenNonWriteRecoveryUsed = true
 			}
 
-			rebuildTools()
+			r.rebuildRunTools(runState)
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "implementation_scoped_tool_recovery", Content: prompt})
 
 			continue
 		}
 
 		if !toolHiddenByActiveSurface {
-			if summary, errorText, prompt, hideNonWrite, reject := r.writeReadyPacketReadWithoutGapRecovery(req, collectedResults); reject {
+			if summary, errorText, prompt, hideNonWrite, reject := r.writeReadyPacketReadWithoutGapRecovery(req, runState.collectedResults); reject {
 				result := workspace.ToolResult{
 					Tool:    req.Tool,
 					Summary: summary,
@@ -2217,10 +2097,10 @@ func (r *Runner) runLegacySessionBody(
 					requestBudget.scopedReadRejections[key]++
 					if requestBudget.scopedReadRejections[key] >= 2 {
 						blockerKind := "scoped_implementation_read_repeated"
-						emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+						emitCompletionStatus("blocked", blockerKind, blockerKind, runState.collectedResults, true)
 
 						target := "the required edit path"
-						if paths := r.remainingRequiredEditPaths(collectedResults); len(paths) > 0 {
+						if paths := r.remainingRequiredEditPaths(runState.collectedResults); len(paths) > 0 {
 							target = strings.Join(paths, ", ")
 						} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
 							target = strings.Join(paths, ", ")
@@ -2233,19 +2113,19 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				if hideNonWrite {
-					implementationWriteOnlyRecoveryActive = true
+					runState.implementationWriteOnlyRecoveryActive = true
 
-					if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
-						requiredPathCompletionRecoveryActive = true
+					if len(r.remainingRequiredEditPaths(runState.collectedResults)) > 0 {
+						runState.requiredPathCompletionRecoveryActive = true
 					}
 
 					markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 					runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 				}
 
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
 				role := "implementation_scoped_read_recovery"
 
@@ -2259,7 +2139,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if summary, errorText, prompt, reject := r.unscopedContextPackCandidateReadRecovery(req, collectedResults); reject {
+		if summary, errorText, prompt, reject := r.unscopedContextPackCandidateReadRecovery(req, runState.collectedResults); reject {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
@@ -2267,7 +2147,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "context_pack_read_recovery", Content: prompt})
 
 			continue
@@ -2280,15 +2160,15 @@ func (r *Runner) runLegacySessionBody(
 				Role:    "plan_then_execute_source_satisfied_evidence_read_allowed",
 				Content: fmt.Sprintf("allowed bounded %s for source-satisfied evidence path %q", strings.TrimSpace(req.Tool), NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
-		} else if refreshReason, ok := r.planThenExecuteDirectSourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes); ok {
+		} else if refreshReason, ok := r.planThenExecuteDirectSourceRefreshAllowed(req, runState.collectedResults, planThenExecuteReadySourceRefreshes); ok {
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
 				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for %s %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, refreshReason, NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
-		} else if redirected, redirectedRaw, ok := r.planThenExecuteRejectedPlanRefreshReadRedirect(req, collectedResults); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_rejected_plan_source_refresh_region")
+		} else if redirected, redirectedRaw, ok := r.planThenExecuteRejectedPlanRefreshReadRedirect(req, runState.collectedResults); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_rejected_plan_source_refresh_region")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
@@ -2296,7 +2176,7 @@ func (r *Runner) runLegacySessionBody(
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
 				Content: fmt.Sprintf("redirected bounded %s source refresh %d/%d for rejected plan path %q", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
-		} else if r.planThenExecuteCandidateSourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes) {
+		} else if r.planThenExecuteCandidateSourceRefreshAllowed(req, runState.collectedResults, planThenExecuteReadySourceRefreshes) {
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
@@ -2305,7 +2185,7 @@ func (r *Runner) runLegacySessionBody(
 			})
 		}
 
-		if implementationWriteOnlyRecoveryActive && !r.writeOnlyRecoveryToolIsWrite(req.Tool) {
+		if runState.implementationWriteOnlyRecoveryActive && !r.writeOnlyRecoveryToolIsWrite(req.Tool) {
 			if strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily && !recoveryReadAllowanceGrantedThisRequest {
 				reviewRepairTerminalRequiredRejects++
 
@@ -2315,12 +2195,12 @@ func (r *Runner) runLegacySessionBody(
 					Error:   reviewRepairTerminalOutcomeRequiredPrompt(r.RuntimeBrief, req.Tool),
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
-				refreshPlanThenExecuteTerminalSurface("review_repair_terminal_recovery")
+				r.refreshPlanThenExecuteTerminalSurface(runState, "review_repair_terminal_recovery")
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
-				opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
+				runState.opts = completionGateRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-				syncPlanThenExecuteRecoveryAllowedTools()
+				r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 				r.emitEvent(RunEvent{Role: "plan_then_execute_review_repair_terminal_required", Content: result.Error})
 
 				if reviewRepairTerminalRequiredRejects >= 2 {
@@ -2332,22 +2212,22 @@ func (r *Runner) runLegacySessionBody(
 
 			if r.planThenExecutePlannerPhase() {
 				if !recoveryReadAllowanceGrantedThisRequest {
-					if result, ok := r.planThenExecuteAnchorRefreshWriteOnlyRejection(req, collectedResults); ok {
+					if result, ok := r.planThenExecuteAnchorRefreshWriteOnlyRejection(req, runState.collectedResults); ok {
 						controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
-						refreshPlanThenExecuteTerminalSurface("anchor_refresh_recovery")
+						r.refreshPlanThenExecuteTerminalSurface(runState, "anchor_refresh_recovery")
 
-						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
-						opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+						runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
+						runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-						syncPlanThenExecuteRecoveryAllowedTools()
+						r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 						r.emitEvent(RunEvent{Role: "plan_then_execute_anchor_refresh_required", Content: result.Error})
 
 						continue
 					}
 
 					refreshNote := ""
-					if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(collectedResults); ok {
-						refreshNote = " " + planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, rejected, rejectedAt)
+					if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(runState.collectedResults); ok {
+						refreshNote = " " + planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, runState.collectedResults, rejected, rejectedAt)
 					}
 
 					result := workspace.ToolResult{
@@ -2355,14 +2235,14 @@ func (r *Runner) runLegacySessionBody(
 						Summary: "Plan-execute submit_plan required",
 						Error:   fmt.Sprintf("%s is not available while plan-execute planner recovery is waiting for a visible `submit_plan`. The next visible action must be a parser-readable `submit_plan`. %s%s", strings.TrimSpace(req.Tool), planThenExecuteSubmitPlanCoverageSentence(), refreshNote),
 					}
-					emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
+					emitToolAuthorizationSurfacePolicyResult(runState.autonomyRecorder, req, autonomy.PolicyReject)
 					controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
-					refreshPlanThenExecuteTerminalSurface("submit_plan_recovery")
+					r.refreshPlanThenExecuteTerminalSurface(runState, "submit_plan_recovery")
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
-					opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
+					runState.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-					syncPlanThenExecuteRecoveryAllowedTools()
+					r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 					r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: result.Error})
 
 					continue
@@ -2372,7 +2252,7 @@ func (r *Runner) runLegacySessionBody(
 			if recoveryReadAllowanceGrantedThisRequest {
 				// The plan-execute branch above grants only the explicit
 				// source-refresh exception after a rejected submit_plan.
-			} else if r.consumeRecoveryReadAllowance(req, recoveryReadAllowanceUsed, collectedResults) {
+			} else if r.consumeRecoveryReadAllowance(req, recoveryReadAllowanceUsed, runState.collectedResults) {
 				recoveryReadAllowanceGrantedThisRequest = true
 
 				r.emitEvent(RunEvent{
@@ -2389,22 +2269,22 @@ func (r *Runner) runLegacySessionBody(
 
 				implementationWriteOnlyNonWriteRejects++
 				if implementationWriteOnlyNonWriteRejects < 2 {
-					prompt := r.writeOnlyRecoveryNonWriteRepairPrompt(req, collectedResults)
+					prompt := r.writeOnlyRecoveryNonWriteRepairPrompt(req, runState.collectedResults)
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-					opts = forceVisibleActionChatOptions(opts)
-					opts = planExecuteSetExactMaxTokens(opts, 768)
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+					runState.opts = forceVisibleActionChatOptions(runState.opts)
+					runState.opts = planExecuteSetExactMaxTokens(runState.opts, 768)
 
 					runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
-					rebuildTools()
+					r.rebuildRunTools(runState)
 					r.emitEvent(RunEvent{Role: "implementation_write_only_recovery_non_write_repair", Content: prompt})
 
 					continue
 				}
 
-				if answer, ok := r.writeOnlyRecoveryBlockerAnswer(collectedResults); ok {
-					blockerKind := r.writeOnlyRecoveryBlockerKind(collectedResults)
-					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+				if answer, ok := r.writeOnlyRecoveryBlockerAnswer(runState.collectedResults); ok {
+					blockerKind := r.writeOnlyRecoveryBlockerKind(runState.collectedResults)
+					emitCompletionStatus("blocked", blockerKind, blockerKind, runState.collectedResults, true)
 
 					return finish(answer, nil, blockerKind, true)
 				}
@@ -2428,13 +2308,13 @@ func (r *Runner) runLegacySessionBody(
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
 				r.emitEvent(RunEvent{Role: "post_child_duplicate_task_rejected", Content: result.Error})
 
 				continue
 			}
 
-			if exactAnchorWriteOnlyActive && !workspace.IsWorkspaceWriteTool(req.Tool) && rejectionRecoveryNudgeUsed {
+			if runState.exactAnchorWriteOnlyActive && !workspace.IsWorkspaceWriteTool(req.Tool) && rejectionRecoveryNudgeUsed {
 				result := workspace.ToolResult{
 					Tool:    req.Tool,
 					Summary: hiddenSummary,
@@ -2442,8 +2322,8 @@ func (r *Runner) runLegacySessionBody(
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
-				if answer, ok := r.exactAnchorHiddenToolBlockerAnswer(req, collectedResults); ok {
-					emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", collectedResults, true)
+				if answer, ok := r.exactAnchorHiddenToolBlockerAnswer(req, runState.collectedResults); ok {
+					emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", runState.collectedResults, true)
 
 					return finish(answer, nil, "exact_anchor_prewrite_hidden_tool_repeated", true)
 				}
@@ -2457,8 +2337,8 @@ func (r *Runner) runLegacySessionBody(
 				hiddenError,
 			)
 			if done {
-				if answer, ok := r.exactAnchorHiddenToolBlockerAnswer(req, collectedResults); ok {
-					emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", collectedResults, true)
+				if answer, ok := r.exactAnchorHiddenToolBlockerAnswer(req, runState.collectedResults); ok {
+					emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", runState.collectedResults, true)
 
 					return finish(answer, nil, "exact_anchor_prewrite_hidden_tool_repeated", true)
 				}
@@ -2469,7 +2349,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if summary, errorText, prompt, reject := r.implementationPreWriteNonWriteRecovery(req, collectedResults); reject {
+		if summary, errorText, prompt, reject := r.implementationPreWriteNonWriteRecovery(req, runState.collectedResults); reject {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
@@ -2477,32 +2357,32 @@ func (r *Runner) runLegacySessionBody(
 			}
 			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
-			implementationWriteOnlyRecoveryActive = true
+			runState.implementationWriteOnlyRecoveryActive = true
 
-			if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
-				requiredPathCompletionRecoveryActive = true
+			if len(r.remainingRequiredEditPaths(runState.collectedResults)) > 0 {
+				runState.requiredPathCompletionRecoveryActive = true
 			}
 
 			markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 			runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
-			rebuildTools()
+			r.rebuildRunTools(runState)
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "implementation_write_only_recovery", Content: prompt})
 
 			continue
 		}
 
-		if redirected, redirectedRaw, ok := r.planThenExecuteMissingTargetReadRedirect(req, collectedResults); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
+		if redirected, redirectedRaw, ok := r.planThenExecuteMissingTargetReadRedirect(req, runState.collectedResults); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		planningTransport := r.planExecutePlanningTransportFromOptions(opts, terminalSubmitPlanNativeTools(), false)
-		planningState := DerivePlanExecutePlanningActionState(r.RuntimeBrief, collectedResults, planningTransport, req)
+		planningTransport := r.planExecutePlanningTransportFromOptions(runState.opts, r.terminalSubmitPlanNativeTools(runState), false)
+		planningState := DerivePlanExecutePlanningActionState(r.RuntimeBrief, runState.collectedResults, planningTransport, req)
 
 		if !recoveryReadAllowanceGrantedThisRequest {
-			if reason, prompt, ok := planThenExecuteCandidateLowValueAction(req, r.RuntimeBrief, collectedResults, planningTransport); ok {
+			if reason, prompt, ok := planThenExecuteCandidateLowValueAction(req, r.RuntimeBrief, runState.collectedResults, planningTransport); ok {
 				r.emitEvent(marshalRunEvent("plan_then_execute_low_value_action", map[string]any{
 					"agent":             r.agentName(),
 					"tool":              strings.TrimSpace(req.Tool),
@@ -2513,12 +2393,12 @@ func (r *Runner) runLegacySessionBody(
 				}))
 
 				if slices.Contains(planningState.TerminalOptions, workspace.ToolNameSubmitPlan) {
-					opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+					runState.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-					currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
-					setCurrentAllowedTools(currentAllowedTools)
-					refreshPlanThenExecuteTerminalSurface("low_value_candidate_action")
-					syncPlanThenExecuteRecoveryAllowedTools()
+					runState.currentAllowedTools = append(runState.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+					r.setCurrentAllowedTools(runState, runState.currentAllowedTools)
+					r.refreshPlanThenExecuteTerminalSurface(runState, "low_value_candidate_action")
+					r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 				}
 
 				if planThenExecuteLowValueActionShouldReject(reason) {
@@ -2536,29 +2416,29 @@ func (r *Runner) runLegacySessionBody(
 					continue
 				}
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
 				continue
 			}
 		}
 
-		if summary, errorText, prompt, reject := r.planThenExecuteSubmitPlanOnlySurfaceRejection(req, collectedResults, currentAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
-			emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
+		if summary, errorText, prompt, reject := r.planThenExecuteSubmitPlanOnlySurfaceRejection(req, runState.collectedResults, runState.currentAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
+			emitToolAuthorizationSurfacePolicyResult(runState.autonomyRecorder, req, autonomy.PolicyReject)
 
 			controller.recordRejectedResult(stepNumber, activeToolCall, req, workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
 				Error:   errorText,
 			}, "tool_rejected")
-			refreshPlanThenExecuteTerminalSurface("submit_plan_only_rejection")
+			r.refreshPlanThenExecuteTerminalSurface(runState, "submit_plan_only_rejection")
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-			rebuildTools()
+			r.rebuildRunTools(runState)
 
-			opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			runState.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-			syncPlanThenExecuteRecoveryAllowedTools()
+			r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
 
 			continue
@@ -2573,7 +2453,7 @@ func (r *Runner) runLegacySessionBody(
 			return finish(closeout.Answer, nil, closeout.StopReason, false)
 		}
 
-		if summary, errorText, reject := r.planThenExecuteClampedEOFReadRejection(req, collectedResults); reject {
+		if summary, errorText, reject := r.planThenExecuteClampedEOFReadRejection(req, runState.collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "plan_then_execute_clamped_eof_read_rejected", true)
@@ -2582,7 +2462,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		surfaceAllowedTools := runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools, r.RuntimeBrief, collectedResults, req)
+		surfaceAllowedTools := runnerPlanExecuteTextualAllowedToolsForRequest(runState.currentAllowedTools, r.RuntimeBrief, runState.collectedResults, req)
 		historyRedirectAllowedTools := append(append([]string(nil), surfaceAllowedTools...), workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol)
 
 		surfaceDecision := toolAuthorizationSurfaceDecision(req, surfaceAllowedTools, false)
@@ -2591,7 +2471,7 @@ func (r *Runner) runLegacySessionBody(
 			redirected := false
 
 			if planThenExecuteUnscopedEmptySubmitPlanAttempt(r.RuntimeBrief, req) {
-				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
+				emitToolAuthorizationSurfacePolicyResult(runState.autonomyRecorder, req, autonomy.PolicyReject)
 
 				result := workspace.ToolResult{
 					Tool:    workspace.ToolNameSubmitPlan,
@@ -2603,52 +2483,52 @@ func (r *Runner) runLegacySessionBody(
 
 				prompt := RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
 
-				refreshPlanThenExecuteTerminalSurface("submit_plan_rejected")
+				r.refreshPlanThenExecuteTerminalSurface(runState, "submit_plan_rejected")
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
-				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-				syncPlanThenExecuteRecoveryAllowedTools()
+				r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 				r.emitEvent(RunEvent{Role: "plan_then_execute_empty_submit_plan_recovery", Content: prompt})
 
 				continue
-			} else if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
+			} else if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, runState.collectedResults, historyRedirectAllowedTools); ok {
 				submitReq := req
 
 				deferredGitHistorySubmitPlan = &submitReq
 				deferredGitHistorySubmitPlanRaw = raw
-				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
+				req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
-			} else if redirectedReq, redirectedRaw, ok := r.sourceReadBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
-				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_source_read_before_history")
+			} else if redirectedReq, redirectedRaw, ok := r.sourceReadBeforeGitHistoryEvidenceRedirect(req, runState.collectedResults, historyRedirectAllowedTools); ok {
+				req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_source_read_before_history")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
-			} else if redirectedReq, ok := postWriteSourceSanityRedirect(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
+			} else if redirectedReq, ok := postWriteSourceSanityRedirect(req, r.RuntimeBrief, runState.collectedResults, surfaceAllowedTools); ok {
 				redirectedRaw := marshalToolRequestRaw(redirectedReq)
-				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "post_write_lane_sanity_requires_source_sanity")
+				req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirectedReq, redirectedRaw, "post_write_lane_sanity_requires_source_sanity")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
-			} else if historySummary, historyError, ok := planThenExecuteUnavailableHistoryToolNudge(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
+			} else if historySummary, historyError, ok := planThenExecuteUnavailableHistoryToolNudge(req, r.RuntimeBrief, runState.collectedResults, surfaceAllowedTools); ok {
 				summary = historySummary
 				errorText = historyError
-			} else if submitCorrectionSummary, submitCorrectionError, prompt, ok := planThenExecuteSubmitCorrectionCurrentSurfaceRejection(req, r.RuntimeBrief, collectedResults); ok {
+			} else if submitCorrectionSummary, submitCorrectionError, prompt, ok := planThenExecuteSubmitCorrectionCurrentSurfaceRejection(req, r.RuntimeBrief, runState.collectedResults); ok {
 				summary = submitCorrectionSummary
 				errorText = submitCorrectionError
-				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-				opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
-				currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
-				setCurrentAllowedTools(currentAllowedTools)
-				refreshPlanThenExecuteTerminalSurface("submit_correction_wrong_tool")
-				syncPlanThenExecuteRecoveryAllowedTools()
+				emitToolAuthorizationSurfacePolicyResult(runState.autonomyRecorder, req, autonomy.PolicyReject)
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
+				runState.currentAllowedTools = append(runState.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+				r.setCurrentAllowedTools(runState, runState.currentAllowedTools)
+				r.refreshPlanThenExecuteTerminalSurface(runState, "submit_correction_wrong_tool")
+				r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 			} else if newFileSummary, newFileError, ok := unavailableRequiredNewFileProbeNudge(req, r.RuntimeBrief, r.Workspace); ok {
 				summary = newFileSummary
 				errorText = newFileError
-			} else if action, ok := r.planThenExecuteRequiredSourceSurfaceAction(req, collectedResults, surfaceAllowedTools); ok {
+			} else if action, ok := r.planThenExecuteRequiredSourceSurfaceAction(req, runState.collectedResults, surfaceAllowedTools); ok {
 				if action.Redirect {
 					r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
 						"agent":          r.agentName(),
@@ -2658,7 +2538,7 @@ func (r *Runner) runLegacySessionBody(
 						"rewritten_raw":  strings.TrimSpace(action.Raw),
 					}))
 
-					turnMessages = append(turnMessages, llama.ChatMessage{
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 						Role:    "system",
 						Content: rewriteVisibilityNote(req.Tool, action.Request.Tool),
 					})
@@ -2673,7 +2553,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			if !redirected {
-				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
+				emitToolAuthorizationSurfacePolicyResult(runState.autonomyRecorder, req, autonomy.PolicyReject)
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 				if done {
 					return finish(answer, err, "tool_not_allowed_by_runtime_surface", true)
@@ -2683,24 +2563,24 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
+		if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, runState.collectedResults, historyRedirectAllowedTools); ok {
 			submitReq := req
 
 			deferredGitHistorySubmitPlan = &submitReq
 			deferredGitHistorySubmitPlanRaw = raw
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if redirected, redirectedRaw, ok := r.implementationTargetSourceWriteBeforeEvidenceRedirect(req, collectedResults, currentAllowedTools); ok {
+		if redirected, redirectedRaw, ok := r.implementationTargetSourceWriteBeforeEvidenceRedirect(req, runState.collectedResults, runState.currentAllowedTools); ok {
 			originalReq := req
 			originalRaw := raw
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "implementation_write_before_evidence_bounded_read")
-			deferredSourceEvidenceWrite = r.newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path, currentAllowedTools)
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "implementation_write_before_evidence_bounded_read")
+			deferredSourceEvidenceWrite = r.newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path, runState.currentAllowedTools)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if summary, errorText, reject := r.implementationTargetSourceWriteBeforeEvidenceRejection(req, collectedResults, currentAllowedTools); reject {
+		if summary, errorText, reject := r.implementationTargetSourceWriteBeforeEvidenceRejection(req, runState.collectedResults, runState.currentAllowedTools); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "implementation_target_source_write_rejected", true)
@@ -2709,11 +2589,11 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		implementationHistoryRedirectAllowedTools := append(append([]string(nil), currentAllowedTools...), workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol)
-		if redirected, redirectedRaw, ok := r.writeBeforeGitHistoryEvidenceRedirect(req, collectedResults, implementationHistoryRedirectAllowedTools); ok {
+		implementationHistoryRedirectAllowedTools := append(append([]string(nil), runState.currentAllowedTools...), workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol)
+		if redirected, redirectedRaw, ok := r.writeBeforeGitHistoryEvidenceRedirect(req, runState.collectedResults, implementationHistoryRedirectAllowedTools); ok {
 			originalReq := req
 			originalRaw := raw
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "write_before_git_history_bounded_history")
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "write_before_git_history_bounded_history")
 			deferredSourceEvidenceWrite = r.newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path, implementationHistoryRedirectAllowedTools)
 
 			if deferredSourceEvidenceWrite != nil {
@@ -2723,7 +2603,7 @@ func (r *Runner) runLegacySessionBody(
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if summary, errorText, reject := r.writeBeforeGitHistoryEvidenceRejection(req, collectedResults); reject {
+		if summary, errorText, reject := r.writeBeforeGitHistoryEvidenceRejection(req, runState.collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "write_before_git_history_rejected", true)
@@ -2732,17 +2612,17 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if redirected, redirectedRaw, ok := r.planThenExecuteCandidateRangeLessReadRedirect(req, collectedResults); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_candidate_rangeless_read_bounded")
+		if redirected, redirectedRaw, ok := r.planThenExecuteCandidateRangeLessReadRedirect(req, runState.collectedResults); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_candidate_rangeless_read_bounded")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if redirected, redirectedRaw, ok := r.planThenExecuteMalformedSymbolReadRedirect(req, collectedResults, currentAllowedTools); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_malformed_symbol_read_bounded")
+		if redirected, redirectedRaw, ok := r.planThenExecuteMalformedSymbolReadRedirect(req, runState.collectedResults, runState.currentAllowedTools); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_malformed_symbol_read_bounded")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if redirected, ok := fillSourceSanityPathFromSingleChangedSource(req, r.RuntimeBrief, collectedResults, currentAllowedTools); ok {
+		if redirected, ok := fillSourceSanityPathFromSingleChangedSource(req, r.RuntimeBrief, runState.collectedResults, runState.currentAllowedTools); ok {
 			redirectedRaw := marshalToolRequestRaw(redirected)
 			r.emitEvent(marshalRunEvent("tool_request_normalizer", map[string]any{
 				"outcome":                      "normalized",
@@ -2757,7 +2637,7 @@ func (r *Runner) runLegacySessionBody(
 				"changed_source":               true,
 			}))
 
-			turnMessages = append(turnMessages, llama.ChatMessage{
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 				Role:    "system",
 				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
 			})
@@ -2766,7 +2646,7 @@ func (r *Runner) runLegacySessionBody(
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if redirected, redirectedRaw, ok := r.deterministicPlanExecuteChainedSearchRecovery(req, collectedResults, &executionState); ok {
+		if redirected, redirectedRaw, ok := r.deterministicPlanExecuteChainedSearchRecovery(req, runState.collectedResults, &runState.executionState); ok {
 			r.emitEvent(marshalRunEvent("tool_request_normalizer", map[string]any{
 				"outcome":       toolRequestNormalizerOutcomeNormalized,
 				"transport":     "plan_execute_chained_search_recovery",
@@ -2778,7 +2658,7 @@ func (r *Runner) runLegacySessionBody(
 				"reason":        "consume_context_pack_candidate_before_more_search",
 			}))
 
-			turnMessages = append(turnMessages, llama.ChatMessage{
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 				Role:    "system",
 				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
 			})
@@ -2787,30 +2667,30 @@ func (r *Runner) runLegacySessionBody(
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		metrics.ToolCalls++
+		runState.metrics.ToolCalls++
 		// Conversation lane: periodic call-count awareness nudges.
 		// Milestones derived from model context window size so
 		// smaller models get earlier nudges, larger models later ones.
 		// The auto-findings capture fires at convFirstMilestone;
 		// awareness nudges begin one nudgeInterval later so the two
 		// signals are staggered rather than competing at the same call.
-		if convFirstMilestone > 0 && metrics.ToolCalls > 5 {
+		if convFirstMilestone > 0 && runState.metrics.ToolCalls > 5 {
 			shouldNudge := false
 
 			var nudgeMsg string
 
 			firstNudgeAt := convFirstMilestone + convNudgeInterval
 
-			if metrics.ToolCalls == firstNudgeAt {
+			if runState.metrics.ToolCalls == firstNudgeAt {
 				shouldNudge = true
-				nudgeMsg = fmt.Sprintf("You have used %d tool calls. The user asked: %q. If you have evidence to answer this specific question, answer now in plain prose. Do not begin new investigation on neighboring topics.", metrics.ToolCalls, strings.TrimSpace(r.RuntimeBrief.Objective))
-			} else if metrics.ToolCalls >= firstNudgeAt+convNudgeInterval && (metrics.ToolCalls-firstNudgeAt)%convNudgeInterval == 0 {
+				nudgeMsg = fmt.Sprintf("You have used %d tool calls. The user asked: %q. If you have evidence to answer this specific question, answer now in plain prose. Do not begin new investigation on neighboring topics.", runState.metrics.ToolCalls, strings.TrimSpace(r.RuntimeBrief.Objective))
+			} else if runState.metrics.ToolCalls >= firstNudgeAt+convNudgeInterval && (runState.metrics.ToolCalls-firstNudgeAt)%convNudgeInterval == 0 {
 				shouldNudge = true
-				nudgeMsg = fmt.Sprintf("You have used %d tool calls. The user asked: %q. Answer this question directly from the evidence gathered, or if more evidence is genuinely needed, take one narrow next step. Do not explore related code or begin new investigations.", metrics.ToolCalls, strings.TrimSpace(r.RuntimeBrief.Objective))
+				nudgeMsg = fmt.Sprintf("You have used %d tool calls. The user asked: %q. Answer this question directly from the evidence gathered, or if more evidence is genuinely needed, take one narrow next step. Do not explore related code or begin new investigations.", runState.metrics.ToolCalls, strings.TrimSpace(r.RuntimeBrief.Objective))
 			}
 
 			if shouldNudge {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
 				r.emitEvent(RunEvent{Role: "call_count_awareness", Content: nudgeMsg})
 			}
 		}
@@ -2834,8 +2714,8 @@ func (r *Runner) runLegacySessionBody(
 			// recently (tracked via discovery tool reset below).
 			if consecutiveNarrowToolCalls >= narrowToolFamilyNudgeAt && !narrowToolFamilyNudgeFired {
 				narrowToolFamilyNudgeFired = true
-				prompt := narrowToolFamilyRepetitionNudgePrompt(narrowFamily, consecutiveNarrowToolCalls, currentAllowedTools)
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				prompt := narrowToolFamilyRepetitionNudgePrompt(narrowFamily, consecutiveNarrowToolCalls, runState.currentAllowedTools)
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "narrow_tool_repetition_nudge", Content: prompt})
 			}
 		} else {
@@ -2869,7 +2749,7 @@ func (r *Runner) runLegacySessionBody(
 			})
 		}
 
-		if summary, errorText, reject := planThenExecuteRequiredPathDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject {
+		if summary, errorText, reject := planThenExecuteRequiredPathDiscoveryRejection(req, r.RuntimeBrief, runState.collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "plan_then_execute_required_path_discovery_rejected", true)
@@ -2878,7 +2758,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if summary, errorText, rejectionCode, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject {
+		if summary, errorText, rejectionCode, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(req, r.RuntimeBrief, runState.collectedResults); reject {
 			if override, denialContext := r.ReadApprovalGate.MaybeOverrideRejection(ctx, r.sessionID(), req, r.RuntimeBrief, rejectionCode, errorText); override {
 				// Gate approved the read — fall through to normal tool dispatch
 			} else {
@@ -2892,20 +2772,20 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				if summary == "Anchor refresh capability required" {
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
 					r.emitEvent(RunEvent{Role: "plan_then_execute_anchor_refresh_required", Content: errorText})
 
 					continue
 				}
 
-				prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
-				transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_post_readiness_discovery")
+				prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, runState.collectedResults, chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan))
+				r.transitionPlanThenExecuteSubmitReadyTerminal(runState, prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_post_readiness_discovery")
 
 				continue
 			}
 		}
 
-		if summary, errorText, reject := r.repeatedRangeLessReadFileRejection(req, collectedResults); reject {
+		if summary, errorText, reject := r.repeatedRangeLessReadFileRejection(req, runState.collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "repeated_rangeless_read_file_rejected", true)
@@ -2914,25 +2794,25 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if redirected, redirectedRaw, ok := r.planThenExecuteRepeatedSymbolReadFallbackRedirect(req, collectedResults, currentAllowedTools); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_miss_bounded")
+		if redirected, redirectedRaw, ok := r.planThenExecuteRepeatedSymbolReadFallbackRedirect(req, runState.collectedResults, runState.currentAllowedTools); ok {
+			req, raw = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_miss_bounded")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
 		toolKey := toolRequestKey(req)
-		targetWriteReadyReadLoopDefers := r.implementationTargetWriteReadyReadLoopDefersToEvidenceContract(req, collectedResults)
-		if prompt, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req, lastToolResult, collectedResults, terminalSubmitPlanNativeTools()); ok && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] < 2 {
+		targetWriteReadyReadLoopDefers := r.implementationTargetWriteReadyReadLoopDefersToEvidenceContract(req, runState.collectedResults)
+		if prompt, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req, lastToolResult, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState)); ok && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] < 2 {
 			replayedToolRequests[toolKey]++
 
-			refreshPlanThenExecuteTerminalSurface("submit_plan_replayed_invalid")
+			r.refreshPlanThenExecuteTerminalSurface(runState, "submit_plan_replayed_invalid")
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-			rebuildTools()
+			r.rebuildRunTools(runState)
 
-			opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-			syncPlanThenExecuteRecoveryAllowedTools()
+			r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 			r.emitEvent(RunEvent{Role: "plan_then_execute_repeated_submit_plan_correction", Content: prompt})
 
 			continue
@@ -2943,7 +2823,7 @@ func (r *Runner) runLegacySessionBody(
 			summary := "Repeated tool request rejected"
 			errorText := "this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker."
 
-			if replaySummary, replayError, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req, lastToolResult, collectedResults); ok {
+			if replaySummary, replayError, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req, lastToolResult, runState.collectedResults); ok {
 				summary = replaySummary
 				errorText = replayError
 			}
@@ -2971,9 +2851,9 @@ func (r *Runner) runLegacySessionBody(
 		identicalCallRun := requestBudget.noteFingerprint(currentFingerprint)
 		if workspace.IsReadTool(strings.TrimSpace(req.Tool)) &&
 			!targetWriteReadyReadLoopDefers {
-			if decision := attachLoopPolicyDecision(requestBudget.samePathFixationDecision(req, genericReadOnlyEvidenceReady(r.RuntimeBrief, collectedResults))); decision.Handled {
-				if autonomyRecorder != nil && decision.Policy.InvariantID != "" {
-					autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+			if decision := attachLoopPolicyDecision(requestBudget.samePathFixationDecision(req, genericReadOnlyEvidenceReady(r.RuntimeBrief, runState.collectedResults))); decision.Handled {
+				if runState.autonomyRecorder != nil && decision.Policy.InvariantID != "" {
+					runState.autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 						Decision:    decision.Policy.Decision,
 						PackID:      decision.Policy.ContractID,
 						InvariantID: decision.Policy.InvariantID,
@@ -2984,11 +2864,11 @@ func (r *Runner) runLegacySessionBody(
 					})
 				}
 				if tool := strings.TrimSpace(decision.HideTool); runState.hideSurfaceTool(OwnerLoopPolicy, tool) {
-					rebuildTools()
+					r.rebuildRunTools(runState)
 					r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after same-path fixation", tool)})
 				}
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
 				r.emitEvent(RunEvent{Role: decision.EventRole, Content: textutil.FirstNonEmpty(decision.EventContent, decision.Nudge)})
 
 				continue
@@ -2996,60 +2876,60 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if identicalCallRun >= 3 {
-			if result, prompt, ok := r.mutationNoWriteLoopRecovery(req, collectedResults, identicalCallRun); ok &&
+			if result, prompt, ok := r.mutationNoWriteLoopRecovery(req, runState.collectedResults, identicalCallRun); ok &&
 				!targetWriteReadyReadLoopDefers {
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
-				implementationWriteOnlyRecoveryActive = true
+				runState.implementationWriteOnlyRecoveryActive = true
 
 				markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 				runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "mutation_no_write_loop_recovery", Content: prompt})
 
 				continue
 			}
 
 			if !planThenExecuteLoopBudgetRecoveryUsed {
-				if recovery, ok := r.planThenExecuteLoopBudgetRecoveryPrompt(req, collectedResults, fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row", req.Tool, identicalCallRun), chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan)); ok {
+				if recovery, ok := r.planThenExecuteLoopBudgetRecoveryPrompt(req, runState.collectedResults, fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row", req.Tool, identicalCallRun), chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan)); ok {
 					planThenExecuteLoopBudgetRecoveryUsed = true
-					opts = forceVisibleActionChatOptions(opts)
+					runState.opts = forceVisibleActionChatOptions(runState.opts)
 
-					if recovery.TerminalOnly && chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
-						opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
-						opts.ToolChoice = "auto"
+					if recovery.TerminalOnly && chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan) {
+						runState.opts.Tools = filterChatOptionsTools(runState.opts.Tools, workspace.ToolNameSubmitPlan)
+						runState.opts.ToolChoice = "auto"
 					}
 
-					syncCurrentAllowedToolsFromOptions()
+					r.syncCurrentAllowedToolsFromOptions(runState)
 
 					if recovery.TerminalOnly {
-						forcePlanThenExecuteTerminalSurface("loop_budget_recovery")
+						r.forcePlanThenExecuteTerminalSurface(runState, "loop_budget_recovery")
 
-						currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
-						setCurrentAllowedTools(currentAllowedTools)
+						runState.currentAllowedTools = append(runState.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+						r.setCurrentAllowedTools(runState, runState.currentAllowedTools)
 					}
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
 					r.emitEvent(RunEvent{Role: "plan_then_execute_loop_budget_terminal_recovery", Content: recovery.Prompt})
 
 					continue
 				}
-			} else if recovery, ok := r.planThenExecuteIgnoredLoopBudgetRecoveryPrompt(req, collectedResults, fmt.Sprintf("the model repeated %s with the same arguments after a loop-budget recovery", req.Tool), chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan)); ok {
-				opts = forceVisibleActionChatOptions(opts)
-				if chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
-					opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
-					opts.ToolChoice = "auto"
+			} else if recovery, ok := r.planThenExecuteIgnoredLoopBudgetRecoveryPrompt(req, runState.collectedResults, fmt.Sprintf("the model repeated %s with the same arguments after a loop-budget recovery", req.Tool), chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan)); ok {
+				runState.opts = forceVisibleActionChatOptions(runState.opts)
+				if chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan) {
+					runState.opts.Tools = filterChatOptionsTools(runState.opts.Tools, workspace.ToolNameSubmitPlan)
+					runState.opts.ToolChoice = "auto"
 				}
 
-				syncCurrentAllowedToolsFromOptions()
-				forcePlanThenExecuteTerminalSurface("loop_budget_recovery_ignored")
+				r.syncCurrentAllowedToolsFromOptions(runState)
+				r.forcePlanThenExecuteTerminalSurface(runState, "loop_budget_recovery_ignored")
 
-				currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
-				setCurrentAllowedTools(currentAllowedTools)
+				runState.currentAllowedTools = append(runState.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+				r.setCurrentAllowedTools(runState, runState.currentAllowedTools)
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_loop_budget_terminal_recovery", Content: recovery.Prompt})
 
 				continue
@@ -3066,8 +2946,8 @@ func (r *Runner) runLegacySessionBody(
 				workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 				requestBudget.fingerprint.identicalRun = 0
 			} else if r.DoomLoopGate != nil {
-				if autonomyRecorder != nil {
-					autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
+				if runState.autonomyRecorder != nil {
+					runState.autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
 				}
 				r.emitEvent(RunEvent{Role: "doom_loop_guard", Content: fmt.Sprintf("model repeated %s %d times — approval required", req.Tool, identicalCallRun)})
 
@@ -3075,7 +2955,7 @@ func (r *Runner) runLegacySessionBody(
 					// User approved — reset the streak and let this call execute.
 					requestBudget.fingerprint.identicalRun = 0
 				} else {
-					if answer, reason, exhausted, ok := r.reviewRepairDoomLoopTerminalCloseout(collectedResults); ok {
+					if answer, reason, exhausted, ok := r.reviewRepairDoomLoopTerminalCloseout(runState.collectedResults); ok {
 						r.emitEvent(RunEvent{Role: "plan_then_execute_review_repair_doom_loop_closeout", Content: reason})
 
 						return finish(answer, nil, reason, exhausted)
@@ -3099,10 +2979,10 @@ func (r *Runner) runLegacySessionBody(
 					return finish(answer, err, "doom_loop_guard", true)
 				}
 			} else {
-				if autonomyRecorder != nil {
-					autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
+				if runState.autonomyRecorder != nil {
+					runState.autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
 				}
-				if answer, reason, exhausted, ok := r.reviewRepairDoomLoopTerminalCloseout(collectedResults); ok {
+				if answer, reason, exhausted, ok := r.reviewRepairDoomLoopTerminalCloseout(runState.collectedResults); ok {
 					r.emitEvent(RunEvent{Role: "plan_then_execute_review_repair_doom_loop_closeout", Content: reason})
 
 					return finish(answer, nil, reason, exhausted)
@@ -3123,8 +3003,8 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		requestBudget.setRecoveryContext(r.RuntimeBrief, collectedResults)
-		fingerprintDecision := attachLoopPolicyDecision(requestBudget.fingerprintDecision(policy, req, currentFingerprint))
+		requestBudget.setRecoveryContext(r.RuntimeBrief, runState.collectedResults)
+		fingerprintDecision := attachLoopPolicyDecision(requestBudget.fingerprintDecision(runState.policy, req, currentFingerprint))
 		if targetWriteReadyReadLoopDefers &&
 			(fingerprintDecision.ForceAnswerReason != "" || fingerprintDecision.RejectSummary != "") {
 			r.emitEvent(RunEvent{
@@ -3134,44 +3014,44 @@ func (r *Runner) runLegacySessionBody(
 			fingerprintDecision = runnerRequestBudgetDecision{}
 		}
 		if !planThenExecuteLoopBudgetRecoveryUsed && fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
-			if recovery, ok := r.planThenExecuteLoopBudgetRecoveryPrompt(req, collectedResults, fingerprintDecision.ForceAnswerPrompt, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan)); ok {
+			if recovery, ok := r.planThenExecuteLoopBudgetRecoveryPrompt(req, runState.collectedResults, fingerprintDecision.ForceAnswerPrompt, chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan)); ok {
 				planThenExecuteLoopBudgetRecoveryUsed = true
-				opts = forceVisibleActionChatOptions(opts)
+				runState.opts = forceVisibleActionChatOptions(runState.opts)
 
-				if recovery.TerminalOnly && chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
-					opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
-					opts.ToolChoice = "auto"
+				if recovery.TerminalOnly && chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan) {
+					runState.opts.Tools = filterChatOptionsTools(runState.opts.Tools, workspace.ToolNameSubmitPlan)
+					runState.opts.ToolChoice = "auto"
 				}
 
-				syncCurrentAllowedToolsFromOptions()
+				r.syncCurrentAllowedToolsFromOptions(runState)
 
 				if recovery.TerminalOnly {
-					forcePlanThenExecuteTerminalSurface("loop_budget_recovery")
+					r.forcePlanThenExecuteTerminalSurface(runState, "loop_budget_recovery")
 
-					currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
-					setCurrentAllowedTools(currentAllowedTools)
+					runState.currentAllowedTools = append(runState.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+					r.setCurrentAllowedTools(runState, runState.currentAllowedTools)
 				}
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_loop_budget_terminal_recovery", Content: recovery.Prompt})
 
 				continue
 			}
 		} else if planThenExecuteLoopBudgetRecoveryUsed && fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
-			if recovery, ok := r.planThenExecuteIgnoredLoopBudgetRecoveryPrompt(req, collectedResults, fingerprintDecision.ForceAnswerPrompt, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan)); ok {
-				opts = forceVisibleActionChatOptions(opts)
-				if chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
-					opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
-					opts.ToolChoice = "auto"
+			if recovery, ok := r.planThenExecuteIgnoredLoopBudgetRecoveryPrompt(req, runState.collectedResults, fingerprintDecision.ForceAnswerPrompt, chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan)); ok {
+				runState.opts = forceVisibleActionChatOptions(runState.opts)
+				if chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan) {
+					runState.opts.Tools = filterChatOptionsTools(runState.opts.Tools, workspace.ToolNameSubmitPlan)
+					runState.opts.ToolChoice = "auto"
 				}
 
-				syncCurrentAllowedToolsFromOptions()
-				forcePlanThenExecuteTerminalSurface("loop_budget_recovery_ignored")
+				r.syncCurrentAllowedToolsFromOptions(runState)
+				r.forcePlanThenExecuteTerminalSurface(runState, "loop_budget_recovery_ignored")
 
-				currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
-				setCurrentAllowedTools(currentAllowedTools)
+				runState.currentAllowedTools = append(runState.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+				r.setCurrentAllowedTools(runState, runState.currentAllowedTools)
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: recovery.Prompt})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_loop_budget_terminal_recovery", Content: recovery.Prompt})
 
 				continue
@@ -3197,10 +3077,10 @@ func (r *Runner) runLegacySessionBody(
 		if prompt, ok := closureSynthesisAfterIgnoredNudgePrompt(
 			r.agentName(),
 			r.RuntimeBrief,
-			collectedResults,
+			runState.collectedResults,
 			req,
-			delegatedReadOnlyAnswerReady,
-			postChildPacketActive,
+			runState.delegatedReadOnlyAnswerReady,
+			runState.postChildPacketActive,
 			delegatedReadOnlyDiminishingNudgeStage,
 			postChildDiminishingNudgeStage,
 		); ok {
@@ -3208,7 +3088,7 @@ func (r *Runner) runLegacySessionBody(
 			return finish(answer, err, "closure_synthesis_after_ignored_nudge", true)
 		}
 
-		if res := requestBudget.explorationDecision(r, req, collectedResults).apply(budgetDecisionContext{
+		if res := requestBudget.explorationDecision(r, req, runState.collectedResults).apply(budgetDecisionContext{
 			controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 		}); res.shouldFinish {
 			return finish(res.answer, res.err, res.reason, true)
@@ -3223,7 +3103,7 @@ func (r *Runner) runLegacySessionBody(
 			// The conversation lane has its own evidence-aligned nudge.
 			!r.lanePolicy().skipSynthesisNudge {
 
-			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls, runnerBriefRequiresMutation(r.RuntimeBrief)).apply(budgetDecisionContext{
+			if res := requestBudget.synthesisDecision(runState.policy, runState.metrics.ToolCalls, runnerBriefRequiresMutation(r.RuntimeBrief)).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 			}); res.shouldFinish {
 				return finish(res.answer, res.err, res.reason, true)
@@ -3232,26 +3112,26 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject && !recoveryReadAllowanceGrantedThisRequest {
+		if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(req, r.RuntimeBrief, runState.collectedResults); reject && !recoveryReadAllowanceGrantedThisRequest {
 			if r.planThenExecutePlannerPhase() {
-				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
+				emitToolAuthorizationSurfacePolicyResult(runState.autonomyRecorder, req, autonomy.PolicyReject)
 			}
 
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 
 			if r.planThenExecutePlannerPhase() {
 				if planThenExecutePostReadinessRejectionRequiresSubmitReadyTransition(summary) {
-					prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
-					transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_plan_required", "corrected_submit_plan_required")
+					prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, runState.collectedResults, chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan))
+					r.transitionPlanThenExecuteSubmitReadyTerminal(runState, prompt, "plan_then_execute_submit_plan_required", "corrected_submit_plan_required")
 				} else {
-					rebuildTools()
+					r.rebuildRunTools(runState)
 
-					opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+					runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-					syncPlanThenExecuteRecoveryAllowedTools()
-					r.refreshPlanThenExecuteTerminalToolSurface(&turnMessages, collectedResults, "corrected_submit_plan_required")
+					r.syncPlanThenExecuteRecoveryAllowedTools(runState)
+					r.refreshPlanThenExecuteTerminalToolSurface(&runState.turnMessages, runState.collectedResults, "corrected_submit_plan_required")
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
 					r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: errorText})
 				}
 			}
@@ -3266,9 +3146,9 @@ func (r *Runner) runLegacySessionBody(
 		if workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 			requestBudget.noteReadClassRequest(req)
 
-			metrics.ReadClassCalls++
+			runState.metrics.ReadClassCalls++
 
-			if res := requestBudget.readBudgetDecision(policy, req).apply(budgetDecisionContext{
+			if res := requestBudget.readBudgetDecision(runState.policy, req).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 			}); res.shouldFinish {
 				return finish(res.answer, res.err, res.reason, true)
@@ -3288,9 +3168,9 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		discoveryRedirect.SetAllowedTools(currentAllowedTools)
+		discoveryRedirect.SetAllowedTools(runState.currentAllowedTools)
 
-		if !implementationScopedReadFileRequestInExplicitScope(r.RuntimeBrief, collectedResults, req) {
+		if !implementationScopedReadFileRequestInExplicitScope(r.RuntimeBrief, runState.collectedResults, req) {
 			// Conversation-lane redirect: repeated read_file → code_navigate.
 			// The model often reads the same file in 50-line chunks when it
 			// could use read_symbol to get full symbol bodies in one call.
@@ -3311,8 +3191,8 @@ func (r *Runner) runLegacySessionBody(
 				// repeat terminates the turn. The soft-redirect path stays
 				// as a result append with no rejection counters bumped.
 				if decision.HardReject {
-					if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
-						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
+					if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, runState.collectedResults, runState.delegatedReadOnlyAnswerReady, runState.postChildPacketActive) {
+						runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
 						r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
 					}
 
@@ -3323,7 +3203,7 @@ func (r *Runner) runLegacySessionBody(
 					// tool N times and now hard-rejected, the model has
 					// shown it won't self-correct — remove the tool.
 					if tool := strings.TrimSpace(req.Tool); r.shouldHideToolAfterDiscoveryHardRedirect(req) && runState.hideSurfaceTool(OwnerDiscoveryRedirect, tool) {
-						rebuildTools()
+						r.rebuildRunTools(runState)
 						r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after hard-redirect", tool)})
 					}
 
@@ -3340,8 +3220,8 @@ func (r *Runner) runLegacySessionBody(
 				recorder.activeToolCall = activeToolCall
 				recorder.record(stepNumber, req, result, "discovery_redirect", runnerRecordOptions{})
 
-				if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
+				if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, runState.collectedResults, runState.delegatedReadOnlyAnswerReady, runState.postChildPacketActive) {
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
 					r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
 				}
 
@@ -3360,7 +3240,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if !evidenceFirstTargetPhaseCleared && evidenceFirstTargetReadUnlocked(r.RuntimeBrief, collectedResults) {
+		if !evidenceFirstTargetPhaseCleared && evidenceFirstTargetReadUnlocked(r.RuntimeBrief, runState.collectedResults) {
 			clearEvidenceFirstTargetReadActionClasses(rejectedActions, r.RuntimeBrief)
 
 			evidenceFirstTargetPhaseCleared = true
@@ -3369,8 +3249,8 @@ func (r *Runner) runLegacySessionBody(
 		repeatedDeadEndRecovered := false
 
 		if actionClass != "" && rejectedActions[actionClass] > 0 {
-			if redirected, redirectedRaw, ok := r.planThenExecuteRepeatedSymbolReadFallbackRedirect(req, collectedResults, currentAllowedTools); ok {
-				req, _ = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_read_failure_bounded")
+			if redirected, redirectedRaw, ok := r.planThenExecuteRepeatedSymbolReadFallbackRedirect(req, runState.collectedResults, runState.currentAllowedTools); ok {
+				req, _ = r.rewriteToolRequest(&runState.turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_read_failure_bounded")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				repeatedDeadEndRecovered = true
 			}
@@ -3391,7 +3271,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if r.Workspace.IsExploreMode() && workspace.IsBroadInspectionRequest(req) && executionState.broadInspectionCount >= 1 {
+		if r.Workspace.IsExploreMode() && workspace.IsBroadInspectionRequest(req) && runState.executionState.broadInspectionCount >= 1 {
 			answer, err, done := controller.rejectTool(
 				stepNumber,
 				activeToolCall,
@@ -3406,7 +3286,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if textutil.EqualTrimFold(req.Tool, workspace.ToolNameListFiles) && executionState.consecutiveListFiles >= 2 {
+		if textutil.EqualTrimFold(req.Tool, workspace.ToolNameListFiles) && runState.executionState.consecutiveListFiles >= 2 {
 			// Hide list_files from the manifest for the rest of the turn
 			// — at this point we've told the model "stop walking dirs"
 			// once already, and keeping list_files in the tool list just
@@ -3414,7 +3294,7 @@ func (r *Runner) runLegacySessionBody(
 			// more effective than rejecting each retry with a message the
 			// model already ignored.
 			if runState.hideSurfaceTool(OwnerListFilesGate, workspace.ToolNameListFiles) {
-				rebuildTools()
+				r.rebuildRunTools(runState)
 				r.emitEvent(RunEvent{Role: "tool_hidden", Content: "list_files hidden for rest of turn after chained-gate fire"})
 			}
 
@@ -3423,7 +3303,7 @@ func (r *Runner) runLegacySessionBody(
 				activeToolCall,
 				req,
 				"Chained list_files rejected",
-				fmt.Sprintf("you have run %d list_files calls in a row without inspecting any content. list_files is hidden for the rest of this turn. Take one narrower next step on a path you already discovered, or answer with the evidence already gathered.", executionState.consecutiveListFiles),
+				fmt.Sprintf("you have run %d list_files calls in a row without inspecting any content. list_files is hidden for the rest of this turn. Take one narrower next step on a path you already discovered, or answer with the evidence already gathered.", runState.executionState.consecutiveListFiles),
 			)
 			if done {
 				return finish(answer, err, "list_files_chain_budget_exhausted", true)
@@ -3432,13 +3312,13 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if executionState.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, r.RuntimeBrief) {
+		if runState.executionState.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, r.RuntimeBrief) {
 			answer, err, done := controller.rejectTool(
 				stepNumber,
 				activeToolCall,
 				req,
 				"Discovery consumption required before more broad discovery",
-				executionState.discoveryConsumptionError(),
+				runState.executionState.discoveryConsumptionError(),
 			)
 			if done {
 				return finish(answer, err, "discovery_consumption_budget_exhausted", true)
@@ -3447,7 +3327,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if executionState.needsNarrowingAfterBroad && workspace.IsBroadInspectionRequest(req) {
+		if runState.executionState.needsNarrowingAfterBroad && workspace.IsBroadInspectionRequest(req) {
 			errorText := "you already have a broad workspace overview. Either answer from the evidence already gathered, or take one narrower next step (a discovered handle, a single named symbol, or a focused search) before any further broad inspection."
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, "Broad inspection request rejected", errorText)
 
@@ -3477,7 +3357,7 @@ func (r *Runner) runLegacySessionBody(
 						summary := "Repeated tool request rejected"
 						errorText := "this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker."
 
-						if replaySummary, replayError, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req, lastToolResult, collectedResults); ok {
+						if replaySummary, replayError, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req, lastToolResult, runState.collectedResults); ok {
 							summary = replaySummary
 							errorText = replayError
 						}
@@ -3506,7 +3386,7 @@ func (r *Runner) runLegacySessionBody(
 						SetLastToolKey:      false,
 					})
 
-					if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+					if runState.policy.shouldStopForNoProgress(consecutiveNoProgress) {
 						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered. If the repeated request leaves one exact claim unsupported, state that uncertainty after the supported answer.")
 						return finish(answer, err, "no_progress_budget_exhausted", false)
 					}
@@ -3548,21 +3428,21 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if autonomyRecorder != nil {
+		if runState.autonomyRecorder != nil {
 			intentPolicyInput := normalizedPolicyInput
 			intentPolicyInput.EventType = autonomy.EventToolIntentClassified
 			intentPolicyInput.Source = "runner_tool_intent"
-			autonomyRecorder.emitIntentClassified(req, intentPolicyInput)
+			runState.autonomyRecorder.emitIntentClassified(req, intentPolicyInput)
 
 			pathPolicyInput := normalizedPolicyInput
 			pathPolicyInput.EventType = autonomy.EventPathRolesResolved
 			pathPolicyInput.Source = "runner_path_roles"
-			autonomyRecorder.emitPathRolesResolved(req, pathPolicyInput)
+			runState.autonomyRecorder.emitPathRolesResolved(req, pathPolicyInput)
 		}
 
 		if permissionDecision.Decision != toolpolicy.Allow {
 
-			if autonomyRecorder != nil {
+			if runState.autonomyRecorder != nil {
 				decision := autonomy.PolicyDeny
 				resultLabel := "denied"
 
@@ -3571,7 +3451,7 @@ func (r *Runner) runLegacySessionBody(
 					resultLabel = "approval_required"
 				}
 
-				autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+				runState.autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 					Decision:         decision,
 					PackID:           autonomy.ContractPackToolAuthorization,
 					InvariantID:      toolAuthorizationPolicyInvariant,
@@ -3597,7 +3477,7 @@ func (r *Runner) runLegacySessionBody(
 			if workspaceToolRulesPermissionDeny(permissionDecision) {
 				answer := workspaceToolRulesPermissionDenyAnswer(req, result)
 
-				emitCompletionStatus("blocked", "workspace_tool_rules_deny", "workspace_tool_rules_deny", collectedResults, true)
+				emitCompletionStatus("blocked", "workspace_tool_rules_deny", "workspace_tool_rules_deny", runState.collectedResults, true)
 
 				return finish(answer, nil, "workspace_tool_rules_deny", true)
 			}
@@ -3610,8 +3490,8 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if autonomyRecorder != nil {
-			autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+		if runState.autonomyRecorder != nil {
+			runState.autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 				Decision:      autonomy.PolicyAllow,
 				PackID:        autonomy.ContractPackToolAuthorization,
 				InvariantID:   toolAuthorizationPolicyInvariant,
@@ -3640,7 +3520,7 @@ func (r *Runner) runLegacySessionBody(
 				continue
 			}
 
-			result := r.runChildTask(ctx, req, opts)
+			result := r.runChildTask(ctx, req, runState.opts)
 
 			recorder.activeToolCall = activeToolCall
 
@@ -3648,7 +3528,7 @@ func (r *Runner) runLegacySessionBody(
 				requestBudget.readOnlyChildTaskSatisfied = true
 				runState.hideSurfaceTools(OwnerTaskDelegation, workspace.ToolNameTask)
 
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
 				childEvidence := newToolResultEvidenceProjection([]workspace.ToolResult{result})
 				if childEvidence.hasAnswerableDelegatedPacket(r.RuntimeBrief) {
@@ -3656,13 +3536,13 @@ func (r *Runner) runLegacySessionBody(
 
 					requestBudget.broadEvidenceDelegationSatisfied = true
 					r.RuntimeBrief.Constraints = textutil.Merge(r.RuntimeBrief.Constraints, []string{"child_packet_available"})
-					postChildPacketActive = true
+					runState.postChildPacketActive = true
 					postChildFollowupReads = 0
 					postChildDiminishingNudgeStage = 0
 					r.RuntimeBrief.EvidencePaths = textutil.Merge(r.RuntimeBrief.EvidencePaths, evidencePaths)
 					requestBudget.noteReadOnlyChildPacket(evidencePaths)
 					runState.hideSurfaceTools(OwnerChildPacket, workspace.BroadDiscoveryToolNames()...)
-					rebuildTools()
+					r.rebuildRunTools(runState)
 
 					requestBudget.postChild.readCalls = 0
 
@@ -3681,7 +3561,7 @@ func (r *Runner) runLegacySessionBody(
 						IncludeProbeSuggestions: true,
 					})
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_boundary", Content: nudge})
 				}
 			}
@@ -3691,8 +3571,8 @@ func (r *Runner) runLegacySessionBody(
 				ResetRejected: true,
 			})
 
-			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-				if shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults) {
+			if runState.policy.shouldStopForNoProgress(consecutiveNoProgress) {
+				if shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, runState.collectedResults) {
 					continue
 				}
 
@@ -3705,7 +3585,7 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if strings.TrimSpace(req.Tool) == workspace.ToolNameTaskLedger {
-			result := taskLedger.apply(req, collectedResults)
+			result := taskLedger.apply(req, runState.collectedResults)
 
 			recorder.activeToolCall = activeToolCall
 			recorder.record(stepNumber, req, result, "task_ledger_result", runnerRecordOptions{
@@ -3713,7 +3593,7 @@ func (r *Runner) runLegacySessionBody(
 				ResetRejected: true,
 			})
 
-			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+			if runState.policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 				return finish(answer, err, "no_progress_budget_exhausted", false)
 			}
@@ -3731,12 +3611,12 @@ func (r *Runner) runLegacySessionBody(
 				SetLastToolKey: true,
 			})
 
-			if checklist := r.requiredEditPathsProgressMessage(req, result, collectedResults); checklist != "" {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: checklist})
+			if checklist := r.requiredEditPathsProgressMessage(req, result, runState.collectedResults); checklist != "" {
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: checklist})
 				r.emitEvent(RunEvent{Role: "required_edit_paths_progress", Content: checklist})
 			}
 
-			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+			if runState.policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the delegated edit. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 				return finish(answer, err, "no_progress_budget_exhausted", false)
 			}
@@ -3769,8 +3649,8 @@ func (r *Runner) runLegacySessionBody(
 				r.markConcreteSourceEvidenceObserved(*guarded)
 
 				if strings.TrimSpace(guarded.Summary) == "Write approval required" {
-					if autonomyRecorder != nil {
-						autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+					if runState.autonomyRecorder != nil {
+						runState.autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 							Decision:         autonomy.PolicyAsk,
 							PackID:           autonomy.ContractPackToolAuthorization,
 							InvariantID:      toolAuthorizationPolicyInvariant,
@@ -3792,7 +3672,7 @@ func (r *Runner) runLegacySessionBody(
 					return finish(answer, err, "guard_rejection_budget_exhausted", true)
 				}
 
-				if bootstrapReadReminder && policy.shouldStopForNoProgress(consecutiveNoProgress) {
+				if bootstrapReadReminder && runState.policy.shouldStopForNoProgress(consecutiveNoProgress) {
 					answer, err := controller.completeWithoutMoreToolsWithReason("The implementation target was already available from bootstrap evidence, but progress stalled on duplicate reads. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 					return finish(answer, err, "no_progress_budget_exhausted", false)
 				}
@@ -3813,13 +3693,13 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if summary, errorText, reject := requiredEditPathScopeRejection(req, r.RuntimeBrief); reject {
-			if exactAnchorWriteOnlyActive && workspace.IsWorkspaceWriteTool(req.Tool) {
+			if runState.exactAnchorWriteOnlyActive && workspace.IsWorkspaceWriteTool(req.Tool) {
 				exactAnchorWriteFailures++
 			}
 
-			if autonomyRecorder != nil {
-				autonomyRecorder.emitWriteGate(req, autonomy.PolicyReject, "required_edit_scope_rejected", mapKeys(newToolResultEvidenceProjection(collectedResults).ChangedPathSet()))
-				autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+			if runState.autonomyRecorder != nil {
+				runState.autonomyRecorder.emitWriteGate(req, autonomy.PolicyReject, "required_edit_scope_rejected", mapKeys(newToolResultEvidenceProjection(runState.collectedResults).ChangedPathSet()))
+				runState.autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 					Decision:   autonomy.PolicyDeny,
 					ReasonCode: "required_edit_scope_rejected",
 					Result:     "denied",
@@ -3829,10 +3709,10 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
-			if exactAnchorWriteOnlyActive && (rejectionRecoveryNudgeUsed || exactAnchorWriteFailures >= 3) {
+			if runState.exactAnchorWriteOnlyActive && (rejectionRecoveryNudgeUsed || exactAnchorWriteFailures >= 3) {
 				result := workspace.ToolResult{Tool: req.Tool, Summary: summary, Error: errorText}
-				if blocker, ok := r.exactAnchorRepeatedWriteFailureBlockerAnswer(req, result, collectedResults); ok {
-					emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", collectedResults, true)
+				if blocker, ok := r.exactAnchorRepeatedWriteFailureBlockerAnswer(req, result, runState.collectedResults); ok {
+					emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", runState.collectedResults, true)
 
 					return finish(blocker, nil, "exact_anchor_write_failure_repeated", true)
 				}
@@ -3854,9 +3734,9 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if summary, errorText, reject := sourceEditVerificationRejection(req, r.RuntimeBrief, collectedResults); reject {
-			if autonomyRecorder != nil {
-				autonomyRecorder.emitVerificationGate(req, autonomy.PolicyReject, "source_edit_verification_required", "pending")
+		if summary, errorText, reject := sourceEditVerificationRejection(req, r.RuntimeBrief, runState.collectedResults); reject {
+			if runState.autonomyRecorder != nil {
+				runState.autonomyRecorder.emitVerificationGate(req, autonomy.PolicyReject, "source_edit_verification_required", "pending")
 			}
 
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
@@ -3867,12 +3747,12 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if prompt, ok := sourceEditCloseoutPrompt(req, r.RuntimeBrief, collectedResults); ok {
+		if prompt, ok := sourceEditCloseoutPrompt(req, r.RuntimeBrief, runState.collectedResults); ok {
 			answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
 			return finish(answer, err, "source_edit_closeout_after_verification", true)
 		}
 
-		if executionState.needsCheckpoint(r.CheckpointPolicy, req) {
+		if runState.executionState.needsCheckpoint(r.CheckpointPolicy, req) {
 			checkpoint, checkpointErr := CaptureGitCheckpoint(ctx, r.Workspace.Root())
 			if checkpointErr != nil {
 				result := workspace.ToolResult{
@@ -3890,15 +3770,15 @@ func (r *Runner) runLegacySessionBody(
 				continue
 			}
 
-			executionState.markCheckpointCreated()
+			runState.executionState.markCheckpointCreated()
 			r.emitEvent(marshalRunEvent("checkpoint", checkpoint))
 		}
 
-		if executionState.shouldRequireVerification(req, r.RuntimeBrief) {
-			summary, errorText := verificationRequiredAfterWritesMessage(r.RuntimeBrief, executionState.writesSinceVerification)
+		if runState.executionState.shouldRequireVerification(req, r.RuntimeBrief) {
+			summary, errorText := verificationRequiredAfterWritesMessage(r.RuntimeBrief, runState.executionState.writesSinceVerification)
 
-			if autonomyRecorder != nil {
-				autonomyRecorder.emitVerificationGate(req, autonomy.PolicyReject, "verification_required_after_writes", "pending")
+			if runState.autonomyRecorder != nil {
+				runState.autonomyRecorder.emitVerificationGate(req, autonomy.PolicyReject, "verification_required_after_writes", "pending")
 			}
 
 			answer, err, done := controller.rejectTool(
@@ -3936,13 +3816,13 @@ func (r *Runner) runLegacySessionBody(
 				Role:    "plan_then_execute_review_repair_guard",
 				Content: guard.Reason,
 			})
-		} else if guard := r.preflightPlanThenExecuteSubmitPlanGroundingGuard(req, collectedResults); guard.Intercepted {
+		} else if guard := r.preflightPlanThenExecuteSubmitPlanGroundingGuard(req, runState.collectedResults); guard.Intercepted {
 			result = guard.Result
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_plan_guard",
 				Content: guard.Reason,
 			})
-		} else if guard := r.preflightPlanThenExecuteSubmitPlanHistoryGuard(req, collectedResults); guard.Intercepted {
+		} else if guard := r.preflightPlanThenExecuteSubmitPlanHistoryGuard(req, runState.collectedResults); guard.Intercepted {
 			result = guard.Result
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_plan_guard",
@@ -3966,27 +3846,27 @@ func (r *Runner) runLegacySessionBody(
 				Role:    "plan_then_execute_review_repair_guard",
 				Content: guard.Reason,
 			})
-		} else if intercept := r.preflightVerificationOnAlreadyEditedPath(req, collectedResults); intercept.Intercepted {
+		} else if intercept := r.preflightVerificationOnAlreadyEditedPath(req, runState.collectedResults); intercept.Intercepted {
 			result = intercept.Result
 			r.emitEvent(RunEvent{
 				Role:    "verification_intercept_already_edited",
 				Content: intercept.Reason,
 			})
-		} else if intercept := r.preflightScopedImplementationBoundedSourceRead(req, collectedResults); intercept.Intercepted {
+		} else if intercept := r.preflightScopedImplementationBoundedSourceRead(req, runState.collectedResults); intercept.Intercepted {
 			result = intercept.Result
 			r.emitEvent(RunEvent{
 				Role:    "scoped_bounded_source_read",
 				Content: intercept.Reason,
 			})
-		} else if intercept := r.preflightScopedImplementationLargeWriteFileReplacement(req, collectedResults); intercept.Intercepted {
+		} else if intercept := r.preflightScopedImplementationLargeWriteFileReplacement(req, runState.collectedResults); intercept.Intercepted {
 			result = intercept.Result
 			r.emitEvent(RunEvent{
 				Role:    "scoped_large_write_file_guard",
 				Content: intercept.Reason,
 			})
 		} else {
-			req = r.planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req, collectedResults)
-			switch precheck := r.preflightApplyPatchAgainstChangedPaths(req, collectedResults); precheck.Action {
+			req = r.planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req, runState.collectedResults)
+			switch precheck := r.preflightApplyPatchAgainstChangedPaths(req, runState.collectedResults); precheck.Action {
 			case applyPatchPreflightAllSkipped:
 				result = precheck.Result
 				r.emitEvent(RunEvent{
@@ -4022,33 +3902,33 @@ func (r *Runner) runLegacySessionBody(
 		})
 		r.markConcreteSourceEvidenceObserved(result)
 
-		if !recoveryReadAllowanceGrantedThisRequest && implementationTargetSourceReadEstablishedWriteReady(r.RuntimeBrief, req, result, collectedResults) {
+		if !recoveryReadAllowanceGrantedThisRequest && implementationTargetSourceReadEstablishedWriteReady(r.RuntimeBrief, req, result, runState.collectedResults) {
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
 				Content: fmt.Sprintf("allowed %s source read to establish target-write-ready evidence on %q", strings.TrimSpace(req.Tool), NormalizeRunnerPath(req.Path)),
 			})
 		}
 
-		if completionGateRejections > 0 && strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.Tool) != "completion_gate" {
-			completionGateRejections = 0
+		if runState.completionGateRejections > 0 && strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.Tool) != "completion_gate" {
+			runState.completionGateRejections = 0
 
 			r.emitEvent(RunEvent{Role: "completion_gate_recovery_progress", Content: "successful tool result reset the completion-gate retry streak"})
 		}
 
-		update := executionState.applyResult(req, result, currentFingerprint, r.Workspace, &requestBudget)
-		if autonomyRecorder != nil && workspaceWriteResultCompleted(req, result) {
-			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", uniqueSortedRunnerPaths(newToolResultEvidenceRecord(result).ChangedPathList()))
+		update := runState.executionState.applyResult(req, result, currentFingerprint, r.Workspace, &requestBudget)
+		if runState.autonomyRecorder != nil && workspaceWriteResultCompleted(req, result) {
+			runState.autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", uniqueSortedRunnerPaths(newToolResultEvidenceRecord(result).ChangedPathList()))
 		}
 
 		if deferredGitHistorySubmitPlan != nil && slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
 			submitReq := *deferredGitHistorySubmitPlan
-			if len(r.submitPlanPathsMissingGitHistory(submitReq, collectedResults)) == 0 {
+			if len(r.submitPlanPathsMissingGitHistory(submitReq, runState.collectedResults)) == 0 {
 				submitRaw := deferredGitHistorySubmitPlanRaw
 				if strings.TrimSpace(submitRaw) == "" {
 					submitRaw = marshalToolRequestRaw(submitReq)
 				}
 
-				metrics.ToolCalls++
+				runState.metrics.ToolCalls++
 
 				if onToolRequest != nil {
 					profile := workspace.DiscoveryProfileForRequest(submitReq)
@@ -4069,10 +3949,10 @@ func (r *Runner) runLegacySessionBody(
 
 				var submitResult workspace.ToolResult
 
-				if guard := r.preflightPlanThenExecuteSubmitPlanGroundingGuard(submitReq, collectedResults); guard.Intercepted {
+				if guard := r.preflightPlanThenExecuteSubmitPlanGroundingGuard(submitReq, runState.collectedResults); guard.Intercepted {
 					submitResult = guard.Result
 					r.emitEvent(RunEvent{Role: "plan_then_execute_plan_guard", Content: guard.Reason})
-				} else if guard := r.preflightPlanThenExecuteSubmitPlanHistoryGuard(submitReq, collectedResults); guard.Intercepted {
+				} else if guard := r.preflightPlanThenExecuteSubmitPlanHistoryGuard(submitReq, runState.collectedResults); guard.Intercepted {
 					submitResult = guard.Result
 					r.emitEvent(RunEvent{Role: "plan_then_execute_plan_guard", Content: guard.Reason})
 				} else if guard := r.preflightPlanThenExecuteSubmitPlanCoverageGuard(submitReq); guard.Intercepted {
@@ -4091,14 +3971,14 @@ func (r *Runner) runLegacySessionBody(
 
 				req = submitReq
 				result = submitResult
-				update = executionState.applyResult(submitReq, submitResult, toolRequestKey(submitReq), r.Workspace, &requestBudget)
+				update = runState.executionState.applyResult(submitReq, submitResult, toolRequestKey(submitReq), r.Workspace, &requestBudget)
 				deferredGitHistorySubmitPlan = nil
 				deferredGitHistorySubmitPlanRaw = ""
 			}
 		}
 
 		if deferredSourceEvidenceWrite != nil && slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
-			if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterHistoryEvidence(collectedResults); replay {
+			if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterHistoryEvidence(runState.collectedResults); replay {
 				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
 					"agent":          r.agentName(),
 					"original_tool":  strings.TrimSpace(req.Tool),
@@ -4108,7 +3988,7 @@ func (r *Runner) runLegacySessionBody(
 					"reason":         "implementation_write_after_history_evidence_replay",
 				}))
 
-				metrics.ToolCalls++
+				runState.metrics.ToolCalls++
 
 				if onToolRequest != nil {
 					profile := workspace.DiscoveryProfileForRequest(replayReq)
@@ -4139,7 +4019,7 @@ func (r *Runner) runLegacySessionBody(
 
 				req = replayReq
 				result = replayResult
-				update = executionState.applyResult(replayReq, replayResult, toolRequestKey(replayReq), r.Workspace, &requestBudget)
+				update = runState.executionState.applyResult(replayReq, replayResult, toolRequestKey(replayReq), r.Workspace, &requestBudget)
 				deferredSourceEvidenceWrite = nil
 			}
 		}
@@ -4148,14 +4028,14 @@ func (r *Runner) runLegacySessionBody(
 			verifyReq := *replayedOverVerificationRequest
 			verifyRaw := marshalToolRequestRaw(verifyReq)
 
-			if hasPendingVerificationAfterWrites(collectedResults, r.RuntimeBrief) ||
-				sourceEditsNeedSemanticVerification(r.RuntimeBrief, collectedResults) {
+			if hasPendingVerificationAfterWrites(runState.collectedResults, r.RuntimeBrief) ||
+				sourceEditsNeedSemanticVerification(r.RuntimeBrief, runState.collectedResults) {
 
-				prompt := postWriteVerificationRequiredPrompt(collectedResults, plannerOwnsVerification(r.RuntimeBrief))
+				prompt := postWriteVerificationRequiredPrompt(runState.collectedResults, plannerOwnsVerification(r.RuntimeBrief))
 				r.emitEvent(RunEvent{Role: "post_write_verification_required", Content: prompt})
 			}
 
-			metrics.ToolCalls++
+			runState.metrics.ToolCalls++
 
 			if onToolRequest != nil {
 				profile := workspace.DiscoveryProfileForRequest(verifyReq)
@@ -4186,13 +4066,13 @@ func (r *Runner) runLegacySessionBody(
 
 			req = verifyReq
 			result = verifyResult
-			update = executionState.applyResult(verifyReq, verifyResult, toolRequestKey(verifyReq), r.Workspace, &requestBudget)
+			update = runState.executionState.applyResult(verifyReq, verifyResult, toolRequestKey(verifyReq), r.Workspace, &requestBudget)
 		}
 
 		if workspaceWriteResultCompleted(req, result) {
-			if verifyReq, ok := deterministicPostWriteVerificationRequest(collectedResults, r.RuntimeBrief); ok {
+			if verifyReq, ok := deterministicPostWriteVerificationRequest(runState.collectedResults, r.RuntimeBrief); ok {
 				verifyRaw := marshalToolRequestRaw(verifyReq)
-				metrics.ToolCalls++
+				runState.metrics.ToolCalls++
 
 				if onToolRequest != nil {
 					profile := workspace.DiscoveryProfileForRequest(verifyReq)
@@ -4223,56 +4103,56 @@ func (r *Runner) runLegacySessionBody(
 
 				req = verifyReq
 				result = verifyResult
-				update = executionState.applyResult(verifyReq, verifyResult, toolRequestKey(verifyReq), r.Workspace, &requestBudget)
+				update = runState.executionState.applyResult(verifyReq, verifyResult, toolRequestKey(verifyReq), r.Workspace, &requestBudget)
 			}
 		}
 
 		if update.ResetVerificationGuards {
 			clearVerificationGateFingerprints(requestBudget.fingerprint.rejected)
 			clearRunnerStringIntMap(rejectedActions)
-			rebuildTools()
+			r.rebuildRunTools(runState)
 		}
 
 		if workspaceWriteResultCompleted(req, result) &&
-			(hasPendingVerificationAfterWrites(collectedResults, r.RuntimeBrief) ||
-				sourceEditsNeedSemanticVerification(r.RuntimeBrief, collectedResults)) {
+			(hasPendingVerificationAfterWrites(runState.collectedResults, r.RuntimeBrief) ||
+				sourceEditsNeedSemanticVerification(r.RuntimeBrief, runState.collectedResults)) {
 
-			prompt := postWriteVerificationRequiredPrompt(collectedResults, plannerOwnsVerification(r.RuntimeBrief))
+			prompt := postWriteVerificationRequiredPrompt(runState.collectedResults, plannerOwnsVerification(r.RuntimeBrief))
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-			opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
-			opts = forceVisibleActionChatOptions(opts)
+			runState.opts = completionGateRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
+			runState.opts = forceVisibleActionChatOptions(runState.opts)
 
-			rebuildTools()
+			r.rebuildRunTools(runState)
 			r.emitEvent(RunEvent{Role: "post_write_verification_required", Content: prompt})
 		}
 
-		if !terminalSubmitPlanNativeTools() && len(r.remainingRequiredEditPaths(collectedResults)) > 0 &&
-			implementationRequiredPathAnchorsReady(r.RuntimeBrief, collectedResults) &&
-			(!r.planThenExecutePlannerPhase() || planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, collectedResults)) {
+		if !r.terminalSubmitPlanNativeTools(runState) && len(r.remainingRequiredEditPaths(runState.collectedResults)) > 0 &&
+			implementationRequiredPathAnchorsReady(r.RuntimeBrief, runState.collectedResults) &&
+			(!r.planThenExecutePlannerPhase() || planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, runState.collectedResults)) {
 
-			opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, false)
+			runState.opts = completionGateRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, false)
 			r.emitEvent(RunEvent{Role: "required_edit_paths_visible_write_mode", Content: "all remaining required edit paths have anchor-ready source evidence; textual backend recovery will disable hidden thinking and require visible write/blocker output"})
 		}
 
 		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
 
-		if autonomyRecorder != nil && update.VerificationState != "" {
+		if runState.autonomyRecorder != nil && update.VerificationState != "" {
 			decision := autonomy.PolicyAllow
 			if update.VerificationState == "failed" {
 				decision = autonomy.PolicyReject
 			}
 
-			autonomyRecorder.emitVerificationGate(req, decision, "verification_result_"+update.VerificationState, update.VerificationState)
+			runState.autonomyRecorder.emitVerificationGate(req, decision, "verification_result_"+update.VerificationState, update.VerificationState)
 		}
 
 		if update.VerificationState == "done" &&
 			runnerBriefRequiresMutation(r.RuntimeBrief) &&
 			len(r.RuntimeBrief.RequiredEditPaths) == 0 &&
-			len(newToolResultEvidenceProjection(collectedResults).ChangedPathSet()) > 0 &&
-			!hasPendingVerificationAfterWrites(collectedResults, r.RuntimeBrief) &&
-			!sourceEditsNeedSemanticVerification(r.RuntimeBrief, collectedResults) {
+			len(newToolResultEvidenceProjection(runState.collectedResults).ChangedPathSet()) > 0 &&
+			!hasPendingVerificationAfterWrites(runState.collectedResults, r.RuntimeBrief) &&
+			!sourceEditsNeedSemanticVerification(r.RuntimeBrief, runState.collectedResults) {
 
 			_ = r.emitPostWriteVerificationTelemetry(req, result)
 
@@ -4281,43 +4161,43 @@ func (r *Runner) runLegacySessionBody(
 			return finish(answer, err, "source_edit_closeout_after_verification", false)
 		}
 
-		if exactAnchorWriteOnlyActive && workspaceWriteResultCompleted(req, result) {
-			exactAnchorWriteOnlyActive = false
+		if runState.exactAnchorWriteOnlyActive && workspaceWriteResultCompleted(req, result) {
+			runState.exactAnchorWriteOnlyActive = false
 
 			runState.releaseSurfaceHiddenTools(OwnerExactAnchorRead)
-			rebuildTools()
+			r.rebuildRunTools(runState)
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "read-class tools restored after successful exact-anchor write"})
-		} else if exactAnchorWriteOnlyActive && workspace.IsWorkspaceWriteTool(req.Tool) && strings.TrimSpace(result.Error) != "" {
+		} else if runState.exactAnchorWriteOnlyActive && workspace.IsWorkspaceWriteTool(req.Tool) && strings.TrimSpace(result.Error) != "" {
 			exactAnchorWriteFailures++
 
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "read-class tools remain hidden after failed exact-anchor write"})
 
 			if rejectionRecoveryNudgeUsed || exactAnchorWriteFailures >= 3 {
-				if answer, ok := r.exactAnchorRepeatedWriteFailureBlockerAnswer(req, result, collectedResults); ok {
-					emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", collectedResults, true)
+				if answer, ok := r.exactAnchorRepeatedWriteFailureBlockerAnswer(req, result, runState.collectedResults); ok {
+					emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", runState.collectedResults, true)
 
 					return finish(answer, nil, "exact_anchor_write_failure_repeated", true)
 				}
 			}
 		}
 
-		if implementationWriteOnlyRecoveryActive && workspaceWriteResultCompleted(req, result) && len(r.remainingRequiredEditPaths(collectedResults)) == 0 {
-			implementationWriteOnlyRecoveryActive = false
+		if runState.implementationWriteOnlyRecoveryActive && workspaceWriteResultCompleted(req, result) && len(r.remainingRequiredEditPaths(runState.collectedResults)) == 0 {
+			runState.implementationWriteOnlyRecoveryActive = false
 			implementationWriteOnlyNonWriteRejects = 0
-			requiredPathCompletionRecoveryActive = false
+			runState.requiredPathCompletionRecoveryActive = false
 
 			runState.releaseImplementationWriteOnlyTools()
-			rebuildTools()
+			r.rebuildRunTools(runState)
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "non-write tools restored after required implementation writes completed"})
 		}
 
-		if prompt, ok := r.scratchpadDeliverableFailedEvidenceNudge(req, result, collectedResults); ok {
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+		if prompt, ok := r.scratchpadDeliverableFailedEvidenceNudge(req, result, runState.collectedResults); ok {
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_failed_evidence_nudge", Content: prompt})
 		}
 
-		if checklist := r.requiredEditPathsProgressMessage(req, result, collectedResults); checklist != "" {
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: checklist})
+		if checklist := r.requiredEditPathsProgressMessage(req, result, runState.collectedResults); checklist != "" {
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: checklist})
 			r.emitEvent(RunEvent{Role: "required_edit_paths_progress", Content: checklist})
 		}
 
@@ -4346,144 +4226,144 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) {
-			surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+			surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, runState.collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
 			prompt := planThenExecuteSourceSatisfiedTerminalRequiredPrompt(r.RuntimeBrief, result)
 			eventRole := "plan_then_execute_source_satisfied_terminal_required"
 
 			if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh {
-				if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(collectedResults); ok {
-					prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, collectedResults, rejected, rejectedAt)
+				if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(runState.collectedResults); ok {
+					prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, runState.collectedResults, rejected, rejectedAt)
 				}
 
 				eventRole = "plan_then_execute_anchor_refresh_required"
 			}
 
-			refreshPlanThenExecuteTerminalSurface("source_satisfied_terminal_required")
+			r.refreshPlanThenExecuteTerminalSurface(runState, "source_satisfied_terminal_required")
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-			rebuildTools()
+			r.rebuildRunTools(runState)
 
 			if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh || surface.Kind == PlanExecuteRecoverySurfaceHistoryPending {
-				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 			} else {
-				opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				runState.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 			}
 
-			syncPlanThenExecuteRecoveryAllowedTools()
+			r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 			r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
 
 			continue
 		}
 
 		if r.planThenExecutePlannerPhase() && planThenExecuteCandidateSourceReadyResult(result) {
-			prompt := r.planThenExecuteSubmitReadyTerminalPrompt(result.Error, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
-			transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_source_ready")
+			prompt := r.planThenExecuteSubmitReadyTerminalPrompt(result.Error, runState.collectedResults, chatOptionsExposeTool(runState.opts, workspace.ToolNameSubmitPlan))
+			r.transitionPlanThenExecuteSubmitReadyTerminal(runState, prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_source_ready")
 
 			continue
 		}
 
 		if r.planThenExecutePlannerPhase() && planThenExecuteSubmitPlanRejectedForCorrection(req, result) {
-			recoveryState := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+			recoveryState := DerivePlanExecutePlanningState(r.RuntimeBrief, runState.collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
 
 			if planThenExecuteSubmitPlanGroundingRejectedResult(result) {
-				replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
+				replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&runState.turnMessages, req, result)
 
 				eventRole := "plan_then_execute_grounding_required"
 				prompt := RenderPlanExecuteRecoveryPlan(planThenExecuteGroundingRequiredRecoveryPlan())
 
 				if recoveryState.Mode == PlanExecutePlanningModeAnchorRefresh {
-					rejectedAt := len(collectedResults) - 1
+					rejectedAt := len(runState.collectedResults) - 1
 
-					prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, collectedResults, result, rejectedAt)
+					prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, runState.collectedResults, result, rejectedAt)
 					eventRole = "plan_then_execute_anchor_refresh_required"
 				}
 
-				refreshPlanThenExecuteTerminalSurface("submit_plan_grounding_rejected")
+				r.refreshPlanThenExecuteTerminalSurface(runState, "submit_plan_grounding_rejected")
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
-				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-				syncPlanThenExecuteRecoveryAllowedTools()
+				r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 				r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
 
 				continue
 			}
 
-			replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
+			replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&runState.turnMessages, req, result)
 
-			rejectedAt := len(collectedResults) - 1
-			refreshNote := planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, result, rejectedAt)
-			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + planThenExecuteSubmitCorrectionOutcomeInstruction(r.RuntimeBrief, collectedResults) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
+			rejectedAt := len(runState.collectedResults) - 1
+			refreshNote := planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, runState.collectedResults, result, rejectedAt)
+			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + planThenExecuteSubmitCorrectionOutcomeInstruction(r.RuntimeBrief, runState.collectedResults) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
 			eventRole := "plan_then_execute_submit_plan_required"
 
-			if planThenExecuteUnscopedEmptySubmitPlanRejected(r.RuntimeBrief, collectedResults) {
-				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyAllow)
+			if planThenExecuteUnscopedEmptySubmitPlanRejected(r.RuntimeBrief, runState.collectedResults) {
+				emitToolAuthorizationSurfacePolicyResult(runState.autonomyRecorder, req, autonomy.PolicyAllow)
 				prompt = RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
 				eventRole = "plan_then_execute_empty_submit_plan_recovery"
 			} else if recoveryState.Mode == PlanExecutePlanningModeAnchorRefresh {
-				prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, collectedResults, result, rejectedAt)
+				prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, runState.collectedResults, result, rejectedAt)
 				eventRole = "plan_then_execute_anchor_refresh_required"
-			} else if terminalSubmitPlanNativeTools() {
+			} else if r.terminalSubmitPlanNativeTools(runState) {
 				prompt = planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, result)
 			}
 
-			refreshPlanThenExecuteTerminalSurface("submit_plan_rejected")
+			r.refreshPlanThenExecuteTerminalSurface(runState, "submit_plan_rejected")
 
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-			rebuildTools()
+			r.rebuildRunTools(runState)
 
-			opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-			syncPlanThenExecuteRecoveryAllowedTools()
+			r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 			r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
 
 			continue
 		}
 
 		if !planThenExecuteReadinessNudged || !planThenExecuteSubmitOnlyReadinessNudged {
-			if nudge := planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, collectedResults); nudge != "" {
-				nextUnread := firstPlanThenExecuteUnreadRequiredPath(r.requiredEditCoveragePaths(), planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, collectedResults))
+			if nudge := planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, runState.collectedResults); nudge != "" {
+				nextUnread := firstPlanThenExecuteUnreadRequiredPath(r.requiredEditCoveragePaths(), planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, runState.collectedResults))
 				if nextUnread != "" && nextUnread != planThenExecuteUnreadSourceNudgedFor {
 					planThenExecuteUnreadSourceNudgedFor = nextUnread
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
-					opts = planThenExecuteUnreadRequiredSourceChatOptions(opts, r.RuntimeBrief, collectedResults)
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					runState.opts = planThenExecuteUnreadRequiredSourceChatOptions(runState.opts, r.RuntimeBrief, runState.collectedResults)
 
-					syncCurrentAllowedToolsFromOptions()
+					r.syncCurrentAllowedToolsFromOptions(runState)
 					r.emitEvent(RunEvent{Role: "plan_then_execute_unread_source_nudge", Content: nudge})
 				}
 			}
 
-			if nudge := planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, collectedResults); nudge != "" {
-				submitOnlyReadiness := planThenExecuteTerminalSubmitPlanSurfaceReady(r.RuntimeBrief, collectedResults)
+			if nudge := planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, runState.collectedResults); nudge != "" {
+				submitOnlyReadiness := planThenExecuteTerminalSubmitPlanSurfaceReady(r.RuntimeBrief, runState.collectedResults)
 				if submitOnlyReadiness || !planThenExecuteReadinessNudged {
 					planThenExecuteReadinessNudged = true
 
 					if submitOnlyReadiness {
 						planThenExecuteSubmitOnlyReadinessNudged = true
-						refreshPlanThenExecuteTerminalSurface("readiness")
+						r.refreshPlanThenExecuteTerminalSurface(runState, "readiness")
 
-						if terminalSubmitPlanNativeTools() {
+						if r.terminalSubmitPlanNativeTools(runState) {
 							nudge = planThenExecuteNativeSubmitPlanNudge(r.RuntimeBrief)
 						}
 
-						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+						runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 
-						rebuildTools()
+						r.rebuildRunTools(runState)
 
-						opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+						runState.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-						syncPlanThenExecuteRecoveryAllowedTools()
+						r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 						r.emitEvent(RunEvent{Role: "plan_then_execute_readiness_nudge", Content: nudge})
 					} else {
-						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
-						opts = forceVisibleActionChatOptions(opts)
-						syncCurrentAllowedToolsFromOptions()
+						runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+						runState.opts = forceVisibleActionChatOptions(runState.opts)
+						r.syncCurrentAllowedToolsFromOptions(runState)
 						r.emitEvent(RunEvent{Role: "plan_then_execute_candidate_readiness_nudge", Content: nudge})
 					}
 				}
@@ -4494,30 +4374,30 @@ func (r *Runner) runLegacySessionBody(
 			r.planThenExecutePlannerPhase() &&
 			planThenExecuteReadinessNudged &&
 			strings.TrimSpace(result.Tool) != workspace.ToolNameSubmitPlan &&
-			successfulSubmitPlanResultCount(collectedResults) == 0 {
+			successfulSubmitPlanResultCount(runState.collectedResults) == 0 {
 
-			recoveryState := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
-			if rejectedResult, _, rejected := lastRejectedSubmitPlanCoverageResult(collectedResults); rejected &&
+			recoveryState := DerivePlanExecutePlanningState(r.RuntimeBrief, runState.collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+			if rejectedResult, _, rejected := lastRejectedSubmitPlanCoverageResult(runState.collectedResults); rejected &&
 				recoveryState.Mode != PlanExecutePlanningModeAnchorRefresh &&
-				len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, collectedResults)) == 0 {
+				len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, runState.collectedResults)) == 0 {
 
 				planThenExecuteCorrectionAfterRefreshNudged = true
 
-				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. " + planThenExecuteSubmitCorrectionOutcomeInstruction(r.RuntimeBrief, collectedResults) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejectedResult)
+				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. " + planThenExecuteSubmitCorrectionOutcomeInstruction(r.RuntimeBrief, runState.collectedResults) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejectedResult)
 
-				refreshPlanThenExecuteTerminalSurface("submit_plan_after_refresh")
+				r.refreshPlanThenExecuteTerminalSurface(runState, "submit_plan_after_refresh")
 
-				if terminalSubmitPlanNativeTools() {
+				if r.terminalSubmitPlanNativeTools(runState) {
 					prompt = planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, rejectedResult)
 				}
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-				rebuildTools()
+				r.rebuildRunTools(runState)
 
-				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				runState.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(runState.opts, r.RuntimeBrief, runState.collectedResults, r.terminalSubmitPlanNativeTools(runState))
 
-				syncPlanThenExecuteRecoveryAllowedTools()
+				r.syncPlanThenExecuteRecoveryAllowedTools(runState)
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_after_refresh", Content: prompt})
 			}
 		}
@@ -4538,24 +4418,24 @@ func (r *Runner) runLegacySessionBody(
 			return finish(answer, nil, "plan_submitted_short_circuit", false)
 		}
 
-		if !delegatedReadOnlyAnswerReady && !postChildPacketActive {
-			r.attachInstructionsForTouchedPaths(&turnMessages, req, result)
+		if !runState.delegatedReadOnlyAnswerReady && !runState.postChildPacketActive {
+			r.attachInstructionsForTouchedPaths(&runState.turnMessages, req, result)
 		}
 
-		childReadyBeforeResult := delegatedReadOnlyAnswerReady
-		becameReadyFromDelegated := r.delegatedReadOnlyAnswerReadyAfterResult(req, result, collectedResults)
-		becameReadyFromAnalysis := r.readOnlyAnalysisAnswerReadyAfterResult(req, result, collectedResults)
+		childReadyBeforeResult := runState.delegatedReadOnlyAnswerReady
+		becameReadyFromDelegated := r.delegatedReadOnlyAnswerReadyAfterResult(req, result, runState.collectedResults)
+		becameReadyFromAnalysis := r.readOnlyAnalysisAnswerReadyAfterResult(req, result, runState.collectedResults)
 
 		if becameReadyFromDelegated || becameReadyFromAnalysis {
-			justBecameReady := !delegatedReadOnlyAnswerReady
+			justBecameReady := !runState.delegatedReadOnlyAnswerReady
 
-			delegatedReadOnlyAnswerReady = true
+			runState.delegatedReadOnlyAnswerReady = true
 			r.RuntimeBrief.Constraints = textutil.Merge(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
 
 			if becameReadyFromDelegated {
-				r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)
+				r.emitDelegatedReadOnlyAnswerReadyEvent(req, runState.collectedResults)
 			} else {
-				r.emitReadOnlyAnswerReadyEvent(req, collectedResults)
+				r.emitReadOnlyAnswerReadyEvent(req, runState.collectedResults)
 			}
 
 			if !delegatedReadOnlyAnswerReadyNudged {
@@ -4564,10 +4444,10 @@ func (r *Runner) runLegacySessionBody(
 				nudge := buildReadinessNudge(ReadinessNudge{
 					Headline:          "The delegated read-only evidence is sufficient for a grounded answer to this question.",
 					EvidencePathLabel: "Core evidence paths: ",
-					EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(collectedResults).delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, 4), 4),
+					EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(runState.collectedResults).delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, 4), 4),
 					Objective:         r.RuntimeBrief.Objective,
 					RuntimeBrief:      r.RuntimeBrief,
-					Results:           collectedResults,
+					Results:           runState.collectedResults,
 					ContinuationScope: "delegated_read_only_answer_ready",
 					FooterLines: []string{
 						"Carry forward the inspected paths above and keep the answer minimal; avoid side-path comparison or mode-by-mode breakdown unless the question requires that contrast.",
@@ -4579,10 +4459,10 @@ func (r *Runner) runLegacySessionBody(
 					nudge = buildReadinessNudge(ReadinessNudge{
 						Headline:          "The read-only evidence is sufficient for a grounded answer to this question.",
 						EvidencePathLabel: "Core evidence paths: ",
-						EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(collectedResults).evidencePathsForBrief(r.RuntimeBrief, 4), 4),
+						EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(runState.collectedResults).evidencePathsForBrief(r.RuntimeBrief, 4), 4),
 						Objective:         strings.TrimSpace(r.RuntimeBrief.Objective),
 						RuntimeBrief:      r.RuntimeBrief,
-						Results:           collectedResults,
+						Results:           runState.collectedResults,
 						ContinuationScope: "answer_readiness_reached",
 						FooterLines: []string{
 							"Anchor the explanation in the inspected paths above and keep any remaining uncertainty explicit.",
@@ -4591,7 +4471,7 @@ func (r *Runner) runLegacySessionBody(
 					eventRole = "read_only_answer_ready_nudge"
 				}
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				r.emitEvent(RunEvent{Role: eventRole, Content: nudge})
 			}
 
@@ -4599,7 +4479,7 @@ func (r *Runner) runLegacySessionBody(
 			// mutation/source-refresh contracts. Read-only readiness is
 			// advisory and must not hide or reshape discovery tools.
 			if justBecameReady {
-				rebuildTools()
+				r.rebuildRunTools(runState)
 			}
 
 		}
@@ -4608,13 +4488,13 @@ func (r *Runner) runLegacySessionBody(
 		// generic post-readiness contract above owns further probes.
 		// Keep this inspected-path note only for lanes that have not
 		// entered answer readiness.
-		if r.conversationEvidenceAvailableForObjective(collectedResults) && !conversationEvidenceNudged && !delegatedReadOnlyAnswerReady {
+		if r.conversationEvidenceAvailableForObjective(runState.collectedResults) && !conversationEvidenceNudged && !runState.delegatedReadOnlyAnswerReady {
 			conversationEvidenceNudged = true
 
-			inspected := conversationInspectedPathSummary(collectedResults)
+			inspected := conversationInspectedPathSummary(runState.collectedResults)
 
 			if inspected != "" {
-				turnMessages = append(turnMessages, llama.ChatMessage{
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 					Role:    "system",
 					Content: "Inspected paths so far: " + inspected + ". Answer if the evidence supports the requested claim; otherwise continue only with one exact missing claim and one exact probe that would resolve it.",
 				})
@@ -4624,10 +4504,10 @@ func (r *Runner) runLegacySessionBody(
 		// Conversation lane: auto-capture findings at the first context-derived
 		// milestone so discoveries survive context compactions.
 		if r.lanePolicy().autoCaptureFindings &&
-			metrics.ToolCalls == convFirstMilestone && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
+			runState.metrics.ToolCalls == convFirstMilestone && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
 
-			if _, err := writeAutoFindingsNoteFromResults(r.Workspace.Root(), r.RuntimeBrief.Objective, collectedResults); err == nil {
-				turnMessages = append(turnMessages, llama.ChatMessage{
+			if _, err := writeAutoFindingsNoteFromResults(r.Workspace.Root(), r.RuntimeBrief.Objective, runState.collectedResults); err == nil {
+				runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{
 					Role:    "system",
 					Content: "The harness has captured your findings so far to .idiom/notes/auto-findings.md. This note persists across context compactions — review it if your working memory is refreshed. Continue investigating, or answer if you have enough evidence.",
 				})
@@ -4636,7 +4516,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if childReadyBeforeResult && !postChildPacketActive && workspace.IsReadTool(strings.TrimSpace(req.Tool)) && strings.TrimSpace(result.Error) == "" {
+		if childReadyBeforeResult && !runState.postChildPacketActive && workspace.IsReadTool(strings.TrimSpace(req.Tool)) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
 			// Diminishing-returns nudge stays as a soft signal; the hard
 			// budget force-finish was a bandaid (per the no-bandaid
@@ -4644,10 +4524,10 @@ func (r *Runner) runLegacySessionBody(
 			// catch pathological loops; the completion gate enforces
 			// mutation closure.
 			if delegatedReadOnlyPostReadyFollowups > delegatedReadOnlyDiminishingNudgeStage {
-				if nudge := delegatedReadOnlyDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, delegatedReadOnlyPostReadyFollowups); nudge != "" {
+				if nudge := delegatedReadOnlyDiminishingReturnsNudge(r.RuntimeBrief.Objective, runState.collectedResults, delegatedReadOnlyPostReadyFollowups); nudge != "" {
 					delegatedReadOnlyDiminishingNudgeStage = delegatedReadOnlyPostReadyFollowups
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 
 					role := "read_only_diminishing_returns_nudge"
 
@@ -4660,13 +4540,13 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if postChildPacketActive && strings.TrimSpace(req.Tool) != workspace.ToolNameTask && workspace.IsReadTool(strings.TrimSpace(req.Tool)) && strings.TrimSpace(result.Error) == "" {
+		if runState.postChildPacketActive && strings.TrimSpace(req.Tool) != workspace.ToolNameTask && workspace.IsReadTool(strings.TrimSpace(req.Tool)) && strings.TrimSpace(result.Error) == "" {
 			postChildFollowupReads++
 			if postChildFollowupReads > postChildDiminishingNudgeStage {
-				if nudge := postChildDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, postChildFollowupReads); nudge != "" {
+				if nudge := postChildDiminishingReturnsNudge(r.RuntimeBrief.Objective, runState.collectedResults, postChildFollowupReads); nudge != "" {
 					postChildDiminishingNudgeStage = postChildFollowupReads
 
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_diminishing_returns_nudge", Content: nudge})
 				}
 			}
@@ -4682,15 +4562,15 @@ func (r *Runner) runLegacySessionBody(
 			// tool calls on a single doc-edit task with only one nudge
 			// fired and no escape).
 			stem := toolFailurePathStem(req)
-			if executionState.noteToolFailure(req, result) >= 3 {
-				if !executionState.softFailureNudgeUsed {
-					if nudge := buildRejectionRecoveryNudge(req, collectedResults, r.Workspace, r.RuntimeBrief, r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive); nudge != "" {
-						executionState.softFailureNudgeUsed = true
+			if runState.executionState.noteToolFailure(req, result) >= 3 {
+				if !runState.executionState.softFailureNudgeUsed {
+					if nudge := buildRejectionRecoveryNudge(req, runState.collectedResults, r.Workspace, r.RuntimeBrief, r.agentName(), runState.delegatedReadOnlyAnswerReady, runState.postChildPacketActive); nudge != "" {
+						runState.executionState.softFailureNudgeUsed = true
 
-						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+						runState.turnMessages = append(runState.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 						r.emitEvent(RunEvent{Role: "rejection_recovery_nudge", Content: nudge})
 
-						executionState.consecutiveToolFailures = 0
+						runState.executionState.consecutiveToolFailures = 0
 					}
 				} else {
 					// Soft nudge already fired. Another 3-failure streak
@@ -4701,21 +4581,21 @@ func (r *Runner) runLegacySessionBody(
 				}
 			}
 		} else {
-			executionState.noteToolFailure(req, result)
+			runState.executionState.noteToolFailure(req, result)
 		}
 
-		if executionState.noteMissingPathListFailure(r.Workspace.IsExploreMode(), req, result) >= 2 {
+		if runState.executionState.noteMissingPathListFailure(r.Workspace.IsExploreMode(), req, result) >= 2 {
 			answer, err := controller.completeWithoutMoreToolsWithReason("Exploration is probing conventional paths that were discovered as index candidates but not read as source-body evidence. Tools are now disabled. Answer from the bootstrapped evidence; if one exact claim remains unsupported, state that uncertainty after the supported answer.")
 			return finish(answer, err, "missing_path_probe_budget_exhausted", true)
 		}
 
-		if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-			return finishNoProgressBudgetExhausted(collectedResults)
+		if runState.policy.shouldStopForNoProgress(consecutiveNoProgress) {
+			return finishNoProgressBudgetExhausted(runState.collectedResults)
 		}
 	}
 
-	if blocker, ok := r.implementationToolBudgetExhaustedBlocker(collectedResults); ok {
-		r.emitImplementationLifecycleState(collectedResults, "implementation_tool_step_budget_blocked", implementationTargetWriteReadyNudges)
+	if blocker, ok := r.implementationToolBudgetExhaustedBlocker(runState.collectedResults); ok {
+		r.emitImplementationLifecycleState(runState.collectedResults, "implementation_tool_step_budget_blocked", runState.implementationTargetWriteReadyNudges)
 		return finish(blocker, nil, "implementation_tool_step_budget_blocked", true)
 	}
 
@@ -12646,59 +12526,36 @@ func stripFallbackJSONArtifacts(output string) string {
 }
 
 type runnerFinalAnswerRetryInput struct {
-	stepNumber               int
-	activeToolCall           *llama.ToolCall
-	assistantMessage         llama.ChatMessage
-	acceptance               finalAnswerAcceptance
-	result                   workspace.ToolResult
-	collectedResults         []workspace.ToolResult
-	currentAllowedTools      []string
-	completionGateRejections *int
-	turnMessages             *[]llama.ChatMessage
-	runState                 *runnerRunState
-	controller               *runnerTurnController
-	autonomyRecorder         *runnerAutonomyRecorder
-	rebuildTools             func()
+	stepNumber       int
+	activeToolCall   *llama.ToolCall
+	assistantMessage llama.ChatMessage
+	acceptance       finalAnswerAcceptance
+	result           workspace.ToolResult
+	runState         *runnerRunState
+	controller       *runnerTurnController
 }
 
 func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInput) bool {
-	rejections := 0
-	if input.completionGateRejections != nil {
-		rejections = *input.completionGateRejections
-	}
-
 	state := input.runState
 	if state == nil {
 		state = &runnerRunState{}
 	}
-	state.collectedResults = input.collectedResults
-	state.currentAllowedTools = input.currentAllowedTools
-	state.completionGateRejections = rejections
-	state.autonomyRecorder = input.autonomyRecorder
-	if input.controller != nil {
-		state.controller = *input.controller
-	}
 
-	retry, prompt := r.retryRejectedFinalAnswer(state, input.stepNumber, input.activeToolCall, input.assistantMessage, input.acceptance, input.result)
+	retry, prompt := r.retryRejectedFinalAnswer(state, input.controller, input.stepNumber, input.activeToolCall, input.assistantMessage, input.acceptance, input.result)
 	if !retry {
 		return false
 	}
-	if input.completionGateRejections != nil {
-		*input.completionGateRejections = state.completionGateRejections
-	}
-	if input.turnMessages != nil && prompt != "" {
-		*input.turnMessages = append(*input.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+	if prompt != "" {
+		state.turnMessages = append(state.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 	}
 
 	// When source-body read tools are available for a source-grounding
 	// rejection, hide non-read tools so the next action is a bounded source
 	// read instead of another prose answer.
-	if r.sourceGroundingReadRecoveryAvailable(input.result, input.currentAllowedTools) {
-		state.hideNonSourceBodyReadTools(OwnerSourceGrounding, input.currentAllowedTools)
+	if r.sourceGroundingReadRecoveryAvailable(input.result, state.currentAllowedTools) {
+		state.hideNonSourceBodyReadTools(OwnerSourceGrounding, state.currentAllowedTools)
 	}
-	if input.rebuildTools != nil {
-		input.rebuildTools()
-	}
+	r.rebuildRunTools(state)
 
 	return true
 }
@@ -18344,9 +18201,9 @@ func postChildPathsOverlap(reqPath string, evidencePath string) bool {
 	return filepath.ToSlash(filepath.Dir(evidencePath)) == reqPath
 }
 
-// runnerRunState is the bridge between Runner.Run's loop-local variables and
-// extracted phase helpers. Keeping the handoff explicit avoids hidden captures
-// while Run is still being split apart incrementally.
+// runnerRunState owns mutable state shared by the session loop, its controller,
+// and extracted phase helpers. A turn has one instance; helpers mutate that
+// instance directly instead of synchronizing parallel loop-local copies.
 type runnerRunState struct {
 	ctx     context.Context
 	policy  RunPolicy
@@ -18365,7 +18222,7 @@ type runnerRunState struct {
 	requiredPathCompletionRecoveryActive  bool
 	exactAnchorWriteOnlyActive            bool
 
-	executionState               *runnerExecutionState
+	executionState               runnerExecutionState
 	delegatedReadOnlyAnswerReady bool
 	postChildPacketActive        bool
 	directAnswerSurfaceEmitted   bool
@@ -18379,8 +18236,6 @@ type runnerRunState struct {
 	completionStatusLastBlockerKind      string
 	implementationTargetWriteReadyNudges int
 	acceptedAnswerSignalsEmitted         bool
-
-	controller runnerTurnController
 }
 
 func (state *runnerRunState) hideExactAnchorReadTools(allowedTools []string) {
@@ -18810,7 +18665,7 @@ func (r *Runner) finish(state *runnerRunState, value string, finishErr error, re
 }
 
 // retryRejectedFinalAnswer handles rejected final answer with retry logic.
-func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int, activeToolCall *llama.ToolCall, assistantMessage llama.ChatMessage, acceptance finalAnswerAcceptance, result workspace.ToolResult) (bool, string) {
+func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, controller *runnerTurnController, stepNumber int, activeToolCall *llama.ToolCall, assistantMessage llama.ChatMessage, acceptance finalAnswerAcceptance, result workspace.ToolResult) (bool, string) {
 	if !r.retryableFinalAnswerAcceptanceRejection(acceptance, state.collectedResults, state.completionGateRejections, state.currentAllowedTools) {
 		return false, ""
 	}
@@ -18823,7 +18678,7 @@ func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int,
 		state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), state.collectedResults, priorGateRejections)
 	}
 
-	state.controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
+	controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
 
 	state.completionGateRejections = priorGateRejections + 1
 
