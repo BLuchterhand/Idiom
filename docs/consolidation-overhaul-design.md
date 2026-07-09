@@ -1342,6 +1342,29 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `git diff --check`.
+- Discovery outcome authority and dead pending-search scaffold cleanup.
+  Runtime discovery consumption, read-only answerability high-cardinality
+  handling, next-action discovery guidance, and evidence projection now consume
+  one `discoveryResultOutcome` backed by the existing `toolfacts.DiscoveryStrength`
+  vocabulary instead of a runtime-local enum, duplicate broad-search thresholds,
+  and consumer-side search-count parsing. The old pending-search-hit rejection
+  path was already disabled; its state fields, error renderer, guard branch, and
+  preserving unit test were deleted so exact-repeat/no-progress controls remain
+  the owner of repeated search behavior. Production Go changed `+94 / -165`,
+  net `-71`; tests changed `+8 / -63`, net `-55`.
+  Focused verification:
+  `go test ./internal/runtime/agent -run 'TestDiscoveryConsumption|TestReadOnlyAnswerabilityHighCardinality|TestReadOnlyWeakDiscovery|TestReadOnlySourceOwnerDiscovery|TestReadOnlyCompletionGateCandidateOnlyRecovery|TestFinalAnswerAcceptance|TestSuccessfulSearchAllows|TestFailedGuessedRead' -count=1`;
+  `go test ./internal/runtime/agent -count=1`;
+  `go test ./internal/capabilities/workspace ./internal/contracts/toolfacts ./internal/runtime/workerruntime -count=1`;
+  `go test ./internal/surfaces/cli/root ./internal/surfaces/cli/headless ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane -count=1`.
+  Broad verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`. Current reviewer-backed next targets are the larger
+  `toolResultEvidenceProjection` read-evidence authority consolidation and
+  deletion of shell replacement/redirect strategy guidance that prescribes
+  structured follow-up tool calls.
 
 ## Review And Regression Protocol
 

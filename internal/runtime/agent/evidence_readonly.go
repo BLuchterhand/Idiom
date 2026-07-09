@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -36,7 +35,6 @@ const (
 	readOnlyEvidenceExternalDocument  readOnlyEvidenceKind = "external_document_body"
 )
 
-const readOnlyHighCardinalitySearchThreshold = 50
 const featurePlannerPlanArtifactPayloadType = "feature_planner_plan_artifact"
 
 type readOnlyEvidenceItem struct {
@@ -318,7 +316,8 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 		switch {
 		case tool == workspace.ToolNameContextPack:
-			candidates := readOnlySourceLikePaths((toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16), 16)
+			discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
+			candidates := readOnlySourceLikePaths(discovery.Candidates, 16)
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceContextPacket,
 				Tool:           tool,
@@ -328,15 +327,15 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 		case workspace.IsSearchToolName(tool):
-			candidates := readOnlySourceLikePaths((toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 128), 128)
+			discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 128)
+			candidates := readOnlySourceLikePaths(discovery.Candidates, 128)
 			objectiveCandidates := readOnlyObjectiveCandidatePathsFromSearch(result, ledger.Objective, 128)
-			count, _ := searchContentSummaryMatchCount(result.Summary)
 
-			if count > ledger.SearchHitCount {
-				ledger.SearchHitCount = count
+			if discovery.SearchHitCount > ledger.SearchHitCount {
+				ledger.SearchHitCount = discovery.SearchHitCount
 			}
 
-			if count > readOnlyHighCardinalitySearchThreshold {
+			if discovery.HighCardinalitySearch {
 				ledger.HighCardinalitySearch = true
 			}
 
@@ -344,14 +343,15 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				Kind:           readOnlyEvidenceSearchHit,
 				Tool:           tool,
 				CandidatePaths: candidates,
-				HitCount:       count,
+				HitCount:       discovery.SearchHitCount,
 				Summary:        strings.TrimSpace(result.Summary),
 			})
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 			ledger.CandidateObjectivePaths = textutil.Merge(ledger.CandidateObjectivePaths, objectiveCandidates)
 		case (toolResultEvidenceProjection{}).DiscoveryCandidateTool(tool):
-			candidates := readOnlySourceLikePaths((toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16), 16)
+			discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
+			candidates := readOnlySourceLikePaths(discovery.Candidates, 16)
 			if len(candidates) > 0 {
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:           readOnlyEvidenceSearchHit,
@@ -4209,22 +4209,6 @@ func utilUniqueTrimmed(values []string, limit int) []string {
 	return out
 }
 
-func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 4
-	}
-
-	if strings.TrimSpace(result.Error) != "" {
-		return nil
-	}
-
-	if strings.TrimSpace(result.Tool) == workspace.ToolNameContextPack {
-		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
-	}
-
-	return promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, max)
-}
-
 func delegatedDiscoveryPathPriority(path string) int {
 	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
 	switch {
@@ -5068,20 +5052,6 @@ func implementationTargetWriteReadyRedirectedReadTool(result workspace.ToolResul
 	}
 
 	return tool, true
-}
-
-func searchContentSummaryMatchCount(summary string) (int, bool) {
-	match := regexp.MustCompile(`Found (\d+) matching line`).FindStringSubmatch(strings.TrimSpace(summary))
-	if len(match) != 2 {
-		return 0, false
-	}
-
-	count, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0, false
-	}
-
-	return count, true
 }
 
 const readOnlyPrefetchEventRole = "read_only_named_path_prefetch"

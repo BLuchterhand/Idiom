@@ -4472,57 +4472,6 @@ func TestRunnerExecutionStateFailureTrackingAndMissingPathProbe(t *testing.T) {
 	}
 }
 
-func TestRunnerExecutionStateTracksPendingSearchInspection(t *testing.T) {
-	state := newRunnerExecutionState(false, 0)
-
-	searchReq := workspace.ToolRequest{Tool: "search_files", Path: "internal", Pattern: "*runner*"}
-	searchResult := workspace.ToolResult{
-		Tool:    "search_files",
-		Summary: "Found 2 matching file(s).",
-		Output:  "f1 internal/runtime/agent/runner_core.go\nf2 internal/runtime/agent/implementation_flow.go",
-	}
-	state.applyResult(searchReq, searchResult, "", nil, nil)
-
-	if !state.pendingSearchInspection {
-		t.Fatal("expected pendingSearchInspection after successful search hit")
-	}
-
-	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_files", Path: ".", Pattern: "**/*.go"}) {
-		t.Fatal("expected broad follow-up file search to remain available; exact-repeat guards own loop prevention")
-	}
-
-	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_files", Path: ".", Pattern: "**/input*.go"}) {
-		t.Fatal("expected concrete follow-up file search to remain available after successful search hit")
-	}
-
-	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_content", Path: "internal/runtime/agent/runner_core.go", Pattern: "budget"}) {
-		t.Fatal("expected file-scoped follow-up content search to remain available after successful search hit")
-	}
-
-	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "budget runner"}) {
-		t.Fatal("expected repo-root follow-up content search to remain available; exact-repeat guards own loop prevention")
-	}
-
-	searchFeedback := state.searchHitConsumptionError()
-	for _, want := range []string{
-		"Returned hit(s):",
-		"internal/runtime/agent/runner_core.go",
-		"internal/runtime/agent/implementation_flow.go",
-	} {
-		if !strings.Contains(searchFeedback, want) {
-			t.Fatalf("search feedback missing %q:\n%s", want, searchFeedback)
-		}
-	}
-
-	readReq := workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go"}
-	readResult := readFileSourceBodyResult("internal/runtime/agent/runner_core.go", 1, 20, 20, "package agent\n")
-	state.applyResult(readReq, readResult, "", nil, nil)
-
-	if state.pendingSearchInspection {
-		t.Fatal("expected concrete inspection to clear pending search state")
-	}
-}
-
 type modelErrorFallbackTestClient struct {
 	err error
 }
@@ -15796,10 +15745,6 @@ func TestSearchEvidenceSurvivesFailedGuessedReadWithoutBlockingFollowupSearch(t 
 	)
 
 	req := workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}
-	if state.shouldConsumeSearchHitBeforeMoreSearch(req) {
-		t.Fatal("failed guessed read must not force a follow-up search rejection")
-	}
-
 	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
 		t.Fatal("failed guessed read must not force a follow-up search discovery-consumption rejection")
 	}

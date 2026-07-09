@@ -31900,7 +31900,7 @@ func TestDiscoveryConsumptionCandidateOnlyContextQueryAllowsFollowup(t *testing.
 		nil,
 	)
 
-	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != discoveryConsumptionCandidateOnly {
+	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthCandidateOnly {
 		t.Fatalf("expected candidate-only pending discovery, got pending=%v strength=%v", state.pendingDiscoveryConsumption, state.pendingDiscoveryStrength)
 	}
 
@@ -31929,7 +31929,7 @@ func TestDiscoveryConsumptionWeakContextPackAllowsCorrectiveFollowup(t *testing.
 		nil,
 	)
 
-	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != discoveryConsumptionCandidateOnly {
+	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthCandidateOnly {
 		t.Fatalf("expected weak context_pack to be candidate-only, got pending=%v strength=%v", state.pendingDiscoveryConsumption, state.pendingDiscoveryStrength)
 	}
 
@@ -31953,7 +31953,7 @@ func TestDiscoveryConsumptionBroadTextSearchAllowsStructuredContextQuery(t *test
 			Summary: "Found 400 matching line(s) (showing first 50).",
 			Output: strings.Join([]string{
 				"internal/contracts/workflowstate/machine.go:1:package workflowstate",
-				"internal/runtime/agent/discovery_consumption.go:12:type discoveryConsumptionStrength int",
+				"internal/runtime/agent/discovery_consumption.go:15:type discoveryResultOutcome struct",
 			}, "\n"),
 		},
 		"",
@@ -31961,7 +31961,7 @@ func TestDiscoveryConsumptionBroadTextSearchAllowsStructuredContextQuery(t *test
 		nil,
 	)
 
-	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != discoveryConsumptionCandidateOnly {
+	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthCandidateOnly {
 		t.Fatalf("expected broad text search to be candidate-only, got pending=%v strength=%v", state.pendingDiscoveryConsumption, state.pendingDiscoveryStrength)
 	}
 
@@ -31993,7 +31993,7 @@ func TestDiscoveryConsumptionFocusedTextSearchStillBlocksBroadRediscovery(t *tes
 		nil,
 	)
 
-	if state.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
+	if state.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner {
 		t.Fatalf("expected focused text search to require source-body consumption, got %v", state.pendingDiscoveryStrength)
 	}
 
@@ -32187,7 +32187,7 @@ func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *tes
 		nil,
 	)
 
-	if state.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
+	if state.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner {
 		t.Fatalf("expected source-owner pending discovery after strong context_pack, got %v", state.pendingDiscoveryStrength)
 	}
 
@@ -32203,7 +32203,7 @@ func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *tes
 		nil,
 	)
 
-	if state.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
+	if state.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner {
 		t.Fatalf("candidate-only context_query downgraded strong pending discovery to %v", state.pendingDiscoveryStrength)
 	}
 

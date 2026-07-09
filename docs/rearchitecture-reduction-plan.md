@@ -154,6 +154,14 @@ the read-only resolver now use the normal unmapped fallback path. The read-only
 capability and tool-schema exports moved to `v2` for the removed fields/error
 class, and private non-runtime-routed resolver states now report `unsupported`
 instead of preserving a deferred route vocabulary.
+Runtime discovery-result meaning now has a single local outcome projection over
+`toolfacts.DiscoveryStrength`, candidate paths, search hit count, and broad
+search status. Pending-discovery state and read-only answerability consume that
+projection; the dead pending-search-hit rejection scaffold was removed, leaving
+generic exact-repeat/no-progress controls as the owner of repeated search
+behavior. Reviewer-backed follow-up targets are broader
+`toolResultEvidenceProjection` consolidation and deletion of shell replacement
+redirects that prescribe strategy rather than enforce invariants.
 
 ### 5. Product Workflow Projection
 

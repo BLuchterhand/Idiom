@@ -12,99 +12,97 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-type discoveryConsumptionStrength int
-
-const (
-	discoveryConsumptionNone discoveryConsumptionStrength = iota
-	discoveryConsumptionCandidateOnly
-	discoveryConsumptionSourceOwner
-)
-
-const broadTextSearchMatchThreshold = 50
+const discoveryBroadSearchMatchThreshold = 50
 
 var textSearchFoundMatchingLinePattern = regexp.MustCompile(`found\s+(\d+)\s+matching\s+line`)
 
-func successfulSearchDiscoveryResult(req workspace.ToolRequest, result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" || workerruntime.IsZeroHitSearchResult(result) {
-		return false
+type discoveryResultOutcome struct {
+	Strength              toolfacts.DiscoveryStrength
+	Candidates            []string
+	SearchHitCount        int
+	HighCardinalitySearch bool
+}
+
+func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspace.ToolResult, maxCandidates int) discoveryResultOutcome {
+	var outcome discoveryResultOutcome
+
+	if strings.TrimSpace(result.Error) != "" || workerruntime.IsZeroHitSearchResult(result) {
+		return outcome
 	}
 
 	tool := strings.TrimSpace(req.Tool)
-	if workspace.IsSearchToolName(tool) || languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) {
-		return true
-	}
-
-	return false
-}
-
-func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {
-	if strings.TrimSpace(result.Error) != "" || workerruntime.IsZeroHitSearchResult(result) {
-		return discoveryConsumptionNone
+	if tool == "" {
+		tool = strings.TrimSpace(result.Tool)
 	}
 
 	if concreteSourceEvidenceResult(result) {
-		return discoveryConsumptionNone
+		return outcome
 	}
 
 	if strings.TrimSpace(result.Output) == "" && strings.TrimSpace(result.Summary) == "" {
-		return discoveryConsumptionNone
+		return outcome
 	}
 
-	tool := strings.TrimSpace(req.Tool)
+	outcome.Candidates = discoveryConsumptionCandidatesFromResult(result, maxCandidates)
+
 	switch {
 	case tool == workspace.ToolNameContextPack:
 		if result.Facts == nil || !result.Facts.HasDiscoveryTargets {
-			return discoveryConsumptionNone
+			return outcome
 		}
 
 		switch result.Facts.DiscoveryStrength {
 		case toolfacts.DiscoveryStrengthCandidateOnly:
-			return discoveryConsumptionCandidateOnly
+			outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
 		case toolfacts.DiscoveryStrengthSourceOwner:
-			return discoveryConsumptionSourceOwner
-		default:
-			return discoveryConsumptionNone
+			outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
 		}
 	case tool == workspace.ToolNameContextQuery:
-		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
-			return discoveryConsumptionNone
+		if len(outcome.Candidates) == 0 {
+			return outcome
 		}
 
 		if discoveryConsumptionResultHasReadableSourceOwner(result) {
-			return discoveryConsumptionSourceOwner
+			outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
+		} else {
+			outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
 		}
-
-		return discoveryConsumptionCandidateOnly
 	case workspace.IsTextSearchToolName(tool):
-		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
-			return discoveryConsumptionNone
+		if len(outcome.Candidates) == 0 {
+			return outcome
 		}
 
-		if textSearchDiscoveryResultIsBroad(result) {
-			return discoveryConsumptionCandidateOnly
+		broad, count, countOK := textSearchDiscoveryResultBreadth(result)
+		if countOK {
+			outcome.SearchHitCount = count
+			outcome.HighCardinalitySearch = count > discoveryBroadSearchMatchThreshold
 		}
 
-		return discoveryConsumptionSourceOwner
+		if broad {
+			outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
+		} else {
+			outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
+		}
 	case tool == workspace.ToolNameSearchFiles ||
 		languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) ||
 		tool == workspace.ToolNameStructuralSearch ||
 		tool == workspace.ToolNameDiscoveryQuery ||
 		tool == workspace.ToolNameContextZoom ||
 		tool == workspace.ToolNameContextImpact:
-		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
-			return discoveryConsumptionNone
+		if len(outcome.Candidates) == 0 {
+			return outcome
 		}
 
-		return discoveryConsumptionSourceOwner
-	default:
-		return discoveryConsumptionNone
+		outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
 	}
+
+	return outcome
 }
 
-func textSearchDiscoveryResultIsBroad(result workspace.ToolResult) bool {
+func textSearchDiscoveryResultBreadth(result workspace.ToolResult) (broad bool, count int, countOK bool) {
 	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
 	if text == "" {
-		return false
+		return false, 0, false
 	}
 
 	if strings.Contains(text, "showing first") ||
@@ -112,16 +110,20 @@ func textSearchDiscoveryResultIsBroad(result workspace.ToolResult) bool {
 		strings.Contains(text, "too many matches") ||
 		strings.Contains(text, "more matches") {
 
-		return true
+		broad = true
 	}
 
 	matches := textSearchFoundMatchingLinePattern.FindStringSubmatch(text)
 	if len(matches) != 2 {
-		return false
+		return broad, 0, false
 	}
 
 	count, err := strconv.Atoi(matches[1])
-	return err == nil && count >= broadTextSearchMatchThreshold
+	if err != nil {
+		return broad, 0, false
+	}
+
+	return broad || count >= discoveryBroadSearchMatchThreshold, count, true
 }
 
 func discoveryConsumptionResultHasReadableSourceOwner(result workspace.ToolResult) bool {
@@ -148,4 +150,20 @@ func discoveryConsumptionResultHasReadableSourceOwner(result workspace.ToolResul
 	}
 
 	return len(readOnlySourceLikePaths(sourceLikePathsFromText(text, 4), 1)) > 0
+}
+
+func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+
+	if strings.TrimSpace(result.Error) != "" {
+		return nil
+	}
+
+	if strings.TrimSpace(result.Tool) == workspace.ToolNameContextPack {
+		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
+	}
+
+	return promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, max)
 }

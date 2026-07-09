@@ -23,6 +23,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/gitstate"
@@ -3517,21 +3518,6 @@ func (r *Runner) runLegacySessionBody(
 			)
 			if done {
 				return finish(answer, err, "discovery_consumption_budget_exhausted", true)
-			}
-
-			continue
-		}
-
-		if executionState.shouldConsumeSearchHitBeforeMoreSearch(req) {
-			answer, err, done := controller.rejectTool(
-				stepNumber,
-				activeToolCall,
-				req,
-				"Chained search rejected",
-				executionState.searchHitConsumptionError(),
-			)
-			if done {
-				return finish(answer, err, "search_chain_budget_exhausted", true)
 			}
 
 			continue
@@ -11456,16 +11442,12 @@ type runnerExecutionState struct {
 	needsNarrowingAfterBroad         bool
 	broadInspectionCount             int
 	consecutiveListFiles             int
-	pendingSearchInspection          bool
-	pendingSearchTool                string
-	pendingSearchSummary             string
-	pendingSearchOutput              string
 	pendingDiscoveryConsumption      bool
 	pendingDiscoveryTool             string
 	pendingDiscoverySummary          string
 	pendingDiscoveryOutput           string
 	pendingDiscoveryCandidates       []string
-	pendingDiscoveryStrength         discoveryConsumptionStrength
+	pendingDiscoveryStrength         toolfacts.DiscoveryStrength
 	pendingDiscoveryFailedAttempt    bool
 	checkpointCreated                bool
 	writesSinceVerification          int
@@ -11563,26 +11545,16 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 	}
 
 	sourceBodyConsumed := concreteSourceEvidenceResult(result) || (toolResultMadeProgress(req, result) && workspace.IsWorkspaceWriteTool(strings.TrimSpace(req.Tool)))
-	if successfulSearchDiscoveryResult(req, result) {
-		s.pendingSearchInspection = true
-		s.pendingSearchTool = strings.TrimSpace(req.Tool)
-		s.pendingSearchSummary = truncForRetryReason(result.Summary)
-		s.pendingSearchOutput = truncForRetryReason(result.Output)
-	} else if sourceBodyConsumed {
-		s.pendingSearchInspection = false
-		s.pendingSearchTool = ""
-		s.pendingSearchSummary = ""
-		s.pendingSearchOutput = ""
-	}
+	discoveryOutcome := discoveryResultOutcomeFromResult(req, result, 6)
 
-	if strength := discoveryConsumptionResultStrengthFromLegacySemantics(req, result); strength != discoveryConsumptionNone {
-		if s.shouldReplacePendingDiscovery(strength) {
+	if discoveryOutcome.Strength != "" {
+		if s.shouldReplacePendingDiscovery(discoveryOutcome.Strength) {
 			s.pendingDiscoveryConsumption = true
 			s.pendingDiscoveryTool = strings.TrimSpace(req.Tool)
 			s.pendingDiscoverySummary = truncForRetryReason(result.Summary)
 			s.pendingDiscoveryOutput = truncForRetryReason(result.Output)
-			s.pendingDiscoveryCandidates = discoveryConsumptionCandidatesFromResult(result, 6)
-			s.pendingDiscoveryStrength = strength
+			s.pendingDiscoveryCandidates = append([]string(nil), discoveryOutcome.Candidates...)
+			s.pendingDiscoveryStrength = discoveryOutcome.Strength
 			s.pendingDiscoveryFailedAttempt = false
 		}
 	} else if sourceBodyConsumed {
@@ -11604,8 +11576,8 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 	return update
 }
 
-func (s *runnerExecutionState) shouldReplacePendingDiscovery(strength discoveryConsumptionStrength) bool {
-	return s.pendingDiscoveryStrength != discoveryConsumptionSourceOwner || strength == discoveryConsumptionSourceOwner
+func (s *runnerExecutionState) shouldReplacePendingDiscovery(strength toolfacts.DiscoveryStrength) bool {
+	return s.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner || strength == toolfacts.DiscoveryStrengthSourceOwner
 }
 
 func (s *runnerExecutionState) clearPendingDiscoveryConsumption() {
@@ -11618,7 +11590,7 @@ func (s *runnerExecutionState) clearPendingDiscoveryConsumption() {
 	s.pendingDiscoverySummary = ""
 	s.pendingDiscoveryOutput = ""
 	s.pendingDiscoveryCandidates = nil
-	s.pendingDiscoveryStrength = discoveryConsumptionNone
+	s.pendingDiscoveryStrength = ""
 	s.pendingDiscoveryFailedAttempt = false
 }
 
@@ -11692,16 +11664,12 @@ func (s *runnerExecutionState) noteMissingPathListFailure(exploreMode bool, req 
 	return 0
 }
 
-func (s *runnerExecutionState) shouldConsumeSearchHitBeforeMoreSearch(req workspace.ToolRequest) bool {
-	return false
-}
-
 func (s *runnerExecutionState) shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) bool {
 	if s == nil || !s.pendingDiscoveryConsumption {
 		return false
 	}
 
-	if s.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
+	if s.pendingDiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner {
 		return false
 	}
 
@@ -11752,33 +11720,6 @@ func (s *runnerExecutionState) discoveryConsumptionError() string {
 	}
 
 	return fmt.Sprintf("%s %s", base, strings.Join(parts, ". "))
-}
-
-func (s *runnerExecutionState) searchHitConsumptionError() string {
-	if s == nil {
-		return "you already have a successful search result with concrete hits. Inspect one returned file or symbol now before doing another search."
-	}
-
-	base := "you already have a successful search result with concrete hits. Inspect one returned file or symbol now before doing another search."
-	detail := strings.TrimSpace(s.pendingSearchSummary)
-
-	if output := strings.TrimSpace(s.pendingSearchOutput); output != "" {
-		if detail != "" {
-			detail += ". "
-		}
-
-		detail += "Returned hit(s): " + output
-	}
-
-	if s.pendingSearchTool != "" && detail != "" {
-		return fmt.Sprintf("%s The last useful %s result was: %s", base, s.pendingSearchTool, detail)
-	}
-
-	if detail != "" {
-		return fmt.Sprintf("%s The last useful result was: %s", base, detail)
-	}
-
-	return base
 }
 
 func (r *Runner) emitVerificationPhaseEvent(state string, detail string) {
@@ -16163,12 +16104,12 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 		return state
 	}
 
-	strength := discoveryConsumptionResultStrengthFromLegacySemantics(req, result)
-	if strength == discoveryConsumptionNone {
+	discoveryOutcome := discoveryResultOutcomeFromResult(req, result, 4)
+	if discoveryOutcome.Strength == "" {
 		return state
 	}
 
-	candidates := readOnlySourceLikePaths(discoveryConsumptionCandidatesFromResult(result, 4), 4)
+	candidates := readOnlySourceLikePaths(discoveryOutcome.Candidates, 4)
 	if len(candidates) == 0 {
 		return state
 	}
@@ -16186,8 +16127,8 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 		"treating discovery candidates, context packets, or search hits as source-body evidence",
 	})
 
-	switch strength {
-	case discoveryConsumptionCandidateOnly:
+	switch discoveryOutcome.Strength {
+	case toolfacts.DiscoveryStrengthCandidateOnly:
 		state.EvidenceStatus = textutil.Merge(state.EvidenceStatus, []string{
 			"discovery_status: candidate-only; source owner and source-body evidence are still missing",
 		})
@@ -16198,7 +16139,7 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 		state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, []string{
 			"exact replay of the same weak discovery request",
 		})
-	case discoveryConsumptionSourceOwner:
+	case toolfacts.DiscoveryStrengthSourceOwner:
 		state.EvidenceStatus = textutil.Merge(state.EvidenceStatus, []string{
 			"discovery_status: candidate owner paths returned, but source-body evidence is still missing",
 		})

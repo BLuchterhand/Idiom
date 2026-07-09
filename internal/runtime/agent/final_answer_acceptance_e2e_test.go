@@ -276,7 +276,7 @@ func TestRunnerEndToEndAllowsContextQueryAfterBroadTextSearch(t *testing.T) {
 					Summary: "Found 400 matching line(s) (showing first 50).",
 					Output: strings.Join([]string{
 						"internal/contracts/workflowstate/machine.go:3:type Machine struct{}",
-						"internal/runtime/agent/discovery_consumption.go:12:type discoveryConsumptionStrength int",
+						"internal/runtime/agent/discovery_consumption.go:15:type discoveryResultOutcome struct",
 					}, "\n"),
 				}
 			case "context_query":
