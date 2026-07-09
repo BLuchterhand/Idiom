@@ -4900,7 +4900,7 @@ func implementationCloseoutRepeatedReadSummary(results []workspace.ToolResult, l
 			continue
 		}
 
-		for _, path := range ReadPathsFromToolResult(result) {
+		for _, path := range newToolResultEvidenceRecord(result).ReadPaths() {
 			path = NormalizeRunnerPath(path)
 			if path == "" {
 				continue
@@ -5249,7 +5249,7 @@ func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, ob
 	}
 
 	diagnostic := result.Facts != nil && len(readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)) > 0
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0 || diagnostic {
+	if len(newToolResultEvidenceRecord(result).SourceBodyPaths()) > 0 || diagnostic {
 		return true
 	}
 
@@ -9448,7 +9448,7 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPat
 			continue
 		}
 
-		paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
+		paths := readOnlySourceLikePaths(newToolResultEvidenceRecord(result).ReadPaths(), 8)
 
 		paths = textutil.Merge(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
 
@@ -11491,7 +11491,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.consecutiveListFiles = 0
 	}
 
-	sourceBodyConsumed := len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0 ||
+	sourceBodyConsumed := len(newToolResultEvidenceRecord(result).SourceBodyPaths()) > 0 ||
 		(toolResultMadeProgress(req, result) && workspace.IsWorkspaceWriteTool(strings.TrimSpace(req.Tool)))
 	discoveryOutcome := discoveryResultOutcomeFromResult(req, result, 6)
 
@@ -15437,13 +15437,13 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		if newToolResultEvidenceRecord(result).candidateAnchorOnly {
 			continue
 		}
 
 		switch strings.TrimSpace(result.Tool) {
 		case "read_file":
-			if (toolResultEvidenceProjection{}).GeneratedArtifactOnlyReadResult(result) {
+			if newToolResultEvidenceRecord(result).GeneratedArtifactOnlyRead() {
 				continue
 			}
 
@@ -15451,7 +15451,7 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 				count++
 			}
 		case "code_navigate":
-			if RoutedSourceReadOutputHasBody(result.Output) &&
+			if routedSourceReadOutputHasBody(result.Output) &&
 				!strings.Contains(result.Output, "capability: file_outline") {
 
 				count++
@@ -15515,7 +15515,7 @@ func delegatedReadOnlyInspectedImplementationPaths(results []workspace.ToolResul
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		if newToolResultEvidenceRecord(result).candidateAnchorOnly {
 			continue
 		}
 
@@ -17628,7 +17628,7 @@ func diagnosticLogReadFileWindows(path string, results []workspace.ToolResult) [
 			continue
 		}
 
-		fact, ok := sourceBodyFactForPath(result, path)
+		fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 		if !ok || fact.StartLine <= 0 || fact.EndLine < fact.StartLine || fact.TotalLines <= 0 {
 			continue
 		}
@@ -17783,7 +17783,7 @@ func mergeDiagnosticLogReadWindows(windows []diagnosticLogReadWindow) ([]diagnos
 }
 
 func runnerToolResultReadPathMatches(result workspace.ToolResult, path string) bool {
-	for _, readPath := range ReadPathsFromToolResult(result) {
+	for _, readPath := range newToolResultEvidenceRecord(result).ReadPaths() {
 		if NormalizeRunnerPath(readPath) == path {
 			return true
 		}
@@ -17806,7 +17806,7 @@ func repeatedDiagnosticLogReadFileExactRejection(req workspace.ToolRequest, last
 		return "", "", false
 	}
 
-	for _, readPath := range ReadPathsFromToolResult(last) {
+	for _, readPath := range newToolResultEvidenceRecord(last).ReadPaths() {
 		if NormalizeRunnerPath(readPath) != path {
 			continue
 		}
@@ -17838,7 +17838,7 @@ func repeatedDiagnosticLogReadFilePreviouslyReadRejection(req workspace.ToolRequ
 			continue
 		}
 
-		fact, ok := sourceBodyFactForPath(result, path)
+		fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 		if !ok || fact.StartLine != req.StartLine || fact.EndLine != req.EndLine {
 			continue
 		}
@@ -20772,13 +20772,13 @@ func implementationSourceCoverageByPath(results []workspace.ToolResult) map[stri
 			continue
 		}
 
-		paths := ReadPathsFromToolResult(result)
+		paths := newToolResultEvidenceRecord(result).ReadPaths()
 		if len(paths) == 0 {
 			continue
 		}
 
 		bodyPathSet := make(map[string]struct{})
-		for _, path := range (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result) {
+		for _, path := range newToolResultEvidenceRecord(result).SourceBodyPaths() {
 			bodyPathSet[path] = struct{}{}
 		}
 
@@ -20788,7 +20788,7 @@ func implementationSourceCoverageByPath(results []workspace.ToolResult) map[stri
 				continue
 			}
 			_, hasBody := bodyPathSet[path]
-			fact, hasFact := sourceBodyFactForPath(result, path)
+			fact, hasFact := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 			hasRange := hasFact && sourceBodyFactHasRange(fact)
 			if !hasBody && !hasRange {
 				continue
@@ -20931,9 +20931,8 @@ func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []
 
 	var paths []string
 
-	projection := newToolResultEvidenceProjection(results)
 	for _, result := range results {
-		if len(projection.SourceBodyPathsFromResult(result)) == 0 {
+		if len(newToolResultEvidenceRecord(result).SourceBodyPaths()) == 0 {
 			continue
 		}
 

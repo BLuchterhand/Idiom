@@ -35,7 +35,7 @@ func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspac
 		tool = strings.TrimSpace(result.Tool)
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0 {
+	if len(newToolResultEvidenceRecord(result).SourceBodyPaths()) > 0 {
 		return outcome
 	}
 

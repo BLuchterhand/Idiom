@@ -43,7 +43,7 @@ func TestSourceGroundingEscapingUnsupportedPathsAllowUnverifiedQualification(t *
 		t.Fatalf("escaping path detection changed: %#v", paths)
 	}
 
-	if unsupported := sourceGroundingUnsupportedEscapingPaths(answer, paths, toolResultEvidenceProjection{}); len(unsupported) != 0 {
+	if unsupported := sourceGroundingUnsupportedEscapingPaths(answer, paths, newToolResultEvidenceProjection(nil)); len(unsupported) != 0 {
 		t.Fatalf("unverified outside-workspace citation should not block source grounding: %#v", unsupported)
 	}
 }

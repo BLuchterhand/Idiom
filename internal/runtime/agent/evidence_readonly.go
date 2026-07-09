@@ -1919,18 +1919,18 @@ func ArchitectureNonSourceSymbolTerm(key string) bool {
 
 func ExactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} {
 	symbols := make(map[string]struct{})
-	projection := newToolResultEvidenceProjection(results)
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		record := newToolResultEvidenceRecord(result)
+		if record.candidateAnchorOnly {
 			continue
 		}
 
-		if len(projection.SourceBodyPathsFromResult(result)) > 0 {
+		if len(record.SourceBodyPaths()) > 0 {
 			addSourceBodyEvidenceSymbols(symbols, result.Output)
 		}
 
@@ -2179,7 +2179,7 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	)
 
 	for _, result := range d.Results {
-		paths := ReadPathsFromToolResult(result)
+		paths := newToolResultEvidenceRecord(result).ReadPaths()
 		for _, path := range paths {
 			if IsNonSourceEvidenceArtifactPath(path) {
 				continue
@@ -2615,7 +2615,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 			continue
 		}
 
-		for _, source := range readOnlySourceLikePaths(ReadPathsFromToolResult(result), 16) {
+		for _, source := range readOnlySourceLikePaths(newToolResultEvidenceRecord(result).ReadPaths(), 16) {
 			base := strings.ToLower(filepath.Base(filepath.ToSlash(source)))
 			if base == "" || !strings.Contains(lower, base) {
 				continue
@@ -4784,7 +4784,7 @@ func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRunt
 
 	best := planThenExecuteSourceEvidence{Path: path}
 	for _, result := range results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
+		evidence := newToolResultEvidenceRecord(result).SourceEvidenceForPath(path)
 		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
 			best = evidence
 		}
@@ -6074,7 +6074,8 @@ func featurePlannerPlanMarkdownReadResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	if !ReadStyleSourceBodyTool(strings.TrimSpace(result.Tool)) {
+	record := newToolResultEvidenceRecord(result)
+	if record.tool != workspace.ToolNameReadFile && record.tool != workspace.ToolNamePrefetch {
 		return false
 	}
 
@@ -6091,7 +6092,7 @@ func featurePlannerPlanMarkdownReadResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	readPaths := ReadPathsFromToolResult(result)
+	readPaths := record.ReadPaths()
 	if len(readPaths) == 0 {
 		return false
 	}
@@ -6604,7 +6605,7 @@ func implementationSourceEvidenceTextContains(path string, results []workspace.T
 	}
 
 	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" || !slices.Contains((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result), path) {
+		if strings.TrimSpace(result.Error) != "" || !slices.Contains(newToolResultEvidenceRecord(result).SourceBodyPaths(), path) {
 			continue
 		}
 
@@ -7869,7 +7870,7 @@ func sourceEvidencePendingRedirectSatisfiedForPath(path string, results []worksp
 	}
 
 	for _, result := range results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
+		evidence := newToolResultEvidenceRecord(result).SourceEvidenceForPath(path)
 		if planThenExecuteEvidenceRank(evidence.Level) < planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow) {
 			continue
 		}
@@ -8142,7 +8143,7 @@ func sourceEvidenceOutlineReadForPath(path string, results []workspace.ToolResul
 }
 
 func sourceEvidenceToolResultMentionsPath(result workspace.ToolResult, path string) bool {
-	for _, readPath := range ReadPathsFromToolResult(result) {
+	for _, readPath := range newToolResultEvidenceRecord(result).ReadPaths() {
 		if NormalizeRunnerPath(readPath) == path {
 			return true
 		}

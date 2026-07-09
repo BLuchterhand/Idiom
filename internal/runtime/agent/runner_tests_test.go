@@ -15702,11 +15702,11 @@ func TestCandidateAnchorMissDoesNotCountAsSourceBodyEvidence(t *testing.T) {
 	}
 
 	for _, result := range []workspace.ToolResult{direct, routed} {
-		if paths := (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result); len(paths) != 0 {
+		if paths := newToolResultEvidenceRecord(result).SourceBodyPaths(); len(paths) != 0 {
 			t.Fatalf("%s candidate-anchor miss counted as concrete source evidence", result.Tool)
 		}
 
-		if paths := ReadPathsFromToolResult(result); len(paths) != 0 {
+		if paths := newToolResultEvidenceRecord(result).ReadPaths(); len(paths) != 0 {
 			t.Fatalf("%s candidate-anchor miss returned read paths: %#v", result.Tool, paths)
 		}
 	}
@@ -27841,7 +27841,7 @@ func TestDelegatedChildFallbackSourceReadUsesDiscoveredEvidencePath(t *testing.T
 		t.Fatalf("expected fallback to read discovered evidence path, req=%#v result=%#v", req, result)
 	}
 
-	if paths := (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result); len(paths) == 0 {
+	if paths := newToolResultEvidenceRecord(result).SourceBodyPaths(); len(paths) == 0 {
 		t.Fatalf("fallback result should contain source body, got %#v", result)
 	}
 }
@@ -30792,106 +30792,106 @@ func TestAcceptedAnswerEvidencePathsIncludeMentionedToolOutputPaths(t *testing.T
 }
 
 func TestToolResultEvidenceProjectionSourceBodyPathsExcludeDiagnosticArtifacts(t *testing.T) {
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
+	if len(newToolResultEvidenceRecord(readFileSourceBodyResult(
 		"logs/conversations/recent.jsonl",
 		1,
 		80,
 		80,
 		"1:{\"type\":\"final\",\"content\":\"The user is asking me...\"}\n",
-	))) > 0 {
+	)).SourceBodyPaths()) > 0 {
 
 		t.Fatal("diagnostic conversation logs must not satisfy codebase source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
+	if len(newToolResultEvidenceRecord(readFileSourceBodyResult(
 		".idiom/comprehension/views/context.json",
 		1,
 		80,
 		80,
 		"1:{\"candidate_files\":[{\"path\":\"internal/runtime/agent/runner_core.go\"}]}\n",
-	))) > 0 {
+	)).SourceBodyPaths()) > 0 {
 
 		t.Fatal("generated .idiom context artifacts must not satisfy codebase source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(workspace.ToolResult{
+	if len(newToolResultEvidenceRecord(workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read f1 .codex/discovery/packet.json lines 1-80",
 		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/runtime/agent/runner_core.go\"}]}\n",
-	})) > 0 {
+	}).SourceBodyPaths()) > 0 {
 
 		t.Fatal("generated discovery artifacts must not satisfy codebase source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(workspace.ToolResult{
+	if len(newToolResultEvidenceRecord(workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read f1 transcripts/session.jsonl lines 1-80",
 		Output:  "1:{\"role\":\"assistant\",\"content\":\"...\"}\n",
-	})) > 0 {
+	}).SourceBodyPaths()) > 0 {
 
 		t.Fatal("top-level transcript artifacts must not satisfy codebase source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(workspace.ToolResult{
+	if len(newToolResultEvidenceRecord(workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read f1 testdata/swe/generated-logs/direct.jsonl lines 1-80",
 		Output:  "1:{\"type\":\"tool_result\"}\n",
-	})) > 0 {
+	}).SourceBodyPaths()) > 0 {
 
 		t.Fatal("generated eval logs must not satisfy codebase source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
+	if len(newToolResultEvidenceRecord(readFileSourceBodyResult(
 		"internal/runtime/agent/runner_core.go",
 		1,
 		80,
 		0,
 		"1:package agent\n2:\n3:func example() {}\n",
-	))) == 0 {
+	)).SourceBodyPaths()) == 0 {
 
 		t.Fatal("source file read should satisfy codebase source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
+	if len(newToolResultEvidenceRecord(readFileSourceBodyResult(
 		"testdata/events.jsonl",
 		1,
 		20,
 		0,
 		"1:{\"event\":\"fixture\"}\n",
-	))) == 0 {
+	)).SourceBodyPaths()) == 0 {
 
 		t.Fatal("checked-in jsonl fixtures outside diagnostic log directories should remain source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
+	if len(newToolResultEvidenceRecord(readFileSourceBodyResult(
 		"internal/log/reader.go",
 		1,
 		20,
 		0,
 		"1:package log\n2:func reader() {}\n",
-	))) == 0 {
+	)).SourceBodyPaths()) == 0 {
 
 		t.Fatal("source files under internal/log must remain source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
+	if len(newToolResultEvidenceRecord(readFileSourceBodyResult(
 		"internal/traces/reader.go",
 		1,
 		20,
 		0,
 		"1:package traces\n2:func reader() {}\n",
-	))) == 0 {
+	)).SourceBodyPaths()) == 0 {
 
 		t.Fatal("source files under internal/traces must remain source-body evidence")
 	}
 
-	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
+	if len(newToolResultEvidenceRecord(readFileSourceBodyResult(
 		"internal/evidence/transcript/debuglog.go",
 		1,
 		20,
 		0,
 		"1:package transcript\n2:func debuglog() {}\n",
-	))) == 0 {
+	)).SourceBodyPaths()) == 0 {
 
 		t.Fatal("source files under internal/evidence/transcript must remain source-body evidence")
 	}
@@ -31766,15 +31766,15 @@ func TestFinalAnswerDecisionRejectsIrrelevantExternalDocumentCitation(t *testing
 	}
 }
 
-func TestReadPathsFromToolResultUsesTypedPathsOnly(t *testing.T) {
+func TestToolResultEvidenceRecordUsesTypedReadPathsOnly(t *testing.T) {
 	typed := workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read wrong.md lines 1-2",
 		Output:  "1:body",
 		Paths:   []string{"/Users/ben/Library/Mobile Documents/Website Project/conversation brief.md"},
 	}
-	if got := ReadPathsFromToolResult(typed); !slices.Equal(got, typed.Paths) {
-		t.Fatalf("ReadPathsFromToolResult typed paths = %#v, want %#v", got, typed.Paths)
+	if got := newToolResultEvidenceRecord(typed).ReadPaths(); !slices.Equal(got, typed.Paths) {
+		t.Fatalf("record read paths = %#v, want %#v", got, typed.Paths)
 	}
 
 	summaryOnly := workspace.ToolResult{
@@ -31782,8 +31782,8 @@ func TestReadPathsFromToolResultUsesTypedPathsOnly(t *testing.T) {
 		Summary: "Read f35 /Users/ben/Library/Mobile Documents/Website Project/conversation brief.md lines 1-80 (total lines: 92)",
 		Output:  "1:Website failure brief",
 	}
-	if got := ReadPathsFromToolResult(summaryOnly); len(got) != 0 {
-		t.Fatalf("ReadPathsFromToolResult must ignore summary-only paths, got %#v", got)
+	if got := newToolResultEvidenceRecord(summaryOnly).ReadPaths(); len(got) != 0 {
+		t.Fatalf("record read paths must ignore summary-only paths, got %#v", got)
 	}
 }
 

@@ -278,8 +278,9 @@ func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {
 
 		return summary
 	case "context_pack", "context_query", "context_zoom", "code_navigate", "read_file", workspace.ToolNamePrefetch, "search_files":
-		if ReadStyleSourceBodyTool(result.Tool) {
-			paths := ReadPathsFromToolResult(result)
+		record := newToolResultEvidenceRecord(result)
+		if record.tool == workspace.ToolNameReadFile || record.tool == workspace.ToolNamePrefetch {
+			paths := record.ReadPaths()
 			if len(paths) > 0 && len(nonArtifactEvidencePaths(paths)) == 0 {
 				return ""
 			}
@@ -498,8 +499,8 @@ func presentableExactProbeResult(result workspace.ToolResult) bool {
 
 	switch tool {
 	case "code_navigate", "read_only_capability":
-		return RoutedSourceReadOutputHasBody(result.Output) &&
-			len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0
+		return routedSourceReadOutputHasBody(result.Output) &&
+			len(newToolResultEvidenceRecord(result).SourceBodyPaths()) > 0
 	default:
 		return false
 	}
@@ -2456,13 +2457,13 @@ func presentableExternalDocumentEvidenceAnswer(brief workerruntime.WorkerRuntime
 	}
 
 	var parts []externalDocumentEvidenceAnswerPart
-	projection := newToolResultEvidenceProjection(results)
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
 		}
 
-		if !ReadStyleSourceBodyTool(result.Tool) {
+		record := newToolResultEvidenceRecord(result)
+		if record.tool != workspace.ToolNameReadFile && record.tool != workspace.ToolNamePrefetch {
 			continue
 		}
 
@@ -2471,7 +2472,7 @@ func presentableExternalDocumentEvidenceAnswer(brief workerruntime.WorkerRuntime
 			continue
 		}
 
-		for _, observation := range projection.ReadOnlyEvidenceObservationsFromResult(result) {
+		for _, observation := range record.ReadOnlyEvidenceObservations() {
 			if observation.Kind != readOnlyEvidenceExternalDocument {
 				continue
 			}
@@ -2651,15 +2652,14 @@ func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSour
 	byPath := make(map[string]*aggregate)
 	order := make([]string, 0, len(results))
 
-	projection := newToolResultEvidenceProjection(results)
 	for i, result := range results {
-		if strings.TrimSpace(result.Error) != "" ||
-			!ReadStyleSourceBodyTool(result.Tool) {
+		record := newToolResultEvidenceRecord(result)
+		if strings.TrimSpace(result.Error) != "" || (record.tool != workspace.ToolNameReadFile && record.tool != workspace.ToolNamePrefetch) {
 
 			continue
 		}
 
-		paths := projection.SourceBodyPathsFromResult(result)
+		paths := record.SourceBodyPaths()
 		if len(paths) == 0 {
 			continue
 		}
@@ -2741,11 +2741,12 @@ func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, resu
 			continue
 		}
 
-		if !ReadStyleSourceBodyTool(result.Tool) {
+		record := newToolResultEvidenceRecord(result)
+		if record.tool != workspace.ToolNameReadFile && record.tool != workspace.ToolNamePrefetch {
 			continue
 		}
 
-		paths := ReadPathsFromToolResult(result)
+		paths := record.ReadPaths()
 		if len(paths) == 0 {
 			continue
 		}
@@ -3824,7 +3825,7 @@ func bestPresentableExactProbeAnchor(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		if newToolResultEvidenceRecord(result).candidateAnchorOnly {
 			continue
 		}
 
@@ -5228,7 +5229,7 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 		}
 		result := r.Workspace.Execute(ctx, req)
 
-		if strings.TrimSpace(result.Error) != "" || len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) == 0 {
+		if strings.TrimSpace(result.Error) != "" || len(newToolResultEvidenceRecord(result).SourceBodyPaths()) == 0 {
 			continue
 		}
 
@@ -6117,7 +6118,7 @@ func synthesizeDelegatedSourceBodyFactsAnswer(objective string, results []worksp
 			continue
 		}
 
-		paths := ReadPathsFromToolResult(result)
+		paths := newToolResultEvidenceRecord(result).ReadPaths()
 		if len(paths) == 0 {
 			continue
 		}
@@ -7012,7 +7013,7 @@ func implementationTargetWriteReadyReadProgressForResult(brief workerruntime.Wor
 		return implementationTargetWriteReadyReadProgressDuplicate
 	}
 
-	if !slices.Contains((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result), path) {
+	if !slices.Contains(newToolResultEvidenceRecord(result).SourceBodyPaths(), path) {
 		return implementationTargetWriteReadyReadProgressDuplicate
 	}
 

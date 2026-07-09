@@ -13,7 +13,18 @@ import (
 )
 
 type toolResultEvidenceProjection struct {
-	results []workspace.ToolResult
+	records []toolResultEvidenceRecord
+}
+
+type toolResultEvidenceRecord struct {
+	result              workspace.ToolResult
+	tool                string
+	summary             string
+	output              string
+	failed              bool
+	sourceBodies        []toolfacts.SourceBodyEvidence
+	readPaths           []string
+	candidateAnchorOnly bool
 }
 
 type readOnlyDelegatedEvidenceFact struct {
@@ -39,16 +50,133 @@ type readOnlyEvidenceObservation struct {
 }
 
 func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultEvidenceProjection {
-	return toolResultEvidenceProjection{results: append([]workspace.ToolResult(nil), results...)}
+	records := make([]toolResultEvidenceRecord, 0, len(results))
+	for _, result := range results {
+		records = append(records, newToolResultEvidenceRecord(result))
+	}
+
+	return toolResultEvidenceProjection{records: records}
+}
+
+func newToolResultEvidenceRecord(result workspace.ToolResult) toolResultEvidenceRecord {
+	record := toolResultEvidenceRecord{
+		result:              result,
+		tool:                strings.TrimSpace(result.Tool),
+		summary:             strings.TrimSpace(result.Summary),
+		output:              result.Output,
+		failed:              strings.TrimSpace(result.Error) != "",
+		sourceBodies:        sourceBodyFactsFromResult(result),
+		candidateAnchorOnly: CandidateAnchorOnlyText(result.Summary + "\n" + result.Output),
+	}
+	record.readPaths = record.deriveReadPaths()
+	return record
+}
+
+func (record toolResultEvidenceRecord) deriveReadPaths() []string {
+	if record.candidateAnchorOnly && len(record.result.Paths) == 0 && len(record.sourceBodies) == 0 {
+		return nil
+	}
+
+	hasTypedReadPath := len(record.result.Paths) > 0 || len(record.sourceBodies) > 0
+	if (record.tool == workspace.ToolNameCodeNavigate || record.tool == workspace.ToolNameReadOnlyCapability) &&
+		!hasTypedReadPath && !routedSourceReadOutputHasBody(record.output) {
+
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var paths []string
+
+	candidates := append([]string{}, record.result.Paths...)
+	for _, fact := range record.sourceBodies {
+		candidates = append(candidates, fact.Path)
+	}
+
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		normalized := NormalizeRunnerPath(candidate)
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		paths = append(paths, candidate)
+	}
+
+	return paths
+}
+
+func (record toolResultEvidenceRecord) ReadPaths() []string {
+	return append([]string(nil), record.readPaths...)
+}
+
+func (record toolResultEvidenceRecord) SourceBodyFact(path string) (toolfacts.SourceBodyEvidence, bool) {
+	path = NormalizeRunnerPath(path)
+	if path == "" {
+		return toolfacts.SourceBodyEvidence{}, false
+	}
+
+	for _, fact := range record.sourceBodies {
+		if NormalizeRunnerPath(fact.Path) == path {
+			return fact, true
+		}
+	}
+
+	return toolfacts.SourceBodyEvidence{}, false
+}
+
+func routedSourceReadOutputHasBody(output string) bool {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false
+	}
+
+	if CandidateAnchorOnlyText(output) {
+		return false
+	}
+
+	if !strings.Contains(output, "route_summary:") {
+		return true
+	}
+
+	seenRouteSummary := false
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "route_summary:") {
+			seenRouteSummary = true
+			continue
+		}
+
+		if !seenRouteSummary || line == "" {
+			continue
+		}
+
+		if routedSourceReadOutputHeaderLine(line) {
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
+func routedSourceReadOutputHeaderLine(line string) bool {
+	return strings.Contains(line, "capability:") ||
+		strings.Contains(line, "language:") ||
+		strings.Contains(line, "routed_tool:")
 }
 
 func (projection toolResultEvidenceProjection) ReadPaths() map[string]struct{} {
-	paths := make(map[string]struct{}, len(projection.results))
-	for _, result := range projection.results {
-		if strings.TrimSpace(result.Error) != "" {
+	paths := make(map[string]struct{}, len(projection.records))
+	for _, record := range projection.records {
+		if record.failed {
 			continue
 		}
-		for _, path := range ReadPathsFromToolResult(result) {
+		for _, path := range record.ReadPaths() {
 			normalized := NormalizeRunnerPath(path)
 			if normalized != "" {
 				paths[normalized] = struct{}{}
@@ -67,21 +195,6 @@ func sourceBodyFactsFromResult(result workspace.ToolResult) []toolfacts.SourceBo
 	}
 
 	return nil
-}
-
-func sourceBodyFactForPath(result workspace.ToolResult, path string) (toolfacts.SourceBodyEvidence, bool) {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return toolfacts.SourceBodyEvidence{}, false
-	}
-
-	for _, fact := range sourceBodyFactsFromResult(result) {
-		if NormalizeRunnerPath(fact.Path) == path {
-			return fact, true
-		}
-	}
-
-	return toolfacts.SourceBodyEvidence{}, false
 }
 
 func sourceBodyFactHasRange(fact toolfacts.SourceBodyEvidence) bool {
@@ -114,14 +227,14 @@ func (projection toolResultEvidenceProjection) SourceEvidenceForPath(path string
 		return planThenExecuteSourceEvidence{}
 	}
 	best := planThenExecuteSourceEvidence{Path: path}
-	for _, result := range projection.results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
-		if redirectPath := implementationTargetWriteReadyRedirectedReadPath(result); redirectPath == path {
-			if tool, ok := implementationTargetWriteReadyRedirectedReadTool(result); ok {
+	for _, record := range projection.records {
+		evidence := record.SourceEvidenceForPath(path)
+		if redirectPath := implementationTargetWriteReadyRedirectedReadPath(record.result); redirectPath == path {
+			if tool, ok := implementationTargetWriteReadyRedirectedReadTool(record.result); ok {
 				evidence = planThenExecuteSourceEvidence{
 					Path:   path,
 					Level:  planThenExecuteEvidenceSourceBodyPending,
-					Source: strings.TrimSpace(result.Tool),
+					Source: record.tool,
 					Detail: "redirected to " + tool,
 				}
 			}
@@ -137,16 +250,116 @@ func (projection toolResultEvidenceProjection) HasSourceBody(path string) bool {
 	return sourceEvidenceHasBody(projection.SourceEvidenceForPath(path))
 }
 
-func (toolResultEvidenceProjection) SourceBodyPathsFromResult(result workspace.ToolResult) []string {
-	if strings.TrimSpace(result.Error) != "" {
+func (record toolResultEvidenceRecord) SourceEvidenceForPath(path string) planThenExecuteSourceEvidence {
+	path = NormalizeRunnerPath(path)
+	if path == "" || IsNonSourceEvidenceArtifactPath(path) || record.failed {
+		return planThenExecuteSourceEvidence{}
+	}
+
+	text := strings.Join([]string{record.result.Summary, record.result.Output}, "\n")
+	evidence := planThenExecuteSourceEvidence{Path: path}
+
+	if strings.Contains(strings.ToLower(text), strings.ToLower(path)) {
+		evidence.Level = planThenExecuteEvidencePathSeen
+		evidence.Source = record.tool
+		evidence.Detail = "path mentioned by tool result"
+	}
+
+	sourceMatched := false
+	var sourceFact toolfacts.SourceBodyEvidence
+	hasSourceFact := false
+
+	for _, readPath := range record.readPaths {
+		if IsNonSourceEvidenceArtifactPath(readPath) {
+			continue
+		}
+
+		if NormalizeRunnerPath(readPath) == path {
+			sourceMatched = true
+			if fact, ok := record.SourceBodyFact(path); ok {
+				sourceFact = fact
+				hasSourceFact = true
+			}
+			break
+		}
+	}
+
+	if !sourceMatched {
+		return evidence
+	}
+
+	evidence.Source = record.tool
+	evidence.Level = planThenExecuteEvidencePathSeen
+	evidence.Detail = "typed path seen"
+
+	if !hasSourceFact {
+		if record.CodeNavigateIsOutline() || strings.HasSuffix(record.tool, "_file_outline") {
+			evidence.Detail = "file outline"
+		}
+		return evidence
+	}
+
+	evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(sourceFact, path)
+
+	switch {
+	case record.tool == workspace.ToolNameReadFile || record.tool == workspace.ToolNamePrefetch:
+	case record.tool == workspace.ToolNameCodeNavigate || record.tool == workspace.ToolNameReadOnlyCapability:
+		if record.CodeNavigateIsOutline() {
+			evidence.Level = planThenExecuteEvidencePathSeen
+			evidence.Detail = "file outline"
+		} else if sourceFact.Truncated {
+			evidence.Level = planThenExecuteEvidenceBodyWindow
+			evidence.Detail = "truncated routed source body"
+		} else {
+			evidence.Level = planThenExecuteEvidenceAnchorReady
+			evidence.Detail = "routed source body"
+		}
+	case strings.HasSuffix(record.tool, "_file_outline"):
+		evidence.Level = planThenExecuteEvidencePathSeen
+		evidence.Detail = "file outline"
+	case strings.HasSuffix(record.tool, "_read_symbol"), strings.HasSuffix(record.tool, "_extract_body"):
+		if sourceFact.Truncated {
+			evidence.Level = planThenExecuteEvidenceBodyWindow
+			evidence.Detail = "truncated symbol/body read"
+		} else {
+			evidence.Level = planThenExecuteEvidenceAnchorReady
+			evidence.Detail = "symbol/body read"
+		}
+	}
+
+	return evidence
+}
+
+func (record toolResultEvidenceRecord) CodeNavigateIsOutline() bool {
+	output := strings.TrimSpace(record.output)
+	if output == "" {
+		return false
+	}
+	summary := strings.ToLower(record.summary)
+
+	if strings.Contains(summary, "outline") && !record.candidateAnchorOnly {
+		return true
+	}
+
+	lower := strings.ToLower(output)
+	for _, marker := range []string{"\nfn ", "\nstruct ", "\nenum ", "\nimpl ", "\ntrait "} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	return strings.Contains(lower, "capability: file_outline")
+}
+
+func (record toolResultEvidenceRecord) SourceBodyPaths() []string {
+	if record.failed {
 		return nil
 	}
 
-	single := toolResultEvidenceProjection{results: []workspace.ToolResult{result}}
 	var paths []string
-	for _, rawPath := range ReadPathsFromToolResult(result) {
+	for _, rawPath := range record.readPaths {
 		path := NormalizeRunnerPath(rawPath)
-		if path == "" || IsNonSourceEvidenceArtifactPath(path) || readOnlyExternalDocumentBodyPath(path) || !single.HasSourceBody(path) {
+		if path == "" || IsNonSourceEvidenceArtifactPath(path) || readOnlyExternalDocumentBodyPath(path) || !sourceEvidenceHasBody(record.SourceEvidenceForPath(path)) {
 			continue
 		}
 		paths = textutil.AppendUnique(paths, path)
@@ -158,8 +371,8 @@ func (toolResultEvidenceProjection) SourceBodyPathsFromResult(result workspace.T
 func (projection toolResultEvidenceProjection) SourceBodyPaths() []string {
 	seen := make(map[string]struct{})
 	var paths []string
-	for _, result := range projection.results {
-		for _, path := range projection.SourceBodyPathsFromResult(result) {
+	for _, record := range projection.records {
+		for _, path := range record.SourceBodyPaths() {
 			if _, ok := seen[path]; ok {
 				continue
 			}
@@ -172,71 +385,69 @@ func (projection toolResultEvidenceProjection) SourceBodyPaths() []string {
 
 func (projection toolResultEvidenceProjection) ReadOnlyEvidenceObservations() []readOnlyEvidenceObservation {
 	var observations []readOnlyEvidenceObservation
-	for _, result := range projection.results {
-		observations = append(observations, projection.ReadOnlyEvidenceObservationsFromResult(result)...)
+	for _, record := range projection.records {
+		observations = append(observations, record.ReadOnlyEvidenceObservations()...)
 	}
 	return observations
 }
 
-func (projection toolResultEvidenceProjection) ReadOnlyEvidenceObservationsFromResult(result workspace.ToolResult) []readOnlyEvidenceObservation {
-	if strings.TrimSpace(result.Error) != "" {
+func (record toolResultEvidenceRecord) ReadOnlyEvidenceObservations() []readOnlyEvidenceObservation {
+	if record.failed {
 		return nil
 	}
 
-	tool := strings.TrimSpace(result.Tool)
-	if tool == "" {
+	if record.tool == "" {
 		return nil
 	}
 
-	summary := strings.TrimSpace(result.Summary)
 	var observations []readOnlyEvidenceObservation
 
-	if projection.GeneratedArtifactOnlyReadResult(result) {
+	if record.GeneratedArtifactOnlyRead() {
 		return []readOnlyEvidenceObservation{{
 			Kind:           readOnlyEvidenceGeneratedArtifact,
-			Tool:           tool,
-			CandidatePaths: readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8),
-			Summary:        summary,
-			Output:         result.Output,
+			Tool:           record.tool,
+			CandidatePaths: readOnlySourceLikePaths(record.readPaths, 8),
+			Summary:        record.summary,
+			Output:         record.output,
 		}}
 	}
 
-	if result.Facts != nil {
-		paths := readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)
+	if record.result.Facts != nil {
+		paths := readOnlySourceLikePaths(record.result.Facts.DiagnosticEvidencePaths, 8)
 		if len(paths) > 0 {
 			observations = append(observations, readOnlyEvidenceObservation{
 				Kind:           readOnlyEvidenceDiagnostic,
-				Tool:           tool,
+				Tool:           record.tool,
 				CandidatePaths: paths,
-				Summary:        summary,
-				Output:         result.Output,
+				Summary:        record.summary,
+				Output:         record.output,
 			})
 		}
 	}
 
-	if featurePlannerPlanArtifactResult(result) {
+	if featurePlannerPlanArtifactResult(record.result) {
 		observations = append(observations, readOnlyEvidenceObservation{
 			Kind:           readOnlyEvidencePlanArtifact,
-			Tool:           tool,
-			CandidatePaths: featurePlannerPlanArtifactProposedPaths(result),
-			Summary:        summary,
-			Output:         result.Output,
+			Tool:           record.tool,
+			CandidatePaths: featurePlannerPlanArtifactProposedPaths(record.result),
+			Summary:        record.summary,
+			Output:         record.output,
 		})
 		return observations
 	}
 
-	for _, path := range projection.SourceBodyPathsFromResult(result) {
+	for _, path := range record.SourceBodyPaths() {
 		observations = append(observations, readOnlyEvidenceObservation{
 			Kind:    readOnlyEvidenceSourceBody,
-			Tool:    tool,
-			Source:  tool,
+			Tool:    record.tool,
+			Source:  record.tool,
 			Path:    path,
-			Summary: summary,
-			Output:  result.Output,
+			Summary: record.summary,
+			Output:  record.output,
 		})
 	}
 
-	for _, fact := range sourceBodyFactsFromResult(result) {
+	for _, fact := range record.sourceBodies {
 		path := normalizeReadOnlyExternalDocumentPath(fact.Path)
 		if !readOnlyExternalDocumentBodyPath(path) {
 			continue
@@ -244,11 +455,11 @@ func (projection toolResultEvidenceProjection) ReadOnlyEvidenceObservationsFromR
 
 		observations = append(observations, readOnlyEvidenceObservation{
 			Kind:    readOnlyEvidenceExternalDocument,
-			Tool:    tool,
-			Source:  tool,
+			Tool:    record.tool,
+			Source:  record.tool,
 			Path:    path,
-			Summary: summary,
-			Output:  result.Output,
+			Summary: record.summary,
+			Output:  record.output,
 		})
 	}
 
@@ -256,56 +467,56 @@ func (projection toolResultEvidenceProjection) ReadOnlyEvidenceObservationsFromR
 		return observations
 	}
 
-	if workspace.IsReadTool(tool) {
-		paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
+	if workspace.IsReadTool(record.tool) {
+		paths := readOnlySourceLikePaths(record.readPaths, 8)
 		if len(paths) > 0 {
 			observations = append(observations, readOnlyEvidenceObservation{
 				Kind:           readOnlyEvidenceOutline,
-				Tool:           tool,
+				Tool:           record.tool,
 				CandidatePaths: paths,
-				Summary:        summary,
-				Output:         result.Output,
+				Summary:        record.summary,
+				Output:         record.output,
 			})
 		}
 	}
 
 	switch {
-	case tool == workspace.ToolNameTask:
+	case record.tool == workspace.ToolNameTask:
 		return observations
-	case tool == workspace.ToolNameContextPack:
-		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
+	case record.tool == workspace.ToolNameContextPack:
+		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: record.tool}, record.result, 16)
 		observations = append(observations, readOnlyEvidenceObservation{
 			Kind:           readOnlyEvidenceContextPacket,
-			Tool:           tool,
+			Tool:           record.tool,
 			CandidatePaths: readOnlySourceLikePaths(discovery.Candidates, 16),
-			Summary:        summary,
-			Output:         result.Output,
+			Summary:        record.summary,
+			Output:         record.output,
 		})
-	case workspace.IsSearchToolName(tool):
-		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 128)
+	case workspace.IsSearchToolName(record.tool):
+		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: record.tool}, record.result, 128)
 		observations = append(observations, readOnlyEvidenceObservation{
 			Kind:            readOnlyEvidenceSearchHit,
-			Tool:            tool,
+			Tool:            record.tool,
 			CandidatePaths:  readOnlySourceLikePaths(discovery.Candidates, 128),
 			HitCount:        discovery.SearchHitCount,
 			HighCardinality: discovery.HighCardinalitySearch,
-			Summary:         summary,
-			Output:          result.Output,
+			Summary:         record.summary,
+			Output:          record.output,
 		})
-	case projection.DiscoveryCandidateTool(tool):
-		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
+	case toolResultEvidenceDiscoveryCandidateTool(record.tool):
+		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: record.tool}, record.result, 16)
 		candidates := readOnlySourceLikePaths(discovery.Candidates, 16)
 		if len(candidates) > 0 {
 			observations = append(observations, readOnlyEvidenceObservation{
 				Kind:           readOnlyEvidenceSearchHit,
-				Tool:           tool,
+				Tool:           record.tool,
 				CandidatePaths: candidates,
-				Summary:        summary,
-				Output:         result.Output,
+				Summary:        record.summary,
+				Output:         record.output,
 			})
 		}
 	default:
-		if observation, ok := projection.readOnlyOutlineObservationFromResult(result); ok {
+		if observation, ok := record.readOnlyOutlineObservation(); ok {
 			observations = append(observations, observation)
 		}
 	}
@@ -323,12 +534,12 @@ func hasReadOnlyBodyObservation(observations []readOnlyEvidenceObservation) bool
 	return false
 }
 
-func (projection toolResultEvidenceProjection) readOnlyOutlineObservationFromResult(result workspace.ToolResult) (readOnlyEvidenceObservation, bool) {
-	if strings.TrimSpace(result.Error) != "" || len(projection.SourceBodyPathsFromResult(result)) > 0 {
+func (record toolResultEvidenceRecord) readOnlyOutlineObservation() (readOnlyEvidenceObservation, bool) {
+	if record.failed || len(record.SourceBodyPaths()) > 0 {
 		return readOnlyEvidenceObservation{}, false
 	}
 
-	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
+	text := strings.ToLower(strings.TrimSpace(record.result.Summary + "\n" + record.result.Output))
 	if text == "" {
 		return readOnlyEvidenceObservation{}, false
 	}
@@ -337,9 +548,9 @@ func (projection toolResultEvidenceProjection) readOnlyOutlineObservationFromRes
 		return readOnlyEvidenceObservation{}, false
 	}
 
-	candidates := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
+	candidates := readOnlySourceLikePaths(record.readPaths, 8)
 	if len(candidates) == 0 {
-		candidates = sourceLikePathsFromText(result.Summary+"\n"+result.Output, 8)
+		candidates = sourceLikePathsFromText(record.result.Summary+"\n"+record.result.Output, 8)
 	}
 	if len(candidates) == 0 {
 		return readOnlyEvidenceObservation{}, false
@@ -347,10 +558,10 @@ func (projection toolResultEvidenceProjection) readOnlyOutlineObservationFromRes
 
 	return readOnlyEvidenceObservation{
 		Kind:           readOnlyEvidenceOutline,
-		Tool:           strings.TrimSpace(result.Tool),
+		Tool:           record.tool,
 		CandidatePaths: candidates,
-		Summary:        strings.TrimSpace(result.Summary),
-		Output:         result.Output,
+		Summary:        record.summary,
+		Output:         record.output,
 	}, true
 }
 
@@ -363,8 +574,8 @@ func (projection toolResultEvidenceProjection) CandidatePaths() []string {
 	seen := make(map[string]struct{})
 	var paths []string
 
-	for _, result := range projection.results {
-		for _, path := range projection.CandidatePathsFromResult(result, 128) {
+	for _, record := range projection.records {
+		for _, path := range record.CandidatePaths(128) {
 			normalized := NormalizeRunnerPath(path)
 			if normalized == "" {
 				continue
@@ -398,8 +609,8 @@ func (projection toolResultEvidenceProjection) ReadOnlyEvidencePackets() []ReadO
 func (projection toolResultEvidenceProjection) ReadOnlyDelegatedEvidenceFacts() []readOnlyDelegatedEvidenceFact {
 	facts := make([]readOnlyDelegatedEvidenceFact, 0, 2)
 
-	for _, result := range projection.results {
-		if fact, ok := readOnlyDelegatedEvidenceFactFromResult(result); ok {
+	for _, record := range projection.records {
+		if fact, ok := readOnlyDelegatedEvidenceFactFromResult(record.result); ok {
 			facts = append(facts, fact)
 		}
 	}
@@ -432,19 +643,18 @@ func readOnlyDelegatedEvidenceFactFromResult(result workspace.ToolResult) (readO
 func (projection toolResultEvidenceProjection) ReadOnlyEvidencePacketCandidatePaths() []string {
 	paths := make([]string, 0, 8)
 
-	for _, result := range projection.results {
-		if strings.TrimSpace(result.Error) != "" {
+	for _, record := range projection.records {
+		if record.failed {
 			continue
 		}
 
-		tool := strings.TrimSpace(result.Tool)
 		switch {
-		case projection.DiscoveryCandidateTool(tool), tool == workspace.ToolNameContextPack:
-			paths = append(paths, projection.CandidatePathsFromResult(result, 16)...)
-		case workspace.IsSearchToolName(tool):
-			paths = append(paths, projection.CandidatePathsFromResult(result, 64)...)
+		case toolResultEvidenceDiscoveryCandidateTool(record.tool), record.tool == workspace.ToolNameContextPack:
+			paths = append(paths, record.CandidatePaths(16)...)
+		case workspace.IsSearchToolName(record.tool):
+			paths = append(paths, record.CandidatePaths(64)...)
 		default:
-			paths = append(paths, ReadPathsFromToolResult(result)...)
+			paths = append(paths, record.ReadPaths()...)
 		}
 	}
 
@@ -471,19 +681,18 @@ func (projection toolResultEvidenceProjection) ReadOnlySourceBodyEvidencePaths()
 	return uniqueDelegatedDiscoveryPaths(paths)
 }
 
-func (projection toolResultEvidenceProjection) CandidatePathsFromResult(result workspace.ToolResult, max int) []string {
-	if strings.TrimSpace(result.Error) != "" {
+func (record toolResultEvidenceRecord) CandidatePaths(max int) []string {
+	if record.failed {
 		return nil
 	}
 
-	tool := strings.TrimSpace(result.Tool)
 	switch {
-	case tool == workspace.ToolNameContextPack:
-		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
-	case projection.DiscoveryCandidateTool(tool):
-		return discoveryConsumptionCandidatesFromResult(result, max)
-	case workspace.IsSearchToolName(tool):
-		return sourceLikePathsFromText(result.Summary+"\n"+result.Output, max)
+	case record.tool == workspace.ToolNameContextPack:
+		return contextPackCandidatePathsFromResults([]workspace.ToolResult{record.result}, max)
+	case toolResultEvidenceDiscoveryCandidateTool(record.tool):
+		return discoveryConsumptionCandidatesFromResult(record.result, max)
+	case workspace.IsSearchToolName(record.tool):
+		return sourceLikePathsFromText(record.result.Summary+"\n"+record.result.Output, max)
 	default:
 		return nil
 	}
@@ -524,13 +733,12 @@ func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max in
 	return paths
 }
 
-func (toolResultEvidenceProjection) GeneratedArtifactOnlyReadResult(result workspace.ToolResult) bool {
-	paths := ReadPathsFromToolResult(result)
-	if len(paths) == 0 {
+func (record toolResultEvidenceRecord) GeneratedArtifactOnlyRead() bool {
+	if len(record.readPaths) == 0 {
 		return false
 	}
 
-	for _, path := range paths {
+	for _, path := range record.readPaths {
 		if !IsNonSourceEvidenceArtifactPath(path) {
 			return false
 		}
@@ -545,15 +753,15 @@ func (projection toolResultEvidenceProjection) DiagnosticArtifactReadForPath(pat
 		return false
 	}
 
-	for _, result := range projection.results {
-		if strings.TrimSpace(result.Error) != "" ||
-			strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile ||
-			!projection.GeneratedArtifactOnlyReadResult(result) {
+	for _, record := range projection.records {
+		if record.failed ||
+			record.tool != workspace.ToolNameReadFile ||
+			!record.GeneratedArtifactOnlyRead() {
 
 			continue
 		}
 
-		for _, readPath := range ReadPathsFromToolResult(result) {
+		for _, readPath := range record.readPaths {
 			if normalizeDiagnosticArtifactEvidencePath(readPath) == needle {
 				return true
 			}
@@ -614,7 +822,7 @@ func externalDocumentPathMatchesCitation(path string, candidate string) bool {
 	return strings.ToLower(filepath.Base(candidateLower)) == pathLower
 }
 
-func (toolResultEvidenceProjection) DiscoveryCandidateTool(tool string) bool {
+func toolResultEvidenceDiscoveryCandidateTool(tool string) bool {
 	tool = strings.TrimSpace(tool)
 	switch tool {
 	case workspace.ToolNameDiscoveryQuery, workspace.ToolNameContextQuery, workspace.ToolNameContextZoom,
@@ -643,12 +851,12 @@ func (projection toolResultEvidenceProjection) ChangedPathList() []string {
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
 
-	for _, result := range projection.results {
-		if strings.TrimSpace(result.Error) != "" {
+	for _, record := range projection.records {
+		if record.failed {
 			continue
 		}
 
-		for _, rawPath := range projection.ChangedPathsFromResult(result) {
+		for _, rawPath := range projection.ChangedPathsFromResult(record.result) {
 			path := NormalizeRunnerPath(rawPath)
 			if path == "" {
 				continue
@@ -678,8 +886,8 @@ func (projection toolResultEvidenceProjection) ChangedSourcePathList() []string 
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
 
-	for _, result := range projection.results {
-		for _, path := range projection.ChangedSourcePathsFromResult(result) {
+	for _, record := range projection.records {
+		for _, path := range projection.ChangedSourcePathsFromResult(record.result) {
 			if _, ok := seen[path]; ok {
 				continue
 			}

@@ -1435,7 +1435,7 @@ func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
 			continue
 		}
 
-		fact, ok := sourceBodyFactForPath(result, path)
+		fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 		if !ok {
 			continue
 		}
@@ -1700,7 +1700,7 @@ func (r *Runner) markConcreteSourceEvidenceObserved(result workspace.ToolResult)
 		return
 	}
 
-	for _, path := range (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result) {
+	for _, path := range newToolResultEvidenceRecord(result).SourceBodyPaths() {
 		r.Workspace.MarkPathObserved(path)
 	}
 }
@@ -3134,7 +3134,7 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 
 		sourceFacts := sourceBodyFactsFromResult(result)
 		if len(sourceFacts) == 0 {
-			for _, path := range ReadPathsFromToolResult(result) {
+			for _, path := range newToolResultEvidenceRecord(result).ReadPaths() {
 				add(path, result.Summary, 0, 0)
 			}
 			continue
@@ -3321,7 +3321,7 @@ func planThenExecuteTerminalSourceEvidenceMessages(brief workerruntime.WorkerRun
 			continue
 		}
 
-		paths := ReadPathsFromToolResult(result)
+		paths := newToolResultEvidenceRecord(result).ReadPaths()
 
 		paths = nonArtifactEvidencePaths(paths)
 
@@ -4708,7 +4708,7 @@ func planThenExecuteLargePathSeen(path string, results []workspace.ToolResult) b
 	}
 
 	for _, result := range results {
-		fact, ok := sourceBodyFactForPath(result, path)
+		fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 		if ok && fact.TotalLines >= planThenExecuteLargeFileGenericHeaderMinTotalLines {
 			return true
 		}
@@ -5333,7 +5333,7 @@ func successfulSourceEvidencePathAfter(results []workspace.ToolResult, index int
 	}
 
 	for i := index + 1; i < len(results); i++ {
-		if planThenExecuteEvidenceRank(planThenExecuteToolResultSourceEvidence(results[i], path).Level) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow) {
+		if planThenExecuteEvidenceRank(newToolResultEvidenceRecord(results[i]).SourceEvidenceForPath(path).Level) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow) {
 			return true
 		}
 	}
@@ -5399,7 +5399,7 @@ func invalidAnchorCompleteCorrectionEvidenceResult(result workspace.ToolResult, 
 		return true
 	}
 
-	evidence := planThenExecuteToolResultSourceEvidence(result, path)
+	evidence := newToolResultEvidenceRecord(result).SourceEvidenceForPath(path)
 	if evidence.Level != planThenExecuteEvidenceAnchorReady {
 		return false
 	}
@@ -5408,7 +5408,7 @@ func invalidAnchorCompleteCorrectionEvidenceResult(result workspace.ToolResult, 
 		return true
 	}
 
-	fact, ok := sourceBodyFactForPath(result, path)
+	fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 	if !ok {
 		return false
 	}
@@ -5436,7 +5436,7 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 		return true
 	}
 
-	evidence := planThenExecuteToolResultSourceEvidence(result, path)
+	evidence := newToolResultEvidenceRecord(result).SourceEvidenceForPath(path)
 	if evidence.Level != planThenExecuteEvidenceAnchorReady {
 		return false
 	}
@@ -5445,7 +5445,7 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 		return true
 	}
 
-	fact, ok := sourceBodyFactForPath(result, path)
+	fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 	if !ok {
 		return false
 	}
@@ -5484,7 +5484,7 @@ func readFileResultIsBoundedCppSourceWindow(result workspace.ToolResult, path st
 		return false
 	}
 
-	fact, ok := sourceBodyFactForPath(result, path)
+	fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 	if !ok {
 		return false
 	}
@@ -5507,7 +5507,7 @@ func readFileResultCoversRejectedLineRange(result workspace.ToolResult, path str
 		return false
 	}
 
-	fact, ok := sourceBodyFactForPath(result, path)
+	fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 	if !ok {
 		return false
 	}
@@ -5940,124 +5940,6 @@ func planThenExecuteRequiredPathStateSummaries(brief workerruntime.WorkerRuntime
 	}
 
 	return out
-}
-
-func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = NormalizeRunnerPath(path)
-	if path == "" || IsNonSourceEvidenceArtifactPath(path) || strings.TrimSpace(result.Error) != "" {
-		return planThenExecuteSourceEvidence{}
-	}
-
-	text := strings.Join([]string{result.Summary, result.Output}, "\n")
-	evidence := planThenExecuteSourceEvidence{Path: path}
-
-	if strings.Contains(strings.ToLower(text), strings.ToLower(path)) {
-		evidence.Level = planThenExecuteEvidencePathSeen
-		evidence.Source = strings.TrimSpace(result.Tool)
-		evidence.Detail = "path mentioned by tool result"
-	}
-
-	sourcePaths := ReadPathsFromToolResult(result)
-	sourceMatched := false
-	var sourceFact toolfacts.SourceBodyEvidence
-	hasSourceFact := false
-
-	for _, readPath := range sourcePaths {
-		if IsNonSourceEvidenceArtifactPath(readPath) {
-			continue
-		}
-
-		if NormalizeRunnerPath(readPath) == path {
-			sourceMatched = true
-			if fact, ok := sourceBodyFactForPath(result, path); ok {
-				sourceFact = fact
-				hasSourceFact = true
-			}
-			break
-		}
-	}
-
-	if !sourceMatched {
-		return evidence
-	}
-
-	tool := strings.TrimSpace(result.Tool)
-
-	evidence.Source = tool
-	evidence.Level = planThenExecuteEvidencePathSeen
-	evidence.Detail = "typed path seen"
-
-	if !hasSourceFact {
-		if planThenExecuteCodeNavigateIsOutline(result) || strings.HasSuffix(tool, "_file_outline") {
-			evidence.Detail = "file outline"
-		}
-		return evidence
-	}
-
-	evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(sourceFact, path)
-
-	switch {
-	case ReadStyleSourceBodyTool(tool):
-		// Evidence level already comes from producer-owned source-body facts.
-	case tool == "code_navigate" || tool == "read_only_capability":
-		if planThenExecuteCodeNavigateIsOutline(result) {
-			evidence.Level = planThenExecuteEvidencePathSeen
-			evidence.Detail = "file outline"
-		} else if sourceFact.Truncated {
-			evidence.Level = planThenExecuteEvidenceBodyWindow
-			evidence.Detail = "truncated routed source body"
-		} else {
-			evidence.Level = planThenExecuteEvidenceAnchorReady
-			evidence.Detail = "routed source body"
-		}
-	case strings.HasSuffix(tool, "_file_outline"):
-		evidence.Level = planThenExecuteEvidencePathSeen
-		evidence.Detail = "file outline"
-	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
-		if sourceFact.Truncated {
-			evidence.Level = planThenExecuteEvidenceBodyWindow
-			evidence.Detail = "truncated symbol/body read"
-		} else {
-			evidence.Level = planThenExecuteEvidenceAnchorReady
-			evidence.Detail = "symbol/body read"
-		}
-	}
-
-	return evidence
-}
-
-// planThenExecuteCodeNavigateIsOutline detects whether a code_navigate /
-// read_only_capability result contains file-outline content. It checks the
-// output for structured outline markers (fn, struct, enum, impl, trait) and
-// for capability: file_outline in the result summary/output. Returns true
-// when the output is non-empty and contains outline-like content.
-func planThenExecuteCodeNavigateIsOutline(result workspace.ToolResult) bool {
-	output := strings.TrimSpace(result.Output)
-	if output == "" {
-		return false
-	}
-	summary := strings.ToLower(result.Summary)
-
-	// If the tool was called with file_outline capability and output exists,
-	// treat it as body-window evidence.
-	if strings.Contains(summary, "outline") && !CandidateAnchorOnlyText(result.Output) {
-		return true
-	}
-
-	// Check output for structured outline declarations common in Rust/Go/etc.
-	lower := strings.ToLower(output)
-	for _, marker := range []string{"\nfn ", "\nstruct ", "\nenum ", "\nimpl ", "\ntrait "} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-
-	// Check for explicit capability marker in output.
-	if strings.Contains(lower, "capability: file_outline") {
-		return true
-	}
-
-	return false
 }
 
 func planThenExecuteReadFileEvidenceLevel(fact toolfacts.SourceBodyEvidence, path string) (PlanThenExecuteSourceEvidenceLevel, string) {
@@ -9745,7 +9627,7 @@ func planThenExecuteRequiredSourceReadTotal(path string, results []workspace.Too
 			continue
 		}
 
-		if fact, ok := sourceBodyFactForPath(result, path); ok && fact.TotalLines > total {
+		if fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path); ok && fact.TotalLines > total {
 			total = fact.TotalLines
 		}
 	}
@@ -9764,7 +9646,7 @@ func planThenExecuteReadRangeSeen(path string, start, end int, results []workspa
 			continue
 		}
 
-		fact, ok := sourceBodyFactForPath(result, path)
+		fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 		if !ok {
 			continue
 		}
@@ -9880,7 +9762,7 @@ func planThenExecuteNextRequiredSourceReadRange(path string, results []workspace
 			continue
 		}
 
-		fact, ok := sourceBodyFactForPath(result, path)
+		fact, ok := newToolResultEvidenceRecord(result).SourceBodyFact(path)
 		if !ok {
 			continue
 		}

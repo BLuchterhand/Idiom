@@ -364,7 +364,7 @@ func validationStatusEvidenceLedgerPaths(results []workspace.ToolResult) []strin
 		if strings.TrimSpace(result.Tool) != workspace.ToolNameSourceSanity && !semanticlanguage.IsDiagnosticToolName(result.Tool) {
 			continue
 		}
-		for _, path := range ReadPathsFromToolResult(result) {
+		for _, path := range newToolResultEvidenceRecord(result).ReadPaths() {
 			add(path)
 		}
 		if result.Facts != nil {

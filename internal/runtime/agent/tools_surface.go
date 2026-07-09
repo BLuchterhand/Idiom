@@ -1534,7 +1534,7 @@ func latestCodeNavigateOutlinePath(results []workspace.ToolResult) string {
 			continue
 		}
 
-		for _, path := range ReadPathsFromToolResult(result) {
+		for _, path := range newToolResultEvidenceRecord(result).ReadPaths() {
 			path = NormalizeRunnerPath(path)
 			if path != "" && !IsNonSourceEvidenceArtifactPath(path) {
 				return path
@@ -7293,97 +7293,9 @@ func ContainsAny(text string, needles ...string) bool {
 	return false
 }
 
-// ReadPathsFromToolResult returns producer-owned workspace-relative read paths.
-func ReadPathsFromToolResult(r workspace.ToolResult) []string {
-	if CandidateAnchorOnlyResult(r) && len(r.Paths) == 0 && len(sourceBodyFactsFromResult(r)) == 0 {
-		return nil
-	}
-
-	tool := strings.TrimSpace(r.Tool)
-	bodyFacts := sourceBodyFactsFromResult(r)
-	hasTypedReadPath := len(r.Paths) > 0 || len(bodyFacts) > 0
-	if (tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability) && !hasTypedReadPath && !RoutedSourceReadOutputHasBody(r.Output) {
-		return nil
-	}
-
-	seen := map[string]struct{}{}
-	var paths []string
-
-	candidates := append([]string{}, r.Paths...)
-	for _, fact := range bodyFacts {
-		candidates = append(candidates, fact.Path)
-	}
-
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		normalized := NormalizeRunnerPath(candidate)
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		paths = append(paths, candidate)
-	}
-
-	return paths
-}
-
-// CandidateAnchorOnlyResult reports whether a tool result only produced a
-// candidate anchor without reading source body content.
-func CandidateAnchorOnlyResult(r workspace.ToolResult) bool {
-	return CandidateAnchorOnlyText(r.Summary + "\n" + r.Output)
-}
-
 // ---------------------------------------------------------------------------
 // Internal helpers extracted from runner_plan_then_execute_guard.go
 // ---------------------------------------------------------------------------
-
-// RoutedSourceReadOutputHasBody reports whether a routed tool result's output
-// contains source body content (not just headers, anchors, or route summaries).
-func RoutedSourceReadOutputHasBody(output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return false
-	}
-
-	if CandidateAnchorOnlyText(output) {
-		return false
-	}
-
-	if !strings.Contains(output, "route_summary:") {
-		return true
-	}
-
-	seenRouteSummary := false
-
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "route_summary:") {
-			seenRouteSummary = true
-			continue
-		}
-
-		if !seenRouteSummary || line == "" {
-			continue
-		}
-
-		if routedSourceReadOutputHeaderLine(line) {
-			continue
-		}
-
-		return true
-	}
-
-	return false
-}
-
-func routedSourceReadOutputHeaderLine(line string) bool {
-	return strings.Contains(line, "capability:") ||
-		strings.Contains(line, "language:") ||
-		strings.Contains(line, "routed_tool:")
-}
 
 // ---------------------------------------------------------------------------
 // Objective text helpers
@@ -7492,17 +7404,6 @@ func ObjectiveAsksImplementationShape(objective string) bool {
 		" how would ",
 		" how should ",
 	)
-}
-
-// ReadStyleSourceBodyTool reports whether the given tool name reads source
-// body content (read_file, prefetch).
-func ReadStyleSourceBodyTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameReadFile, workspace.ToolNamePrefetch:
-		return true
-	default:
-		return false
-	}
 }
 
 // IsDiagnosticLogArtifactPath reports whether the path points to a known
