@@ -3546,7 +3546,11 @@ func assertObjectiveRelevanceAdvisoryForTest(t *testing.T, runner *Runner, answe
 		t.Fatalf("expected objective diagnostic without enforceable violations, got %#v", acceptance.ContractAssessment)
 	}
 
-	relevance := runner.readOnlyDirectAnswerRelevance(answer, results)
+	projection := newToolResultEvidenceProjection(results)
+	relevance := readOnlyClosureDecisionForProjection(
+		readOnlyDirectAnswerAcceptanceLedgerBrief(runner.RuntimeBrief),
+		projection,
+	).DirectAnswerRelevance(answer)
 	if relevance.BlockerKind != wantKind {
 		t.Fatalf("objective relevance advisory got kind=%q reason=%q, want %q", relevance.BlockerKind, relevance.Reason, wantKind)
 	}
@@ -4036,7 +4040,7 @@ func TestPostChildSourceBodyPacketEvidenceAvailableAcceptsDelegatedNegativeFindi
 		t.Fatalf("source-body packet availability alone should not satisfy answerability: %#v", ledger)
 	}
 
-	if !postChildSourceBodyPacketEvidenceAvailable(results) {
+	if !newToolResultEvidenceProjection(results).sourceBodyPacketAvailable() {
 		t.Fatal("delegated source-body packet with a bounded negative finding should trigger parent model synthesis")
 	}
 }
@@ -4174,7 +4178,7 @@ func TestReadOnlyAnswerabilityRejectsGenericToolSchemaPacketForUsefulnessObjecti
 		t.Fatalf("generic tool/schema packet must not satisfy usefulness answerability: %#v", ledger)
 	}
 
-	if postChildReadOnlyPacketAvailable(brief, results) {
+	if newToolResultEvidenceProjection(results).hasAnswerableDelegatedPacket(brief) {
 		t.Fatal("generic tool/schema packet must not activate child packet closure")
 	}
 
@@ -4248,7 +4252,7 @@ func TestReadOnlyAnswerabilityRejectsTypedDelegatedArtifactOnlyPacket(t *testing
 		t.Fatalf("artifact-only typed packet must not satisfy answerability: %#v", ledger)
 	}
 
-	if postChildReadOnlyPacketAvailable(brief, results) {
+	if newToolResultEvidenceProjection(results).hasAnswerableDelegatedPacket(brief) {
 		t.Fatalf("artifact-only typed packet must not activate child packet closure")
 	}
 
@@ -4827,7 +4831,11 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAn
 	answer := "I cannot determine from the available evidence what role evidence has in the harness."
 	runner := &Runner{RuntimeBrief: brief}
 
-	relevance := runner.readOnlyDirectAnswerRelevance(answer, results)
+	projection := newToolResultEvidenceProjection(results)
+	relevance := readOnlyClosureDecisionForProjection(
+		readOnlyDirectAnswerAcceptanceLedgerBrief(runner.RuntimeBrief),
+		projection,
+	).DirectAnswerRelevance(answer)
 	if relevance.BlockerKind != answerObjectiveUnmetInsufficientEvidenceClaimed {
 		t.Fatalf("direct answer relevance blocker = %q, want %q", relevance.BlockerKind, answerObjectiveUnmetInsufficientEvidenceClaimed)
 	}
@@ -6193,7 +6201,7 @@ func TestReadOnlyEvidencePacketRejectsOffObjectiveSubagentImplementationPacket(t
 	}
 }
 
-func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *testing.T) {
+func TestToolResultEvidenceProjectionUsesTypedPacketAsAnswerabilityAuthority(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    "task",
 		Summary: "Child task completed",
@@ -6217,11 +6225,12 @@ func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *t
 		Confidence: "medium",
 	})
 
-	if ReadOnlyTaskResultAnswerableForObjective(result, "Explain how subagents work.") {
+	projection := newToolResultEvidenceProjection([]workspace.ToolResult{result})
+	if projection.hasAnswerableDelegatedPacket(workerruntime.WorkerRuntimeBrief{Objective: "Explain how subagents work."}) {
 		t.Fatal("typed packet rejection must not fall back to legacy rendered text promotion")
 	}
 
-	if paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).postChildClosureEvidencePaths("Explain how subagents work.", 4); len(paths) != 0 {
+	if paths := projection.postChildClosureEvidencePaths("Explain how subagents work.", 4); len(paths) != 0 {
 		t.Fatalf("non-answerable typed packet must not promote closure evidence paths: %#v", paths)
 	}
 }

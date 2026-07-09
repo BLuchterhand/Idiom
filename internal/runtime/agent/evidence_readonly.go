@@ -180,6 +180,10 @@ func (ledger *readOnlyAnswerabilityLedger) observeDelegatedEvidence(decision rea
 }
 
 func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) readOnlyAnswerabilityLedger {
+	return readOnlyAnswerabilityForProjection(brief, newToolResultEvidenceProjection(results))
+}
+
+func readOnlyAnswerabilityForProjection(brief workerruntime.WorkerRuntimeBrief, projection toolResultEvidenceProjection) readOnlyAnswerabilityLedger {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 
 	ledger := readOnlyAnswerabilityLedger{
@@ -188,7 +192,6 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		Contract:   strings.TrimSpace(brief.Contract),
 	}
 	namedTargets := readOnlyObjectiveEvidencePaths(brief)
-	projection := newToolResultEvidenceProjection(results)
 
 	ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, readOnlyBriefCandidateEvidencePaths(brief))
 
@@ -2042,15 +2045,6 @@ func TextSharesObjectiveTerm(text string, objective string) bool {
 	return false
 }
 
-func ReadOnlyTaskResultAnswerableForObjective(result workspace.ToolResult, objective string) bool {
-	fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
-	if !ok {
-		return false
-	}
-
-	return readOnlyDelegatedEvidenceDecisionForObjective(objective, fact).TaskResultAnswerable
-}
-
 type ReadOnlyCloseoutState string
 
 const (
@@ -2077,14 +2071,18 @@ type ReadOnlyCloseout struct {
 }
 
 func readOnlyClosureDecisionForResults(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) ReadOnlyCloseout {
+	return readOnlyClosureDecisionForProjection(brief, newToolResultEvidenceProjection(results))
+}
+
+func readOnlyClosureDecisionForProjection(brief workerruntime.WorkerRuntimeBrief, projection toolResultEvidenceProjection) ReadOnlyCloseout {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 
-	evidence := readOnlyAnswerabilityForResults(brief, results)
+	evidence := readOnlyAnswerabilityForProjection(brief, projection)
 
 	if evidence.Answerable() {
 		return ReadOnlyCloseout{
 			Brief:    brief,
-			Results:  append([]workspace.ToolResult(nil), results...),
+			Results:  append([]workspace.ToolResult(nil), projection.results...),
 			State:    readOnlyClosureAnswerReady,
 			Reason:   readOnlyClosureReasonAnswerable,
 			Evidence: evidence,
@@ -2104,11 +2102,19 @@ func readOnlyClosureDecisionForResults(brief workerruntime.WorkerRuntimeBrief, r
 
 	return ReadOnlyCloseout{
 		Brief:    brief,
-		Results:  append([]workspace.ToolResult(nil), results...),
+		Results:  append([]workspace.ToolResult(nil), projection.results...),
 		State:    readOnlyClosureNotReady,
 		Reason:   reason,
 		Evidence: evidence,
 	}
+}
+
+func (projection toolResultEvidenceProjection) postChildPacketClosureReady(brief workerruntime.WorkerRuntimeBrief) bool {
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return false
+	}
+	return projection.hasAnswerableDelegatedPacket(brief) &&
+		readOnlyClosureDecisionForProjection(brief, projection).Answerable()
 }
 
 func (d ReadOnlyCloseout) Answerable() bool {
@@ -2305,7 +2311,7 @@ func acceptedFinalAnswerEvidencePaths(answer string, brief workerruntime.WorkerR
 
 func (d ReadOnlyCloseout) AcceptedAnswerEvidencePaths(answer string) []string {
 	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
-	if readOnlyDirectAnswerAcceptanceApplies(brief) {
+	if readOnlyDirectAnswerLane(brief) {
 		decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), d.Results).
 			FinalAnswerDecision(answer)
 
@@ -2339,7 +2345,7 @@ func (d ReadOnlyCloseout) AcceptedAnswerEvidencePaths(answer string) []string {
 
 func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswerDecision {
 	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
-	if !readOnlyDirectAnswerAcceptanceApplies(brief) {
+	if !readOnlyDirectAnswerLane(brief) {
 		return readOnlyFinalAnswerDecision{}
 	}
 

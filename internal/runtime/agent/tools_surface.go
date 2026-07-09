@@ -2373,18 +2373,8 @@ func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.Work
 		return true
 	}
 
-	return postChildPacketClosureReadyWithBrief(brief, results) ||
-		postChildSourceBodyPacketEvidenceAvailable(results)
-}
-
-func postChildSourceBodyPacketEvidenceAvailable(results []workspace.ToolResult) bool {
-	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
-		if readOnlyDelegatedEvidenceDecisionForObjective("", fact).SourceBodyPacketAvailable {
-			return true
-		}
-	}
-
-	return false
+	evidence := newToolResultEvidenceProjection(results)
+	return evidence.postChildPacketClosureReady(brief) || evidence.sourceBodyPacketAvailable()
 }
 
 func runnerBriefAllowsExternalToolAppend(brief workerruntime.WorkerRuntimeBrief) bool {

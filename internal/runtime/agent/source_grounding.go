@@ -214,13 +214,8 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 	}
 
 	projection := newToolResultEvidenceProjection(results)
-	closeout := readOnlyClosureDecisionForResults(brief, results)
-	directAnswerCloseout := ReadOnlyCloseout{}
-	if readOnlyDirectAnswerLane(brief) {
-		directAnswerCloseout = readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
-	}
 
-	if assessment := r.readOnlyEvidenceSourceGroundingAssessment(brief, answer, projection, closeout, directAnswerCloseout); assessment.BlocksFinalAnswer() {
+	if assessment := r.readOnlyEvidenceSourceGroundingAssessment(brief, answer, projection); assessment.BlocksFinalAnswer() {
 		return assessment
 	}
 
@@ -325,11 +320,20 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 	return sourceGroundingAssessment{}
 }
 
-func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.WorkerRuntimeBrief, answer string, projection toolResultEvidenceProjection, closeout ReadOnlyCloseout, directAnswerCloseout ReadOnlyCloseout) sourceGroundingAssessment {
+func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.WorkerRuntimeBrief, answer string, projection toolResultEvidenceProjection) sourceGroundingAssessment {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
 		return sourceGroundingAssessment{}
 	}
 
+	closeout := readOnlyClosureDecisionForProjection(brief, projection)
+	directAnswerCloseout := ReadOnlyCloseout{}
+	if readOnlyDirectAnswerLane(brief) {
+		directAnswerCloseout = readOnlyClosureDecisionForProjection(
+			readOnlyDirectAnswerAcceptanceLedgerBrief(brief),
+			projection,
+		)
+	}
 	directCandidateOnly := readOnlyDirectAnswerLane(brief) && directAnswerCloseout.CandidateOnlyEvidence()
 	if brief.Readiness == nil &&
 		!readOnlyExplanationGateApplies(brief) &&
@@ -377,12 +381,12 @@ func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.W
 
 	if len(intersectRunnerPaths(
 		readOnlySourceLikePaths(pathparse.MentionedWorkspacePaths(answer), 16),
-		newToolResultEvidenceProjection(closeout.Results).delegatedClosureEvidencePaths(brief.Objective, 8),
+		projection.delegatedClosureEvidencePaths(brief.Objective, 8),
 	)) > 0 {
 		return sourceGroundingAssessment{}
 	}
 
-	if postChildReadOnlyPacketAvailable(brief, closeout.Results) {
+	if projection.hasAnswerableDelegatedPacket(brief) {
 		return sourceGroundingAssessment{}
 	}
 

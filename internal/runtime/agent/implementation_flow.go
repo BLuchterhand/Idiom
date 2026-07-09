@@ -473,24 +473,6 @@ func finalAnswerNeedsDecoration(answer string) bool {
 	)
 }
 
-func bestObjectiveAnswerableTaskResultOutput(objective string, results []workspace.ToolResult) (string, bool) {
-	for i := len(results) - 1; i >= 0; i-- {
-		result := results[i]
-		if !ReadOnlyTaskResultAnswerableForObjective(result, objective) {
-			continue
-		}
-
-		output := strings.TrimSpace(result.Output)
-		if output == "" {
-			continue
-		}
-
-		return output, true
-	}
-
-	return "", false
-}
-
 func presentableExactProbeResult(result workspace.ToolResult) bool {
 	tool := strings.TrimSpace(result.Tool)
 	if workspace.IsLanguageSourceBodyTool(tool) {
@@ -1216,7 +1198,11 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	var directAnswerRelevance readOnlyDirectAnswerRelevance
 
 	if r != nil {
-		directAnswerRelevance = r.readOnlyDirectAnswerRelevance(answer, results)
+		projection := newToolResultEvidenceProjection(results)
+		directAnswerRelevance = readOnlyClosureDecisionForProjection(
+			readOnlyDirectAnswerAcceptanceLedgerBrief(r.RuntimeBrief),
+			projection,
+		).DirectAnswerRelevance(answer)
 		acceptance = finalAnswerAcceptanceWithDirectAnswerRelevance(acceptance, directAnswerRelevance)
 	}
 
@@ -1360,19 +1346,6 @@ type readOnlyDirectAnswerRelevance struct {
 	Reason                  string
 	RelevantSourceBodyPaths []string
 	AnswerObjectiveTerms    []string
-}
-
-func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspace.ToolResult) readOnlyDirectAnswerRelevance {
-	if r == nil {
-		return readOnlyDirectAnswerRelevance{}
-	}
-
-	return readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(r.RuntimeBrief), results).DirectAnswerRelevance(answer)
-}
-
-func readOnlyDirectAnswerAcceptanceApplies(brief workerruntime.WorkerRuntimeBrief) bool {
-	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	return readOnlyDirectAnswerLane(brief)
 }
 
 func readOnlyDirectAnswerLane(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -2157,9 +2130,10 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 		return exact, true
 	}
 
-	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(input.Brief, input.Results)
+	evidence := newToolResultEvidenceProjection(input.Results)
+	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(input.Brief, evidence)
 	if delegatedOwnerReady {
-		if answer, ok := synthesizeReadOnlyDelegatedEvidenceAnswer(input.Brief.Objective, newToolResultEvidenceProjection(input.Results).ReadOnlyDelegatedEvidenceFacts()); ok {
+		if answer, ok := synthesizeReadOnlyDelegatedEvidenceAnswer(input.Brief.Objective, evidence.ReadOnlyDelegatedEvidenceFacts()); ok {
 			return answer, true
 		}
 	}
@@ -2185,7 +2159,7 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 	}
 
 	if delegatedOwnerReady {
-		if output, ok := bestObjectiveAnswerableTaskResultOutput(input.Brief.Objective, input.Results); ok {
+		if output, ok := evidence.bestAnswerableTaskResultOutput(input.Brief); ok {
 			if cleaned, ok := cleanedSubstantiveFinalAnswer(output); ok {
 				return cleaned, true
 			}
@@ -2215,14 +2189,13 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 	return "", false
 }
 
-func delegatedImplementationShapeSynthesisAllowed(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+func delegatedImplementationShapeSynthesisAllowed(brief workerruntime.WorkerRuntimeBrief, projection toolResultEvidenceProjection) bool {
 	if !implementationShapeOwnerContractApplies(brief) {
 		return true
 	}
 
-	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
-
-	return len(ledger.ImplementationOwnerPaths()) > 0
+	closeout := readOnlyClosureDecisionForProjection(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), projection)
+	return len(closeout.Evidence.ImplementationOwnerPaths()) > 0
 }
 
 func implementationShapeOwnerContractApplies(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -5936,14 +5909,16 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		useful = append(useful, sanitizedResult)
 	}
 
-	if answer, ok := synthesizeReadOnlyDelegatedEvidenceAnswer(objective, newToolResultEvidenceProjection(answerabilityResults).ReadOnlyDelegatedEvidenceFacts()); ok {
+	answerabilityBrief := workerruntime.WorkerRuntimeBrief{
+		Objective:         objective,
+		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+	}
+	answerabilityProjection := newToolResultEvidenceProjection(answerabilityResults)
+	if answer, ok := synthesizeReadOnlyDelegatedEvidenceAnswer(objective, answerabilityProjection.ReadOnlyDelegatedEvidenceFacts()); ok {
 		return answer, true
 	}
 
-	answerability := readOnlyAnswerabilityForResults(workerruntime.WorkerRuntimeBrief{
-		Objective:         objective,
-		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
-	}, answerabilityResults)
+	answerability := readOnlyClosureDecisionForProjection(answerabilityBrief, answerabilityProjection).Evidence
 	sourceBodyPaths := answerability.RelevantSourceBodyPaths
 
 	if len(sourceBodyPaths) == 0 {

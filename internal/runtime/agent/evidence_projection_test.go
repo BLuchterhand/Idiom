@@ -219,6 +219,31 @@ func TestToolResultEvidenceProjectionCandidateBoundaries(t *testing.T) {
 	}
 }
 
+func TestToolResultEvidenceProjectionCloseoutUsesProjectedResultSnapshot(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       brief.Objective,
+		Question:        brief.Objective,
+		SourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
+		Confidence:      "high",
+		Findings: []ReadOnlyEvidenceFinding{{
+			Path: "internal/runtime/agent/runner_core.go",
+			Text: "The harness uses the `task` tool as the subagent entrypoint for read-only exploration.",
+		}},
+	})}
+
+	projection := newToolResultEvidenceProjection(results)
+	results[0] = workspace.ToolResult{Tool: workspace.ToolNameSearchFiles}
+
+	closeout := readOnlyClosureDecisionForProjection(brief, projection)
+	if !closeout.Answerable() {
+		t.Fatalf("projected delegated evidence should remain answerable: %#v", closeout)
+	}
+	if len(closeout.Results) != 1 || closeout.Results[0].Tool != workspace.ToolNameTask {
+		t.Fatalf("closeout must use the projection-owned result snapshot, got %#v", closeout.Results)
+	}
+}
+
 func TestFactlessDiscoveryQueryOutputDoesNotCreateCandidateAuthority(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    workspace.ToolNameDiscoveryQuery,

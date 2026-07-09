@@ -723,6 +723,40 @@ func (projection toolResultEvidenceProjection) ReadOnlyDelegatedEvidenceFacts() 
 	return facts
 }
 
+func (projection toolResultEvidenceProjection) bestAnswerableTaskResultOutput(brief workerruntime.WorkerRuntimeBrief) (string, bool) {
+	objective := strings.TrimSpace(workerruntime.NormalizeRuntimeBrief(brief).Objective)
+	facts := projection.ReadOnlyDelegatedEvidenceFacts()
+	for i := len(facts) - 1; i >= 0; i-- {
+		fact := facts[i]
+		if !readOnlyDelegatedEvidenceDecisionForObjective(objective, fact).TaskResultAnswerable {
+			continue
+		}
+		if output := strings.TrimSpace(fact.Output); output != "" {
+			return output, true
+		}
+	}
+	return "", false
+}
+
+func (projection toolResultEvidenceProjection) hasAnswerableDelegatedPacket(brief workerruntime.WorkerRuntimeBrief) bool {
+	objective := strings.TrimSpace(workerruntime.NormalizeRuntimeBrief(brief).Objective)
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		if readOnlyDelegatedEvidenceDecisionForObjective(objective, fact).TaskResultAnswerable {
+			return true
+		}
+	}
+	return false
+}
+
+func (projection toolResultEvidenceProjection) sourceBodyPacketAvailable() bool {
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		if readOnlyDelegatedEvidenceDecisionForObjective("", fact).SourceBodyPacketAvailable {
+			return true
+		}
+	}
+	return false
+}
+
 func readOnlyDelegatedEvidenceFactFromResult(result workspace.ToolResult) (readOnlyDelegatedEvidenceFact, bool) {
 	if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
 		return readOnlyDelegatedEvidenceFact{}, false

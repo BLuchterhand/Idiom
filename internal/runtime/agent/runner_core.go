@@ -3650,8 +3650,9 @@ func (r *Runner) runLegacySessionBody(
 
 				rebuildTools()
 
-				if ReadOnlyTaskResultAnswerableForObjective(result, r.RuntimeBrief.Objective) {
-					evidencePaths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).postChildClosureEvidencePaths(r.RuntimeBrief.Objective, 4)
+				childEvidence := newToolResultEvidenceProjection([]workspace.ToolResult{result})
+				if childEvidence.hasAnswerableDelegatedPacket(r.RuntimeBrief) {
+					evidencePaths := childEvidence.postChildClosureEvidencePaths(r.RuntimeBrief.Objective, 4)
 
 					requestBudget.broadEvidenceDelegationSatisfied = true
 					r.RuntimeBrief.Constraints = textutil.Merge(r.RuntimeBrief.Constraints, []string{"child_packet_available"})
@@ -10012,7 +10013,9 @@ func runnerGuidanceConstraints(agent string, brief workerruntime.WorkerRuntimeBr
 		constraints = textutil.Merge(constraints, []string{"answer_readiness_reached"})
 	}
 
-	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
+	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") &&
+		newToolResultEvidenceProjection(results).postChildPacketClosureReady(brief) {
+
 		constraints = textutil.Merge(constraints, []string{"child_packet_available"})
 	}
 
@@ -10063,7 +10066,9 @@ func delegatedReadOnlyClosureReady(agent string, brief workerruntime.WorkerRunti
 }
 
 func applyPostChildClosureBias(state runnerNextActionState, agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) runnerNextActionState {
-	if strings.HasPrefix(strings.TrimSpace(agent), "child:") || !postChildPacketClosureReadyWithBrief(brief, results) {
+	if strings.HasPrefix(strings.TrimSpace(agent), "child:") ||
+		!newToolResultEvidenceProjection(results).postChildPacketClosureReady(brief) {
+
 		return state
 	}
 
@@ -10079,29 +10084,6 @@ func applyPostChildClosureBias(state runnerNextActionState, agent string, brief 
 	return state
 }
 
-func postChildPacketClosureReadyWithBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return false
-	}
-
-	if !postChildReadOnlyPacketAvailable(brief, results) {
-		return false
-	}
-
-	return readOnlyClosureDecisionForResults(brief, results).Answerable()
-}
-
-func postChildReadOnlyPacketAvailable(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	objective := strings.TrimSpace(workerruntime.NormalizeRuntimeBrief(brief).Objective)
-	for _, result := range results {
-		if ReadOnlyTaskResultAnswerableForObjective(result, objective) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func runnerClosureGuidanceActive(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool) bool {
 	if delegatedReadOnlyAnswerReady || postChildPacketActive {
 		return true
@@ -10115,7 +10097,7 @@ func runnerClosureGuidanceActive(agent string, brief workerruntime.WorkerRuntime
 		return false
 	}
 
-	return postChildPacketClosureReadyWithBrief(brief, results)
+	return newToolResultEvidenceProjection(results).postChildPacketClosureReady(brief)
 }
 
 func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, delegatedDiminishingNudges int, postChildDiminishingNudges int) (string, bool) {
@@ -11523,9 +11505,10 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 		return "", false
 	}
 
-	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
+	evidence := newToolResultEvidenceProjection(results)
+	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, evidence)
 	if delegatedOwnerReady {
-		if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
+		if output, ok := evidence.bestAnswerableTaskResultOutput(brief); ok {
 			return presentableFallbackCandidate(agentName, brief, results, annotateBudgetLimitedAnswer(output))
 		}
 	}
@@ -11537,7 +11520,8 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 
 	if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
-		return presentableFallbackCandidate(agentName, brief, results, readOnlyClosureDecisionForResults(brief, results).ConversationFallback())
+		closeout := readOnlyClosureDecisionForProjection(brief, evidence)
+		return presentableFallbackCandidate(agentName, brief, results, closeout.ConversationFallback())
 	}
 
 	if usefulFallbackResultCount(results) < 2 {
@@ -11626,16 +11610,17 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 	}
 
 	if !runnerBriefRequiresMutation(brief) && !runnerVerificationRequired(brief) {
-		closeout := readOnlyClosureDecisionForResults(brief, results)
+		evidence := newToolResultEvidenceProjection(results)
+		closeout := readOnlyClosureDecisionForProjection(brief, evidence)
 		if readOnlyDirectAnswerLane(brief) {
 			if answer, ok := closeout.ConcreteFallbackAnswer(); ok {
 				return answer, true
 			}
 		}
 
-		delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
+		delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, evidence)
 		if delegatedOwnerReady {
-			if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
+			if output, ok := evidence.bestAnswerableTaskResultOutput(brief); ok {
 				if normalized := normalizeDelegatedReadOnlyPacket(output); strings.TrimSpace(normalized) != "" {
 					return normalized, true
 				}
@@ -11649,7 +11634,7 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 		}
 
 		if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
-			return readOnlyClosureDecisionForResults(brief, results).ConversationFallback(), true
+			return closeout.ConversationFallback(), true
 		}
 	}
 
@@ -15697,7 +15682,10 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		state.EvidencePaths = projection.delegatedClosureEvidencePaths(brief.Objective, 6)
 	}
 
-	if !runnerBriefRequiresMutation(brief) && !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
+	if !runnerBriefRequiresMutation(brief) &&
+		!strings.HasPrefix(strings.TrimSpace(agent), "child:") &&
+		projection.postChildPacketClosureReady(brief) {
+
 		state.EvidencePaths = projection.postChildClosureEvidencePaths(brief.Objective, 6)
 	}
 
@@ -19349,7 +19337,9 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 		readiness.FurtherReadsRequire = "one exact missing claim, one exact probe, and why the current evidence would be materially incomplete"
 	}
 
-	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
+	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") &&
+		newToolResultEvidenceProjection(results).postChildPacketClosureReady(brief) {
+
 		readiness.ReadyToAnswer = true
 
 		addClosed("child_packet_available")
