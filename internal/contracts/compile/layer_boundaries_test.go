@@ -68,6 +68,7 @@ func coreContractPackageDirectImports() map[string][]string {
 		"idiom/internal/contracts/recovery":       {"idiom/internal/contracts/lane", "idiom/internal/contracts/workflowstate"},
 		"idiom/internal/contracts/sensitivity":    {},
 		"idiom/internal/contracts/sourcekind":     {},
+		"idiom/internal/contracts/taskledger":     {},
 		"idiom/internal/contracts/toolfacts":      {},
 		"idiom/internal/contracts/toolpolicy":     {},
 		"idiom/internal/contracts/workflowstate":  {},

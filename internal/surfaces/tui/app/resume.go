@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/taskledger"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/jsonl"
 	"idiom/internal/platform/textutil"
@@ -370,9 +371,9 @@ func rehydratePlanState(m *Model) {
 	diffPaths := loadDiffPathIndex(m.diffsPath())
 
 	for _, lm := range lines {
-		status := "pending"
+		status := taskledger.StatusPending
 		if lm.Checked {
-			status = "completed"
+			status = taskledger.StatusCompleted
 		}
 
 		m.plan.ledgerItems[lm.TID] = workspace.TaskLedgerItem{

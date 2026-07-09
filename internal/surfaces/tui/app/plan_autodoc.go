@@ -11,6 +11,7 @@ import (
 	"time"
 
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/taskledger"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/shortid"
@@ -699,10 +700,11 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 func plannedItemLine(item workspace.TaskLedgerItem) string {
 	box := "[ ]"
 
-	switch strings.ToLower(strings.TrimSpace(item.Status)) {
-	case "completed", "cancelled":
+	status, _ := taskledger.Parse(string(item.Status))
+	switch {
+	case status.Finished():
 		box = "[x]"
-	case "in_progress":
+	case status == taskledger.StatusInProgress:
 		box = "[~]"
 	}
 
@@ -762,8 +764,8 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	slices.Sort(ids)
 
 	pending := func(item workspace.TaskLedgerItem) bool {
-		status := strings.ToLower(strings.TrimSpace(item.Status))
-		return status != "completed" && status != "cancelled"
+		status, _ := taskledger.Parse(string(item.Status))
+		return !status.Finished()
 	}
 
 	var (
@@ -918,7 +920,7 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	if allHit {
 		item := m.plan.ledgerItems[matchID]
 
-		item.Status = "completed"
+		item.Status = taskledger.StatusCompleted
 		m.plan.ledgerItems[matchID] = item
 	}
 
@@ -1021,18 +1023,18 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 	}
 
 	anchor := "<!-- tid:" + item.ID + " -->"
-	status := strings.ToLower(strings.TrimSpace(item.Status))
+	status, _ := taskledger.Parse(string(item.Status))
 
-	if status == "pending" || status == "" {
+	if status == taskledger.StatusPending || status == "" {
 		return
 	}
 
 	var targetBox string
 
-	switch status {
-	case "completed", "cancelled":
+	switch {
+	case status.Finished():
 		targetBox = "[x]"
-	case "in_progress":
+	case status == taskledger.StatusInProgress:
 		targetBox = "[~]"
 	default:
 		return

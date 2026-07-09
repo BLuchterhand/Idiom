@@ -20,6 +20,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/taskledger"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
@@ -8210,7 +8211,8 @@ func (s *taskLedgerState) apply(req workspace.ToolRequest, receiptBatches ...[]w
 	for i, item := range items {
 		item.ID = strings.TrimSpace(item.ID)
 		item.Content = strings.TrimSpace(item.Content)
-		item.Status = normalizeTaskLedgerStatus(item.Status)
+		status, validStatus := taskledger.Parse(string(item.Status))
+		item.Status = status
 		item.Evidence = strings.TrimSpace(item.Evidence)
 
 		if item.ID == "" {
@@ -8225,7 +8227,7 @@ func (s *taskLedgerState) apply(req workspace.ToolRequest, receiptBatches ...[]w
 			}
 		}
 
-		if !validTaskLedgerStatus(item.Status) {
+		if !validStatus {
 			return workspace.ToolResult{
 				Tool:    "task_ledger",
 				Summary: "Task ledger rejected",
@@ -8233,13 +8235,13 @@ func (s *taskLedgerState) apply(req workspace.ToolRequest, receiptBatches ...[]w
 			}
 		}
 
-		if item.Status == "completed" && item.Evidence == "" {
-			if previous, ok := s.previousItem(item.ID); ok && normalizeTaskLedgerStatus(previous.Status) == "completed" {
+		if item.Status == taskledger.StatusCompleted && item.Evidence == "" {
+			if previous, ok := s.previousItem(item.ID); ok && previous.Status == taskledger.StatusCompleted {
 				item.Evidence = strings.TrimSpace(previous.Evidence)
 			}
 		}
 
-		if item.Status == "in_progress" {
+		if item.Status == taskledger.StatusInProgress {
 			active++
 		}
 
@@ -8287,7 +8289,7 @@ func flattenTaskLedgerReceiptBatches(batches [][]workspace.ToolResult) []workspa
 
 func (s *taskLedgerState) validateCompletedEvidence(items []workspace.TaskLedgerItem, receipts []workspace.ToolResult) string {
 	for _, item := range items {
-		if item.Status != "completed" || !s.itemNewlyCompleted(item) {
+		if item.Status != taskledger.StatusCompleted || !s.itemNewlyCompleted(item) {
 			continue
 		}
 
@@ -8311,7 +8313,7 @@ func (s *taskLedgerState) itemNewlyCompleted(next workspace.TaskLedgerItem) bool
 	}
 
 	if previous, ok := s.previousItem(next.ID); ok {
-		return normalizeTaskLedgerStatus(previous.Status) != "completed"
+		return previous.Status != taskledger.StatusCompleted
 	}
 
 	return true
@@ -8471,9 +8473,8 @@ func (s *taskLedgerState) unfinishedItems() []string {
 	var unfinished []string
 
 	for _, item := range s.items {
-		switch item.Status {
-		case "pending", "in_progress":
-			unfinished = append(unfinished, item.ID+": "+item.Content+" ["+item.Status+"]")
+		if item.Status.Open() {
+			unfinished = append(unfinished, item.ID+": "+item.Content+" ["+string(item.Status)+"]")
 		}
 	}
 
@@ -8488,7 +8489,7 @@ func (s *taskLedgerState) blockedItems() []string {
 	var blocked []string
 
 	for _, item := range s.items {
-		if item.Status != "blocked" {
+		if item.Status != taskledger.StatusBlocked {
 			continue
 		}
 
@@ -8504,16 +8505,16 @@ func (s *taskLedgerState) blockedItems() []string {
 }
 
 func (s *taskLedgerState) statusSummary() string {
-	counts := make(map[string]int)
+	counts := make(map[taskledger.Status]int)
 	for _, item := range s.items {
 		counts[item.Status]++
 	}
 
 	parts := make([]string, 0, 5)
 
-	for _, status := range []string{"completed", "in_progress", "pending", "blocked", "cancelled"} {
+	for _, status := range []taskledger.Status{taskledger.StatusCompleted, taskledger.StatusInProgress, taskledger.StatusPending, taskledger.StatusBlocked, taskledger.StatusCancelled} {
 		if counts[status] > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
+			parts = append(parts, fmt.Sprintf("%d %s", counts[status], string(status)))
 		}
 	}
 
@@ -8533,7 +8534,7 @@ func (s *taskLedgerState) render() string {
 
 	for _, item := range s.items {
 		b.WriteString("- [")
-		b.WriteString(item.Status)
+		b.WriteString(string(item.Status))
 		b.WriteString("] ")
 		b.WriteString(item.ID)
 		b.WriteString(": ")
@@ -8557,23 +8558,6 @@ func taskLedgerItemsFromRequest(req workspace.ToolRequest) []workspace.TaskLedge
 	}
 
 	return append([]workspace.TaskLedgerItem(nil), req.Items...)
-}
-
-func normalizeTaskLedgerStatus(status string) string {
-	status = strings.ToLower(strings.TrimSpace(status))
-	status = strings.ReplaceAll(status, "-", "_")
-	status = strings.ReplaceAll(status, " ", "_")
-
-	return status
-}
-
-func validTaskLedgerStatus(status string) bool {
-	switch status {
-	case "pending", "in_progress", "completed", "blocked", "cancelled":
-		return true
-	default:
-		return false
-	}
 }
 
 // taskLedgerFinalHasTerminalReason recognizes reply phrasings that let

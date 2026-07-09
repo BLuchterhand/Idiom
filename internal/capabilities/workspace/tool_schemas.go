@@ -3,6 +3,7 @@ package workspace
 import (
 	"strings"
 
+	"idiom/internal/contracts/taskledger"
 	"idiom/internal/platform/tooljsonschema"
 	"idiom/internal/repository/semantic/languagetools"
 )
@@ -140,7 +141,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Track complex multi-step work. Keep at most one item in_progress. When an item will touch files, list them in `paths` so the plan panel attaches the completed write to this item instead of adding a duplicate line. When marking mutation work completed, cite host-backed evidence refs such as `write:path`, `read:path`, `verify:command`, or `artifact:id`.",
 			ParametersJSON: tooljsonschema.Object(
 				[]string{"todos"},
-				`"todos":{"type":"array","items":{"type":"object","properties":{"id":`+tooljsonschema.StringProperty("stable id")+`,"content":`+tooljsonschema.StringProperty("what needs doing")+`,"status":{"type":"string","enum":["pending","in_progress","completed","blocked","cancelled"]},"evidence":`+tooljsonschema.StringProperty("for completed mutation items, refs backed by prior tool results, e.g. write:README.md; verify:go test ./...")+`,"paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative files this item will touch"}},"required":["id","content","status"]}}`,
+				`"todos":{"type":"array","items":{"type":"object","properties":{"id":`+tooljsonschema.StringProperty("stable id")+`,"content":`+tooljsonschema.StringProperty("what needs doing")+`,"status":{"type":"string","enum":`+tooljsonschema.StringEnum(taskledger.Values())+`},"evidence":`+tooljsonschema.StringProperty("for completed mutation items, refs backed by prior tool results, e.g. write:README.md; verify:go test ./...")+`,"paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative files this item will touch"}},"required":["id","content","status"]}}`,
 			),
 		},
 		{

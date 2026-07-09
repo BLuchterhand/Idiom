@@ -124,7 +124,7 @@ func TestRehydratePlanStatePreservesCheckedItems(t *testing.T) {
 		t.Fatalf("t1 missing from rehydrated ledger")
 	}
 
-	if strings.ToLower(item.Status) != "completed" {
+	if strings.ToLower(string(item.Status)) != "completed" {
 		t.Errorf("checked item should rehydrate with status=completed, got %q", item.Status)
 	}
 }

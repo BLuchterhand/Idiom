@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/taskledger"
 	"idiom/internal/contracts/toolfacts"
 )
 
@@ -135,10 +136,10 @@ type GoDeclarationMove struct {
 }
 
 type TaskLedgerItem struct {
-	ID       string `json:"id,omitempty"`
-	Content  string `json:"content,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Evidence string `json:"evidence,omitempty"`
+	ID       string            `json:"id,omitempty"`
+	Content  string            `json:"content,omitempty"`
+	Status   taskledger.Status `json:"status,omitempty"`
+	Evidence string            `json:"evidence,omitempty"`
 	// Paths lists the workspace-relative files this item plans to touch. The
 	// plan autodoc uses it to attach a completed write to the planned item
 	// instead of adding a duplicate entry under "Unplanned". Empty when the

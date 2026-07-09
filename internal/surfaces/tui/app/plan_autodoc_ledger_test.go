@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/taskledger"
 )
 
 // TestRecordTaskLedgerAppendsPlannedItems covers the happy-path triage
@@ -300,7 +301,7 @@ func TestPlannedItemLineStatus(t *testing.T) {
 		"cancelled":   "- [x] ",
 	}
 	for status, prefix := range cases {
-		line := plannedItemLine(workspace.TaskLedgerItem{ID: "x", Content: "c", Status: status})
+		line := plannedItemLine(workspace.TaskLedgerItem{ID: "x", Content: "c", Status: taskledger.Status(status)})
 		if !strings.HasPrefix(line, prefix) {
 			t.Errorf("status %s: got %q, want prefix %q", status, line, prefix)
 		}
