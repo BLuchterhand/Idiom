@@ -80,7 +80,7 @@ func TestOverlayFeaturePlannerPlanExecuteRunResultPreservesExitCode(t *testing.T
 		t.Fatalf("status = %q, want failed; fields=%+v", got, fields)
 	}
 
-	if got := featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 
@@ -105,7 +105,7 @@ func TestOverlayFeaturePlannerPlanExecuteRunResultPreservesExitCode(t *testing.T
 		t.Fatalf("durable progress exit_code = %#v, want 7; fields=%+v", got, fields)
 	}
 
-	if got := featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("durable progress terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }

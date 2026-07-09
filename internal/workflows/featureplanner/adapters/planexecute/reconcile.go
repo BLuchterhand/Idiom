@@ -279,7 +279,7 @@ func markTrustedAcceptanceEvidence(fields map[string]any) {
 		return
 	}
 
-	if featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class != plancontract.PlanExecuteTerminalDecisionCompleted {
+	if plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class != plancontract.PlanExecuteTerminalDecisionCompleted {
 		delete(fields, featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted)
 
 		return

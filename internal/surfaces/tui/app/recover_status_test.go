@@ -510,7 +510,7 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableSkippedReviewState(t *
 		t.Fatalf("review_repair_skipped = %v, want true in payload %s", got, payload)
 	}
 
-	if got := featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
 }

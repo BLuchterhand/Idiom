@@ -106,7 +106,7 @@ func TrustObservedPlanExecuteCompletionSummary(summary PlanExecuteCompletionSumm
 		return summary
 	}
 
-	if PlanExecuteCompletionTerminalDecision(summary.Fields()).Class != plancontract.PlanExecuteTerminalDecisionCompleted {
+	if plancontract.DecidePlanExecuteTerminalCompletionFields(summary.Fields(), nil).Class != plancontract.PlanExecuteTerminalDecisionCompleted {
 		summary.AcceptanceEvidenceTrusted = false
 		return summary
 	}
@@ -764,74 +764,10 @@ func (summary PlanExecuteCompletionSummary) hasFailureOutcome() bool {
 		return true
 	}
 
-	if len(planExecuteCompletionSourceSanityValidationFailures(summary)) > 0 {
-		return true
-	}
-
-	if len(planExecuteCompletionVerificationValidationFailures(summary)) > 0 {
-		return true
-	}
-
 	record := plancontract.PlanExecuteTerminalCompletionRecordFromFields(summary.Fields())
 
-	return record.TerminalClass != plancontract.PlanExecuteTerminalClassSuccess
-}
-
-func planExecuteCompletionSourceSanityValidationFailures(summary PlanExecuteCompletionSummary) []string {
-	record := plancontract.PlanExecuteTerminalCompletionRecordFromFields(summary.Fields())
-
-	return normalizeCompletionStringList(plancontract.PlanExecuteTerminalSourceSanityValidationFailures(record))
-}
-
-func planExecuteCompletionVerificationValidationFailures(summary PlanExecuteCompletionSummary) []string {
-	summary = summary.normalized()
-	var failures []string
-
-	for _, reject := range summary.VerificationRejects {
-		failures = append(failures, "verification_rejected:"+firstCompletionString(reject.Command, reject.Reason))
-	}
-
-	evidenceByCommand := map[string]plancontract.PhaseEvidenceCheck{}
-	for _, check := range summary.Verification {
-		if !plancontract.PhaseEvidenceCheckIsPassed(check) {
-			failures = append(failures, "verification_failed:"+firstCompletionString(check.Command, "(unknown)"))
-		}
-
-		key := plancontract.VerificationCommandEvidenceKey(check.Command, nil, check.WorkingDir)
-		if key != "" {
-			evidenceByCommand[key] = check
-		}
-	}
-
-	for _, command := range summary.VerificationCommands {
-		key := plancontract.VerificationCommandEvidenceKey(command.Command, command.Argv, command.WorkingDir)
-		if key == "" {
-			failures = append(failures, "verification_command_invalid")
-			continue
-		}
-
-		check, ok := evidenceByCommand[key]
-		if !ok {
-			failures = append(failures, "verification_evidence_missing:"+command.Command)
-			continue
-		}
-
-		if !plancontract.PhaseEvidenceCheckIsPassed(check) {
-			failures = append(failures, "verification_not_passed:"+command.Command)
-		}
-	}
-
-	return normalizeCompletionStringList(failures)
-}
-
-func firstCompletionString(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-
-	return ""
+	return len(plancontract.PlanExecuteTerminalEvidenceValidationFailures(record)) > 0 ||
+		record.TerminalClass != plancontract.PlanExecuteTerminalClassSuccess
 }
 
 func (summary PlanExecuteCompletionSummary) completionSpecificityScore() int {
@@ -897,19 +833,12 @@ func PlanExecuteCompletionEventTypeForFields(fields map[string]any) featureplann
 		return featureplannercontract.NestedPlanExecuteCompletionEventBlocked
 	}
 
-	switch PlanExecuteCompletionTerminalDecision(fields).Class {
+	switch plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class {
 	case plancontract.PlanExecuteTerminalDecisionCompleted:
 		return featureplannercontract.NestedPlanExecuteCompletionEventCompleted
 	default:
 		return featureplannercontract.NestedPlanExecuteCompletionEventBlocked
 	}
-}
-
-func PlanExecuteCompletionTerminalDecision(fields map[string]any) plancontract.PlanExecuteTerminalDecision {
-	summary := PlanExecuteCompletionSummaryFromFields(fields)
-	derivedFailures := append(planExecuteCompletionSourceSanityValidationFailures(summary), planExecuteCompletionVerificationValidationFailures(summary)...)
-	failures := normalizeCompletionStringList(append(completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldValidationFailures), derivedFailures...))
-	return plancontract.DecidePlanExecuteTerminalCompletionFields(fields, failures)
 }
 
 func canonicalPlanExecuteCompletionStatus(status string) string {

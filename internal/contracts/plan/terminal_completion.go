@@ -372,10 +372,6 @@ func PhaseEvidenceStatusIsPassed(status PhaseEvidenceStatus) bool {
 	}
 }
 
-func PhaseEvidenceCheckIsPassed(check PhaseEvidenceCheck) bool {
-	return strings.TrimSpace(check.Error) == "" && PhaseEvidenceStatusIsPassed(check.Status)
-}
-
 type ExecutorHandoffState string
 
 const (
@@ -699,6 +695,8 @@ func DecidePlanExecuteTerminalCompletion(record PlanExecuteTerminalCompletionRec
 	rawReviewStatus := canonicalTerminalToken(string(record.ReviewStatus))
 	rawTerminalClass := canonicalTerminalClassToken(record.TerminalClass)
 	rawOutcome := canonicalTerminalToken(string(record.Outcome))
+	failures := append([]string(nil), validationFailures...)
+	failures = append(failures, record.ValidationFailures...)
 
 	if rawStatus == "" && rawReviewStatus == "" && rawTerminalClass == "" && rawOutcome == "" {
 		return PlanExecuteTerminalDecision{Class: PlanExecuteTerminalDecisionBlocked, Reason: "missing required nested plan-execute status"}
@@ -717,7 +715,8 @@ func DecidePlanExecuteTerminalCompletion(record PlanExecuteTerminalCompletionRec
 	}
 
 	record = NormalizePlanExecuteTerminalCompletionRecord(record)
-	if failures := uniqueTerminalStrings(validationFailures); len(failures) > 0 {
+	failures = append(failures, PlanExecuteTerminalEvidenceValidationFailures(record)...)
+	if failures := uniqueTerminalStrings(failures); len(failures) > 0 {
 		return PlanExecuteTerminalDecision{Class: PlanExecuteTerminalDecisionBlocked, Reason: "nested plan-execute terminal validation failed: " + strings.Join(failures, "; ")}
 	}
 
@@ -1038,11 +1037,18 @@ func PlanExecuteTerminalCompletionValidationFailures(record PlanExecuteTerminalC
 	if record.Outcome == PlanExecuteTerminalOutcomeSourceSatisfied {
 		failures = append(failures, sourceSatisfiedTerminalValidationFailures(record)...)
 	}
-	failures = append(failures, PlanExecuteTerminalSourceSanityValidationFailures(record)...)
-	failures = append(failures, verificationTerminalValidationFailures(record)...)
+	failures = append(failures, PlanExecuteTerminalEvidenceValidationFailures(record)...)
 	if failure := planExecuteTerminalReviewValidationFailure(record); failure != "" {
 		failures = append(failures, failure)
 	}
+	return uniqueTerminalStrings(failures)
+}
+
+// PlanExecuteTerminalEvidenceValidationFailures derives evidence failures that
+// block an otherwise success-shaped plan-execute terminal completion.
+func PlanExecuteTerminalEvidenceValidationFailures(record PlanExecuteTerminalCompletionRecord) []string {
+	failures := append([]string(nil), PlanExecuteTerminalSourceSanityValidationFailures(record)...)
+	failures = append(failures, verificationTerminalValidationFailures(record)...)
 	return uniqueTerminalStrings(failures)
 }
 

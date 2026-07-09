@@ -1197,7 +1197,7 @@ func planExecuteCompletionObservedAcceptanceTrust(summary PlanExecuteCompletionS
 	return len(summary.AcceptanceEvidenceIDs) > 0 &&
 		summary.AcceptanceEvidenceTrusted &&
 		featureplannercontract.CompletionSourceCarriesDurableAcceptanceEvidence(summary.CompletionSource) &&
-		PlanExecuteCompletionTerminalDecision(summary.Fields()).Class == plancontract.PlanExecuteTerminalDecisionCompleted
+		plancontract.DecidePlanExecuteTerminalCompletionFields(summary.Fields(), nil).Class == plancontract.PlanExecuteTerminalDecisionCompleted
 }
 
 type implementorOutputEnvelope struct {
@@ -1283,7 +1283,7 @@ func planExecuteCompletionIsSuccess(completion planExecuteCompletion, state Feat
 		}
 	}
 
-	decision := PlanExecuteCompletionTerminalDecision(completion.summary().Fields())
+	decision := plancontract.DecidePlanExecuteTerminalCompletionFields(completion.summary().Fields(), nil)
 	if decision.Class != plancontract.PlanExecuteTerminalDecisionCompleted {
 		return false, decision.Reason
 	}

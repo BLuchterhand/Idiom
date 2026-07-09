@@ -8,7 +8,7 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 )
 
-func TestPlanExecuteCompletionTerminalDecisionClass(t *testing.T) {
+func TestPlanExecuteTerminalContractDecisionClass(t *testing.T) {
 	tests := []struct {
 		name   string
 		fields map[string]any
@@ -57,14 +57,14 @@ func TestPlanExecuteCompletionTerminalDecisionClass(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := PlanExecuteCompletionTerminalDecision(tt.fields).Class; got != tt.want {
+			if got := plancontract.DecidePlanExecuteTerminalCompletionFields(tt.fields, nil).Class; got != tt.want {
 				t.Fatalf("PlanExecuteCompletionTerminalClass = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
+func TestPlanExecuteTerminalContractDecisionReasons(t *testing.T) {
 	tests := []struct {
 		name       string
 		fields     map[string]any
@@ -115,7 +115,7 @@ func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := PlanExecuteCompletionTerminalDecision(tt.fields)
+			got := plancontract.DecidePlanExecuteTerminalCompletionFields(tt.fields, nil)
 			if got.Class != tt.wantClass || got.Reason != tt.wantReason {
 				t.Fatalf("decision = %#v, want class=%q reason=%q", got, tt.wantClass, tt.wantReason)
 			}
@@ -131,7 +131,7 @@ func TestPlanExecuteCompletionFieldsPreservesExitCodeForTerminalDecision(t *test
 	if got := completionFieldInt(fields, "exit_code"); got != 1 {
 		t.Fatalf("exit_code = %#v, want 1; fields=%+v", got, fields)
 	}
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want %q; fields=%+v", got, plancontract.PlanExecuteTerminalDecisionBlocked, fields)
 	}
 }
@@ -172,7 +172,7 @@ func TestPlanExecuteCompletionFieldsIgnoresUnknownPlanExecuteEventName(t *testin
 	if got := CompletionFieldString(fields, "status"); got != "" {
 		t.Fatalf("status = %q, want unknown event ignored; fields=%+v", got, fields)
 	}
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("decision = %q, want blocked for ignored unknown event; fields=%+v", got, fields)
 	}
 }
@@ -183,7 +183,7 @@ func TestPlanExecuteCompletionFieldsBlocksInvalidPlanExecuteEventName(t *testing
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
 
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("decision = %q, want blocked for invalid event; fields=%+v", got, fields)
 	}
 	if got := completionFieldStringSlice(fields, "validation_failures"); len(got) != 1 || got[0] != "invalid_plan_execute_event:verification" {
@@ -206,7 +206,7 @@ func TestPlanExecuteCompletionFieldsTreatsSourceSatisfiedEventAsEvidenceOnly(t *
 		t.Fatalf("outcome = %q, want no terminal outcome from intermediate source_satisfied event; fields=%+v", got, fields)
 	}
 
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked without terminal_completion record; fields=%+v", got, fields)
 	}
 
@@ -307,7 +307,7 @@ func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *t
 		t.Fatalf("progress_path = %q, want active progress path; fields=%+v", got, fields)
 	}
 
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
 }
@@ -324,7 +324,7 @@ func TestPlanExecuteCompletionFieldsKeepsTerminalCompletionSourceSatisfied(t *te
 		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
 	}
 
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
 }
@@ -463,7 +463,7 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.
 	if got := merged["exit_code"]; got != 1 {
 		t.Fatalf("merged exit_code = %#v, want 1; fields=%+v", got, merged)
 	}
-	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("merged terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 
@@ -480,7 +480,7 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.
 	if got := fields["exit_code"]; got != 1 {
 		t.Fatalf("overlaid exit_code = %#v, want 1; fields=%+v", got, fields)
 	}
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("overlaid terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }
@@ -500,7 +500,7 @@ func TestPlanExecuteCompletionMergePreservesSparseValidationFailure(t *testing.T
 	if got := completionFieldStringSlice(merged, "validation_failures"); len(got) != 1 || got[0] != "exit_code_nonzero" {
 		t.Fatalf("validation_failures = %#v, want sparse failure preserved; fields=%+v", got, merged)
 	}
-	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 }
@@ -524,7 +524,7 @@ func TestPlanExecuteCompletionMergePreservesSparseVerificationReject(t *testing.
 	if len(rejects) != 1 || rejects[0].Command != "go test ./pkg" {
 		t.Fatalf("verification_rejects = %#v, want sparse reject preserved; fields=%+v", merged["verification_rejects"], merged)
 	}
-	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 }
@@ -550,7 +550,7 @@ func TestPlanExecuteCompletionMergePreservesSparseSourceSanityFailure(t *testing
 	if len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
 		t.Fatalf("source_sanity = %#v, want sparse failure preserved; fields=%+v", merged["source_sanity"], merged)
 	}
-	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 }
@@ -702,7 +702,7 @@ func TestPlanExecuteCompletionSummaryMergeNestedFailureOverridesWrapperCompleted
 		}
 	}
 
-	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }
