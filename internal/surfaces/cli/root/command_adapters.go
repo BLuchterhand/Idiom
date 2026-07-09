@@ -1,7 +1,6 @@
 package root
 
 import (
-	"context"
 	"io"
 
 	"idiom/internal/evidence/lanehistory"
@@ -18,7 +17,7 @@ import (
 	rankercmd "idiom/internal/surfaces/cli/ranker"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	coreplanexecute "idiom/internal/workflows/planexecute"
-	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
+	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 )
 
 func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
@@ -41,8 +40,8 @@ func featurePlannerDependencies() featureplannercmd.Dependencies {
 	return featureplannercmd.Dependencies{
 		NewSessionID:            sessionid.New,
 		LocalOpsTelemetryFields: localops.TelemetryFields,
-		RunPlanExecute: func(_ context.Context, cfg config.Config, opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) coreplanexecute.RunResult {
-			return coreplanexecute.RunWithDependencies(cfg, opts, planexecutecmd.AdaptPromptRunner(cmdruntime.RunPromptOnce), nil, stdout, stderr, planexecuteadapters.Dependencies())
+		RunPlanExecute: func(cfg config.Config, opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) coreplanexecute.RunResult {
+			return planexecuterunner.Run(cfg, opts, planexecuterunner.Options{}, planexecutecmd.AdaptPromptRunner(cmdruntime.RunPromptOnce), nil, stdout, stderr)
 		},
 	}
 }

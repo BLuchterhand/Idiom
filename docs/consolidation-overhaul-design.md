@@ -1251,34 +1251,14 @@ Reviewer-updated estimate:
   `go test ./internal/contracts/plan ./internal/workflows/planexecute ./internal/surfaces/cli/recover ./internal/workflows/recovery`;
   `go run ./cmd/idiom coding-rules check --fail-on warning`;
   `git diff --check`.
-- Historical workflow command-check authority was superseded by the later
-  `Workflow commandcheck deletion` ledger row and should not be repeated. That
-  earlier slice had added `internal/workflows/commandcheck` as the owner for
-  workflow/surface
-  check-style command runs: argv vs shell execution, timestamps, timeout/exit/
-  spawn failure classification, diagnostic capture, merged output, and display
-  truncation. Plan-execute, recovery, headless lint/test/commit checks,
-  artifact validators, postflight shell checks and `go_build_passes`, refine
-  dispatch, SWE live runs, architect collectors, brieflint preflight, brief
-  lint, and TUI implementation dispatch now project from that owned result
-  instead of each interpreting `commandexec.Result` locally. Platform,
-  gitstate, hosttools, workspace internals, and MCP dispatch remain direct
-  `commandexec` consumers because they are lower-level process/tool adapters,
-  not workflow check projections. The same slice deleted runtime-agent
-  production scaffolds kept alive only by tests: `LifecycleEvent`,
-  `PreimageCheckpointStore.Restore`/`Has`,
-  `runtimeBriefDefinesWriteReadyReadContract`, `Runner.controlRails`, and the
-  defaulting next-action/failure-feedback builders. Production Go changed
-  `+282 / -283`, net `-1`; tests changed `+148 / -136`, net `+12`.
-  Focused verification: `go test ./internal/workflows/commandcheck ./internal/workflows/planexecute ./internal/surfaces/cli/recover ./internal/surfaces/cli/headless ./internal/surfaces/cli/artifact ./internal/workflows/postflight ./internal/surfaces/cli/refine ./internal/surfaces/cli/sweeval ./internal/workflows/architect ./internal/workflows/brieflint ./internal/surfaces/tui/app ./internal/surfaces/cli/brief ./internal/runtime/agent -count=1`;
-  broad verification: `go test ./...`; `go build ./cmd/idiom`;
-  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
-  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
-  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
-  `git diff --check`. The later deletion row is now the current command
-  authority: command execution belongs to `commandexec`, and workflow-specific
-  validation/display/error projection belongs to the owning workflow or
-  surface.
+- Historical workflow command-check authority is superseded by the later
+  `Workflow commandcheck deletion` ledger row and must not guide new work.
+  The current command boundary is: `commandexec` owns process execution facts;
+  workflows and surfaces own their validation, display, status, and error
+  projection. Future command cleanup should delete duplicated caller
+  classification or move meaningful multi-step git lifecycle mechanics into
+  `gitstate`; it should not recreate `internal/workflows/commandcheck` or a
+  replacement command-check facade.
 - Runtime/TUI tool-surface override and lane output facts authority are
   implemented. `workerruntime` now owns the task-family-to-workspace-surface
   override policy used by runner and TUI; workspace catalog facets/action
@@ -1405,9 +1385,29 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `git diff --check`. Current reviewer-backed next targets are the larger
-  `toolResultEvidenceProjection` read-evidence authority consolidation and
-  deletion of shell replacement/redirect strategy guidance that prescribes
-  structured follow-up tool calls.
+  read-only answerability consolidation around `ReadOnlyCloseout`, typed
+  `ToolResultFacts` for discovery/source-body evidence producers, and removal
+  of delegated read-only prose round-tripping once typed packets own child
+  evidence authority.
+- Plan-execute runner ownership now covers feature-planner nested execution
+  and typed new-file prompt authority. `internal/workflows/planexecute/runner`
+  returns the workflow `RunResult`, so root feature-planner wiring consumes the
+  same model override, active-model, context-default, intent-loop, and default
+  dependency policy as the direct `plan-execute` CLI and lane wrapper instead
+  of calling `RunWithDependencies` and plan-execute adapters directly. CLI and
+  lane surfaces unwrap only `ExitCode` at their delivery boundary. The
+  plan-execute CLI prompt adapter also forwards `AuthorizedNewFiles` through
+  `cmdruntime.RunOptions`, and the TUI prompt runner projects those paths into
+  the runtime brief via `SetPlanExecuteScope`. Focused verification:
+  `go test ./internal/surfaces/cli/planexecute -run 'TestRunPlanExecuteMainForwardsTypedAuthorizedNewFiles|TestRunPlanExecuteMainIntentLoopScriptedLiveE2E|TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride'`;
+  `go test ./internal/surfaces/tui/app -run 'TestRuntimeBriefPlanExecuteScopeIncludesTypedAuthorizedNewFiles|TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles|TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence'`;
+  `go test ./internal/surfaces/cli/lane -run 'TestRunLaneMainEmitsDegradedEventOnReadOnlyLane|TestLane'`;
+  `go test ./internal/surfaces/cli/featureplanner -run 'TestDefaultFeaturePlannerPlanExecuteReturnsTypedReviewedCompletion|TestDefaultFeaturePlannerPlanExecutePassesTypedAuthorizedNewFiles|TestDefaultFeaturePlannerPlanExecuteForwardsResolvedModelOverride'`;
+  `go test ./internal/surfaces/cli/root`;
+  `go test ./internal/workflows/planexecute/runner ./internal/workflows/intentloop`;
+  `git diff --check`. Full verification is the standard post-change gate:
+  `go test ./...`; `go build ./cmd/idiom`; coding-rules, deadcode, and
+  staticcheck.
 
 ## Review And Regression Protocol
 

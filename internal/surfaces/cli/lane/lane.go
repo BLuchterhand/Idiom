@@ -75,7 +75,7 @@ var canonicalRuleNames = cliassets.CanonicalLaneRuleNames()
 // shape until its use case moves out of the CLI package.
 type laneImplementRunner func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int
 
-type lanePlanExecuteRunner func(cfg config.Config, opts planexecute.Options, runOpts planexecuterunner.Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) int
+type lanePlanExecuteRunner func(cfg config.Config, opts planexecute.Options, runOpts planexecuterunner.Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) planexecute.RunResult
 
 // laneDeps groups the lane wrapper's external dependencies so tests
 // can swap in fakes without touching package-level globals.
@@ -381,7 +381,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			MaxCycles:         opts.IntentLoopMaxCycles,
 			TotalBudgetTokens: opts.IntentLoopBudgetTokens,
 		}
-		subcode = deps.runPlanExecute(cfg, planOpts, runOpts, planexecutecmd.AdaptPromptRunner(deps.defaultPromptRun), deps.telemetry, tee, stderr)
+		subcode = deps.runPlanExecute(cfg, planOpts, runOpts, planexecutecmd.AdaptPromptRunner(deps.defaultPromptRun), deps.telemetry, tee, stderr).ExitCode
 	case string(lanecontract.LaneImplement):
 		forwardArgs := buildImplementArgs(opts, composedPath)
 		subcode = deps.runImplement(forwardArgs, tee, stderr, sessionCapture.wrap(deps.defaultPromptRun))

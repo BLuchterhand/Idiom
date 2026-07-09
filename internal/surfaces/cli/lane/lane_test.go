@@ -118,7 +118,7 @@ func TestLaneAtomIntakeReportFieldsProjectFinalNonDispatchableStates(t *testing.
 	}
 }
 
-func (f *laneFakeRunner) plan(_ config.Config, opts planexecute.Options, runOpts planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) int {
+func (f *laneFakeRunner) plan(_ config.Config, opts planexecute.Options, runOpts planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) planexecute.RunResult {
 	f.calledMode = "plan-execute"
 
 	f.calledPlanOptions = opts
@@ -130,7 +130,7 @@ func (f *laneFakeRunner) plan(_ config.Config, opts planexecute.Options, runOpts
 
 	emitFakeEditAttempt(stdout, "submit_plan")
 
-	return f.exitCode
+	return planexecute.RunResult{ExitCode: f.exitCode}
 }
 
 func (f *laneFakeRunner) implement(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int {

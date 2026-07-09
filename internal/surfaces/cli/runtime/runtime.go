@@ -36,6 +36,7 @@ type RunOptions struct {
 	UseActiveModel              bool
 	Telemetry                   *telemetry.Recorder
 	ScopeContract               plancontract.PlanScopeContract
+	AuthorizedNewFiles          []string
 }
 
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
@@ -168,7 +169,7 @@ func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.
 	}
 
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) {
-		model.SetPlanExecuteScopeContract(opts.ScopeContract)
+		model.SetPlanExecuteScope(opts.ScopeContract, opts.AuthorizedNewFiles)
 	}
 
 	LogModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())

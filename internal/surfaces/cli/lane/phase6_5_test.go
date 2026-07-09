@@ -362,9 +362,9 @@ func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 	briefPath := writeBrief(t, "# Test\n")
 	stubLaneBriefLint(t, passingLaneBriefLint)
 
-	plan := func(_ config.Config, _ planexecute.Options, _ planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) int {
+	plan := func(_ config.Config, _ planexecute.Options, _ planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) planexecute.RunResult {
 		_, _ = stdout.Write([]byte(`{"type":"route_plan","contract":"verification_only"}` + "\n"))
-		return 0
+		return planexecute.RunResult{ExitCode: 0}
 	}
 	implement := func([]string, io.Writer, io.Writer, cmdruntime.PromptRunner) int { return 0 }
 

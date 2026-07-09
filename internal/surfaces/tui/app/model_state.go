@@ -1893,9 +1893,10 @@ func turnObjectiveCarryTerms(text string) map[string]struct{} {
 	return terms
 }
 
-func (m *Model) SetPlanExecuteScopeContract(contract plancontract.PlanScopeContract) {
+func (m *Model) SetPlanExecuteScope(contract plancontract.PlanScopeContract, authorizedNewFiles []string) {
 	m.planExecuteActive = true
 	m.planExecuteScopeContract = contract.Normalized()
+	m.planExecuteAuthorizedNewFiles = appendUniqueBriefStrings(nil, authorizedNewFiles...)
 }
 
 func (m *Model) clearContextError() {

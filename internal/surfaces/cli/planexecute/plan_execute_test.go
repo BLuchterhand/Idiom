@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,34 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 
 	if gotOpts.MaxTokensOverride != 2048 {
 		t.Fatalf("MaxTokensOverride = %d, want 2048", gotOpts.MaxTokensOverride)
+	}
+}
+
+func TestRunPlanExecuteMainForwardsTypedAuthorizedNewFiles(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+
+	var (
+		stdout, stderr bytes.Buffer
+		gotOpts        cmdruntime.RunOptions
+	)
+
+	code := RunMainWithTelemetry(
+		[]string{"-config", configPath, "-prompt", "create pkg/new_helper.go", "-authorized-new-file", "pkg/new_helper.go"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "no plan", nil
+		},
+		nil,
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+
+	if !slices.Equal(gotOpts.AuthorizedNewFiles, []string{"pkg/new_helper.go"}) {
+		t.Fatalf("AuthorizedNewFiles = %#v, want pkg/new_helper.go", gotOpts.AuthorizedNewFiles)
 	}
 }
 
@@ -197,7 +226,7 @@ Typed plan execution contract:
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := planexecuterunner.Run(
+	result := planexecuterunner.Run(
 		cfg,
 		planexecute.Options{ConfigPath: configPath, Prompt: prompt, JSONEvents: true},
 		runOpts,
@@ -213,8 +242,8 @@ Typed plan execution contract:
 	t.Logf("scripted intent-loop stdout:\n%s", stdout.String())
 	t.Logf("scripted intent-loop stderr:\n%s", stderr.String())
 
-	if code != 0 {
-		t.Fatalf("runner exit = %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	if result.ExitCode != 0 {
+		t.Fatalf("runner exit = %d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
 	if len(childSessions) != 3 {
 		t.Fatalf("child session count = %d, want 3 (%#v)", len(childSessions), childSessions)

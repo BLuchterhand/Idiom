@@ -22,7 +22,7 @@ type Options struct {
 // Run owns the plan-execute execution policy shared by CLI surfaces:
 // model override activation, context defaults, optional intent-loop
 // routing, and default workflow dependencies.
-func Run(cfg config.Config, opts planexecute.Options, runOpts Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) int {
+func Run(cfg config.Config, opts planexecute.Options, runOpts Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) planexecute.RunResult {
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 		opts.UseActiveModel = true
@@ -47,11 +47,15 @@ func Run(cfg config.Config, opts planexecute.Options, runOpts Options, promptRun
 			DetectExternalScopedChanges: true,
 			RunPlanExecute:              childRunner,
 		}, promptRun, rec, stdout, stderr)
-		return result.ExitCode
+		return planexecute.RunResult{
+			ExitCode:       result.ExitCode,
+			SessionID:      result.SessionID,
+			Completion:     result.Completion,
+			CompletionPath: result.CompletionPath,
+		}
 	}
 
-	result := defaultChildRunner(cfg, opts, promptRun, rec, stdout, stderr)
-	return result.ExitCode
+	return defaultChildRunner(cfg, opts, promptRun, rec, stdout, stderr)
 }
 
 func defaultChildRunner(cfg config.Config, opts planexecute.Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) planexecute.RunResult {

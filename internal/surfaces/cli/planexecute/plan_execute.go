@@ -37,7 +37,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		return 1
 	}
 
-	return planexecuterunner.Run(cfg, opts, loopOpts, AdaptPromptRunner(promptRun), rec, stdout, stderr)
+	return planexecuterunner.Run(cfg, opts, loopOpts, AdaptPromptRunner(promptRun), rec, stdout, stderr).ExitCode
 }
 
 func AdaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunner {
@@ -53,6 +53,7 @@ func AdaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 			UseActiveModel:              opts.UseActiveModel,
 			Telemetry:                   opts.Telemetry,
 			ScopeContract:               opts.ScopeContract,
+			AuthorizedNewFiles:          opts.AuthorizedNewFiles,
 		}, stdout)
 	}
 }

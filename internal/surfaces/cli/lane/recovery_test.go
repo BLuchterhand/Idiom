@@ -53,8 +53,8 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 
 			return 7
 		},
-		func(config.Config, planexecute.Options, planexecuterunner.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
-			return 0
+		func(config.Config, planexecute.Options, planexecuterunner.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+			return planexecute.RunResult{ExitCode: 0}
 		},
 		&stdout, &stderr)
 
@@ -151,8 +151,8 @@ func TestRunLaneImplementRecoveryCapturesPromptRunnerSessionID(t *testing.T) {
 
 			return 3
 		},
-		func(config.Config, planexecute.Options, planexecuterunner.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
-			return 0
+		func(config.Config, planexecute.Options, planexecuterunner.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+			return planexecute.RunResult{ExitCode: 0}
 		},
 		&stdout, &stderr)
 
@@ -196,9 +196,9 @@ func TestRunLanePlanExecuteRecoveryDoesNotWriteLaneImplementRecord(t *testing.T)
 
 	code := runLaneRecoveryTest(t, root, []string{"plan-execute", "--json", "--project-root", root, briefPath},
 		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int { return 0 },
-		func(_ config.Config, _ planexecute.Options, _ planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) int {
+		func(_ config.Config, _ planexecute.Options, _ planexecuterunner.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, stdout io.Writer, _ io.Writer) planexecute.RunResult {
 			_, _ = stdout.Write([]byte(`{"type":"session_summary","session_id":"plan-session","stop_reason":"planner_failed"}` + "\n"))
-			return 5
+			return planexecute.RunResult{ExitCode: 5}
 		},
 		&stdout, &stderr)
 

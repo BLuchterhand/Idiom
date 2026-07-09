@@ -2363,7 +2363,7 @@ func TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence(t *testing.T) {
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
-	model.SetPlanExecuteScopeContract(plancontract.NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil))
+	model.SetPlanExecuteScope(plancontract.NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil), nil)
 
 	prompt := `
 # Atom
@@ -2393,11 +2393,11 @@ func TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles(t *testing.T) {
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
-	model.SetPlanExecuteScopeContract(plancontract.NewPlanScopeContract(
+	model.SetPlanExecuteScope(plancontract.NewPlanScopeContract(
 		[]string{"pkg/feature.go"},
 		[]string{"pkg/feature_test.go"},
 		nil,
-	))
+	), nil)
 
 	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), "Implement the feature")
 	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
@@ -2432,6 +2432,23 @@ func TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles(t *testing.T) {
 		!allowedCandidate.WithinAllowedCandidatePath {
 
 		t.Fatalf("TUI allowed path must remain candidate scope only, got %#v", allowedCandidate)
+	}
+}
+
+func TestRuntimeBriefPlanExecuteScopeIncludesTypedAuthorizedNewFiles(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetPlanExecuteScope(
+		plancontract.NewPlanScopeContract([]string{"pkg/new_helper.go"}, nil, nil),
+		[]string{"pkg/new_helper.go"},
+	)
+
+	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), "Create pkg/new_helper.go")
+
+	if !slices.Equal(brief.AuthorizedNewFiles, []string{"pkg/new_helper.go"}) {
+		t.Fatalf("authorized new files = %#v, want pkg/new_helper.go", brief.AuthorizedNewFiles)
 	}
 }
 

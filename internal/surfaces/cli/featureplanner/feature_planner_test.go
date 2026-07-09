@@ -1385,7 +1385,7 @@ func testContainsString(values []string, want string) bool {
 }
 
 func featurePlannerPlanExecuteRunner(run func(coreplanexecute.Options, io.Writer, io.Writer) int) PlanExecuteRunner {
-	return func(_ context.Context, _ config.Config, opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) coreplanexecute.RunResult {
+	return func(_ config.Config, opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) coreplanexecute.RunResult {
 		return coreplanexecute.RunResult{ExitCode: run(opts, stdout, stderr)}
 	}
 }

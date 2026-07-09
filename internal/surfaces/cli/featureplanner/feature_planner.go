@@ -73,7 +73,7 @@ type Dependencies struct {
 	RunPlanExecute          PlanExecuteRunner
 }
 
-type PlanExecuteRunner func(context.Context, config.Config, coreplanexecute.Options, io.Writer, io.Writer) coreplanexecute.RunResult
+type PlanExecuteRunner func(config.Config, coreplanexecute.Options, io.Writer, io.Writer) coreplanexecute.RunResult
 
 type featurePlannerRunner func(context.Context, featurePlannerRequest, io.Writer) (featurePlannerResult, error)
 
@@ -425,7 +425,7 @@ func defaultFeaturePlannerPlanExecute(ctx context.Context, req featurePlannerReq
 		planStdout.Reset()
 		planStderr.Reset()
 		startedAt := time.Now().UTC()
-		result := req.Deps.RunPlanExecute(ctx, req.Config, opts, &planStdout, &planStderr)
+		result := req.Deps.RunPlanExecute(req.Config, opts, &planStdout, &planStderr)
 		if req.JSONEvents && stdout != nil {
 			_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 		}
