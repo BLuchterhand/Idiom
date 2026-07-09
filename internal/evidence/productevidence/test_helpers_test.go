@@ -12,15 +12,9 @@ import (
 	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
-func TestMain(m *testing.M) {
-	restore := setDefaultDependenciesForTest(Dependencies{
-		RunMainNoTelemetry:  p711RunMainNoTelemetry,
-		DemoCommandRunnerID: "productevidence-test:cli-adapter",
-	})
-	code := m.Run()
-
-	restore()
-	os.Exit(code)
+var p711TestDemoDependencies = Dependencies{
+	RunMainNoTelemetry:  p711RunMainNoTelemetry,
+	DemoCommandRunnerID: "productevidence-test:cli-adapter",
 }
 
 func p711RunMainNoTelemetry(args []string, stdout io.Writer, stderr io.Writer) int {

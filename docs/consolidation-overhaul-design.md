@@ -1612,6 +1612,26 @@ Reviewer-updated estimate:
   `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `git diff --check`.
+- Product/release evidence dependency-authority cleanup deleted the package
+  global dependency fallback (`defaultDependencies`, `currentDependencies`,
+  and `setDefaultDependenciesForTest`), no-deps production forwarders for the
+  product/release evidence entrypoints and report builders, the no-deps demo
+  command executor alias, and the exported P9.8 readiness-field getter that
+  existed only for tests. The CLI root remains the single production
+  composition authority through `productEvidenceDeps()`, while package tests
+  pass an explicit `Dependencies` fixture and sidecar validation tests assert
+  readiness fields from the sidecar proof artifact's own
+  `mcp_contract.readiness_fields`. Production Go changed `+0 / -95`, net
+  `-95`; test Go changed `+168 / -249`, net `-81`. With this worktree
+  included, the branch is production Go `+26,599 / -34,091`, net `-7,492`
+  versus `main`. Focused verification:
+  `go test ./internal/evidence/productevidence -run 'Test(FirstNonEmptyString|SummarizeLaneHistoryNilDeps|P911RunMainNoTelemetryWithDeps|RunProductEvidenceExportWritesParseableJSONOutput|RunReleaseEvidenceWritesParseableJSONOutput|P911ProductEvidence|ReleaseEvidence)' -count=1`;
+  `go test ./internal/evidence/productevidence -count=1`;
+  `go test ./internal/evidence/productevidence ./internal/evidence/sidecarvalidation ./internal/surfaces/cli/root -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/evidence/productevidence ./internal/evidence/sidecarvalidation`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^(internal/evidence/productevidence|internal/evidence/sidecarvalidation)/'`
+  as inventory, now showing no touched evidence-package findings;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

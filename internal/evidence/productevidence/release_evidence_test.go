@@ -64,7 +64,7 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		t.Fatalf("append learning log: %v", err)
 	}
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:        root,
 		BaselineDir:        "baseline",
 		CurrentDir:         "current",
@@ -72,7 +72,7 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		ValidationRecords:  recordsPath,
 		BenchmarkReport:    benchmarkPath,
 		SidecarSmokeReport: filepath.Join("testdata", "sidecar", "discovery-smoke.transcript.json"),
-	})
+	}, p711TestDemoDependencies)
 
 	body, err := json.Marshal(report)
 	if err != nil {
@@ -163,10 +163,11 @@ func TestReleaseEvidenceSummarizesOpenRecoveryRollup(t *testing.T) {
 	root := t.TempDir()
 	stageProductEvidenceRecoveryPacket(t, root, "release-open-recovery")
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
-	})
+	}, p711TestDemoDependencies)
+
 	if report.Recovery.Status != "partial" ||
 		report.Recovery.OpenPacketCount != 1 ||
 		report.Recovery.CandidateAtomCount == 0 ||
@@ -188,10 +189,11 @@ func TestReleaseEvidenceRecoveredRollupDoesNotAddRecoveryBlocker(t *testing.T) {
 	root := t.TempDir()
 	stageProductEvidenceRecoveredPacket(t, root, "release-recovered")
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
-	})
+	}, p711TestDemoDependencies)
+
 	if report.Recovery.Status != "pass" ||
 		report.Recovery.RecoveredPacketCount != 1 ||
 		report.Recovery.OpenPacketCount != 0 ||
@@ -215,7 +217,7 @@ func TestP911ReleaseEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 	})
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"}, p711TestDemoDependencies)
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.11")
 
 	if gate.Status != "needs_evidence" || gate.Counts["runnable_command_rows"] == 7 || gate.Counts["command_id_mismatch_rows"] == 0 {
@@ -229,12 +231,12 @@ func TestP911ReleaseEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 
 func TestP91ReleaseEvidenceMarksPartialWhenEvidenceMissing(t *testing.T) {
 	root := t.TempDir()
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{}, releaseEvidenceOptions{
 		ProjectRoot:        root,
 		BaselineDir:        "missing-baseline",
 		CurrentDir:         "missing-current",
 		SidecarSmokeReport: "missing-smoke.json",
-	})
+	}, p711TestDemoDependencies)
 
 	if report.Status != "partial" {
 		t.Fatalf("missing evidence should produce partial status, got %q", report.Status)
@@ -264,11 +266,11 @@ func TestP913ReleaseEvidenceDowngradesClientRowsWhenValidationRecordsMissing(t *
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
 		LocalOpsReport:  localOpsPath,
 		BenchmarkReport: benchmarkPath,
-	})
+	}, p711TestDemoDependencies)
 
 	for _, row := range report.ClientReadiness {
 		if !releaseEvidenceStringSliceContains(row.MissingEvidence, "validation record") {
@@ -292,11 +294,12 @@ func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
 		LocalOpsReport:  localOpsPath,
 		BenchmarkReport: benchmarkPath,
-	})
+	}, p711TestDemoDependencies)
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.12")
 
 	if gate.Status == "evidence_present" {
@@ -340,10 +343,11 @@ func TestP96ReleaseReadinessNeedsMeasuredCleanInstallAndCleanupEvidence(t *testi
 	localOps.Quickstart.SetupInstallReadiness.ReleaseInstallProof = "not_claimed"
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:    root,
 		LocalOpsReport: localOpsPath,
-	})
+	}, p711TestDemoDependencies)
+
 	if report.ActivationOnboarding.Status != "needs_evidence" || report.ActivationOnboarding.Classification != "no-go" {
 		t.Fatalf("source-build deterministic activation evidence must fail closed for P9.6: %#v", report.ActivationOnboarding)
 	}
@@ -387,10 +391,11 @@ func TestP96ReleaseActivationMalformedMandatoryFieldsFailClosed(t *testing.T) {
 	localOps.Quickstart.Cleanup = localops.ActivationCleanupEvidence{Status: "pass", ExitStatus: "pass"}
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:    root,
 		LocalOpsReport: localOpsPath,
-	})
+	}, p711TestDemoDependencies)
+
 	if report.ActivationOnboarding.Status == "pass" || report.ActivationOnboarding.Classification == "pass" {
 		t.Fatalf("malformed activation evidence must fail closed: %#v", report.ActivationOnboarding)
 	}
@@ -420,11 +425,12 @@ func TestP96ReleaseReadinessNeedsValidationRecordsForStrictActivation(t *testing
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:    root,
 		CurrentDir:     "current",
 		LocalOpsReport: localOpsPath,
-	})
+	}, p711TestDemoDependencies)
+
 	if report.ActivationOnboarding.Status != "needs_evidence" || report.ActivationOnboarding.Classification != "no-go" {
 		t.Fatalf("activation readiness must fail closed without validation records: %#v", report.ActivationOnboarding)
 	}
@@ -464,12 +470,13 @@ func TestP96ReleaseActivationRetainedStatePolicyMustBeReviewed(t *testing.T) {
 	localOps.Quickstart.Cleanup.RetainedStatePolicy = "quickstart smoke retains local context graph by policy"
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
-	})
+	}, p711TestDemoDependencies)
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
 
 	if gate.Status == "evidence_present" || report.ActivationOnboarding.Status == "pass" {
@@ -507,12 +514,13 @@ func TestP96ReleaseActivationZeroRankedPacketFailsClosed(t *testing.T) {
 	localOps.Quickstart.FirstUsefulPacket.UsefulEvidence = []string{"candidate_files:0", "candidate_symbols:0", "candidate_tests:0"}
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
-	})
+	}, p711TestDemoDependencies)
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
 
 	if gate.Status == "evidence_present" || report.ActivationOnboarding.Status == "pass" {
@@ -533,17 +541,19 @@ func TestP97ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 	stageP711LearningEvidence(t, root, "p97-agreement")
 
-	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
+	product := buildProductEvidenceExportReportWithDeps(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
-	})
-	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	}, p711TestDemoDependencies)
+
+	release := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
-	})
+	}, p711TestDemoDependencies)
+
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.7")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.7")
 
@@ -569,13 +579,15 @@ func TestP98ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	stageP711ProductEvidenceFixtures(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
+	product := buildProductEvidenceExportReportWithDeps(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot: root,
-	})
-	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	}, p711TestDemoDependencies)
+
+	release := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
-	})
+	}, p711TestDemoDependencies)
+
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.8")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.8")
 
@@ -604,9 +616,10 @@ func TestP98ReleaseReadinessNeedsEvidenceWhenIntegrationProofsIncomplete(t *test
 		p711IntegrationProofWithMCPParityOnPath("p7.8-external-coding-agent", "external_coding_agent_workflow"),
 	})
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
-	})
+	}, p711TestDemoDependencies)
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.8")
 
 	if gate.Status != "needs_evidence" {
@@ -633,12 +646,13 @@ func TestP97ReleaseRetainedUseWithoutCredibleAdoptionSignalDoesNotPass(t *testin
 	recordsPath := filepath.Join(root, "validation-records.json")
 	writeP711JSON(t, recordsPath, records)
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
-	})
+	}, p711TestDemoDependencies)
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.7")
 
 	if gate.Status == "evidence_present" {
@@ -661,11 +675,12 @@ func TestP914ReleaseBundleDowngradesEveryP912ObjectWhenClientValidationMissing(t
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
 		LocalOpsReport:  localOpsPath,
 		BenchmarkReport: benchmarkPath,
-	})
+	}, p711TestDemoDependencies)
+
 	if !releaseEvidenceAnyClientMissingEvidence(report.ClientReadiness) {
 		t.Fatalf("fixture should contain client rows with missing validation evidence: %#v", report.ClientReadiness)
 	}
@@ -700,11 +715,11 @@ func TestP913ReleaseBenchmarkNeedsCompetitiveEvidenceWithPassingLocalOps(t *test
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
-	})
+	}, p711TestDemoDependencies)
 
 	if report.BenchmarkLocalOps.LocalOps.Status != "pass" {
 		t.Fatalf("fixture should keep local-ops replay passing: %#v", report.BenchmarkLocalOps.LocalOps)
@@ -746,10 +761,10 @@ func TestP91ReleaseEvidencePreservesPrivacy(t *testing.T) {
 		t.Fatalf("write fixture artifact: %v", err)
 	}
 
-	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundleWithDeps(root, lanehistory.Summary{}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
-	})
+	}, p711TestDemoDependencies)
 
 	body, err := json.Marshal(report)
 	if err != nil {
@@ -817,7 +832,7 @@ func TestRunReleaseEvidenceWritesParseableJSONOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runReleaseMainWithTelemetry([]string{
+	code := RunReleaseMainWithTelemetry([]string{
 		"evidence",
 		"--project-root", root,
 		"--baseline-dir", "baseline",
@@ -826,7 +841,7 @@ func TestRunReleaseEvidenceWritesParseableJSONOutput(t *testing.T) {
 		"--validation-records", recordsPath,
 		"--sidecar-smoke", filepath.Join("testdata", "sidecar", "discovery-smoke.transcript.json"),
 		"--output", outputPath,
-	}, &stdout, &stderr, nil)
+	}, &stdout, &stderr, nil, p711TestDemoDependencies)
 
 	if code != 0 {
 		t.Fatalf("release evidence command failed code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())

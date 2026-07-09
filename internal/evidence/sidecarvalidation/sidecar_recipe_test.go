@@ -327,9 +327,19 @@ func TestP78IntegrationProofRecords(t *testing.T) {
 				t.Fatalf("MCP proof missing replay/product-evidence linkage: %#v", proof)
 			}
 
-			for _, field := range p98RequiredMCPParityReadinessFields {
+			readinessFields, ok := proof.MCPContract["readiness_fields"].([]any)
+			if !ok || len(readinessFields) == 0 {
+				t.Fatalf("MCP contract missing readiness_fields: %#v", proof.MCPContract)
+			}
+
+			for _, value := range readinessFields {
+				field, ok := value.(string)
+				if !ok || strings.TrimSpace(field) == "" {
+					t.Fatalf("MCP contract has malformed readiness field %#v: %#v", value, proof.MCPContract)
+				}
+
 				if !proof.Readiness[field] {
-					t.Fatalf("MCP proof missing required P9.8 parity field %q: %#v", field, proof.Readiness)
+					t.Fatalf("MCP proof missing declared readiness field %q: %#v", field, proof.Readiness)
 				}
 			}
 

@@ -155,10 +155,6 @@ type p99ProductPrivacyState struct {
 	ValidationRecordsStatus string
 }
 
-func runProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return RunProductEvidenceMainWithTelemetry(args, stdout, stderr, rec, Dependencies{})
-}
-
 func RunProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Dependencies) int {
 	if len(args) == 0 {
 		printProductEvidenceUsage(stderr)
@@ -280,13 +276,7 @@ func runProductEvidenceExportWithDeps(args []string, stdout io.Writer, stderr io
 	return 0
 }
 
-func buildProductEvidenceExportReport(root string, summary lanehistory.Summary, opts productEvidenceExportOptions) productEvidenceExportReport {
-	return buildProductEvidenceExportReportWithDeps(root, summary, opts, Dependencies{})
-}
-
 func buildProductEvidenceExportReportWithDeps(root string, summary lanehistory.Summary, opts productEvidenceExportOptions, deps Dependencies) productEvidenceExportReport {
-	deps = currentDependencies(deps)
-
 	laneStatus := "not_available"
 
 	if summary.Total > 0 {
@@ -470,10 +460,6 @@ var p98RequiredMCPParityReadinessFields = []string{
 	"redaction_denial_present",
 	"report_only_freshness_present",
 	"product_evidence_export_parity",
-}
-
-func P98RequiredMCPParityReadinessFields() []string {
-	return append([]string(nil), p98RequiredMCPParityReadinessFields...)
 }
 
 type p711IntegrationProofSet struct {
@@ -1881,8 +1867,6 @@ func p910RequiredBaseline(required []string, baseline string) bool {
 }
 
 func p911ClientDemoGateWithDeps(demos p711DemoTranscriptSet, ref productEvidenceSourceReference, deps Dependencies) productEvidenceReleaseGateLinkage {
-	deps = currentDependencies(deps)
-
 	required := p711Classifications()
 	counts := map[string]int{
 		"required_classifications":           len(required),
@@ -2121,8 +2105,6 @@ func p911EvaluateDemoTranscript(demo p711DemoTranscript, counts map[string]int, 
 }
 
 func p911DemoRunnableCommandEvidenceWithDeps(demo p711DemoTranscript, deps Dependencies) p911RunnableCommandEvidence {
-	deps = currentDependencies(deps)
-
 	key := p911DemoCommandValidationCacheKey(demo, deps)
 
 	if key != "" {
@@ -2527,10 +2509,6 @@ func p911ExecuteDemoCommandWithDeps(demo p711DemoTranscript, command p711DemoCom
 	defer os.RemoveAll(root)
 
 	return p911ExecuteDemoCommandAtRootWithDeps(root, demo, command, deps)
-}
-
-func p911ExecuteDemoCommandAtRoot(root string, demo p711DemoTranscript, command p711DemoCommand) []string {
-	return p911ExecuteDemoCommandAtRootWithDeps(root, demo, command, Dependencies{})
 }
 
 func p911ExecuteDemoCommandAtRootWithDeps(root string, demo p711DemoTranscript, command p711DemoCommand, deps Dependencies) []string {

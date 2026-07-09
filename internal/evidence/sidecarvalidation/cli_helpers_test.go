@@ -6,13 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"idiom/internal/evidence/productevidence"
 	cmdconfig "idiom/internal/surfaces/cli/config"
 	localopscmd "idiom/internal/surfaces/cli/localops"
 	toolcmd "idiom/internal/surfaces/cli/tool"
 )
-
-var p98RequiredMCPParityReadinessFields = productevidence.P98RequiredMCPParityReadinessFields()
 
 func writeMainConfig(t testFataler) string {
 	t.Helper()

@@ -272,10 +272,6 @@ type releaseEvidenceGateReadiness struct {
 	EvidenceIDs []string       `json:"evidence_ids,omitempty"`
 }
 
-func runReleaseMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return RunReleaseMainWithTelemetry(args, stdout, stderr, rec, Dependencies{})
-}
-
 func RunReleaseMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Dependencies) int {
 	if len(args) == 0 {
 		printReleaseUsage(stderr)
@@ -400,13 +396,7 @@ func blockReleaseEvidencePrivacy(report *releaseEvidenceBundle, forbidden string
 	report.BundleID = "release-evidence-" + report.ArtifactHash
 }
 
-func buildReleaseEvidenceBundle(root string, laneSummary lanehistory.Summary, opts releaseEvidenceOptions) releaseEvidenceBundle {
-	return buildReleaseEvidenceBundleWithDeps(root, laneSummary, opts, Dependencies{})
-}
-
 func buildReleaseEvidenceBundleWithDeps(root string, laneSummary lanehistory.Summary, opts releaseEvidenceOptions, deps Dependencies) releaseEvidenceBundle {
-	deps = currentDependencies(deps)
-
 	baseline := loadReleaseEvidenceInputBundle(root, opts.BaselineDir, "baseline")
 	current := loadReleaseEvidenceInputBundle(root, opts.CurrentDir, "current")
 	localOps, localOpsRef := loadP711LocalOpsReport(root, opts.LocalOpsReport)
@@ -1583,8 +1573,6 @@ func releaseEvidenceHash(report releaseEvidenceBundle) string {
 }
 
 func releaseEvidenceBuildInfoWithDeps(deps Dependencies) releaseEvidenceBuildMetadata {
-	deps = currentDependencies(deps)
-
 	resolvedCommit, resolvedDate := deps.Commit, deps.Date
 
 	if resolvedCommit == "" || resolvedDate == "" {
