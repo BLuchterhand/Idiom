@@ -18,12 +18,6 @@ type ProductStatusMigrationOptions struct {
 	EffortsRoot          string
 }
 
-type ProductStatusMigrationContractInput struct {
-	EffortIndexJSON   []byte
-	WorkflowStateJSON []byte
-	MigrationOptions  ProductStatusMigrationOptions
-}
-
 type ProductStatusMigrationPlan struct {
 	Status               ProductWorkflowStatus           `json:"status"`
 	EffortID             string                          `json:"effort_id"`
@@ -279,47 +273,6 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	plan.NextValidAction = "review the status migration plan before applying any folder move"
 
 	return plan
-}
-
-func PlanProductStatusMigrationContract(input ProductStatusMigrationContractInput) ProductStatusMigrationPlan {
-	idx, idxErr := ParseEffortIndexJSON(input.EffortIndexJSON)
-	if idxErr != nil {
-		return ProductStatusMigrationPlan{
-			Status: ProductWorkflowStatusBlocked,
-			Blockers: []ProductStatusMigrationBlocker{
-				{
-					Code:    "malformed_effort_index",
-					Path:    "efforts/index.json",
-					Message: idxErr.Error(),
-				},
-			},
-			NextValidAction: "fix effort index JSON before planning status migration",
-		}
-	}
-
-	ws, wsErr := ParseWorkflowStateJSON(input.WorkflowStateJSON)
-	if wsErr != nil {
-		return ProductStatusMigrationPlan{
-			Status: ProductWorkflowStatusBlocked,
-			Blockers: []ProductStatusMigrationBlocker{
-				{
-					Code:    "malformed_workflow_state",
-					Path:    WorkflowStateFileName,
-					Message: wsErr.Error(),
-				},
-			},
-			NextValidAction: "fix workflow state JSON before planning status migration",
-		}
-	}
-
-	options := input.MigrationOptions
-	if strings.TrimSpace(options.SourceFolderPath) == "" {
-		if entry, blockers := migrationIndexEntry(idx, ws.EffortID); len(blockers) == 0 && entry != nil {
-			options.SourceFolderPath = entry.FolderPath
-		}
-	}
-
-	return PlanProductStatusMigration(ws, idx, options)
 }
 
 func defaultMigrationTargetState(targetBucket, currentState string) string {

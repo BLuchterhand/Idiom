@@ -1390,28 +1390,6 @@ func TestADRIndexInvalidCoverageTierFailsClosed(t *testing.T) {
 }
 
 func TestValidAllObligationTypesAccepted(t *testing.T) {
-	for _, typ := range AllowedObligationTypes() {
-		ledger := TDDLedger{
-			SchemaVersion: "idiom.tdd_obligations.v2",
-			EffortID:      "test",
-			TaskID:        "test",
-			CoverageTier:  "contract_high",
-			Coverage:      TDDCoverage{MutationMinScore: 80},
-			Obligations: []TDDObligation{
-				{ID: "TDD-1", Type: typ, Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
-			},
-		}
-		if err := validateTDDLedger(ledger); err != nil {
-			t.Fatalf("expected obligation type %q to pass, got %v", typ, err)
-		}
-	}
-}
-
-func TestAllowedObligationTypesIncludeCanonicalValues(t *testing.T) {
-	allowed := map[string]bool{}
-	for _, typ := range AllowedObligationTypes() {
-		allowed[typ] = true
-	}
 	for _, typ := range []string{
 		"characterization",
 		"regression",
@@ -1442,8 +1420,18 @@ func TestAllowedObligationTypesIncludeCanonicalValues(t *testing.T) {
 		"e2e_journey",
 		"manual",
 	} {
-		if !allowed[typ] {
-			t.Fatalf("AllowedObligationTypes() missing canonical type %q: %#v", typ, AllowedObligationTypes())
+		ledger := TDDLedger{
+			SchemaVersion: "idiom.tdd_obligations.v2",
+			EffortID:      "test",
+			TaskID:        "test",
+			CoverageTier:  "contract_high",
+			Coverage:      TDDCoverage{MutationMinScore: 80},
+			Obligations: []TDDObligation{
+				{ID: "TDD-1", Type: typ, Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+			},
+		}
+		if err := validateTDDLedger(ledger); err != nil {
+			t.Fatalf("expected obligation type %q to pass, got %v", typ, err)
 		}
 	}
 }

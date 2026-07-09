@@ -2564,7 +2564,7 @@ func TestFeaturePlannerTUIE2EProductCoveragePromotionContextResumePlanDisplay(t 
 	}
 	promotion, err := productworkflow.PromoteBehavioralCoverageContractWithResult(ledger, contract)
 	if err != nil {
-		t.Fatalf("PromoteBehavioralCoverageContract: %v", err)
+		t.Fatalf("PromoteBehavioralCoverageContractWithResult: %v", err)
 	}
 	promoted := promotion.Ledger
 	if promoted.BehavioralCoverage == nil {
@@ -4817,7 +4817,11 @@ func TestBuildProductWorkflowBriefCarriesAcceptedBehavioralCoverageWhileTDDEvide
 			RequiredBefore: "implementation",
 		}},
 	}
-	ledger := productworkflow.ProjectBehavioralCoverageContractLedger(contract)
+	promotion, err := productworkflow.PromoteBehavioralCoverageContractWithResult(productworkflow.TDDLedger{}, contract)
+	if err != nil {
+		t.Fatalf("PromoteBehavioralCoverageContractWithResult: %v", err)
+	}
+	ledger := promotion.Ledger
 	ledger.Obligations[0].Status = "planned"
 	prd := productworkflow.PRDDocument{
 		FrontMatter: productworkflow.PRDFrontMatter{Status: "accepted"},

@@ -271,50 +271,13 @@ func TestProductStatusMigrationRejectsAndRedactsPersistedAbsolutePaths(t *testin
 	}
 }
 
-func TestProductStatusMigrationContractFailsClosedOnMalformedJSON(t *testing.T) {
-	plan := PlanProductStatusMigrationContract(ProductStatusMigrationContractInput{
-		EffortIndexJSON:   []byte(`{not-json`),
-		WorkflowStateJSON: []byte(`{}`),
-		MigrationOptions: ProductStatusMigrationOptions{
-			TargetStatusBucket: "closed",
-		},
-	})
-	if !migrationTestHasBlocker(plan, "malformed_effort_index") {
-		t.Fatalf("expected malformed_effort_index blocker, got %#v", plan.Blockers)
+func TestProductStatusMigrationParsersRejectMalformedJSON(t *testing.T) {
+	if _, err := ParseEffortIndexJSON([]byte(`{not-json`)); err == nil {
+		t.Fatal("expected malformed effort index JSON to fail")
 	}
 
-	plan = PlanProductStatusMigrationContract(ProductStatusMigrationContractInput{
-		EffortIndexJSON:   []byte(`{"schema_version":"idiom.effort_index.v1","updated_at":"2026-05-18T21:30:00Z","efforts":[{"effort_id":"test-effort","title":"Test Effort","status_bucket":"started","current_phase":"phase-test","current_state":"reviewing","folder_path":"started/test-effort","task_id":"impl-test","created_at":"2026-05-18T21:00:00Z","prior_paths":[]}]}`),
-		WorkflowStateJSON: []byte(`{not-json`),
-		MigrationOptions: ProductStatusMigrationOptions{
-			TargetStatusBucket: "closed",
-		},
-	})
-	if !migrationTestHasBlocker(plan, "malformed_workflow_state") {
-		t.Fatalf("expected malformed_workflow_state blocker, got %#v", plan.Blockers)
-	}
-}
-
-func TestProductStatusMigrationContractCanDeriveSourcePathFromIndex(t *testing.T) {
-	plan := PlanProductStatusMigrationContract(ProductStatusMigrationContractInput{
-		EffortIndexJSON:   []byte(`{"schema_version":"idiom.effort_index.v1","updated_at":"2026-05-18T21:30:00Z","efforts":[{"effort_id":"test-effort","title":"Test Effort","status_bucket":"started","current_phase":"phase-test","current_state":"reviewing","folder_path":"started/test-effort","task_id":"impl-test","created_at":"2026-05-18T21:00:00Z","prior_paths":[]}]}`),
-		WorkflowStateJSON: []byte(`{"schema_version":"idiom.product_workflow_state.v0.fixture","effort_id":"test-effort","task_id":"impl-test","title":"Test Effort","created_at":"2026-05-18T21:00:00Z","updated_at":"2026-05-18T21:00:00Z","state_revision":7,"last_event_id":"evt-007","workspace_fingerprint":"idiom@old","status_bucket":"started","current_phase":"phase-test","current_state":"reviewing","artifact_paths":{"events":"events.jsonl"},"context":{"context_pack_id":"pack","freshness_state":"current","referenced_paths":[],"unresolved_gaps":[],"refresh_policy":"on_demand"},"coverage":{"coverage_tier":"unit","gate_results":[],"blocking_criteria":[],"advisory_criteria":[]},"open_obligations":[],"open_questions":[],"blockers":[],"privacy":{"redaction_status":"applied","fields_excluded":[]},"session_ids":{"codex":"s"},"folder_path":"docs/product-workflows/efforts/started/test-effort","prior_folder_paths":[],"next_valid_actions":["complete"],"durability_level":"source_controlled"}`),
-		MigrationOptions: ProductStatusMigrationOptions{
-			TargetStatusBucket: "closed",
-			UpdatedAt:          "2026-05-18T21:40:00Z",
-			MigrationEventID:   "evt-migration-derived",
-		},
-	})
-	if plan.Status != "planned" {
-		t.Fatalf("expected planned migration, got %#v", plan)
-	}
-
-	if plan.SourceFolderPath != "started/test-effort" {
-		t.Fatalf("expected derived source folder path started/test-effort, got %q", plan.SourceFolderPath)
-	}
-
-	if plan.TargetFolderPath != "closed/test-effort" {
-		t.Fatalf("expected target folder path closed/test-effort, got %q", plan.TargetFolderPath)
+	if _, err := ParseWorkflowStateJSON([]byte(`{not-json`)); err == nil {
+		t.Fatal("expected malformed workflow state JSON to fail")
 	}
 }
 

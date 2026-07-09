@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -157,38 +156,6 @@ var allowedObligationTypes = map[string]bool{
 	"scripted_e2e":        true,
 	"e2e_journey":         true,
 	"manual":              true,
-}
-
-func AllowedObligationTypes() []string {
-	return orderedAllowedValues(allowedObligationTypes, nil)
-}
-
-func orderedAllowedValues(values map[string]bool, preferred []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range preferred {
-		if !values[value] {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-
-	var rest []string
-	for value, allowed := range values {
-		if !allowed {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		rest = append(rest, value)
-	}
-	sort.Strings(rest)
-	return append(out, rest...)
 }
 
 func validateTDDLedger(ledger TDDLedger) error {

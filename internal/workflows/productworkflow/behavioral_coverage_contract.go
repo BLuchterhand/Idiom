@@ -754,18 +754,6 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	return coverage
 }
 
-func ProjectBehavioralCoverageContractLedger(contract BehavioralCoverageContract) TDDLedger {
-	return TDDLedger{
-		SchemaVersion:      "v1",
-		EffortID:           strings.TrimSpace(contract.EffortID),
-		TaskID:             strings.TrimSpace(contract.TaskID),
-		CoverageTier:       strings.TrimSpace(contract.CoverageTier),
-		Coverage:           ProjectBehavioralCoverageContract(contract),
-		BehavioralCoverage: &contract,
-		Obligations:        projectBehavioralTestObligations(contract.TestObligations),
-	}
-}
-
 func ProjectAcceptedBehavioralCoverage(input BriefGenerationInput) *AcceptedBehavioralCoverageProjection {
 	if input.TDD.BehavioralCoverage == nil {
 		return nil
@@ -994,15 +982,6 @@ func behavioralCoverageAnyRefAccepted(refs []string, accepted map[string]bool) b
 	return false
 }
 
-func PromoteBehavioralCoverageContract(ledger TDDLedger, contract BehavioralCoverageContract) (TDDLedger, error) {
-	result, err := PromoteBehavioralCoverageContractWithResult(ledger, contract)
-	if err != nil {
-		return TDDLedger{}, err
-	}
-
-	return result.Ledger, nil
-}
-
 func ReviewBehavioralCoverageContractWithResult(ledger TDDLedger, contract BehavioralCoverageContract) (BehavioralCoveragePromotionResult, error) {
 	result, err := behavioralCoveragePromotionResult(ledger, contract, BehavioralCoveragePromotionStateReviewed)
 	if err != nil {
@@ -1111,14 +1090,6 @@ func mergePromotedBehavioralObligations(existing []TDDObligation, promoted []TDD
 	out = append(out, promoted...)
 
 	return out
-}
-
-func ProjectValidatedBehavioralCoverageContract(contract BehavioralCoverageContract) (TDDCoverage, error) {
-	if err := ValidateBehavioralCoverageContract(contract); err != nil {
-		return TDDCoverage{}, err
-	}
-
-	return ProjectBehavioralCoverageContract(contract), nil
 }
 
 func ValidateBehavioralCoverageProjection(contract BehavioralCoverageContract, coverage TDDCoverage) error {

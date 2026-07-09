@@ -113,10 +113,10 @@ func TestBehavioralCoverageContractProjectsCompleteAcceptedCoverage(t *testing.T
 		},
 	}
 
-	coverage, err := ProjectValidatedBehavioralCoverageContract(contract)
-	if err != nil {
+	if err := ValidateBehavioralCoverageContract(contract); err != nil {
 		t.Fatalf("expected valid contract, got %v", err)
 	}
+	coverage := ProjectBehavioralCoverageContract(contract)
 
 	if coverage.EARSTotal != 1 || coverage.EARSMapped != 1 {
 		t.Fatalf("unexpected EARS projection: %#v", coverage)
@@ -185,7 +185,7 @@ func TestBehavioralCoverageContractProjectsCompleteAcceptedCoverage(t *testing.T
 		t.Fatalf("passing contract projection should not block gates: %#v", coverage.GatesBlocked)
 	}
 
-	ledger := ProjectBehavioralCoverageContractLedger(contract)
+	ledger := validBehavioralCoverageLedger(contract, coverage)
 	if ledger.EffortID != "effort-test" || ledger.TaskID != "task-test" || ledger.CoverageTier != "contract_high" {
 		t.Fatalf("unexpected projected ledger identity: %#v", ledger)
 	}
@@ -807,7 +807,7 @@ func TestProjectedBehavioralCoverageLedgerPassesCoverageGate(t *testing.T) {
 			RequiredBefore: "implementation",
 		}},
 	}
-	ledger := ProjectBehavioralCoverageContractLedger(contract)
+	ledger := validBehavioralCoverageLedger(contract, ProjectBehavioralCoverageContract(contract))
 	prd := PRDDocument{
 		FrontMatter: PRDFrontMatter{Status: "accepted"},
 		Requirements: []PRDRequirement{{
@@ -973,10 +973,16 @@ func TestPromoteBehavioralCoverageContractProjectsLedgerAndMergesObligations(t *
 		},
 	}
 
-	promoted, err := PromoteBehavioralCoverageContract(ledger, contract)
+	result, err := PromoteBehavioralCoverageContractWithResult(ledger, contract)
 	if err != nil {
-		t.Fatalf("PromoteBehavioralCoverageContract: %v", err)
+		t.Fatalf("PromoteBehavioralCoverageContractWithResult: %v", err)
 	}
+	if result.State != BehavioralCoveragePromotionStateAccepted ||
+		result.CommitStatus != BehavioralCoveragePromotionCommitStatusWritePending ||
+		result.Digest == "" {
+		t.Fatalf("expected accepted pending promotion result, got %#v", result)
+	}
+	promoted := result.Ledger
 
 	if promoted.BehavioralCoverage == nil {
 		t.Fatal("expected behavioral coverage contract to be stamped into ledger")
@@ -1031,7 +1037,15 @@ func TestAcceptedBehavioralCoverageProjectionFiltersNonAcceptedItems(t *testing.
 		{ID: "VERIFY-ACCEPTED", Gate: "accepted", Command: "go test ./behavior", Obligations: []string{"TDD-BDD"}},
 		{ID: "VERIFY-WAIVED", Gate: "waived", Command: "go test ./waived", Obligations: []string{"TDD-WAIVED"}},
 	}
-	ledger := ProjectBehavioralCoverageContractLedger(contract)
+	result, err := PromoteBehavioralCoverageContractWithResult(TDDLedger{
+		EffortID:     "effort-promote",
+		TaskID:       "task-promote",
+		CoverageTier: "behavior_standard",
+	}, contract)
+	if err != nil {
+		t.Fatalf("PromoteBehavioralCoverageContractWithResult: %v", err)
+	}
+	ledger := result.Ledger
 	digest := BehavioralCoverageContractDigest(*ledger.BehavioralCoverage)
 	projection := ProjectAcceptedBehavioralCoverage(BriefGenerationInput{
 		TDD:                ledger,

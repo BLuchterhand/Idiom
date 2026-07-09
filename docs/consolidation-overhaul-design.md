@@ -1756,6 +1756,32 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `git diff --check`.
+- Product workflow contract facade cleanup deleted test-preserved convenience
+  surfaces that duplicated live owners: `ProjectBehavioralCoverageContractLedger`,
+  `PromoteBehavioralCoverageContract`, `ProjectValidatedBehavioralCoverageContract`,
+  `ProductStatusMigrationContractInput`, `PlanProductStatusMigrationContract`,
+  `AllowedObligationTypes`, and `orderedAllowedValues`. Behavioral coverage
+  authority now stays on `ValidateBehavioralCoverageContract`,
+  `ProjectBehavioralCoverageContract`, `PromoteBehavioralCoverageContractWithResult`,
+  and `ValidateBehavioralCoverageProjection`; status migration authority stays
+  split between parsers, `PlanProductStatusMigration`, and the disk-backed
+  migration apply loader. Tests were retargeted to explicit validation plus
+  projection, the result-bearing promotion API, parser failures, and
+  `validateTDDLedger`; one adapter-only source-path derivation test was deleted
+  as a stale expectation. Architecture and test reviewers both recommended
+  deleting these surfaces. Production Go changed `+0 / -109`, net `-109`;
+  test Go changed `+56 / -79`, net `-23`. With this worktree included, the
+  branch is production Go `+26,561 / -35,102`, net `-8,541` versus `main`.
+  Focused verification:
+  `go test ./internal/workflows/productworkflow -count=1`;
+  `go test ./internal/workflows/featureplannerproduct -count=1`;
+  `go test ./internal/surfaces/tui/app -run 'Test.*(ProductWorkflow|FeaturePlannerProduct|BehavioralCoverage|BDDTTD)' -count=1`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./internal/workflows/productworkflow ./internal/workflows/featureplannerproduct ./internal/surfaces/tui/app`;
+  stale-symbol scan for deleted names is clean; deadcode inventory shows no
+  deleted-name matches, with unrelated pre-existing candidates left for later
+  slices. Full verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
 
 ## Review And Regression Protocol
 

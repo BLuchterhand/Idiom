@@ -339,8 +339,12 @@ func TestBDDTTDPipelineCarriesAcceptedCoverageThroughPlannerValidation(t *testin
 			Resolution: "Product workflow owns accepted coverage; planner cites only the contract reference.",
 		}},
 	}
-	ledger := productworkflow.ProjectBehavioralCoverageContractLedger(contract)
-	digest := productworkflow.BehavioralCoverageContractDigest(contract)
+	promotion, err := productworkflow.PromoteBehavioralCoverageContractWithResult(productworkflow.TDDLedger{}, contract)
+	if err != nil {
+		t.Fatalf("PromoteBehavioralCoverageContractWithResult: %v", err)
+	}
+	ledger := promotion.Ledger
+	digest := promotion.Digest
 	prd := productworkflow.PRDDocument{
 		FrontMatter: productworkflow.PRDFrontMatter{Status: "accepted"},
 		Requirements: []productworkflow.PRDRequirement{{
@@ -653,13 +657,17 @@ None.
 		}},
 		Mutation: productworkflow.BehavioralMutationCoverage{Requirement: "required", MinScore: 80, Score: &score},
 	}
-	ledger := productworkflow.ProjectBehavioralCoverageContractLedger(contract)
+	promotion, err := productworkflow.PromoteBehavioralCoverageContractWithResult(productworkflow.TDDLedger{}, contract)
+	if err != nil {
+		t.Fatalf("PromoteBehavioralCoverageContractWithResult: %v", err)
+	}
+	ledger := promotion.Ledger
 	ledgerBytes, err := json.MarshalIndent(ledger, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	mustWriteFeaturePlannerProductTestFile(t, dir, "tdd.json", string(ledgerBytes)+"\n")
-	mustWriteFeaturePlannerProductTestFile(t, dir, "events.jsonl", `{"event":"behavioral_coverage_accepted","event_id":"evt-disk","state":"accepted","digest":`+strconv.Quote(productworkflow.BehavioralCoverageContractDigest(contract))+`,"source":"test"}`+"\n")
+	mustWriteFeaturePlannerProductTestFile(t, dir, "events.jsonl", `{"event":"behavioral_coverage_accepted","event_id":"evt-disk","state":"accepted","digest":`+strconv.Quote(promotion.Digest)+`,"source":"test"}`+"\n")
 	mustWriteFeaturePlannerProductTestFile(t, dir, "evidence/traceability_matrix.json", `{
 		"schema_version":"idiom.traceability.v1.fixture",
 		"effort_id":"effort-disk",
