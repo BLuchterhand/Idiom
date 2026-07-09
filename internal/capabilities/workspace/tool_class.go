@@ -28,7 +28,7 @@ const (
 
 // ClassifyTool returns the ToolCategory for a given tool name.
 func ClassifyTool(name string) ToolCategory {
-	if metadata, ok := builtInToolSurfaceCatalog.lookup(name); ok && ToolCategory(metadata.Category) != CategoryUnknown {
+	if metadata, ok := builtInToolSurfaceCatalog().lookup(name); ok && ToolCategory(metadata.Category) != CategoryUnknown {
 		return ToolCategory(metadata.Category)
 	}
 
@@ -66,7 +66,7 @@ func ToolActionClass(tool string) autonomy.ActionClass {
 		return ""
 	}
 
-	if metadata, ok := builtInToolSurfaceCatalog.lookup(tool); ok {
+	if metadata, ok := builtInToolSurfaceCatalog().lookup(tool); ok {
 		if metadata.ActionClass != "" {
 			return autonomy.CanonicalActionClass(metadata.ActionClass)
 		}
@@ -351,7 +351,7 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 		return IsNarrowingRequest(req)
 	}
 
-	metadata, ok := builtInToolSurfaceCatalog.lookup(tool)
+	metadata, ok := builtInToolSurfaceCatalog().lookup(tool)
 	if !ok {
 		return languagetools.IsToolName(tool)
 	}

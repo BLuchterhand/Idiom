@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,7 +28,7 @@ type listedEntry struct {
 const listFilesDisplayCap = 80
 const defaultLogReadLineCap = 80
 
-func (m *Manager) listFiles(req ToolRequest) ToolResult {
+func (m *Manager) listFiles(_ context.Context, req ToolRequest) ToolResult {
 	base, err := m.pathAccess.ResolveReadPath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to resolve path", Error: err.Error()}
@@ -273,7 +274,7 @@ func (m *Manager) exploreListPriority(entry listedEntry) int {
 	return 4
 }
 
-func (m *Manager) searchFiles(req ToolRequest) ToolResult {
+func (m *Manager) searchFiles(_ context.Context, req ToolRequest) ToolResult {
 	base, err := m.pathAccess.ResolveReadPath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		if resolved, ok := resolveUserGlobalConversationLogSearchPath(defaultString(req.Path, ".")); ok {
@@ -688,7 +689,7 @@ func searchFilesPattern(req ToolRequest) (pattern string, interpreted string) {
 	return "", ""
 }
 
-func (m *Manager) readFile(req ToolRequest) ToolResult {
+func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 	path, description, err := m.resolveReadTarget(req)
 	if err != nil {
 		if recoveredPath, ok := m.closestRecoverableReadPath(req.Path, req.Workdir); ok {
@@ -697,7 +698,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			recoveredReq.Path = recoveredPath
 			recoveredReq.ID = ""
 
-			result := m.readFile(recoveredReq)
+			result := m.readFile(ctx, recoveredReq)
 
 			if strings.TrimSpace(result.Error) == "" {
 				result.Summary = fmt.Sprintf("Recovered missing read_file path %q as %q; %s", strings.TrimSpace(req.Path), recoveredPath, result.Summary)
@@ -975,7 +976,7 @@ const fileStatsDefaultLimit = 1000
 const fileStatsMaxLimit = 10000
 const fileStatsEntryDisplayCap = 50
 
-func (m *Manager) fileStats(req ToolRequest) ToolResult {
+func (m *Manager) fileStats(_ context.Context, req ToolRequest) ToolResult {
 	requestPath := strings.TrimSpace(req.Path)
 	if requestPath == "" {
 		requestPath = "."

@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func TestBuiltInToolSurfaceCatalogLookupReturnsClonedMetadata(t *testing.T) {
-	first, ok := builtInToolSurfaceCatalog.lookup(ToolNameReadFile)
+	first, ok := builtInToolSurfaceCatalog().lookup(ToolNameReadFile)
 	if !ok {
 		t.Fatalf("catalog lookup missed %s", ToolNameReadFile)
 	}
@@ -19,7 +20,7 @@ func TestBuiltInToolSurfaceCatalogLookupReturnsClonedMetadata(t *testing.T) {
 	first.SideEffects = append(first.SideEffects, autonomy.SideEffectDestructive)
 	first.Facets = append(first.Facets, toolSurfaceFacetBroadDiscovery)
 
-	second, ok := builtInToolSurfaceCatalog.lookup(ToolNameReadFile)
+	second, ok := builtInToolSurfaceCatalog().lookup(ToolNameReadFile)
 	if !ok {
 		t.Fatalf("second catalog lookup missed %s", ToolNameReadFile)
 	}
@@ -73,6 +74,37 @@ func TestWorkspaceToolSurfaceListsProjectCatalog(t *testing.T) {
 	for _, tool := range broadDiscoveryBuiltIns {
 		if !slices.Contains(BroadDiscoveryToolNames(), tool) {
 			t.Fatalf("broad discovery built-ins no longer project catalog facet metadata: missing %s", tool)
+		}
+	}
+}
+
+func TestBuiltInToolSurfaceCatalogOwnsManagerDispatchHandlers(t *testing.T) {
+	runtimeOwned := map[string]struct{}{
+		ToolNameTaskLedger:   {},
+		ToolNameTask:         {},
+		ToolNameDelegateEdit: {},
+	}
+
+	for _, spec := range builtInToolSurfaceCatalog().specsSnapshot() {
+		if spec.Handler != nil {
+			continue
+		}
+		if _, ok := runtimeOwned[spec.Tool]; ok {
+			continue
+		}
+		if languagetools.IsToolName(spec.Tool) {
+			continue
+		}
+		t.Fatalf("built-in manager-dispatched tool %q has no catalog handler", spec.Tool)
+	}
+
+	for tool := range runtimeOwned {
+		spec, ok := builtInToolSurfaceCatalog().lookup(tool)
+		if !ok {
+			t.Fatalf("runtime-owned tool %q missing from catalog", tool)
+		}
+		if spec.Handler != nil {
+			t.Fatalf("runtime-owned tool %q must not be manager-dispatched", tool)
 		}
 	}
 }
@@ -186,7 +218,7 @@ func TestRuntimeReadOnlyInvestigationToolNamesAllowsOnlyReadApprovalAdditiveEffe
 			continue
 		}
 
-		spec, ok := builtInToolSurfaceCatalog.lookup(tool)
+		spec, ok := builtInToolSurfaceCatalog().lookup(tool)
 		if !ok {
 			t.Fatalf("missing metadata for %s", tool)
 		}
@@ -376,7 +408,7 @@ func TestPlanExecutePlannerToolMetadataReturnsDefensiveCopies(t *testing.T) {
 }
 
 func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
-	readFile, ok := builtInToolSurfaceCatalog.lookup(ToolNameReadFile)
+	readFile, ok := builtInToolSurfaceCatalog().lookup(ToolNameReadFile)
 	if !ok {
 		t.Fatalf("missing metadata for %s", ToolNameReadFile)
 	}
@@ -390,7 +422,7 @@ func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 		t.Fatalf("read_file side effects drifted: %#v", readFile.SideEffects)
 	}
 
-	submitPlan, ok := builtInToolSurfaceCatalog.lookup(ToolNameSubmitPlan)
+	submitPlan, ok := builtInToolSurfaceCatalog().lookup(ToolNameSubmitPlan)
 	if !ok {
 		t.Fatalf("missing metadata for %s", ToolNameSubmitPlan)
 	}
@@ -404,7 +436,7 @@ func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 		t.Fatalf("submit_plan side effects drifted: %#v", submitPlan.SideEffects)
 	}
 
-	harnessAudit, ok := builtInToolSurfaceCatalog.lookup(ToolNameHarnessAudit)
+	harnessAudit, ok := builtInToolSurfaceCatalog().lookup(ToolNameHarnessAudit)
 	if !ok {
 		t.Fatalf("missing metadata for %s", ToolNameHarnessAudit)
 	}
@@ -423,7 +455,7 @@ func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 func projectedCatalogTools(match func(toolSurfaceSpec) bool) []string {
 	var tools []string
 
-	for _, spec := range builtInToolSurfaceCatalog.specsSnapshot() {
+	for _, spec := range builtInToolSurfaceCatalog().specsSnapshot() {
 		if match(spec) {
 			tools = append(tools, spec.Tool)
 		}

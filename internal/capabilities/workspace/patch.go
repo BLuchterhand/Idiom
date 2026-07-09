@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 	"idiom/internal/platform/failures"
 )
 
-func (m *Manager) applyPatch(req ToolRequest) ToolResult {
+func (m *Manager) applyPatch(_ context.Context, req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return toolWriteDisabledResult(ToolNameApplyPatch, "Patch request rejected", "workspace writes are disabled")
 	}

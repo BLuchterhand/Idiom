@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,7 +12,7 @@ import (
 	"idiom/internal/platform/failures"
 )
 
-func (m *Manager) makeDir(req ToolRequest) ToolResult {
+func (m *Manager) makeDir(_ context.Context, req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return toolWriteDisabledResult(ToolNameMkdir, "Write request rejected", "workspace writes are disabled")
 	}
@@ -35,8 +36,9 @@ func (m *Manager) makeDir(req ToolRequest) ToolResult {
 	}
 }
 
-func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
+func (m *Manager) writeFile(_ context.Context, req ToolRequest) ToolResult {
 	toolName := ToolNameWriteFile
+	appendMode := strings.TrimSpace(req.Tool) == ToolNameAppendFile
 	if appendMode {
 		toolName = ToolNameAppendFile
 	}
@@ -136,7 +138,7 @@ func writeFull(w io.Writer, content []byte) error {
 	return nil
 }
 
-func (m *Manager) editFile(req ToolRequest) ToolResult {
+func (m *Manager) editFile(_ context.Context, req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return toolWriteDisabledResult(ToolNameEditFile, "Edit request rejected", "workspace writes are disabled")
 	}

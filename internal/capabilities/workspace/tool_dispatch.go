@@ -12,8 +12,6 @@ import (
 	"idiom/internal/repository/semantic/languagetools"
 )
 
-type toolSurfaceHandlerID string
-
 func exploreModeWriteBlocked(tool string, mode Mode) (string, bool) {
 	if mode != ModeExplore || !IsWorkspaceWriteTool(tool) {
 		return "", false
@@ -144,7 +142,7 @@ func (m *Manager) ToolTimeoutForRequest(req ToolRequest) time.Duration {
 }
 
 func toolTimeoutFor(tool string) time.Duration {
-	spec, ok := builtInToolSurfaceCatalog.lookup(tool)
+	spec, ok := builtInToolSurfaceCatalog().lookup(tool)
 	if !ok {
 		return 30 * time.Second
 	}
@@ -162,101 +160,12 @@ func toolTimeoutFor(tool string) time.Duration {
 	return 30 * time.Second
 }
 
-func (m *Manager) executeBuiltInTool(ctx context.Context, req ToolRequest, id toolSurfaceHandlerID) ToolResult {
-	switch strings.TrimSpace(string(id)) {
-	case ToolNamePwd:
-		tool := strings.TrimSpace(req.Tool)
-		return ToolResult{
-			Tool:    tool,
-			Summary: "Printed current working directory",
-			Output:  m.cfg.CWD,
-		}
-	case ToolNameListFiles:
-		return m.listFiles(req)
-	case ToolNameSearchFiles:
-		return m.searchFiles(req)
-	case ToolNameSearchContent, ToolNameRg:
-		return m.searchContent(ctx, req, strings.TrimSpace(req.Tool))
-	case ToolNameReadFile:
-		return m.readFile(req)
-	case ToolNameFileStats:
-		return m.fileStats(req)
-	case ToolNameSystemSearchAccess:
-		return m.requestSystemSearchAccess(ctx, req)
-	case ToolNameCodeNavigate, ToolNameGoMoveDeclarations:
-		return m.executeLanguageTool(ctx, req)
-	case ToolNameReadOnlyCapability:
-		return m.readOnlyCapability(ctx, req)
-	case ToolNameSourceSanity:
-		return m.sourceSanity(ctx, req)
-	case ToolNameCodingRulesCheck:
-		return m.codingRulesCheck(ctx, req)
-	case ToolNameHarnessAudit:
-		return m.harnessAudit(req)
-	case ToolNameHarnessFeedback:
-		return m.harnessFeedback(req)
-	case ToolNameRecoveryInspect:
-		return m.recoveryInspect(ctx, req)
-	case ToolNameRecoveryStatus:
-		return m.recoveryStatus(ctx, req)
-	case ToolNameRecoveryDecompose:
-		return m.recoveryDecompose(ctx, req)
-	case ToolNameProductEfforts:
-		return m.productEfforts(req)
-	case ToolNameProductStatus:
-		return m.productStatus(req)
-	case ToolNameSubmitPlan:
-		return m.submitPlan(req)
-	case ToolNameContextIndex:
-		return m.contextIndex(ctx, req)
-	case ToolNameContextStatus:
-		return m.contextStatus(ctx, req)
-	case ToolNameContextQuery:
-		return m.contextQuery(ctx, req)
-	case ToolNameContextZoom:
-		return m.contextZoom(ctx, req)
-	case ToolNameContextPack:
-		return m.contextPack(ctx, req)
-	case ToolNameContextImpact:
-		return m.contextImpact(ctx, req)
-	case ToolNameContextTracePack:
-		return m.contextTracePack(ctx, req)
-	case ToolNameDiscoveryQuery:
-		return m.discoveryQuery(ctx, req)
-	case ToolNameStructuralSearch:
-		return m.structuralSearch(ctx, req)
-	case ToolNameDependencyGraph:
-		return m.dependencyGraph(ctx, req)
-	case ToolNameHistoryRange:
-		return m.historyRange(ctx, req)
-	case ToolNameHistorySymbol:
-		return m.historySymbol(ctx, req)
-	case ToolNameBlameRange:
-		return m.blameRange(ctx, req)
-	case ToolNameCtagsSymbols:
-		return m.ctagsSymbols(ctx, req)
-	case ToolNameSemgrepScan:
-		return m.semgrepScan(ctx, req)
-	case ToolNameJoernScan:
-		return m.joernScan(ctx, req)
-	case ToolNameMkdir:
-		return m.makeDir(req)
-	case ToolNameEditFile:
-		return m.editFile(req)
-	case ToolNameWriteFile:
-		return m.writeFile(req, false)
-	case ToolNameAppendFile:
-		return m.writeFile(req, true)
-	case ToolNameApplyPatch:
-		return m.applyPatch(req)
-	case ToolNameShell:
-		return m.runShell(ctx, req)
-	case ToolNameGitStatus:
-		return m.gitStatus(ctx, req)
-	case ToolNameGitDiff:
-		return m.gitDiff(ctx, req)
-	default:
-		return toolUnsupportedResult(strings.TrimSpace(req.Tool), "Tool request rejected", m.unsupportedToolError(strings.TrimSpace(req.Tool)))
+func (m *Manager) pwd(_ context.Context, req ToolRequest) ToolResult {
+	tool := strings.TrimSpace(req.Tool)
+	return ToolResult{
+		Tool:    tool,
+		Summary: "Printed current working directory",
+		Output:  m.cfg.CWD,
 	}
 }
 
@@ -272,8 +181,8 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.executeLanguageTool(ctx, req)
 	}
 
-	if handlerID, ok := builtInToolSurfaceCatalog.handlerID(tool); ok {
-		return m.executeBuiltInTool(ctx, req, handlerID)
+	if handler, ok := builtInToolSurfaceCatalog().handler(tool); ok {
+		return handler(m, ctx, req)
 	}
 
 	if strings.HasPrefix(tool, "mcp:") {

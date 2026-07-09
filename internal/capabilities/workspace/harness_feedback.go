@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -30,7 +31,7 @@ type harnessFeedbackReport struct {
 	TaskID        string   `json:"task_id,omitempty"`
 }
 
-func (m *Manager) harnessFeedback(req ToolRequest) ToolResult {
+func (m *Manager) harnessFeedback(_ context.Context, req ToolRequest) ToolResult {
 	now := time.Now().UTC()
 	report := harnessFeedbackReport{
 		FeedbackID:    "feedback-" + now.Format("20060102T150405.000000000Z"),

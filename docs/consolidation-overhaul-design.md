@@ -1898,6 +1898,25 @@ Reviewer-updated estimate:
   `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
   `deadcode ./...` still reports only the deliberately retained shared
   `jsoneventstest` test helpers.
+- Workspace built-in dispatch authority moved into the tool-surface catalog.
+  `toolSurfaceSpec.Handler` now stores the executable manager handler, and
+  dispatch calls the catalog handler directly after language-tool routing.
+  The parallel `executeBuiltInTool` switch and string handler IDs were deleted.
+  Handler signatures were normalized to the existing manager execution shape,
+  and `write_file`/`append_file` share the existing write implementation by
+  reading the tool name rather than through wrapper handlers. The catalog is
+  constructed lazily from the same spec literal to avoid Go init cycles from
+  handlers that read catalog metadata. A catalog test now fails if a
+  manager-dispatched built-in lacks a handler while runtime-owned tools remain
+  nil. Production Go changed `+139 / -203`, net `-64`; test Go changed
+  `+44 / -12`, net `+32`; pre-ledger tracked files changed `+183 / -215`, net
+  `-32`. With this worktree included, the branch is production Go
+  `+27,141 / -36,866`, net `-9,725` versus `main`. Verification:
+  `go test ./internal/capabilities/workspace -count=1`; `go test ./...`;
+  `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`;
+  `/Users/ben/go/bin/deadcode -test ./...`; `git diff --check`.
 
 ## Review And Regression Protocol
 

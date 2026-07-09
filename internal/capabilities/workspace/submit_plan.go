@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -41,7 +42,7 @@ func submitPlanNoOpEditGuidanceForPath(path string) string {
 // returns the path so the caller (orchestrator) can find and execute
 // it. The artifact lives under .idiom/plans/<timestamp>.json by
 // default.
-func (m *Manager) submitPlan(req ToolRequest) ToolResult {
+func (m *Manager) submitPlan(_ context.Context, req ToolRequest) ToolResult {
 	if req.PlanArtifact == nil && len(req.Edits) == 0 {
 		if SubmitPlanRequestClaimsSourceSatisfied(req) {
 			errorMessage := fmt.Sprintf("submit_plan cannot carry a source-satisfied/no-op closeout. Answer `%s` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.", plancontract.SourceSatisfiedDecision)

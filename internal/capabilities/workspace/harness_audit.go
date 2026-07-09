@@ -534,7 +534,7 @@ var harnessAuditStandardCapabilities = []semanticlanguage.Capability{
 	semanticlanguage.CapFileOutline,
 }
 
-func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
+func (m *Manager) harnessAudit(_ context.Context, req ToolRequest) ToolResult {
 	purpose := normalizeHarnessAuditPurpose(req.Purpose)
 	report := harnessAuditReport{
 		GeneratedAt:   time.Now().Format(time.RFC3339),

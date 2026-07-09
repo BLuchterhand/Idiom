@@ -193,7 +193,7 @@ func IsBuiltInToolName(tool string) bool {
 		return false
 	}
 
-	if _, ok := builtInToolSurfaceCatalog.lookup(tool); ok {
+	if _, ok := builtInToolSurfaceCatalog().lookup(tool); ok {
 		return true
 	}
 

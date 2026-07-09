@@ -49,17 +49,17 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 		tools = append(tools, ToolNameTask)
 	}
 
-	tools = append(tools, builtInToolSurfaceCatalog.toolsWhere(func(spec toolSurfaceSpec) bool {
+	tools = append(tools, builtInToolSurfaceCatalog().toolsWhere(func(spec toolSurfaceSpec) bool {
 		return spec.DefaultManifest
 	})...)
 	if opts.IncludeWriteTools && !opts.IncludePlanThenExecute {
-		tools = append(tools, builtInToolSurfaceCatalog.toolsWhere(func(spec toolSurfaceSpec) bool {
+		tools = append(tools, builtInToolSurfaceCatalog().toolsWhere(func(spec toolSurfaceSpec) bool {
 			return ToolCategory(spec.Category) == CategoryWrite && strings.TrimSpace(spec.Language) == ""
 		})...)
 	}
 
 	if opts.IncludePlanThenExecute {
-		if metadata, ok := builtInToolSurfaceCatalog.lookup(ToolNameSubmitPlan); ok {
+		if metadata, ok := builtInToolSurfaceCatalog().lookup(ToolNameSubmitPlan); ok {
 			tools = append(tools, metadata.Tool)
 		}
 	}

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,7 +9,7 @@ import (
 	"idiom/internal/workflows/productworkflow"
 )
 
-func (m *Manager) productEfforts(req ToolRequest) ToolResult {
+func (m *Manager) productEfforts(_ context.Context, req ToolRequest) ToolResult {
 	root := strings.TrimSpace(req.Root)
 	if root == "" {
 		root = productworkflow.DefaultProductEffortsRoot
@@ -42,7 +43,7 @@ func (m *Manager) productEfforts(req ToolRequest) ToolResult {
 	return toolResult
 }
 
-func (m *Manager) productStatus(req ToolRequest) ToolResult {
+func (m *Manager) productStatus(_ context.Context, req ToolRequest) ToolResult {
 	effortRoot := strings.TrimSpace(req.EffortRoot)
 	if effortRoot == "" {
 		effortRoot = strings.TrimSpace(req.Path)

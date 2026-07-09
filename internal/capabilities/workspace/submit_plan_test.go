@@ -147,7 +147,7 @@ func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
 
 func TestSubmitPlanEmptyEditsReturnsTypedCode(t *testing.T) {
 	mgr, _ := newSubmitPlanTestManager(t)
-	result := mgr.submitPlan(ToolRequest{
+	result := mgr.submitPlan(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "empty plan should be rejected",
 	})
@@ -163,7 +163,7 @@ func TestSubmitPlanEmptyEditsReturnsTypedCode(t *testing.T) {
 
 func TestSubmitPlanEmptySourceSatisfiedUsesTerminalRequiredCode(t *testing.T) {
 	mgr, _ := newSubmitPlanTestManager(t)
-	result := mgr.submitPlan(ToolRequest{
+	result := mgr.submitPlan(context.Background(), ToolRequest{
 		Tool:     "submit_plan",
 		Decision: "source-satisfied",
 	})
@@ -179,7 +179,7 @@ func TestSubmitPlanEmptySourceSatisfiedUsesTerminalRequiredCode(t *testing.T) {
 
 func TestSubmitPlanEmptySourceSatisfiedRationaleUsesTerminalRequiredCode(t *testing.T) {
 	mgr, _ := newSubmitPlanTestManager(t)
-	result := mgr.submitPlan(ToolRequest{
+	result := mgr.submitPlan(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "The current source already contains the requested final state, so no changes are needed.",
 	})

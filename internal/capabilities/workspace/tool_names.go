@@ -1,7 +1,7 @@
 package workspace
 
 // ToolName constants for all built-in workspace tools.
-// Keep this list synchronized with builtInToolSurfaceCatalog.
+// Keep this list synchronized with builtInToolSurfaceCatalog().
 const (
 	ToolNameAppendFile         = "append_file"
 	ToolNameApplyPatch         = "apply_patch"

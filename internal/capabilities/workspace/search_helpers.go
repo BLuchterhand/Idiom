@@ -18,7 +18,8 @@ import (
 	"idiom/internal/repository/discovery"
 )
 
-func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolName string) ToolResult {
+func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolResult {
+	toolName := strings.TrimSpace(req.Tool)
 	workdir, err := m.pathAccess.ResolveReadWorkdir(req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: toolName, Summary: "Failed to resolve workdir", Error: err.Error()}

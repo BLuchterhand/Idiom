@@ -38,7 +38,7 @@ func isStructuredNarrowingTool(tool string) bool {
 		return true
 	}
 
-	if metadata, ok := builtInToolSurfaceCatalog.lookup(tool); ok {
+	if metadata, ok := builtInToolSurfaceCatalog().lookup(tool); ok {
 		return metadata.Narrowing
 	}
 
