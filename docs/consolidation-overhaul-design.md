@@ -1701,6 +1701,32 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `git diff --check`.
+- Eval default-wrapper and hardcoded suite cleanup deleted
+  `ComprehensionMemorySuite`, its `evalIntPtr` helper, and production-unreachable
+  default wrappers around live eval owners: `LoadLocalizationCorpus`,
+  `ValidateLocalizationCorpus`, `AnalyzeLocalizationCorpus`,
+  `EvaluateLocalizationCorpus`, and `LoadSWESuite`. The remaining authorities
+  are explicit: `ReadLocalizationCorpus`, `LintLocalizationCorpus`,
+  `AnalyzeLocalizationCorpusWithOptions`,
+  `EvaluateLocalizationCorpusWithOptions`,
+  `EvaluateLocalizationCorpusFileWithOptions`, `ReadSWESuite`,
+  `ValidateSWESuite`, `ValidateSWESuiteFixtures`, and the CLI `Run` paths.
+  Tests now assert through those live APIs and deleted the stale hardcoded
+  comprehension-memory suite expectation; both architecture and test reviewers
+  recommended deletion rather than preserving compatibility helpers. Production
+  Go changed `+0 / -166`, net `-166`; test Go changed `+67 / -94`, net `-27`.
+  With this worktree included, the branch is production Go
+  `+26,611 / -34,662`, net `-8,051` versus `main`. Focused verification:
+  `go test ./internal/evidence/eval ./internal/surfaces/cli/eval ./internal/surfaces/cli/sweeval -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/evidence/eval ./internal/surfaces/cli/eval ./internal/surfaces/cli/sweeval`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^(internal/evidence/eval|internal/surfaces/cli/(eval|sweeval))/'`
+  as inventory, now showing no findings for the touched packages; stale-symbol
+  scan for deleted names is clean. Full verification: `go test ./...`;
+  `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

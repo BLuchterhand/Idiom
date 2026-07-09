@@ -165,19 +165,6 @@ type LocalizationCorpusReport struct {
 	Findings           []string                    `json:"findings,omitempty"`
 }
 
-func LoadLocalizationCorpus(path string) (LocalizationCorpus, error) {
-	corpus, err := ReadLocalizationCorpus(path)
-	if err != nil {
-		return corpus, err
-	}
-
-	if err := ValidateLocalizationCorpus(corpus); err != nil {
-		return corpus, err
-	}
-
-	return corpus, nil
-}
-
 func ReadLocalizationCorpus(path string) (LocalizationCorpus, error) {
 	var corpus LocalizationCorpus
 
@@ -191,15 +178,6 @@ func ReadLocalizationCorpus(path string) (LocalizationCorpus, error) {
 	}
 
 	return corpus, nil
-}
-
-func ValidateLocalizationCorpus(corpus LocalizationCorpus) error {
-	findings := LintLocalizationCorpus(corpus)
-	if len(findings) > 0 {
-		return fmt.Errorf("localization corpus %q validation failed: %s", corpus.Name, strings.Join(findings, "; "))
-	}
-
-	return nil
 }
 
 func LintLocalizationCorpus(corpus LocalizationCorpus) []string {
@@ -544,10 +522,6 @@ func LintLocalizationCorpusPaths(corpus LocalizationCorpus, root string) []strin
 	return findings
 }
 
-func AnalyzeLocalizationCorpus(corpus LocalizationCorpus) LocalizationCorpusReport {
-	return AnalyzeLocalizationCorpusWithOptions(corpus, DefaultLocalizationBenchmarkOptions())
-}
-
 func AnalyzeLocalizationCorpusWithOptions(corpus LocalizationCorpus, options LocalizationBenchmarkOptions) LocalizationCorpusReport {
 	report := LocalizationCorpusReport{
 		Name:               corpus.Name,
@@ -596,10 +570,6 @@ func AnalyzeLocalizationCorpusWithOptions(corpus LocalizationCorpus, options Loc
 	}
 
 	return report
-}
-
-func EvaluateLocalizationCorpus(corpus LocalizationCorpus, root string) LocalizationCorpusReport {
-	return EvaluateLocalizationCorpusWithOptions(corpus, root, DefaultLocalizationBenchmarkOptions())
 }
 
 func EvaluateLocalizationCorpusWithOptions(corpus LocalizationCorpus, root string, options LocalizationBenchmarkOptions) LocalizationCorpusReport {

@@ -1267,9 +1267,9 @@ func TestScriptedContractSuiteLintsClean(t *testing.T) {
 func TestScriptedContractSuiteDefaultsExpandPinnedTaskSemantics(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	taskByID := map[string]eval.SWETask{}
@@ -1345,9 +1345,9 @@ func TestScriptedContractSuiteDefaultsExpandPinnedTaskSemantics(t *testing.T) {
 func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	taskByID := map[string]eval.SWETask{}
@@ -1457,9 +1457,9 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	taskByID := map[string]eval.SWETask{}
@@ -1499,9 +1499,9 @@ func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
 func TestScriptedContractTDDExpansionTasksExerciseSuiteBehavior(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	taskByID := map[string]eval.SWETask{}
@@ -1584,9 +1584,9 @@ func TestScriptedContractTDDExpansionTasksExerciseSuiteBehavior(t *testing.T) {
 func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	var task eval.SWETask
@@ -1638,9 +1638,9 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	taskByID := map[string]eval.SWETask{}
@@ -1732,9 +1732,9 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 func TestScriptedContractImplementNewFileCoveragePinned(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	taskByID := make(map[string]eval.SWETask, len(suite.Tasks))
@@ -1781,9 +1781,9 @@ func TestScriptedContractImplementNewFileCoveragePinned(t *testing.T) {
 func TestScriptedContractPlanExecuteNewFileCoveragePinned(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
 
-	suite, err := eval.LoadSWESuite(suitePath)
+	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("load scripted contract suite: %v", err)
+		t.Fatalf("read scripted contract suite: %v", err)
 	}
 
 	taskByID := make(map[string]eval.SWETask, len(suite.Tasks))

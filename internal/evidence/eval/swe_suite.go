@@ -263,23 +263,6 @@ type SWESuiteReport struct {
 	Findings     []string          `json:"findings,omitempty"`
 }
 
-func LoadSWESuite(path string) (SWESuite, error) {
-	suite, err := ReadSWESuite(path)
-	if err != nil {
-		return suite, err
-	}
-
-	if err := ValidateSWESuite(suite); err != nil {
-		return suite, err
-	}
-
-	if err := ValidateSWESuiteFixtures(suite, path); err != nil {
-		return suite, err
-	}
-
-	return suite, nil
-}
-
 func ReadSWESuite(path string) (SWESuite, error) {
 	var suite SWESuite
 

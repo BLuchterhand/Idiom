@@ -9,16 +9,20 @@ import (
 	"testing"
 )
 
-func TestLoadRecentImplementationLocalizationCorpus(t *testing.T) {
+func TestReadRecentImplementationLocalizationCorpus(t *testing.T) {
 	repoRoot := evalTestRepoRoot(t)
 	corpusPath := filepath.Join(repoRoot, "testdata", "localization", "recent-implementation-corpus.json")
 
-	corpus, err := LoadLocalizationCorpus(corpusPath)
+	corpus, err := ReadLocalizationCorpus(corpusPath)
 	if err != nil {
-		t.Fatalf("LoadLocalizationCorpus: %v", err)
+		t.Fatalf("ReadLocalizationCorpus: %v", err)
 	}
 
-	report := EvaluateLocalizationCorpus(corpus, repoRoot)
+	if findings := LintLocalizationCorpus(corpus); len(findings) > 0 {
+		t.Fatalf("localization corpus lint failed: %v", findings)
+	}
+
+	report := EvaluateLocalizationCorpusWithOptions(corpus, repoRoot, DefaultLocalizationBenchmarkOptions())
 	if !report.Passed {
 		t.Fatalf("expected corpus report to pass, findings=%v", report.Findings)
 	}
@@ -77,13 +81,13 @@ func TestLocalizationCorpusPrivacyScan(t *testing.T) {
 	}
 }
 
-func TestValidateLocalizationCorpusRejectsWeakPrivacy(t *testing.T) {
+func TestLintLocalizationCorpusRejectsWeakPrivacy(t *testing.T) {
 	corpus := validLocalizationCorpusForTest()
 
 	corpus.Tasks[0].Privacy.PromptTextIncluded = true
 
-	if err := ValidateLocalizationCorpus(corpus); err == nil {
-		t.Fatal("expected validation to reject included prompt text")
+	if findings := LintLocalizationCorpus(corpus); len(findings) == 0 {
+		t.Fatal("expected lint to reject included prompt text")
 	}
 }
 
@@ -92,7 +96,7 @@ func TestEvaluateLocalizationCorpusReportsMissingExpectedPath(t *testing.T) {
 
 	corpus.Tasks[0].Expected.Files[0].Path = "missing/file.go"
 
-	report := EvaluateLocalizationCorpus(corpus, t.TempDir())
+	report := EvaluateLocalizationCorpusWithOptions(corpus, t.TempDir(), DefaultLocalizationBenchmarkOptions())
 
 	if report.Passed {
 		t.Fatal("expected missing expected path to fail report")
@@ -177,7 +181,7 @@ func TestLocalizationBenchmarkMetricsUseExpectedAnchors(t *testing.T) {
 
 func TestLocalizationBenchmarkReportsMissingAndPartialInputs(t *testing.T) {
 	corpus := validLocalizationCorpusForTest()
-	report := AnalyzeLocalizationCorpus(corpus)
+	report := AnalyzeLocalizationCorpusWithOptions(corpus, DefaultLocalizationBenchmarkOptions())
 
 	if report.Benchmark.TopKEditPathCoverage[0].Available {
 		t.Fatalf("expected top-k unavailable without context packet candidates: %#v", report.Benchmark.TopKEditPathCoverage[0])
@@ -308,23 +312,19 @@ func TestLocalizationBenchmarkConstrainsCompetitiveConditionClientClassification
 		}
 	}
 
-	if err := ValidateLocalizationCorpus(corpus); err == nil {
-		t.Fatal("expected corpus validation to reject unapproved competitive client classification")
-	} else {
-		message := err.Error()
-		if !strings.Contains(message, "approved bounded classes") {
-			t.Fatalf("expected bounded validation reason, got %v", err)
-		}
+	message := strings.Join(LintLocalizationCorpus(corpus), "\n")
+	if !strings.Contains(message, "approved bounded classes") {
+		t.Fatalf("expected bounded lint reason, got %v", message)
+	}
 
-		for _, forbidden := range []string{"customer-acme-session", "customer_acme_session"} {
-			if strings.Contains(message, forbidden) {
-				t.Fatalf("validation leaked customer-like classification %q: %v", forbidden, err)
-			}
+	for _, forbidden := range []string{"customer-acme-session", "customer_acme_session"} {
+		if strings.Contains(message, forbidden) {
+			t.Fatalf("lint leaked customer-like classification %q: %v", forbidden, message)
 		}
 	}
 }
 
-func TestValidateLocalizationCorpusRejectsInvalidBenchmarkEvidence(t *testing.T) {
+func TestLintLocalizationCorpusRejectsInvalidBenchmarkEvidence(t *testing.T) {
 	corpus := validLocalizationCorpusForTest()
 	negative := -1
 
@@ -337,19 +337,16 @@ func TestValidateLocalizationCorpusRejectsInvalidBenchmarkEvidence(t *testing.T)
 		},
 	}
 
-	err := ValidateLocalizationCorpus(corpus)
-	if err == nil {
-		t.Fatal("expected invalid benchmark evidence to fail validation")
-	}
+	findings := strings.Join(LintLocalizationCorpus(corpus), "\n")
 
 	for _, want := range []string{"context packet candidate file path", "broad_read_count must be non-negative"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("expected validation error to contain %q, got %v", want, err)
+		if !strings.Contains(findings, want) {
+			t.Fatalf("expected lint finding to contain %q, got %v", want, findings)
 		}
 	}
 }
 
-func TestValidateLocalizationCorpusRejectsBackslashTraversalEvidencePath(t *testing.T) {
+func TestLintLocalizationCorpusRejectsBackslashTraversalEvidencePath(t *testing.T) {
 	corpus := validLocalizationCorpusForTest()
 
 	corpus.Tasks[0].Benchmark = &LocalizationBenchmarkInput{
@@ -358,17 +355,14 @@ func TestValidateLocalizationCorpusRejectsBackslashTraversalEvidencePath(t *test
 		},
 	}
 
-	err := ValidateLocalizationCorpus(corpus)
-	if err == nil {
-		t.Fatal("expected backslash traversal evidence path to fail validation")
-	}
+	findings := strings.Join(LintLocalizationCorpus(corpus), "\n")
 
-	if !strings.Contains(err.Error(), "context packet candidate file path") {
-		t.Fatalf("expected candidate path validation error, got %v", err)
+	if !strings.Contains(findings, "context packet candidate file path") {
+		t.Fatalf("expected candidate path lint finding, got %v", findings)
 	}
 }
 
-func TestValidateLocalizationCorpusRejectsInvalidCompetitiveConditionEvidence(t *testing.T) {
+func TestLintLocalizationCorpusRejectsInvalidCompetitiveConditionEvidence(t *testing.T) {
 	corpus := validLocalizationCorpusForTest()
 
 	corpus.Tasks[0].Benchmark = &LocalizationBenchmarkInput{
@@ -381,13 +375,10 @@ func TestValidateLocalizationCorpusRejectsInvalidCompetitiveConditionEvidence(t 
 		}},
 	}
 
-	err := ValidateLocalizationCorpus(corpus)
-	if err == nil {
-		t.Fatal("expected invalid competitive condition evidence to fail validation")
-	}
+	findings := strings.Join(LintLocalizationCorpus(corpus), "\n")
 
-	if !strings.Contains(err.Error(), "infeasibility_reason") || !strings.Contains(err.Error(), "sensitive or raw-content marker") {
-		t.Fatalf("expected sensitive-marker validation error, got %v", err)
+	if !strings.Contains(findings, "infeasibility_reason") || !strings.Contains(findings, "sensitive or raw-content marker") {
+		t.Fatalf("expected sensitive-marker lint finding, got %v", findings)
 	}
 }
 

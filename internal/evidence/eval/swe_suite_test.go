@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
+func TestReadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 	suitePath := evalTestdataPath(t, "swe", "representative-suite.json")
 
-	suite, err := LoadSWESuite(suitePath)
+	suite, err := ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("LoadSWESuite: %v", err)
+		t.Fatalf("ReadSWESuite: %v", err)
 	}
 
 	coverage := AnalyzeSWESuiteCoverage(suite)
@@ -23,6 +23,9 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 
 	if findings := LintSWESuite(suite); len(findings) > 0 {
 		t.Fatalf("representative suite lint failed: %v", findings)
+	}
+	if err := ValidateSWESuiteFixtures(suite, suitePath); err != nil {
+		t.Fatalf("representative suite fixture validation failed: %v", err)
 	}
 
 	requiredFamilies := []string{
@@ -86,14 +89,14 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 }
 
 func TestLiveSubsetAssertionsDoNotContradictRepresentativeSuiteForSharedTasks(t *testing.T) {
-	liveSuite, err := LoadSWESuite(evalTestdataPath(t, "swe", "live-subset.json"))
+	liveSuite, err := ReadSWESuite(evalTestdataPath(t, "swe", "live-subset.json"))
 	if err != nil {
-		t.Fatalf("LoadSWESuite live subset: %v", err)
+		t.Fatalf("ReadSWESuite live subset: %v", err)
 	}
 
-	representativeSuite, err := LoadSWESuite(evalTestdataPath(t, "swe", "representative-suite.json"))
+	representativeSuite, err := ReadSWESuite(evalTestdataPath(t, "swe", "representative-suite.json"))
 	if err != nil {
-		t.Fatalf("LoadSWESuite representative suite: %v", err)
+		t.Fatalf("ReadSWESuite representative suite: %v", err)
 	}
 
 	representativeByID := map[string]SWETask{}
@@ -318,33 +321,6 @@ func TestTaskScenarioAssertionsIncludeContractReplay(t *testing.T) {
 	}
 }
 
-func TestComprehensionMemorySuiteCoversContextTooling(t *testing.T) {
-	suite := ComprehensionMemorySuite()
-	report := EvaluateSWESuiteDefinition(suite)
-
-	if !report.Passed {
-		t.Fatalf("expected comprehension memory suite definition to pass, findings=%#v lint=%#v coverage=%#v", report.Findings, report.LintFindings, report.Coverage)
-	}
-
-	for _, tool := range []string{"context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query"} {
-		if report.Coverage.Tools[tool] == 0 {
-			t.Fatalf("expected comprehension suite coverage for tool %q, got %#v", tool, report.Coverage.Tools)
-		}
-	}
-
-	for _, family := range []string{"orientation", "localization", "planning", "failing_test"} {
-		if report.Coverage.Families[family] == 0 {
-			t.Fatalf("expected comprehension suite family %q, got %#v", family, report.Coverage.Families)
-		}
-	}
-
-	for _, assertion := range []string{"tools", "discovery_classes", "broad_tool_budget", "heavy_discovery_budget"} {
-		if report.Coverage.ScenarioAssertions[assertion] == 0 {
-			t.Fatalf("expected scenario assertion %q, got %#v", assertion, report.Coverage.ScenarioAssertions)
-		}
-	}
-}
-
 func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.T) {
 	dir := t.TempDir()
 	suite := SWESuite{
@@ -375,7 +351,7 @@ func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.
 	}
 }
 
-func TestLoadSWESuiteAppliesTaskDefaultsBeforeValidation(t *testing.T) {
+func TestReadSWESuiteAppliesTaskDefaultsBeforeValidation(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "fixtures", "frozen-label-repo"), 0o755); err != nil {
 		t.Fatalf("mkdir fixture: %v", err)
@@ -412,9 +388,15 @@ func TestLoadSWESuiteAppliesTaskDefaultsBeforeValidation(t *testing.T) {
 		t.Fatalf("write suite: %v", err)
 	}
 
-	suite, err := LoadSWESuite(suitePath)
+	suite, err := ReadSWESuite(suitePath)
 	if err != nil {
-		t.Fatalf("LoadSWESuite: %v", err)
+		t.Fatalf("ReadSWESuite: %v", err)
+	}
+	if findings := LintSWESuite(suite); len(findings) > 0 {
+		t.Fatalf("defaulted suite should lint cleanly: %v", findings)
+	}
+	if err := ValidateSWESuiteFixtures(suite, suitePath); err != nil {
+		t.Fatalf("defaulted suite fixture validation failed: %v", err)
 	}
 
 	if got := suite.Tasks[0].Fixture; got != "fixtures/frozen-label-repo" {
