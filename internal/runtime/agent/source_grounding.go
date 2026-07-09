@@ -132,7 +132,8 @@ func sourceGroundingCandidateOnlyCompletionAssessment(brief workerruntime.Worker
 	if !candidateOnly {
 		return sourceGroundingAssessment{}, false
 	}
-	if sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, answer, results) {
+	projection := newToolResultEvidenceProjection(results)
+	if sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, answer, projection) {
 		return sourceGroundingAssessment{}, true
 	}
 
@@ -263,7 +264,8 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 	validationLedgerEvidence := r.validationStatusAnswerCanUseLedgerEvidence(answer, results)
 
 	citations := analyzeSourceCitations(answer)
-	if escaping := sourceGroundingUnsupportedEscapingPaths(answer, citations.EscapingPaths, results); len(escaping) > 0 {
+	projection := newToolResultEvidenceProjection(results)
+	if escaping := sourceGroundingUnsupportedEscapingPaths(answer, citations.EscapingPaths, projection); len(escaping) > 0 {
 		return sourceGroundingUnsupportedDetailAssessment(escaping)
 	}
 
@@ -283,13 +285,13 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 			continue
 		}
 
-		if sourceCitationAmbiguousBodyEvidence(r, path, results) {
+		if sourceCitationAmbiguousBodyEvidence(r, path, projection) {
 			missing = append(missing, path)
 			continue
 		}
 
 		citationPath := path
-		if resolved, ok := sourceCitationCanonicalPath(r, path, results); ok {
+		if resolved, ok := sourceCitationCanonicalPath(r, path, projection); ok {
 			citationPath = resolved
 		}
 
@@ -301,7 +303,6 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 			}
 		}
 
-		projection := newToolResultEvidenceProjection(results)
 		if projection.HasSourceBody(citationPath) ||
 			len(projection.ExternalDocumentBodyMatches(citationPath)) > 0 ||
 			slices.Contains(projection.ReadOnlySourceBodyEvidencePaths(), citationPath) ||
@@ -377,7 +378,7 @@ func sourceGroundingStripGateRecoveryPrefix(text string) string {
 	return text
 }
 
-func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.ToolResult) (string, bool) {
+func sourceCitationCanonicalPath(r *Runner, path string, projection toolResultEvidenceProjection) (string, bool) {
 	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return "", false
@@ -387,7 +388,7 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 		return path, true
 	}
 
-	externalMatches := newToolResultEvidenceProjection(results).ExternalDocumentBodyMatches(path)
+	externalMatches := projection.ExternalDocumentBodyMatches(path)
 	if strings.Contains(path, "/") || sourceCitationLooksLikeRootPath(path) {
 		if len(externalMatches) == 1 {
 			return externalMatches[0], true
@@ -395,7 +396,7 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 		return path, false
 	}
 
-	matches := sourceCitationWorkspaceBodyMatches(r, path, results)
+	matches := sourceCitationWorkspaceBodyMatches(r, path, projection)
 	if len(matches) == 1 && len(externalMatches) == 0 {
 		return matches[0], true
 	}
@@ -406,32 +407,32 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 	return path, false
 }
 
-func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, results []workspace.ToolResult) bool {
-	externalMatches := newToolResultEvidenceProjection(results).ExternalDocumentBodyMatches(path)
+func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, projection toolResultEvidenceProjection) bool {
+	externalMatches := projection.ExternalDocumentBodyMatches(path)
 	if len(externalMatches) == 0 {
 		return false
 	}
 
 	if sourceCitationExists(r, path) {
-		return !sourceCitationHasExactWorkspaceBodyEvidence(r, path, results)
+		return !sourceCitationHasExactWorkspaceBodyEvidence(r, path, projection)
 	}
 
 	if strings.Contains(path, "/") || sourceCitationLooksLikeRootPath(path) {
 		return len(externalMatches) > 1
 	}
 
-	return len(sourceCitationWorkspaceBodyMatches(r, path, results))+len(externalMatches) > 1
+	return len(sourceCitationWorkspaceBodyMatches(r, path, projection))+len(externalMatches) > 1
 }
 
-func sourceCitationHasExactWorkspaceBodyEvidence(r *Runner, path string, results []workspace.ToolResult) bool {
-	return newToolResultEvidenceProjection(results).HasSourceBody(path) ||
-		slices.Contains(newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths(), path)
+func sourceCitationHasExactWorkspaceBodyEvidence(r *Runner, path string, projection toolResultEvidenceProjection) bool {
+	return projection.HasSourceBody(path) ||
+		slices.Contains(projection.ReadOnlySourceBodyEvidencePaths(), path)
 }
 
-func sourceCitationWorkspaceBodyMatches(r *Runner, path string, results []workspace.ToolResult) []string {
+func sourceCitationWorkspaceBodyMatches(r *Runner, path string, projection toolResultEvidenceProjection) []string {
 	base := strings.ToLower(filepath.Base(path))
 	var matches []string
-	for _, candidate := range newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths() {
+	for _, candidate := range projection.ReadOnlySourceBodyEvidencePaths() {
 		candidate = NormalizeRunnerPath(candidate)
 		if candidate == "" || strings.EqualFold(candidate, path) {
 			continue
@@ -451,17 +452,17 @@ func sourceCitationWorkspaceBodyMatches(r *Runner, path string, results []worksp
 	return uniqueSortedRunnerPaths(matches)
 }
 
-func sourceGroundingUnsupportedEscapingPaths(answer string, paths []string, results []workspace.ToolResult) []string {
+func sourceGroundingUnsupportedEscapingPaths(answer string, paths []string, projection toolResultEvidenceProjection) []string {
 	if len(paths) == 0 {
 		return nil
 	}
 
 	var unsupported []string
 	for _, path := range paths {
-		if newToolResultEvidenceProjection(results).DiagnosticArtifactReadForPath(path) {
+		if projection.DiagnosticArtifactReadForPath(path) {
 			continue
 		}
-		if len(newToolResultEvidenceProjection(results).ExternalDocumentBodyMatches(path)) > 0 {
+		if len(projection.ExternalDocumentBodyMatches(path)) > 0 {
 			continue
 		}
 		if sourceCitationExplicitlyUnverified(answer, path) || sourceCitationExplicitlyNonCurrent(answer, path) {
@@ -957,14 +958,14 @@ func sourceGroundingTokenLooksLikeSymbol(token string) bool {
 		qualifiedIdentifierPattern.MatchString(token)
 }
 
-func sourceGroundingAnswerCitesReadDiagnosticArtifact(answer string, results []workspace.ToolResult) bool {
+func sourceGroundingAnswerCitesReadDiagnosticArtifact(answer string, projection toolResultEvidenceProjection) bool {
 	cited := sourceGroundingDiagnosticArtifactPathsFromText(answer)
 	if len(cited) == 0 {
 		return false
 	}
 
 	for _, path := range cited {
-		if newToolResultEvidenceProjection(results).DiagnosticArtifactReadForPath(path) {
+		if projection.DiagnosticArtifactReadForPath(path) {
 			return true
 		}
 	}
@@ -972,8 +973,8 @@ func sourceGroundingAnswerCitesReadDiagnosticArtifact(answer string, results []w
 	return false
 }
 
-func sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief workerruntime.WorkerRuntimeBrief, answer string, results []workspace.ToolResult) bool {
-	if !sourceGroundingAnswerCitesReadDiagnosticArtifact(answer, results) {
+func sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief workerruntime.WorkerRuntimeBrief, answer string, projection toolResultEvidenceProjection) bool {
+	if !sourceGroundingAnswerCitesReadDiagnosticArtifact(answer, projection) {
 		return false
 	}
 

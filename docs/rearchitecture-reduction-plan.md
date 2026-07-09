@@ -82,9 +82,10 @@ constructs the refine command request/result, but process execution now goes
 through `internal/platform/commandexec` for cwd, timeout, output capture, exit
 status, launch failure, and cancellation semantics. CLI refine's default
 artifact dispatcher also routes its one-shot child process through
-`commandexec`; `queue run` remains a direct process owner until the platform
-execution API explicitly supports live stdin/stdout/stderr streaming, signal
-cancellation, and queue lease environment propagation.
+`commandexec`. `queue run` owns admission, lease lifetime, nested held-pool
+behavior, and queue env propagation; foreground child process launch, live
+stdio, cancellation, and exit classification are owned by
+`commandexec.RunForeground`.
 
 ### 4. Workspace Manager Decomposition
 
@@ -165,7 +166,11 @@ syntax were deleted; workspace shell analysis remains the command-meaning
 authority, and runtime no longer converts read-like shell intent into a
 harness-chosen strategy. Reviewer-backed follow-up targets are broader
 `toolResultEvidenceProjection` consolidation and remaining command-execution
-authority seams.
+authority seams. Changed-source path classification now belongs to
+`toolResultEvidenceProjection` through the `sourcekind.CoversSourceSanity`
+contract, and the old read-path pass-through helper has been deleted; the
+larger remaining evidence target is a cached projection/read-only answerability
+model rather than more caller-local path scanners.
 
 ### 5. Product Workflow Projection
 

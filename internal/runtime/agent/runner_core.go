@@ -23,6 +23,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/failures"
@@ -9664,7 +9665,7 @@ func (r *Runner) removedTestDeclarations(results []workspace.ToolResult) []strin
 }
 
 func testSourcePathCanRemoveDeclarations(path string) bool {
-	if !sourcePathNeedsSemanticVerification(path) {
+	if !sourcekind.CoversSourceSanity(path) {
 		return false
 	}
 
@@ -10399,7 +10400,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		}
 	}
 
-	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, reply, results)
+	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, reply, newToolResultEvidenceProjection(results))
 	if readOnlyDirectAnswerLane(brief) &&
 		(readOnlyAnswerHasConcreteEvidence(results) ||
 			readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results) ||
@@ -10426,7 +10427,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		return workspace.ToolResult{}, false
 	}
 
-	if readPaths := sortedRunnerPathKeys(readPathsFromResults(results)); len(readPaths) > 0 {
+	if readPaths := sortedRunnerPathKeys(newToolResultEvidenceProjection(results).ReadPaths()); len(readPaths) > 0 {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Read-only completion gate rejected final answer",

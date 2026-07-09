@@ -227,7 +227,7 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 		TargetRefs:           append([]string(nil), brief.TargetRefs...),
 		RequiredEditPaths:    append([]string(nil), brief.RequiredEditPaths...),
 		AllowedEditPaths:     append([]string(nil), brief.AllowedEditPaths...),
-		EvidencePaths:        append(append([]string(nil), brief.EvidencePaths...), sortedRunnerPathKeys(readPathsFromResults(results))...),
+		EvidencePaths:        append(append([]string(nil), brief.EvidencePaths...), sortedRunnerPathKeys(newToolResultEvidenceProjection(results).ReadPaths())...),
 		ChangedPaths:         mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()),
 		UserBoundaries:       append([]string(nil), brief.UserBoundaries...),
 		AllowedTools:         allowedTools,
@@ -2616,7 +2616,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	state.RequiredCoveragePaths = planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
 	state.RequiredPathStates = planThenExecuteRequiredPathStateSummaries(brief, results)
 	state.AllowedCandidatePaths = candidateRecoveryScopePaths(brief, results, 16)
-	state.EvidencePaths = sortedRunnerPathKeys(readPathsFromResults(results))
+	state.EvidencePaths = sortedRunnerPathKeys(newToolResultEvidenceProjection(results).ReadPaths())
 	state.LastInvalidPaths = planThenExecuteLastInvalidSubmitPlanPaths(results)
 	state.TerminalOptions = []string{"source_satisfied", "blocker"}
 

@@ -221,6 +221,38 @@ func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {
 	}
 }
 
+func TestToolResultEvidenceProjectionChangedSourcePathsUseSourceSanityContract(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, ChangedPaths: []string{"README.md"}},
+		{Tool: workspace.ToolNameEditFile, ChangedPaths: []string{"scripts/panel.gd"}},
+		{Tool: workspace.ToolNameApplyPatch, ChangedPaths: []string{"internal/app/edit.go", "docs/notes.txt"}},
+		{Tool: workspace.ToolNameWriteFile, ChangedPaths: []string{"internal/app/failed.go"}, Error: "permission denied"},
+	}
+
+	projection := newToolResultEvidenceProjection(results)
+	want := []string{"internal/app/edit.go", "scripts/panel.gd"}
+
+	if got := projection.ChangedSourcePathList(); !slices.Equal(got, want) {
+		t.Fatalf("changed source paths = %#v, want %#v", got, want)
+	}
+	if !projection.HasChangedSourcePath("scripts/panel.gd") {
+		t.Fatal("changed source path should be found")
+	}
+	if projection.HasChangedSourcePath("README.md") {
+		t.Fatal("non-source changed path should not be source-sanity-backed")
+	}
+	if target, ok := projection.SingleChangedSourcePath(); ok {
+		t.Fatalf("multiple source paths should not choose a single target, got %q", target)
+	}
+
+	single := newToolResultEvidenceProjection([]workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, ChangedPaths: []string{"scripts/panel.gd", "README.md"}},
+	})
+	if target, ok := single.SingleChangedSourcePath(); !ok || target != "scripts/panel.gd" {
+		t.Fatalf("single changed source target = %q, %v", target, ok)
+	}
+}
+
 func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 	sourcePath := "internal/runtime/agent/evidence_projection.go"
 	externalPath := filepath.Join(t.TempDir(), "Mobile Documents", "Project Notes", "brief.md")

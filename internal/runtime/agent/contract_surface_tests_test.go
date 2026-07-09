@@ -21616,7 +21616,7 @@ func TestReadPathsFromResultsCountsCodeNavigateRouteSummary(t *testing.T) {
 		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 3209, 3230, 0, "3209:func TestProductWorkflow(t *testing.T) {}\n"),
 	}
 
-	paths := readPathsFromResults(results)
+	paths := newToolResultEvidenceProjection(results).ReadPaths()
 	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
 		if _, ok := paths[want]; !ok {
 			t.Fatalf("read paths missing %q: %#v", want, paths)
@@ -21636,7 +21636,7 @@ func TestReadPathsFromResultsDoesNotCountRouteSummaryWithoutSourceBody(t *testin
 		}, "\n"),
 	}}
 
-	paths := readPathsFromResults(results)
+	paths := newToolResultEvidenceProjection(results).ReadPaths()
 	if _, ok := paths["cmd/idiom/product_workflow.go"]; ok {
 		t.Fatalf("route_summary without source body should not satisfy source readiness: %#v", paths)
 	}
@@ -27483,7 +27483,7 @@ func TestPlanExecuteNoWriteRecoveryLeavesNextCandidateModelOwned(t *testing.T) {
 		},
 	}
 
-	if read := readPathsFromResults(results); len(read) == 0 {
+	if read := newToolResultEvidenceProjection(results).ReadPaths(); len(read) == 0 {
 		t.Fatalf("fixture should expose code_navigate source-body evidence, got %#v", read)
 	}
 

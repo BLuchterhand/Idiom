@@ -20,7 +20,6 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
@@ -1267,7 +1266,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 			// evidence and the blocker names an exact path or claim.
 			// This prevents the dead-end loop where the model can't
 			// proceed and can't say "I'm stuck" either.
-			if hasSourceBodyEvidence(results) && isSpecificQuestionBlocker(answer) {
+			if len(newToolResultEvidenceProjection(results).SourceBodyPaths()) > 0 && isSpecificQuestionBlocker(answer) {
 				return rejectFinalAnswerAcceptance(acceptance, turnViolationUserVisibleBlocker, turnReasonUserVisibleBlocker)
 			}
 			return rejectFinalAnswerAcceptance(acceptance, turnViolationReadOnlyProtocolBlocker, turnReasonReadOnlyProtocolBlocker)
@@ -1395,23 +1394,6 @@ func readOnlyDirectAnswerLane(brief workerruntime.WorkerRuntimeBrief) bool {
 func readOnlyDirectAnswerTaskFamily(family string) bool {
 	return workerruntime.TaskFamilyIsConversation(family) ||
 		workerruntime.TaskFamilyMatches(family, autonomy.TaskFamilyDirectAnswer)
-}
-
-// hasSourceBodyEvidence reports whether the model has gathered any
-// source-body evidence (read_file or code_navigate results) in the current
-// turn. Used by the <<QUESTION>> gate to distinguish "I gathered evidence
-// and am still stuck" from "I gave up without trying."
-func hasSourceBodyEvidence(results []workspace.ToolResult) bool {
-	for _, result := range results {
-		tool := strings.TrimSpace(result.Tool)
-		if tool == workspace.ToolNameReadFile || tool == workspace.ToolNameCodeNavigate {
-			if strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.Output) != "" {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // isSpecificQuestionBlocker reports whether a <<QUESTION>>: blocker message
@@ -7340,7 +7322,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 
 	candidates = appendUniqueRunnerPaths(candidates, contextPackCandidatePathsFromResults(results[rejectedAt+1:], 8)...)
 
-	read := readPathsFromResults(results[rejectedAt+1:])
+	read := newToolResultEvidenceProjection(results[rejectedAt+1:]).ReadPaths()
 
 	if len(read) >= 4 {
 		return workspace.ToolRequest{}, "", false
@@ -8900,7 +8882,7 @@ func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerrunt
 		return "", "", false
 	}
 
-	paths := changedSourcePaths(results)
+	paths := newToolResultEvidenceProjection(results).ChangedSourcePathList()
 	if len(paths) == 0 {
 		return "", "", false
 	}
@@ -8925,7 +8907,7 @@ func fillSourceSanityPathFromSingleChangedSource(req workspace.ToolRequest, brie
 		return workspace.ToolRequest{}, false
 	}
 
-	target, ok := singleChangedSourceSanityPath(results)
+	target, ok := newToolResultEvidenceProjection(results).SingleChangedSourcePath()
 	if !ok {
 		return workspace.ToolRequest{}, false
 	}
@@ -8957,7 +8939,7 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 	}
 
 	if requested := NormalizeRunnerPath(req.Path); requested != "" && requested != "." {
-		if !changedSourcePathsContain(results, requested) {
+		if !newToolResultEvidenceProjection(results).HasChangedSourcePath(requested) {
 			return workspace.ToolRequest{}, false
 		}
 
@@ -8968,46 +8950,12 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 		return workspace.ToolRequest{}, false
 	}
 
-	target, ok := singleChangedSourceSanityPath(results)
+	target, ok := newToolResultEvidenceProjection(results).SingleChangedSourcePath()
 	if !ok {
 		return workspace.ToolRequest{}, false
 	}
 
 	return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: target}, true
-}
-
-func singleChangedSourceSanityPath(results []workspace.ToolResult) (string, bool) {
-	var target string
-
-	for _, path := range changedSourcePaths(results) {
-		normalized := NormalizeRunnerPath(path)
-		if normalized == "" || !sourcekind.CoversSourceSanity(normalized) {
-			continue
-		}
-
-		if target != "" && target != normalized {
-			return "", false
-		}
-
-		target = normalized
-	}
-
-	return target, target != ""
-}
-
-func changedSourcePathsContain(results []workspace.ToolResult, path string) bool {
-	normalizedPath := NormalizeRunnerPath(path)
-	if normalizedPath == "" {
-		return false
-	}
-
-	for _, changed := range changedSourcePaths(results) {
-		if NormalizeRunnerPath(changed) == normalizedPath {
-			return true
-		}
-	}
-
-	return false
 }
 
 func postWriteVerificationReadOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {
@@ -9020,13 +8968,7 @@ func postWriteVerificationReadOfChangedSource(req workspace.ToolRequest, results
 		return false
 	}
 
-	for _, changed := range changedSourcePaths(results) {
-		if NormalizeRunnerPath(changed) == requested {
-			return true
-		}
-	}
-
-	return false
+	return newToolResultEvidenceProjection(results).HasChangedSourcePath(requested)
 }
 
 func postWriteVerificationWriteOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {
@@ -9039,17 +8981,7 @@ func postWriteVerificationWriteOfChangedSource(req workspace.ToolRequest, result
 		return false
 	}
 
-	if !sourcekind.CoversSourceSanity(requested) {
-		return false
-	}
-
-	for _, changed := range changedSourcePaths(results) {
-		if NormalizeRunnerPath(changed) == requested {
-			return true
-		}
-	}
-
-	return false
+	return newToolResultEvidenceProjection(results).HasChangedSourcePath(requested)
 }
 
 func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -9069,7 +9001,7 @@ func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.Wor
 		return "", false
 	}
 
-	paths := changedSourcePaths(results)
+	paths := newToolResultEvidenceProjection(results).ChangedSourcePathList()
 	if len(paths) == 0 {
 		return "", false
 	}
@@ -9229,7 +9161,7 @@ func sourceVerificationGateApplies(brief workerruntime.WorkerRuntimeBrief, resul
 		return false
 	}
 
-	return len(changedSourcePaths(results)) > 0
+	return len(newToolResultEvidenceProjection(results).ChangedSourcePathList()) > 0
 }
 
 func latestVerificationAfterLatestSourceWrite(results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -9237,13 +9169,14 @@ func latestVerificationAfterLatestSourceWrite(results []workspace.ToolResult) (w
 
 	found := false
 	seenSourceWrite := false
+	projection := newToolResultEvidenceProjection(results)
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
 
-		if toolResultChangedSourcePath(result) {
+		if len(projection.ChangedSourcePathsFromResult(result)) > 0 {
 			seenSourceWrite = true
 			found = false
 			latest = workspace.ToolResult{}
@@ -9258,58 +9191,6 @@ func latestVerificationAfterLatestSourceWrite(results []workspace.ToolResult) (w
 	}
 
 	return latest, found
-}
-
-func changedSourcePaths(results []workspace.ToolResult) []string {
-	paths := make([]string, 0)
-	seen := make(map[string]struct{})
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		for _, path := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList() {
-			normalized := NormalizeRunnerPath(path)
-			if normalized == "" || !sourcePathNeedsSemanticVerification(normalized) {
-				continue
-			}
-
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-
-			seen[normalized] = struct{}{}
-			paths = append(paths, normalized)
-		}
-	}
-
-	slices.Sort(paths)
-
-	return paths
-}
-
-func toolResultChangedSourcePath(result workspace.ToolResult) bool {
-	for _, path := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList() {
-		if sourcePathNeedsSemanticVerification(path) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func sourcePathNeedsSemanticVerification(path string) bool {
-	if _, ok := semanticlanguage.LanguageForFile(path); ok {
-		return true
-	}
-
-	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
-	case ".gd":
-		return true
-	default:
-		return false
-	}
 }
 
 func summarizeRunnerPaths(paths []string, limit int) string {

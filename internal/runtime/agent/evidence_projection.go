@@ -2,10 +2,12 @@ package agent
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 )
@@ -491,4 +493,58 @@ func (toolResultEvidenceProjection) ChangedPathsFromResult(result workspace.Tool
 	}
 
 	return nil
+}
+
+func (projection toolResultEvidenceProjection) ChangedSourcePathList() []string {
+	seen := make(map[string]struct{})
+	paths := make([]string, 0, 4)
+
+	for _, result := range projection.results {
+		for _, path := range projection.ChangedSourcePathsFromResult(result) {
+			if _, ok := seen[path]; ok {
+				continue
+			}
+
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+	}
+
+	return uniqueSortedRunnerPaths(paths)
+}
+
+func (projection toolResultEvidenceProjection) ChangedSourcePathsFromResult(result workspace.ToolResult) []string {
+	if strings.TrimSpace(result.Error) != "" {
+		return nil
+	}
+
+	var paths []string
+	for _, rawPath := range projection.ChangedPathsFromResult(result) {
+		path := NormalizeRunnerPath(rawPath)
+		if path == "" || !sourcekind.CoversSourceSanity(path) {
+			continue
+		}
+
+		paths = textutil.AppendUnique(paths, path)
+	}
+
+	return paths
+}
+
+func (projection toolResultEvidenceProjection) HasChangedSourcePath(path string) bool {
+	path = NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	return slices.Contains(projection.ChangedSourcePathList(), path)
+}
+
+func (projection toolResultEvidenceProjection) SingleChangedSourcePath() (string, bool) {
+	paths := projection.ChangedSourcePathList()
+	if len(paths) != 1 {
+		return "", false
+	}
+
+	return paths[0], true
 }

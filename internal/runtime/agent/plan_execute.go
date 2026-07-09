@@ -672,7 +672,7 @@ func unreadCandidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, r
 		return nil
 	}
 
-	read := readPathsFromResults(results)
+	read := newToolResultEvidenceProjection(results).ReadPaths()
 	for _, path := range candidates {
 		if _, ok := read[NormalizeRunnerPath(path)]; ok {
 			return nil
@@ -692,7 +692,7 @@ func unreadCandidateRecoveryScopePathsForRecovery(brief workerruntime.WorkerRunt
 		return nil
 	}
 
-	read := readPathsFromResults(results)
+	read := newToolResultEvidenceProjection(results).ReadPaths()
 	unread := make([]string, 0, len(candidates))
 
 	for _, path := range candidates {
@@ -1076,7 +1076,7 @@ func (r *Runner) planThenExecuteLoopBudgetRecoveryPrompt(req workspace.ToolReque
 
 	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) == 0 && noBodyMissRecovery {
 		if unread := unreadCandidatePaths; len(unread) > 0 {
-			read := sortedRunnerPathKeys(readPathsFromResults(results))
+			read := sortedRunnerPathKeys(newToolResultEvidenceProjection(results).ReadPaths())
 			lead := fmt.Sprintf("The repeated %s request hit the loop budget: %s. Do not repeat that request.", tool, reason)
 			parts := []string{
 				lead,
@@ -1109,7 +1109,7 @@ func (r *Runner) planThenExecuteLoopBudgetRecoveryPrompt(req workspace.ToolReque
 }
 
 func planThenExecuteNoBodyMissRecoveryApplies(results []workspace.ToolResult) bool {
-	return len(readPathsFromResults(results)) == 0 && planThenExecuteHasPriorReadClassFailure(results)
+	return len(newToolResultEvidenceProjection(results).ReadPaths()) == 0 && planThenExecuteHasPriorReadClassFailure(results)
 }
 
 func (r *Runner) planThenExecuteIgnoredLoopBudgetRecoveryPrompt(req workspace.ToolRequest, results []workspace.ToolResult, reason string, nativeSubmitPlan bool) (planThenExecuteLoopBudgetRecovery, bool) {
@@ -1209,7 +1209,7 @@ func (r *Runner) planThenExecuteCandidateRangeLessReadRedirect(req workspace.Too
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if _, alreadyRead := readPathsFromResults(results)[target]; alreadyRead {
+	if _, alreadyRead := newToolResultEvidenceProjection(results).ReadPaths()[target]; alreadyRead {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -2476,7 +2476,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	if r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) == 0 && successfulSubmitPlanResultCount(results) == 0 {
 		gateRejected := completionGateResultSeen(results)
 		gateRejections := completionGateResultCount(results)
-		readPathSet := readPathsFromResults(results)
+		readPathSet := newToolResultEvidenceProjection(results).ReadPaths()
 		readPaths := make([]string, 0, len(readPathSet))
 
 		for path := range readPathSet {
@@ -2627,7 +2627,7 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 		targets = append(targets, brief.TargetRefs...)
 	}
 
-	readPaths := readPathsFromResults(results)
+	readPaths := newToolResultEvidenceProjection(results).ReadPaths()
 	target := ""
 
 	for _, rawTarget := range targets {
@@ -7377,12 +7377,12 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 	}
 
 	if len(required) == 0 {
-		if len(readPathsFromResults(results)) == 0 {
+		if len(newToolResultEvidenceProjection(results).ReadPaths()) == 0 {
 			return ""
 		}
 
 		state := PlanExecutePlanningState{
-			EvidencePaths: sortedRunnerPathKeys(readPathsFromResults(results)),
+			EvidencePaths: sortedRunnerPathKeys(newToolResultEvidenceProjection(results).ReadPaths()),
 		}
 		paths := planThenExecuteSelectedEditPaths(brief, results, state)
 
@@ -7390,7 +7390,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 			return ""
 		}
 
-		observed := readPathsFromResults(results)
+		observed := newToolResultEvidenceProjection(results).ReadPaths()
 
 		var observedSelected []string
 
@@ -7493,7 +7493,7 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 
 		if len(normalizedRequiredEditPaths(brief.AllowedEditPaths)) == 0 {
 			state := PlanExecutePlanningState{
-				EvidencePaths: sortedRunnerPathKeys(readPathsFromResults(results)),
+				EvidencePaths: sortedRunnerPathKeys(newToolResultEvidenceProjection(results).ReadPaths()),
 			}
 			selected := planThenExecuteSelectedEditPaths(brief, results, state)
 
@@ -7577,7 +7577,7 @@ func isPlanExecuteContextDocPath(path string) bool {
 
 func planExecuteContextDocReadCount(results []workspace.ToolResult) int {
 	seen := make(map[string]struct{})
-	for path := range readPathsFromResults(results) {
+	for path := range newToolResultEvidenceProjection(results).ReadPaths() {
 		normalized := NormalizeRunnerPath(path)
 		if normalized == "" || !isPlanExecuteContextDocPath(normalized) {
 			continue
@@ -7731,7 +7731,7 @@ func planThenExecutePostGateOutOfScopeCandidateReadRejection(target string, brie
 		return "", "", false
 	}
 
-	if _, ok := readPathsFromResults(results)[target]; ok {
+	if _, ok := newToolResultEvidenceProjection(results).ReadPaths()[target]; ok {
 		return "", "", false
 	}
 
@@ -7760,7 +7760,7 @@ func planThenExecuteCandidateDifferentPathReadAllowed(req workspace.ToolRequest,
 		return false
 	}
 
-	for readPath := range readPathsFromResults(results) {
+	for readPath := range newToolResultEvidenceProjection(results).ReadPaths() {
 		if NormalizeRunnerPath(readPath) == target {
 			return false
 		}
@@ -7788,7 +7788,7 @@ func planThenExecuteCandidateSymbolReadAllowed(req workspace.ToolRequest, result
 		return false
 	}
 
-	if _, ok := readPathsFromResults(results)[target]; ok {
+	if _, ok := newToolResultEvidenceProjection(results).ReadPaths()[target]; ok {
 		return true
 	}
 
@@ -8143,21 +8143,13 @@ func planThenExecuteAnchorReadyPaths(brief workerruntime.WorkerRuntimeBrief, res
 		return paths
 	}
 
-	for path := range readPathsFromResults(results) {
+	for path := range newToolResultEvidenceProjection(results).ReadPaths() {
 		if planThenExecuteRequiredSourceEvidenceForPath(brief, results, path).Level == planThenExecuteEvidenceAnchorReady {
 			paths[path] = struct{}{}
 		}
 	}
 
 	return paths
-}
-
-// readPathsFromResults returns the set of paths that have been
-// successfully read in this lane (read_file, code_navigate read_*,
-// *_file_outline / *_read_symbol, etc.). Used by the planner readiness
-// nudge to check whether every required path has been touched.
-func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
-	return newToolResultEvidenceProjection(results).ReadPaths()
 }
 
 type planThenExecuteReadRange struct {
@@ -8348,7 +8340,7 @@ func planThenExecuteCandidatePostReadChatOptionsForBackend(opts llama.ChatOption
 		return planThenExecuteUnreadRequiredSourceChatOptions(opts, brief, results)
 	}
 
-	readEvidenceSeen := successfulToolSeen(results, workspace.ToolNameReadFile) || lastNonGateTool(results) == workspace.ToolNameReadFile || len(readPathsFromResults(results)) > 0
+	readEvidenceSeen := successfulToolSeen(results, workspace.ToolNameReadFile) || lastNonGateTool(results) == workspace.ToolNameReadFile || len(newToolResultEvidenceProjection(results).ReadPaths()) > 0
 	if len(brief.RequiredEditPaths) > 0 {
 		if !readEvidenceSeen {
 			if opts.MaxTokens <= 0 {
@@ -8648,7 +8640,7 @@ func planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts llama.C
 		return opts
 	}
 
-	if len(readPathsFromResults(results)) == 0 && !successfulToolSeen(results, workspace.ToolNameReadFile) && lastNonGateTool(results) != workspace.ToolNameReadFile {
+	if len(newToolResultEvidenceProjection(results).ReadPaths()) == 0 && !successfulToolSeen(results, workspace.ToolNameReadFile) && lastNonGateTool(results) != workspace.ToolNameReadFile {
 		return opts
 	}
 
@@ -9106,7 +9098,7 @@ func planThenExecuteTerminalSubmitPlanAllowedLegacy(brief workerruntime.WorkerRu
 		return false
 	}
 
-	if !(successfulToolSeen(results, workspace.ToolNameReadFile) || len(readPathsFromResults(results)) > 0 || lastNonGateTool(results) == workspace.ToolNameReadFile) {
+	if !(successfulToolSeen(results, workspace.ToolNameReadFile) || len(newToolResultEvidenceProjection(results).ReadPaths()) > 0 || lastNonGateTool(results) == workspace.ToolNameReadFile) {
 		return false
 	}
 
@@ -9118,7 +9110,7 @@ func planThenExecuteOpenCandidateSourceCanSubmit(brief workerruntime.WorkerRunti
 		return false
 	}
 
-	return len(readPathsFromResults(results)) > 0
+	return len(newToolResultEvidenceProjection(results).ReadPaths()) > 0
 }
 
 func planThenExecuteCandidateScopeFullyRead(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) bool {
@@ -9127,7 +9119,7 @@ func planThenExecuteCandidateScopeFullyRead(brief workerruntime.WorkerRuntimeBri
 		return true
 	}
 
-	read := readPathsFromResults(results)
+	read := newToolResultEvidenceProjection(results).ReadPaths()
 	if len(read) == 0 {
 		return false
 	}
@@ -10342,7 +10334,7 @@ func (r *Runner) deterministicNoWriteRecoveryUnreadCandidateRead(results []works
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if successfulSubmitPlanResultCount(results) > 0 || len(readPathsFromResults(results)) == 0 {
+	if successfulSubmitPlanResultCount(results) > 0 || len(newToolResultEvidenceProjection(results).ReadPaths()) == 0 {
 		return workspace.ToolRequest{}, "", false
 	}
 
