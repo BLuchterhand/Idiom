@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -553,18 +552,4 @@ func writeJSON(w io.Writer, v any) error {
 	_, err = w.Write(data)
 
 	return err
-}
-
-// Run is a small convenience for `idiom queue serve` style binaries:
-// start the server, wait until ctx is canceled (typically by SIGINT),
-// then stop. Tests use Start/Stop directly to avoid signal coupling.
-func (s *Server) Run(ctx context.Context) error {
-	if err := s.Start(); err != nil {
-		return err
-	}
-
-	<-ctx.Done()
-	s.Stop()
-
-	return nil
 }

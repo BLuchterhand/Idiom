@@ -53,13 +53,13 @@ func PoolHeldByAncestor(heldPools, pool string) bool {
 	return false
 }
 
-// MaybeAcquire is the best-effort wrapper around Acquire used by
+// MaybeAcquire is the best-effort gate around Acquire used by
 // entry-point dispatch (idiom plan-execute / implement / lane). If
 // the queue daemon isn't running OR no socket configured, it returns
-// a no-op release function and nil error — the caller proceeds
-// un-gated, matching legacy behavior. If the daemon IS reachable, it
-// blocks until a lease is granted; the returned release function
-// closes the lease.
+// an unavailable state with a no-op release function and nil error —
+// the caller may proceed un-gated, matching legacy behavior. If the
+// daemon IS reachable, it blocks until a lease is granted; the
+// returned release function closes the lease.
 //
 // Reentrancy: if the IDIOM_QUEUE_HELD_POOLS env var lists ANY pool
 // (the same one OR a different one), an ancestor process already
@@ -80,14 +80,9 @@ func PoolHeldByAncestor(heldPools, pool string) bool {
 //
 // The dial-with-timeout reachability check is sub-second; an offline
 // daemon never blocks the caller. This is intentional: the gate is
-// opportunistic — if you want a hard "queue is required" contract,
-// run `idiom queue ping` separately first.
-func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, statusOut io.Writer) (release func(), err error) {
-	result := MaybeAcquireWithResult(ctx, socketPath, pool, label, client, statusOut)
-	return result.Release, result.Err
-}
-
-func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client string, statusOut io.Writer) MaybeAcquireResult {
+// opportunistic unless the caller treats non-acquired states as
+// blocking.
+func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, statusOut io.Writer) MaybeAcquireResult {
 	// Reentrant short-circuit: if an ancestor process already holds
 	// a lease in ANY pool, return a no-op release immediately.
 	heldPools := os.Getenv(HeldPoolsEnv)

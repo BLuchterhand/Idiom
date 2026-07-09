@@ -131,7 +131,7 @@ func implementAcquireQueueSlot(cfg config.Config, sessionID string, stdout io.Wr
 	label := "implement:" + sessionID
 	client := fmt.Sprintf("idiom-implement/%d", os.Getpid())
 
-	return queueadmission.AcquireWithResult(cfg, queueadmission.Options{
+	return queueadmission.Acquire(cfg, queueadmission.Options{
 		Command:        "implement",
 		EventPrefix:    queuecontract.CommandEventPrefixImplement,
 		TelemetryEvent: "implement_queue",

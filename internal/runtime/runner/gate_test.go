@@ -22,12 +22,16 @@ func TestMaybeAcquireNoOpWhenDaemonAbsent(t *testing.T) {
 
 	start := time.Now()
 
-	release, err := MaybeAcquire(ctx, missing, "qwen-35b", "label", "test", nil)
-	if err != nil {
-		t.Fatalf("expected no error when daemon absent, got %v", err)
+	result := MaybeAcquire(ctx, missing, "qwen-35b", "label", "test", nil)
+	if result.Err != nil {
+		t.Fatalf("expected no error when daemon absent, got %v", result.Err)
 	}
 
-	if release == nil {
+	if result.State != queuecontract.AdmissionStateUnavailable {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateUnavailable)
+	}
+
+	if result.Release == nil {
 		t.Fatalf("release must be non-nil even on no-op path")
 	}
 
@@ -36,17 +40,17 @@ func TestMaybeAcquireNoOpWhenDaemonAbsent(t *testing.T) {
 		t.Fatalf("no-op path took too long: %v", elapsed)
 	}
 
-	release() // idempotent on no-op
+	result.Release() // idempotent on no-op
 }
 
-func TestMaybeAcquireWithResultReportsUnavailableWhenDaemonAbsent(t *testing.T) {
+func TestMaybeAcquireReportsUnavailableWhenDaemonAbsent(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "definitely-not-a-socket.sock")
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 
 	defer cancel()
 
-	result := MaybeAcquireWithResult(ctx, missing, "qwen-35b", "label", "test", nil)
+	result := MaybeAcquire(ctx, missing, "qwen-35b", "label", "test", nil)
 	if result.State != queuecontract.AdmissionStateUnavailable {
 		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateUnavailable)
 	}
@@ -71,12 +75,16 @@ func TestMaybeAcquireGrantsImmediatelyWhenSlotFree(t *testing.T) {
 
 	defer cancel()
 
-	release, err := MaybeAcquire(ctx, sock, "default", "test-label", "test-client", &statusBuf)
-	if err != nil {
-		t.Fatalf("MaybeAcquire: %v", err)
+	result := MaybeAcquire(ctx, sock, "default", "test-label", "test-client", &statusBuf)
+	if result.Err != nil {
+		t.Fatalf("MaybeAcquire: %v", result.Err)
 	}
 
-	if release == nil {
+	if result.State != queuecontract.AdmissionStateAcquired {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateAcquired)
+	}
+
+	if result.Release == nil {
 		t.Fatalf("release must be non-nil")
 	}
 
@@ -94,7 +102,7 @@ func TestMaybeAcquireGrantsImmediatelyWhenSlotFree(t *testing.T) {
 		t.Fatalf("label not propagated: got %q", snap.InFlight[0].Label)
 	}
 
-	release()
+	result.Release()
 
 	// After release, daemon should show no in-flight jobs.
 	deadline := time.Now().Add(time.Second)
@@ -114,15 +122,15 @@ func TestMaybeAcquireGrantsImmediatelyWhenSlotFree(t *testing.T) {
 	t.Fatalf("expected release to drop in-flight count to 0; snap=%+v", snap)
 }
 
-func TestMaybeAcquireWithResultReportsAcquiredWhenSlotGranted(t *testing.T) {
+func TestMaybeAcquireReportsAcquiredWhenSlotGranted(t *testing.T) {
 	_, sock := startTestServer(t, DefaultConfig())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 
 	defer cancel()
 
-	result := MaybeAcquireWithResult(ctx, sock, "default", "typed-label", "typed-client", nil)
+	result := MaybeAcquire(ctx, sock, "default", "typed-label", "typed-client", nil)
 	if result.Err != nil {
-		t.Fatalf("MaybeAcquireWithResult: %v", result.Err)
+		t.Fatalf("MaybeAcquire: %v", result.Err)
 	}
 
 	if result.State != queuecontract.AdmissionStateAcquired {
@@ -149,40 +157,46 @@ func TestMaybeAcquireSerializesUnderPoolCap(t *testing.T) {
 
 	defer cancel()
 
-	firstReleased := make(chan struct{})
-	secondGranted := make(chan struct{})
+	secondResult := make(chan MaybeAcquireResult, 1)
 
 	// First acquire blocks the slot.
-	release1, err := MaybeAcquire(ctx, sock, "default", "first", "test-1", nil)
-	if err != nil {
-		t.Fatalf("first acquire: %v", err)
+	result1 := MaybeAcquire(ctx, sock, "default", "first", "test-1", nil)
+	if result1.Err != nil {
+		t.Fatalf("first acquire: %v", result1.Err)
+	}
+
+	if result1.State != queuecontract.AdmissionStateAcquired {
+		t.Fatalf("first state = %q, want acquired", result1.State)
 	}
 
 	// Second acquire must wait until first releases.
 	go func() {
-		release2, err := MaybeAcquire(ctx, sock, "default", "second", "test-2", nil)
-		if err != nil {
-			return
-		}
-
-		close(secondGranted)
-		release2()
+		result2 := MaybeAcquire(ctx, sock, "default", "second", "test-2", nil)
+		secondResult <- result2
 	}()
 
 	// Briefly verify second is NOT yet granted.
 	select {
-	case <-secondGranted:
+	case result2 := <-secondResult:
+		if result2.Release != nil {
+			result2.Release()
+		}
 		t.Fatalf("second acquire should not be granted while first holds the slot")
 	case <-time.After(150 * time.Millisecond):
 		// Expected: still waiting.
 	}
 
-	release1()
-	close(firstReleased)
+	result1.Release()
 
 	select {
-	case <-secondGranted:
-		// Expected: second now granted post-release.
+	case result2 := <-secondResult:
+		if result2.Err != nil {
+			t.Fatalf("second acquire: %v", result2.Err)
+		}
+		if result2.State != queuecontract.AdmissionStateAcquired {
+			t.Fatalf("second state = %q, want acquired", result2.State)
+		}
+		result2.Release()
 	case <-time.After(2 * time.Second):
 		t.Fatal("second acquire never got promoted after first released")
 	}
@@ -219,9 +233,13 @@ func TestMaybeAcquireSkipsWhenAncestorHoldsPool(t *testing.T) {
 
 	start := time.Now()
 
-	release, err := MaybeAcquire(childCtx, sock, "qwen-coder", "child", "test-child", nil)
-	if err != nil {
-		t.Fatalf("child MaybeAcquire: %v", err)
+	result := MaybeAcquire(childCtx, sock, "qwen-coder", "child", "test-child", nil)
+	if result.Err != nil {
+		t.Fatalf("child MaybeAcquire: %v", result.Err)
+	}
+
+	if result.State != queuecontract.AdmissionStateNestedSamePool {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateNestedSamePool)
 	}
 
 	// Sub-millisecond return; if it tried to dial the busy pool it
@@ -230,7 +248,7 @@ func TestMaybeAcquireSkipsWhenAncestorHoldsPool(t *testing.T) {
 		t.Fatalf("reentrant skip took too long (%v); did it actually dial?", elapsed)
 	}
 
-	release()
+	result.Release()
 
 	// The parent's slot is still held — confirms the child did NOT
 	// touch the daemon's counters.
@@ -248,13 +266,13 @@ func TestMaybeAcquireSkipsWhenAncestorHoldsPool(t *testing.T) {
 	}
 }
 
-func TestMaybeAcquireWithResultReportsNestedSamePoolState(t *testing.T) {
+func TestMaybeAcquireReportsNestedSamePoolState(t *testing.T) {
 	t.Setenv(HeldPoolsEnv, "qwen-coder")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	result := MaybeAcquireWithResult(ctx, "unused.sock", "qwen-coder", "child", "test-child", nil)
+	result := MaybeAcquire(ctx, "unused.sock", "qwen-coder", "child", "test-child", nil)
 	if result.State != queuecontract.AdmissionStateNestedSamePool {
 		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateNestedSamePool)
 	}
@@ -288,11 +306,14 @@ func TestMaybeAcquireSkipsCrossPoolNestedAcquire(t *testing.T) {
 
 	start := time.Now()
 
-	release, err := MaybeAcquire(ctx, sock, "qwen-coder", "nested", "test-nested", nil)
-	if err != nil {
-		t.Fatalf("MaybeAcquire on cross-pool nested: %v", err)
+	result := MaybeAcquire(ctx, sock, "qwen-coder", "nested", "test-nested", nil)
+	if result.Err != nil {
+		t.Fatalf("MaybeAcquire on cross-pool nested: %v", result.Err)
 	}
-	defer release()
+	if result.State != queuecontract.AdmissionStateNestedCrossPool {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateNestedCrossPool)
+	}
+	defer result.Release()
 
 	// Sub-millisecond return; if it tried to dial the daemon it
 	// would take longer than 50ms even on a localhost socket.
@@ -318,13 +339,13 @@ func TestMaybeAcquireSkipsCrossPoolNestedAcquire(t *testing.T) {
 	}
 }
 
-func TestMaybeAcquireWithResultReportsNestedCrossPoolState(t *testing.T) {
+func TestMaybeAcquireReportsNestedCrossPoolState(t *testing.T) {
 	t.Setenv(HeldPoolsEnv, "qwen-35b")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	result := MaybeAcquireWithResult(ctx, "unused.sock", "qwen-coder", "child", "test-child", nil)
+	result := MaybeAcquire(ctx, "unused.sock", "qwen-coder", "child", "test-child", nil)
 	if result.State != queuecontract.AdmissionStateNestedCrossPool {
 		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateNestedCrossPool)
 	}

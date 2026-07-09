@@ -37,11 +37,7 @@ type Result struct {
 	Release func()
 }
 
-func Acquire(cfg config.Config, opts Options, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) func() {
-	return AcquireWithResult(cfg, opts, rec, stdout, stderr).Release
-}
-
-func AcquireWithResult(cfg config.Config, opts Options, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) Result {
+func Acquire(cfg config.Config, opts Options, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) Result {
 	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
 	if pool == "" {
 		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
@@ -70,7 +66,7 @@ func AcquireWithResult(cfg config.Config, opts Options, rec *telemetry.Recorder,
 	ctx, cancel := context.WithTimeout(context.Background(), queueAdmissionWaitTimeout(opts))
 	defer cancel()
 
-	result := runner.MaybeAcquireWithResult(ctx, socket, pool, label, client, stderr)
+	result := runner.MaybeAcquire(ctx, socket, pool, label, client, stderr)
 	waitMillis := time.Since(startedAt).Milliseconds()
 
 	state := result.State

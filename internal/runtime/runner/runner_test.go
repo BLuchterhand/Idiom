@@ -562,46 +562,6 @@ func TestDefaultConfigPathHonorsEnvOverride(t *testing.T) {
 	}
 }
 
-func TestRunStopsOnContextCancel(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "idr-")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-
-	sock := filepath.Join(dir, "s")
-	srv := NewServer(DefaultConfig(), sock)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-
-	go func() {
-		done <- srv.Run(ctx)
-	}()
-
-	// Wait for the listener to bind.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(sock); err == nil {
-			break
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not return after cancel")
-	}
-}
-
 // TestSilentClientIsTimedOut: a client that connects but never sends
 // must not pin a server goroutine indefinitely. The server applies a
 // short read deadline before the first action; after it expires the

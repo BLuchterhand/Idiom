@@ -17,14 +17,21 @@ func TestAcquireReportsDisabledWhenNoPoolResolves(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	release := Acquire(config.Config{}, Options{
+	result := Acquire(config.Config{}, Options{
 		Command:        "plan_execute",
 		EventPrefix:    queuecontract.CommandEventPrefixPlanExecute,
 		TelemetryEvent: "plan_execute_queue",
 		Label:          "plan-execute:session",
 		JSONEvents:     true,
 	}, nil, &stdout, &stderr)
-	release()
+	result.Release()
+
+	if !result.Allowed {
+		t.Fatalf("disabled queue admission should allow dispatch: %#v", result)
+	}
+	if result.State != queuecontract.AdmissionStateDisabled {
+		t.Fatalf("state = %q, want disabled", result.State)
+	}
 
 	out := stdout.String()
 	if !strings.Contains(out, `"type":"`+queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueDisabled)+`"`) {
@@ -40,12 +47,12 @@ func TestAcquireReportsDisabledWhenNoPoolResolves(t *testing.T) {
 	}
 }
 
-func TestAcquireWithResultRequiredModeBlocksUnavailableQueue(t *testing.T) {
+func TestAcquireRequiredModeBlocksUnavailableQueue(t *testing.T) {
 	t.Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
 	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
 
 	var stdout, stderr bytes.Buffer
-	result := AcquireWithResult(config.Config{}, Options{
+	result := Acquire(config.Config{}, Options{
 		Command:     "plan_execute",
 		EventPrefix: queuecontract.CommandEventPrefixPlanExecute,
 		JSONEvents:  true,
@@ -64,13 +71,13 @@ func TestAcquireWithResultRequiredModeBlocksUnavailableQueue(t *testing.T) {
 	}
 }
 
-func TestAcquireWithResultRequiredModeBlocksNestedCrossPool(t *testing.T) {
+func TestAcquireRequiredModeBlocksNestedCrossPool(t *testing.T) {
 	t.Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
 	t.Setenv("IDIOM_QUEUE_HELD_POOLS", "qwen-35b")
 	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
 
 	var stdout, stderr bytes.Buffer
-	result := AcquireWithResult(config.Config{}, Options{
+	result := Acquire(config.Config{}, Options{
 		Command:     "plan_execute",
 		EventPrefix: queuecontract.CommandEventPrefixPlanExecute,
 		JSONEvents:  true,

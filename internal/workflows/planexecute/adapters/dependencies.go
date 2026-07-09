@@ -45,7 +45,7 @@ func AcquireQueueSlot(cfg config.Config, opts planexecute.QueueAcquireOptions, r
 
 	client := fmt.Sprintf("idiom-plan-execute/%d", os.Getpid())
 
-	result := queueadmission.AcquireWithResult(cfg, queueadmission.Options{
+	result := queueadmission.Acquire(cfg, queueadmission.Options{
 		Command:        "plan_execute",
 		EventPrefix:    queuecontract.CommandEventPrefixPlanExecute,
 		TelemetryEvent: "plan_execute_queue",

@@ -73,7 +73,7 @@ func acquireQueueSlotForTest(cfg config.Config, opts QueueAcquireOptions, rec *t
 		label = "plan-execute:" + strings.TrimSpace(opts.SessionID)
 	}
 
-	result := queueadmission.AcquireWithResult(cfg, queueadmission.Options{
+	result := queueadmission.Acquire(cfg, queueadmission.Options{
 		Command:        "plan_execute",
 		EventPrefix:    queuecontract.CommandEventPrefixPlanExecute,
 		TelemetryEvent: "plan_execute_queue",

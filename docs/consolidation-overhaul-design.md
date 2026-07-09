@@ -1632,6 +1632,25 @@ Reviewer-updated estimate:
   `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^(internal/evidence/productevidence|internal/evidence/sidecarvalidation)/'`
   as inventory, now showing no touched evidence-package findings;
   `git diff --check`.
+- Queue admission facade cleanup deleted the release-only
+  `queueadmission.Acquire` wrapper, promoted `AcquireWithResult` to the
+  canonical result-returning `queueadmission.Acquire`, deleted the release-only
+  `runner.MaybeAcquire` wrapper, promoted `MaybeAcquireWithResult` to the
+  canonical `runner.MaybeAcquire`, and removed the test-only `Server.Run`
+  lifecycle wrapper. `runner` remains the socket/lease authority,
+  `queueadmission` owns command admission policy, pool resolution, JSON and
+  telemetry events, required-mode dispatch decisions, and `queue run` remains
+  separate because it owns foreground child execution plus held-pool
+  propagation. Tests now assert queue admission state instead of inferring
+  success from a nil error or release-only API. Production Go changed
+  `+12 / -36`, net `-24`; test Go changed `+79 / -91`, net `-12`. With this
+  worktree included, the branch is production Go `+26,611 / -34,127`,
+  net `-7,516` versus `main`. Focused verification:
+  `go test ./internal/runtime/queueadmission ./internal/runtime/runner ./internal/surfaces/cli/implement ./internal/workflows/planexecute/adapters ./internal/workflows/planexecute -run 'Test(Acquire|MaybeAcquire|Queue|ImplementQueue|PlanExecuteQueue|Dependencies)' -count=1`;
+  `go test ./internal/runtime/queueadmission ./internal/runtime/runner ./internal/surfaces/cli/queue ./internal/surfaces/cli/implement ./internal/workflows/planexecute ./internal/workflows/planexecute/adapters -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/runtime/queueadmission ./internal/runtime/runner ./internal/surfaces/cli/queue ./internal/surfaces/cli/implement ./internal/workflows/planexecute ./internal/workflows/planexecute/adapters`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^(internal/runtime/(queueadmission|runner)|internal/surfaces/cli/(queue|implement)|internal/workflows/planexecute)'`
+  as inventory, now showing no touched queue-package findings; `git diff --check`.
 
 ## Review And Regression Protocol
 
