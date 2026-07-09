@@ -285,7 +285,7 @@ func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
 	events = append(events, ready)
 
 	for i := 0; i < 2; i++ {
-		events = append(events, mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+		events = append(events, mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 			ToolCallID:       "tool-search-" + string(rune('a'+i)),
 			ToolName:         "search_content",
 			Capability:       CapabilityLiteralSearch,

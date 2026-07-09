@@ -1678,6 +1678,29 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `git diff --check`.
+- Autonomy policy-event and obligation-ledger dead-surface cleanup deleted the
+  one-line `NewToolPolicyDecisionEvent` wrapper and the parallel
+  contract-snapshot obligation ledger path (`NormalizeContractObligationLedger`,
+  `obligationLedgerBuilder.ApplyObligation`, and
+  `normalizedObligationFromContract`). Runtime already emits policy events
+  through `NewPolicyEvent(EventToolPolicyDecision, ...)`, and live audit/replay
+  obligation ledgers are event-stream projections from
+  `NormalizeObligationLedger(events)`. Tests now call the live policy-event
+  constructor directly, and the static contract-ledger test was deleted instead
+  of preserving a second obligation source of truth. Architecture and test
+  reviewers both recommended deletion as dead/test-only API surface. Production
+  Go changed `+0 / -49`, net `-49`; test Go changed `+12 / -43`, net `-31`.
+  With this worktree included, the branch is production Go
+  `+26,611 / -34,496`, net `-7,885` versus `main`. Focused verification:
+  `go test ./internal/contracts/autonomy ./internal/capabilities/workspace -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/contracts/autonomy ./internal/capabilities/workspace ./internal/runtime/agent`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^(internal/contracts/autonomy|internal/capabilities/workspace)/'`
+  as inventory, now showing no findings for the touched packages. Full
+  verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

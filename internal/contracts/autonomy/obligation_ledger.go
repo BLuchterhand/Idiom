@@ -64,34 +64,12 @@ func NormalizeObligationLedger(events []Event) ObligationLedger {
 	return ledger.Report()
 }
 
-func NormalizeContractObligationLedger(contract AutonomyContract) ObligationLedger {
-	contract.Normalize()
-
-	ledger := newObligationLedgerBuilder()
-	for _, obligation := range contract.Obligations {
-		ledger.ApplyObligation(contract.ContractID, obligation)
-	}
-
-	return ledger.Report()
-}
-
 type obligationLedgerBuilder struct {
 	entries map[obligationLedgerKey]NormalizedObligation
 }
 
 func newObligationLedgerBuilder() *obligationLedgerBuilder {
 	return &obligationLedgerBuilder{entries: map[obligationLedgerKey]NormalizedObligation{}}
-}
-
-func (b *obligationLedgerBuilder) ApplyObligation(contractID string, obligation Obligation) {
-	obligation.normalize()
-	status := normalizeObligationStatus(obligation.Status)
-	if obligation.ObligationID == "" || obligation.Kind == "" || status == "" {
-		return
-	}
-
-	entry := normalizedObligationFromContract(contractID, obligation, status)
-	b.upsert(entry)
 }
 
 func (b *obligationLedgerBuilder) ApplyEvent(event Event) {
@@ -184,29 +162,6 @@ func carryForwardObligationFields(current NormalizedObligation, next NormalizedO
 	next.FinalAnswerRequirement = firstNonEmptyEventValue(next.FinalAnswerRequirement, current.FinalAnswerRequirement)
 
 	return next
-}
-
-func normalizedObligationFromContract(contractID string, obligation Obligation, status ObligationStatus) NormalizedObligation {
-	contractID = strings.TrimSpace(contractID)
-	entry := NormalizedObligation{
-		ContractID:             contractID,
-		ObligationID:           obligation.ObligationID,
-		Kind:                   obligation.Kind,
-		Status:                 status,
-		Owner:                  obligation.Owner,
-		TargetRef:              obligation.TargetRef,
-		RequiredBy:             obligation.RequiredBy,
-		SourceEvent:            obligation.SourceEvent,
-		EvidenceRef:            obligation.EvidenceRef,
-		Command:                obligation.Command,
-		Resolution:             "",
-		WaiverReason:           obligation.WaiverReason,
-		ApprovedBy:             "",
-		FinalAnswerRequirement: obligation.FinalAnswerRequirement,
-	}
-	entry.Identity = obligationLedgerIdentity(entry.ContractID, entry.Kind, entry.ObligationID)
-
-	return entry
 }
 
 func normalizedObligationFromEvent(event Event, obligation ContractObligationEvent, status ObligationStatus) NormalizedObligation {

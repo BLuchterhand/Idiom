@@ -538,10 +538,6 @@ func NewContractPresentedEvent(contract AutonomyContract, lifecycle ContractLife
 	})
 }
 
-func NewToolPolicyDecisionEvent(contract AutonomyContract, policy ContractPolicyEvent, occurredAt time.Time, sequence int64) (Event, error) {
-	return NewPolicyEvent(EventToolPolicyDecision, contract, policy, occurredAt, sequence)
-}
-
 func NewPolicyEvent(eventType EventType, contract AutonomyContract, policy ContractPolicyEvent, occurredAt time.Time, sequence int64) (Event, error) {
 	correlation := CorrelationFromContract(contract)
 	if policy.ToolCallID == "" {

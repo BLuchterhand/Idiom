@@ -142,7 +142,7 @@ func TestAuditEventsJoinsPolicyAndObligationCoverage(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 18, 30, 0, 0, time.UTC)
 	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
-	policy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+	policy := mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 		ToolCallID:        "tool-apply-1",
 		ToolName:          "apply_patch",
 		Capability:        CapabilityApplyPatch,
@@ -196,7 +196,7 @@ func TestAuditEventsGroupsByContractInvariantLanePhaseAdapterAndTerminal(t *test
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 18, 35, 0, 0, time.UTC)
 	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
-	policy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+	policy := mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 		ToolCallID:  "tool-apply-1",
 		ToolName:    "apply_patch",
 		Capability:  CapabilityApplyPatch,
@@ -1048,7 +1048,7 @@ func TestAuditEventsFlagsTurnPhaseContradictoryToolAction(t *testing.T) {
 			EnforcementMode: "observe_only",
 		},
 	}, occurredAt.Add(time.Second), 2))
-	readPolicy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+	readPolicy := mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 		ToolName:    "read_file",
 		ActionClass: ActionClassRead,
 		Capability:  CapabilityBoundedRead,
@@ -1367,7 +1367,7 @@ func TestAuditEventsFlagsToolWhenNoManifestToolsAreAllowed(t *testing.T) {
 			EnforcementMode: "observe_only",
 		},
 	}, occurredAt.Add(time.Second), 2))
-	policy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+	policy := mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 		ToolName:    "read_file",
 		ActionClass: ActionClassRead,
 		Capability:  CapabilityBoundedRead,
@@ -1782,7 +1782,7 @@ func TestAuditEventsAllClearCoverageCarriesClassificationAndProductSignals(t *te
 	occurredAt := time.Date(2026, 5, 13, 20, 30, 0, 0, time.UTC)
 	events := []Event{
 		mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1)),
-		mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+		mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 			ToolCallID: "tool-test-1",
 			ToolName:   "shell",
 			Capability: CapabilityShellVerification,

@@ -2540,7 +2540,7 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 	occurredAt := time.Date(2026, 5, 13, 21, 0, 0, 0, time.UTC)
 	events := []autonomy.Event{
 		mustWorkspaceAutonomyEvent(autonomy.NewContractCompiledEvent(contract, occurredAt, 1)),
-		mustWorkspaceAutonomyEvent(autonomy.NewToolPolicyDecisionEvent(contract, autonomy.ContractPolicyEvent{
+		mustWorkspaceAutonomyEvent(autonomy.NewPolicyEvent(autonomy.EventToolPolicyDecision, contract, autonomy.ContractPolicyEvent{
 			ToolCallID: "tool-contract-coverage",
 			ToolName:   "context_pack",
 			Capability: autonomy.CapabilitySemanticDiscovery,

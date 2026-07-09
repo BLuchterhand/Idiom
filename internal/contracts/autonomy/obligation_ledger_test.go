@@ -6,37 +6,6 @@ import (
 	"time"
 )
 
-func TestNormalizeContractObligationLedgerStableIdentityAndStatus(t *testing.T) {
-	contract := AutonomyContract{
-		ContractID: "contract-ledger",
-		Obligations: []Obligation{
-			{
-				ObligationID: " obl-verify ",
-				Kind:         ObligationVerify,
-				Status:       ObligationStatus(" RESOLVED "),
-				Owner:        OwnerHost,
-				RequiredBy:   " post_write_verification ",
-				EvidenceRef:  " verification-event ",
-			},
-		},
-	}
-
-	ledger := NormalizeContractObligationLedger(contract)
-
-	if ledger.Total != 1 || len(ledger.Resolved) != 1 || len(ledger.Open) != 0 || len(ledger.Waived) != 0 {
-		t.Fatalf("expected one resolved obligation, got %#v", ledger)
-	}
-
-	entry := ledger.Resolved[0]
-	if entry.Identity != "contract-ledger/verify/obl-verify" {
-		t.Fatalf("expected stable contract/kind/id identity, got %q", entry.Identity)
-	}
-
-	if entry.Status != ObligationResolved || entry.RequiredBy != "post_write_verification" || entry.EvidenceRef != "verification-event" {
-		t.Fatalf("expected normalized status and fields, got %#v", entry)
-	}
-}
-
 func TestReplayEventsCarriesOpenClosedObligationLedgerFromStructuredEvents(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	start := time.Date(2026, 6, 18, 14, 0, 0, 0, time.UTC)

@@ -198,11 +198,11 @@ func TestMemoryEventSinkPreservesOrderingAndCopiesEvents(t *testing.T) {
 	}
 }
 
-func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T) {
+func TestPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T) {
 	contract := newEventTestReadOnlySidecarContract(t)
 	occurredAt := time.Date(2026, 5, 13, 15, 0, 0, 0, time.UTC)
 
-	event, err := NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+	event, err := NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 		ToolCallID:        "tool-001",
 		ToolName:          "context_pack",
 		ActionClass:       ActionClass("broad_inspection"),
@@ -224,7 +224,7 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 		},
 	}, occurredAt, 1)
 	if err != nil {
-		t.Fatalf("NewToolPolicyDecisionEvent returned error: %v", err)
+		t.Fatalf("NewPolicyEvent returned error: %v", err)
 	}
 
 	if event.Correlation.SidecarRequestID != "req-001" || event.Correlation.ToolCallID != "tool-001" {
@@ -251,7 +251,7 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 		}
 	}
 
-	_, err = NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+	_, err = NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 		ToolCallID: "tool-other",
 		ToolName:   "context_pack",
 		Decision:   PolicyObserve,
@@ -260,7 +260,7 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 		t.Fatalf("expected correlation mismatch validation error, got %v", err)
 	}
 
-	_, err = NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+	_, err = NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
 		ToolCallID:      "tool-001",
 		ToolName:        "context_pack",
 		ActionClass:     ActionClass("invented_action"),
