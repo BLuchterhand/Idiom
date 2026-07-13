@@ -4,171 +4,112 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-// TestRunSkillsListIncludesOrchestratorWorkflow verifies the
-// canonical orchestrator-workflow skill (deferred from Phase 3)
-// ships in the embedded set and is discoverable via `idiom skills
-// list`. If the skill isn't listed, install will also fail.
-func TestRunSkillsListIncludesOrchestratorWorkflow(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	if code := RunMain([]string{"list"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("skills list must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
-
-	if !strings.Contains(stdout.String(), "orchestrator-workflow") {
-		t.Fatalf("skills list should include orchestrator-workflow: %s", stdout.String())
-	}
-}
-
-// TestRunSkillsInstallCopiesSkillToProjectRoot is the canonical
-// happy path: installing a known skill writes the embedded SKILL.md
-// to <project-root>/<target>/<name>/SKILL.md and exits 0.
-func TestRunSkillsInstallCopiesSkillToProjectRoot(t *testing.T) {
-	root := t.TempDir()
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"install", "--project-root", root, "orchestrator-workflow"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("install must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
-
-	dest := filepath.Join(root, ".claude", "skills", "orchestrator-workflow", "SKILL.md")
-
-	body, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatalf("read installed SKILL.md: %v", err)
-	}
-
-	if len(bytes.TrimSpace(body)) == 0 {
-		t.Fatalf("installed SKILL.md is empty — embed produced nothing")
-	}
-
-	if !bytes.Contains(body, []byte("Orchestrator Workflow")) {
-		t.Fatalf("installed SKILL.md missing canonical content header: %s", body[:min(200, len(body))])
-	}
-}
-
-// TestRunSkillsInstallRespectsCustomTarget covers the orchestrator-
-// agnostic seam: --target swaps .claude/skills for whatever
-// convention the project uses (e.g. .codex/skills). The canonical
-// content is unchanged; only the destination shifts.
-func TestRunSkillsInstallRespectsCustomTarget(t *testing.T) {
-	root := t.TempDir()
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"install", "--project-root", root, "--target", ".codex/skills", "orchestrator-workflow"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("install with --target must exit 0; got %d", code)
-	}
-
-	if _, err := os.Stat(filepath.Join(root, ".codex", "skills", "orchestrator-workflow", "SKILL.md")); err != nil {
-		t.Fatalf("custom target should land file at .codex/skills/...: %v", err)
-	}
-}
-
-// TestRunSkillsInstallRefusesOverwriteWithoutForce verifies the
-// safety net: a pre-existing SKILL.md is exit 2 with a "use
-// --force" hint. The canonical version is starting-point content
-// that operators customize; silent overwrites would lose that work.
-func TestRunSkillsInstallRefusesOverwriteWithoutForce(t *testing.T) {
-	root := t.TempDir()
-	skillDir := filepath.Join(root, ".claude", "skills", "orchestrator-workflow")
-
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	sentinel := []byte("CUSTOMIZED-BY-OPERATOR")
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), sentinel, 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"install", "--project-root", root, "orchestrator-workflow"}, &stdout, &stderr)
-
-	if code != 2 {
-		t.Fatalf("existing SKILL.md without --force must exit 2; got %d", code)
-	}
-
-	if !strings.Contains(stderr.String(), "--force") {
-		t.Fatalf("stderr should suggest --force: %s", stderr.String())
-	}
-
-	preserved, _ := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
-	if !bytes.Equal(preserved, sentinel) {
-		t.Fatalf("file should be untouched on refusal; got %q", preserved)
-	}
-}
-
-// TestRunSkillsInstallForceOverwrites verifies --force does what it
-// says: overwrites the existing file with the canonical body.
-func TestRunSkillsInstallForceOverwrites(t *testing.T) {
-	root := t.TempDir()
-	skillDir := filepath.Join(root, ".claude", "skills", "orchestrator-workflow")
-
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("OLD"), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"install", "--project-root", root, "--force", "orchestrator-workflow"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("--force install must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
-
-	body, _ := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
-	if bytes.Equal(body, []byte("OLD")) {
-		t.Fatalf("--force should overwrite; file still has old content")
-	}
-}
-
-// TestRunSkillsInstallRejectsUnknownSkill verifies a clear error
-// when the requested skill isn't in the embedded set. Exit 1 (not
-// found) distinguishes from exit 2 (flag/usage).
-func TestRunSkillsInstallRejectsUnknownSkill(t *testing.T) {
-	root := t.TempDir()
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"install", "--project-root", root, "no-such-skill"}, &stdout, &stderr)
-
-	if code != 1 {
-		t.Fatalf("unknown skill must exit 1; got %d", code)
-	}
-
-	if !strings.Contains(stderr.String(), "unknown skill") {
-		t.Fatalf("stderr should explain: %s", stderr.String())
-	}
-}
-
-// TestRunSkillsInstallRejectsPathTraversalName guards the security
-// surface: a skill name with path separators or `..` could escape
-// the install dir. Reject before any filesystem read.
-func TestRunSkillsInstallRejectsPathTraversalName(t *testing.T) {
-	root := t.TempDir()
-
-	for _, bad := range []string{"../../etc/passwd", "a/b", "..", "x\x00y"} {
+var _ = ginkgo.Describe("idiom skills", func() {
+	ginkgo.It("lists the embedded orchestrator workflow", func() {
 		var stdout, stderr bytes.Buffer
 
-		code := RunMain([]string{"install", "--project-root", root, bad}, &stdout, &stderr)
+		gomega.Expect(RunMain([]string{"list"}, &stdout, &stderr)).To(gomega.Equal(0), stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("orchestrator-workflow"))
+	})
 
-		if code != 2 {
-			t.Errorf("bad name %q must exit 2; got %d", bad, code)
-		}
-	}
-}
+	ginkgo.It("installs a known skill into the default project target", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var stdout, stderr bytes.Buffer
+
+		gomega.Expect(RunMain(
+			[]string{"install", "--project-root", root, "orchestrator-workflow"},
+			&stdout,
+			&stderr,
+		)).To(gomega.Equal(0), stderr.String())
+		body, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "orchestrator-workflow", "SKILL.md"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(bytes.TrimSpace(body)).NotTo(gomega.BeEmpty())
+		gomega.Expect(body).To(gomega.ContainSubstring("Orchestrator Workflow"))
+	})
+
+	ginkgo.It("installs into a custom target", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var stdout, stderr bytes.Buffer
+
+		gomega.Expect(RunMain([]string{
+			"install",
+			"--project-root", root,
+			"--target", ".codex/skills",
+			"orchestrator-workflow",
+		}, &stdout, &stderr)).To(gomega.Equal(0))
+		_, err := os.Stat(filepath.Join(root, ".codex", "skills", "orchestrator-workflow", "SKILL.md"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("refuses to overwrite a customized skill without force", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		skillDir := filepath.Join(root, ".claude", "skills", "orchestrator-workflow")
+		gomega.Expect(os.MkdirAll(skillDir, 0o755)).To(gomega.Succeed())
+		sentinel := []byte("CUSTOMIZED-BY-OPERATOR")
+		path := filepath.Join(skillDir, "SKILL.md")
+		gomega.Expect(os.WriteFile(path, sentinel, 0o644)).To(gomega.Succeed())
+		var stdout, stderr bytes.Buffer
+
+		gomega.Expect(RunMain(
+			[]string{"install", "--project-root", root, "orchestrator-workflow"},
+			&stdout,
+			&stderr,
+		)).To(gomega.Equal(2))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("--force"))
+		preserved, err := os.ReadFile(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(preserved).To(gomega.Equal(sentinel))
+	})
+
+	ginkgo.It("overwrites an existing skill when forced", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		skillDir := filepath.Join(root, ".claude", "skills", "orchestrator-workflow")
+		gomega.Expect(os.MkdirAll(skillDir, 0o755)).To(gomega.Succeed())
+		path := filepath.Join(skillDir, "SKILL.md")
+		gomega.Expect(os.WriteFile(path, []byte("OLD"), 0o644)).To(gomega.Succeed())
+		var stdout, stderr bytes.Buffer
+
+		gomega.Expect(RunMain([]string{
+			"install",
+			"--project-root", root,
+			"--force",
+			"orchestrator-workflow",
+		}, &stdout, &stderr)).To(gomega.Equal(0), stderr.String())
+		body, err := os.ReadFile(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(body).NotTo(gomega.Equal([]byte("OLD")))
+	})
+
+	ginkgo.It("rejects an unknown embedded skill", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var stdout, stderr bytes.Buffer
+
+		gomega.Expect(RunMain(
+			[]string{"install", "--project-root", root, "no-such-skill"},
+			&stdout,
+			&stderr,
+		)).To(gomega.Equal(1))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("unknown skill"))
+	})
+
+	ginkgo.DescribeTable("rejects unsafe skill names",
+		func(name string) {
+			root := ginkgo.GinkgoT().TempDir()
+			var stdout, stderr bytes.Buffer
+			gomega.Expect(RunMain(
+				[]string{"install", "--project-root", root, name},
+				&stdout,
+				&stderr,
+			)).To(gomega.Equal(2))
+		},
+		ginkgo.Entry("parent traversal", "../../etc/passwd"),
+		ginkgo.Entry("path separator", "a/b"),
+		ginkgo.Entry("parent directory", ".."),
+		ginkgo.Entry("NUL byte", "x\x00y"),
+	)
+})

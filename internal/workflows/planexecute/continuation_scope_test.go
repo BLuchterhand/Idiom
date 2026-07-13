@@ -9,9 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"testing"
 	"time"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
@@ -19,9 +20,9 @@ import (
 	"idiom/internal/repository/planartifactstore"
 )
 
-func TestLoadApprovedContinuationScopeUsesProgressPlanAndApprovedNewFileProjection(t *testing.T) {
-	root := t.TempDir()
-	planPath := writeContinuationScopePlanArtifact(t, root, planartifact.PlanArtifactApproval{
+var _ = ginkgo.It("load approved continuation scope uses progress plan and approved new file projection", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	planPath := writeContinuationScopePlanArtifact(root, planartifact.PlanArtifactApproval{
 		Required:            true,
 		Status:              planartifact.ApprovalStatusApproved,
 		Mode:                planartifact.ApprovalModePlanThenExecute,
@@ -31,88 +32,67 @@ func TestLoadApprovedContinuationScopeUsesProgressPlanAndApprovedNewFileProjecti
 		ApprovedPaths:       []string{"docs/new-note.md"},
 		ExecutionPermission: planartifact.ExecutionPermissionExecuteApprovedScope,
 	})
-	writeContinuationScopeProgressState(t, root, planPath)
+	writeContinuationScopeProgressState(root, planPath)
 
 	scope, ok, err := LoadApprovedContinuationScope(root, ContinuationScopeRequest{
 		Prompt: "original prompt",
 	}, Dependencies{LoadPlanArtifact: workspace.LoadPlanArtifact})
-	if err != nil || !ok {
-		t.Fatalf("LoadApprovedContinuationScope ok=%t err=%v", ok, err)
-	}
-	if filepath.Base(scope.PlanPath) == "last.plan.json" {
-		t.Fatalf("scope must use stamped progress plan path, got %q", scope.PlanPath)
-	}
-	if !slices.Equal(scope.RequiredEditPaths, []string{"docs/new-note.md"}) {
-		t.Fatalf("required edit paths = %#v, want docs/new-note.md", scope.RequiredEditPaths)
-	}
-	if !slices.Equal(scope.AuthorizedNewFiles, []string{"docs/new-note.md"}) {
-		t.Fatalf("authorized new files = %#v, want docs/new-note.md", scope.AuthorizedNewFiles)
-	}
-}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("LoadApprovedContinuationScope ok=%t err=%v", ok, err))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("LoadApprovedContinuationScope ok=%t err=%v", ok, err))
+	gomega.Expect(filepath.Base(scope.PlanPath) == "last.plan.json").To(gomega.BeFalse(), fmt.Sprintf("scope must use stamped progress plan path, got %q", scope.PlanPath))
+	gomega.Expect(slices.Equal(scope.RequiredEditPaths, []string{"docs/new-note.md"})).To(gomega.BeTrue(), fmt.Sprintf("required edit paths = %#v, want docs/new-note.md", scope.RequiredEditPaths))
+	gomega.Expect(slices.Equal(scope.AuthorizedNewFiles, []string{"docs/new-note.md"})).To(gomega.BeTrue(), fmt.Sprintf("authorized new files = %#v, want docs/new-note.md", scope.AuthorizedNewFiles))
+})
 
-func TestLoadApprovedContinuationScopeDoesNotAuthorizeImplicitNewFile(t *testing.T) {
-	root := t.TempDir()
-	planPath := writeContinuationScopePlanArtifact(t, root, planartifact.PlanArtifactApproval{
+var _ = ginkgo.It("load approved continuation scope does not authorize implicit new file", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	planPath := writeContinuationScopePlanArtifact(root, planartifact.PlanArtifactApproval{
 		Required:            false,
 		Status:              planartifact.ApprovalStatusImplicit,
 		Mode:                planartifact.ApprovalModePlanThenExecute,
 		ExpirationPolicy:    planartifact.ApprovalExpirationWorkspaceDigest,
 		ExecutionPermission: planartifact.ExecutionPermissionExecuteAll,
 	})
-	writeContinuationScopeProgressState(t, root, planPath)
+	writeContinuationScopeProgressState(root, planPath)
 
 	scope, ok, err := LoadApprovedContinuationScope(root, ContinuationScopeRequest{
 		Prompt: "original prompt",
 	}, Dependencies{LoadPlanArtifact: workspace.LoadPlanArtifact})
-	if err != nil || !ok {
-		t.Fatalf("LoadApprovedContinuationScope ok=%t err=%v", ok, err)
-	}
-	if !slices.Equal(scope.RequiredEditPaths, []string{"docs/new-note.md"}) {
-		t.Fatalf("required edit paths = %#v, want docs/new-note.md", scope.RequiredEditPaths)
-	}
-	if len(scope.AuthorizedNewFiles) != 0 {
-		t.Fatalf("implicit approval must not grant new-file authority: %#v", scope.AuthorizedNewFiles)
-	}
-}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("LoadApprovedContinuationScope ok=%t err=%v", ok, err))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("LoadApprovedContinuationScope ok=%t err=%v", ok, err))
+	gomega.Expect(slices.Equal(scope.RequiredEditPaths, []string{"docs/new-note.md"})).To(gomega.BeTrue(), fmt.Sprintf("required edit paths = %#v, want docs/new-note.md", scope.RequiredEditPaths))
+	gomega.Expect(len(scope.AuthorizedNewFiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("implicit approval must not grant new-file authority: %#v", scope.AuthorizedNewFiles))
+})
 
-func TestMissingNewFileAuthorizationPathsUsesPlanPreflightProjection(t *testing.T) {
-	root := t.TempDir()
-	planPath := writeContinuationScopePlanArtifact(t, root, planartifact.PlanArtifactApproval{
+var _ = ginkgo.It("missing new file authorization paths uses plan preflight projection", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	planPath := writeContinuationScopePlanArtifact(root, planartifact.PlanArtifactApproval{
 		Required:            false,
 		Status:              planartifact.ApprovalStatusImplicit,
 		Mode:                planartifact.ApprovalModePlanThenExecute,
 		ExpirationPolicy:    planartifact.ApprovalExpirationWorkspaceDigest,
 		ExecutionPermission: planartifact.ExecutionPermissionExecuteAll,
 	})
-	writeContinuationScopeProgressState(t, root, planPath)
+	writeContinuationScopeProgressState(root, planPath)
 
 	state, _, found, err := TryLoadProgressState(root, "continuation-scope-test-session")
-	if err != nil || !found {
-		t.Fatalf("load progress state: found=%t err=%v", found, err)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("load progress state: found=%t err=%v", found, err))
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("load progress state: found=%t err=%v", found, err))
 
 	cfg := config.Default()
 	cfg.Workspace.Root = root
 
 	missing, err := MissingNewFileAuthorizationPaths(cfg, state, nil, Dependencies{LoadPlanArtifact: workspace.LoadPlanArtifact})
-	if err != nil {
-		t.Fatalf("MissingNewFileAuthorizationPaths: %v", err)
-	}
-	if !slices.Equal(missing, []string{"docs/new-note.md"}) {
-		t.Fatalf("missing new-file auth paths = %#v, want docs/new-note.md", missing)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("MissingNewFileAuthorizationPaths: %v", err))
+	gomega.Expect(slices.Equal(missing, []string{"docs/new-note.md"})).To(gomega.BeTrue(), fmt.Sprintf("missing new-file auth paths = %#v, want docs/new-note.md", missing))
 
 	authorized, err := MissingNewFileAuthorizationPaths(cfg, state, []string{"docs/new-note.md"}, Dependencies{LoadPlanArtifact: workspace.LoadPlanArtifact})
-	if err != nil {
-		t.Fatalf("MissingNewFileAuthorizationPaths authorized: %v", err)
-	}
-	if len(authorized) != 0 {
-		t.Fatalf("explicit authorized new file should clear missing paths: %#v", authorized)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("MissingNewFileAuthorizationPaths authorized: %v", err))
+	gomega.Expect(len(authorized) != 0).To(gomega.BeFalse(), fmt.Sprintf("explicit authorized new file should clear missing paths: %#v", authorized))
+})
 
-func TestLoadApprovedContinuationScopeRequiresContextForImplicitLatest(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("load approved continuation scope requires context for implicit latest", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	approval := planartifact.PlanArtifactApproval{
 		Required:            true,
 		Status:              planartifact.ApprovalStatusApproved,
@@ -123,51 +103,44 @@ func TestLoadApprovedContinuationScopeRequiresContextForImplicitLatest(t *testin
 		ApprovedPaths:       []string{"docs/current-note.md"},
 		ExecutionPermission: planartifact.ExecutionPermissionExecuteApprovedScope,
 	}
-	currentPlanPath := writeContinuationScopePlanArtifactForPath(t, root, "20260628-180000000.plan.json", "current-note", "docs/current-note.md", approval)
-	currentStatePath := writeContinuationScopeProgressStateForSession(t, root, "current-session", "approve current task", currentPlanPath, time.Date(2026, 6, 28, 18, 0, 0, 0, time.UTC))
+	currentPlanPath := writeContinuationScopePlanArtifactForPath(root, "20260628-180000000.plan.json", "current-note", "docs/current-note.md", approval)
+	currentStatePath := writeContinuationScopeProgressStateForSession(root, "current-session", "approve current task", currentPlanPath, time.Date(2026, 6, 28, 18, 0, 0, 0, time.UTC))
 
 	staleApproval := approval
 	staleApproval.ApprovedPaths = []string{"docs/stale-note.md"}
-	stalePlanPath := writeContinuationScopePlanArtifactForPath(t, root, "20260628-181000000.plan.json", "stale-note", "docs/stale-note.md", staleApproval)
-	staleStatePath := writeContinuationScopeProgressStateForSession(t, root, "stale-session", "approve unrelated stale task", stalePlanPath, time.Date(2026, 6, 28, 18, 10, 0, 0, time.UTC))
+	stalePlanPath := writeContinuationScopePlanArtifactForPath(root, "20260628-181000000.plan.json", "stale-note", "docs/stale-note.md", staleApproval)
+	staleStatePath := writeContinuationScopeProgressStateForSession(root, "stale-session", "approve unrelated stale task", stalePlanPath, time.Date(2026, 6, 28, 18, 10, 0, 0, time.UTC))
 
 	legacyApproval := approval
 	legacyApproval.ApprovedPaths = []string{"docs/legacy-note.md"}
-	legacyPlanPath := writeContinuationScopePlanArtifactForPath(t, root, "20260628-182000000.plan.json", "legacy-note", "docs/legacy-note.md", legacyApproval)
-	writeContinuationScopeProgressStateForSessionWithoutPromptHash(t, root, "legacy-session", "approve unrelated legacy task", legacyPlanPath, time.Date(2026, 6, 28, 18, 20, 0, 0, time.UTC))
+	legacyPlanPath := writeContinuationScopePlanArtifactForPath(root, "20260628-182000000.plan.json", "legacy-note", "docs/legacy-note.md", legacyApproval)
+	writeContinuationScopeProgressStateForSessionWithoutPromptHash(root, "legacy-session", "approve unrelated legacy task", legacyPlanPath, time.Date(2026, 6, 28, 18, 20, 0, 0, time.UTC))
 
 	scope, ok, err := LoadApprovedContinuationScope(root, ContinuationScopeRequest{
 		Prompt: "approve current task",
 	}, Dependencies{LoadPlanArtifact: workspace.LoadPlanArtifact})
-	if err != nil || !ok {
-		t.Fatalf("LoadApprovedContinuationScope matched prompt ok=%t err=%v", ok, err)
-	}
-	if scope.SessionID != "current-session" {
-		t.Fatalf("selected session = %q, want current-session; stale state path was %s", scope.SessionID, staleStatePath)
-	}
-	if scope.StatePath != currentStatePath {
-		t.Fatalf("state path = %q, want %q", scope.StatePath, currentStatePath)
-	}
-	if !slices.Equal(scope.RequiredEditPaths, []string{"docs/current-note.md"}) {
-		t.Fatalf("required edit paths = %#v, want docs/current-note.md", scope.RequiredEditPaths)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("LoadApprovedContinuationScope matched prompt ok=%t err=%v", ok, err))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("LoadApprovedContinuationScope matched prompt ok=%t err=%v", ok, err))
+	gomega.Expect(scope.SessionID != "current-session").To(gomega.BeFalse(), fmt.Sprintf("selected session = %q, want current-session; stale state path was %s", scope.SessionID, staleStatePath))
+	gomega.Expect(scope.StatePath != currentStatePath).To(gomega.BeFalse(), fmt.Sprintf("state path = %q, want %q", scope.StatePath, currentStatePath))
+	gomega.Expect(slices.Equal(scope.RequiredEditPaths, []string{"docs/current-note.md"})).To(gomega.BeTrue(), fmt.Sprintf("required edit paths = %#v, want docs/current-note.md", scope.RequiredEditPaths))
 
 	if scope, ok, err := LoadApprovedContinuationScope(root, ContinuationScopeRequest{}, Dependencies{LoadPlanArtifact: workspace.LoadPlanArtifact}); err != nil || ok {
-		t.Fatalf("context-free implicit lookup must not select latest stale continuation: ok=%t err=%v scope=%#v", ok, err, scope)
+		ginkgo.Fail(fmt.Sprintf("context-free implicit lookup must not select latest stale continuation: ok=%t err=%v scope=%#v", ok, err, scope))
 	}
-}
+})
 
-func TestRunExecutorContinuationExecutesStampedPlanWithoutPromptRunner(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("run executor continuation executes stamped plan without prompt runner", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	assetPath := filepath.Join(root, ".idiom", "plans", "assets", "continuation-body.txt")
 	if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
-		t.Fatalf("mkdir asset dir: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir asset dir: %v", err))
 	}
 	if err := os.WriteFile(assetPath, []byte("hydrated planned note\n"), 0o644); err != nil {
-		t.Fatalf("write body ref asset: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write body ref asset: %v", err))
 	}
 
-	planPath := writeContinuationScopePlanArtifactWithEdits(t, root, []planartifact.PlanEdit{{
+	planPath := writeContinuationScopePlanArtifactWithEdits(root, []planartifact.PlanEdit{{
 		Path:       "docs/new-note.md",
 		NewTextRef: "assets/continuation-body.txt",
 		ReplaceAll: true,
@@ -182,7 +155,7 @@ func TestRunExecutorContinuationExecutesStampedPlanWithoutPromptRunner(t *testin
 		ApprovedPaths:       []string{"docs/new-note.md"},
 		ExecutionPermission: planartifact.ExecutionPermissionExecuteApprovedScope,
 	})
-	writeContinuationScopeProgressState(t, root, planPath)
+	writeContinuationScopeProgressState(root, planPath)
 
 	cfg := config.Default()
 	cfg.Workspace.Root = root
@@ -199,30 +172,21 @@ func TestRunExecutorContinuationExecutesStampedPlanWithoutPromptRunner(t *testin
 		Resume:           "continuation-scope-test-session",
 		SkipReviewRepair: true,
 	}, func(config.Config, string, RunOptions, io.Writer) (string, error) {
-		t.Fatal("continuation execution must not call the planner prompt runner")
+		ginkgo.Fail(fmt.Sprint("continuation execution must not call the planner prompt runner"))
 		return "", fmt.Errorf("unexpected prompt runner call")
 	}, nil, &stdout, &stderr, deps)
-
-	if result.ExitCode != 0 {
-		t.Fatalf("RunExecutorContinuationWithDependencies exit=%d result=%#v stdout=%s stderr=%s", result.ExitCode, result, stdout.String(), stderr.String())
-	}
+	gomega.Expect(result.ExitCode != 0).To(gomega.BeFalse(), fmt.Sprintf("RunExecutorContinuationWithDependencies exit=%d result=%#v stdout=%s stderr=%s", result.ExitCode, result, stdout.String(), stderr.String()))
 
 	got, err := os.ReadFile(filepath.Join(root, "docs", "new-note.md"))
-	if err != nil {
-		t.Fatalf("read created note: %v", err)
-	}
-	if string(got) != "hydrated planned note\n" {
-		t.Fatalf("created note = %q, want hydrated body ref content", string(got))
-	}
-	if result.SessionID != "continuation-scope-test-session" {
-		t.Fatalf("session id = %q, want recovered continuation session", result.SessionID)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read created note: %v", err))
+	gomega.Expect(string(got) != "hydrated planned note\n").To(gomega.BeFalse(), fmt.Sprintf("created note = %q, want hydrated body ref content", string(got)))
+	gomega.Expect(result.SessionID != "continuation-scope-test-session").To(gomega.BeFalse(), fmt.Sprintf("session id = %q, want recovered continuation session", result.SessionID))
+})
 
-func writeContinuationScopePlanArtifact(t *testing.T, root string, approval planartifact.PlanArtifactApproval) string {
-	t.Helper()
+func writeContinuationScopePlanArtifact(root string, approval planartifact.PlanArtifactApproval) string {
+	ginkgo.GinkgoHelper()
 
-	return writeContinuationScopePlanArtifactWithEdits(t, root, []planartifact.PlanEdit{{
+	return writeContinuationScopePlanArtifactWithEdits(root, []planartifact.PlanEdit{{
 		Path:       "docs/new-note.md",
 		NewText:    "new note\n",
 		ReplaceAll: true,
@@ -230,15 +194,16 @@ func writeContinuationScopePlanArtifact(t *testing.T, root string, approval plan
 	}}, approval)
 }
 
-func writeContinuationScopePlanArtifactWithEdits(t *testing.T, root string, edits []planartifact.PlanEdit, approval planartifact.PlanArtifactApproval) string {
-	t.Helper()
-	return writeContinuationScopePlanArtifactWithOptions(t, root, "20260628-180000000.plan.json", "continuation-scope-test", "plan_continuation_scope_test", edits, approval)
+func writeContinuationScopePlanArtifactWithEdits(root string, edits []planartifact.PlanEdit, approval planartifact.PlanArtifactApproval) string {
+	ginkgo.GinkgoHelper()
+
+	return writeContinuationScopePlanArtifactWithOptions(root, "20260628-180000000.plan.json", "continuation-scope-test", "plan_continuation_scope_test", edits, approval)
 }
 
-func writeContinuationScopePlanArtifactForPath(t *testing.T, root string, stamp string, id string, editPath string, approval planartifact.PlanArtifactApproval) string {
-	t.Helper()
+func writeContinuationScopePlanArtifactForPath(root string, stamp string, id string, editPath string, approval planartifact.PlanArtifactApproval) string {
+	ginkgo.GinkgoHelper()
 
-	return writeContinuationScopePlanArtifactWithOptions(t, root, stamp, id, "plan_"+id, []planartifact.PlanEdit{{
+	return writeContinuationScopePlanArtifactWithOptions(root, stamp, id, "plan_"+id, []planartifact.PlanEdit{{
 		Path:       editPath,
 		NewText:    "new note\n",
 		ReplaceAll: true,
@@ -246,8 +211,8 @@ func writeContinuationScopePlanArtifactForPath(t *testing.T, root string, stamp 
 	}}, approval)
 }
 
-func writeContinuationScopePlanArtifactWithOptions(t *testing.T, root string, stamp string, sessionID string, planID string, edits []planartifact.PlanEdit, approval planartifact.PlanArtifactApproval) string {
-	t.Helper()
+func writeContinuationScopePlanArtifactWithOptions(root string, stamp string, sessionID string, planID string, edits []planartifact.PlanEdit, approval planartifact.PlanArtifactApproval) string {
+	ginkgo.GinkgoHelper()
 
 	var paths []string
 	for _, edit := range edits {
@@ -301,46 +266,44 @@ func writeContinuationScopePlanArtifactWithOptions(t *testing.T, root string, st
 	})
 
 	body, err := json.MarshalIndent(artifact, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal plan artifact: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal plan artifact: %v", err))
 
 	planPath, _, err := planartifactstore.StoreFilePath(root, stamp)
-	if err != nil {
-		t.Fatalf("resolve plan artifact path: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("resolve plan artifact path: %v", err))
+
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
-		t.Fatalf("mkdir plan artifact dir: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir plan artifact dir: %v", err))
 	}
 	if err := os.WriteFile(planPath, append(body, '\n'), 0o644); err != nil {
-		t.Fatalf("write plan artifact: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write plan artifact: %v", err))
 	}
 
 	return planPath
 }
 
-func writeContinuationScopeProgressState(t *testing.T, root string, planPath string) {
-	t.Helper()
-	writeContinuationScopeProgressStateForSession(t, root, "continuation-scope-test-session", "original prompt", planPath, time.Date(2026, 6, 28, 18, 0, 0, 0, time.UTC))
+func writeContinuationScopeProgressState(root string, planPath string) {
+	ginkgo.GinkgoHelper()
+
+	writeContinuationScopeProgressStateForSession(root, "continuation-scope-test-session", "original prompt", planPath, time.Date(2026, 6, 28, 18, 0, 0, 0, time.UTC))
 }
 
-func writeContinuationScopeProgressStateForSession(t *testing.T, root string, sessionID string, prompt string, planPath string, now time.Time) string {
-	t.Helper()
-	return writeContinuationScopeProgressStateForSessionWithPromptHash(t, root, sessionID, prompt, planPath, now, true)
+func writeContinuationScopeProgressStateForSession(root string, sessionID string, prompt string, planPath string, now time.Time) string {
+	ginkgo.GinkgoHelper()
+
+	return writeContinuationScopeProgressStateForSessionWithPromptHash(root, sessionID, prompt, planPath, now, true)
 }
 
-func writeContinuationScopeProgressStateForSessionWithoutPromptHash(t *testing.T, root string, sessionID string, prompt string, planPath string, now time.Time) string {
-	t.Helper()
-	return writeContinuationScopeProgressStateForSessionWithPromptHash(t, root, sessionID, prompt, planPath, now, false)
+func writeContinuationScopeProgressStateForSessionWithoutPromptHash(root string, sessionID string, prompt string, planPath string, now time.Time) string {
+	ginkgo.GinkgoHelper()
+
+	return writeContinuationScopeProgressStateForSessionWithPromptHash(root, sessionID, prompt, planPath, now, false)
 }
 
-func writeContinuationScopeProgressStateForSessionWithPromptHash(t *testing.T, root string, sessionID string, prompt string, planPath string, now time.Time, keepPromptHash bool) string {
-	t.Helper()
+func writeContinuationScopeProgressStateForSessionWithPromptHash(root string, sessionID string, prompt string, planPath string, now time.Time, keepPromptHash bool) string {
+	ginkgo.GinkgoHelper()
 
 	artifact, err := workspace.LoadPlanArtifact(planPath)
-	if err != nil {
-		t.Fatalf("load plan artifact: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("load plan artifact: %v", err))
 
 	state := NewProgressState(sessionID, prompt, "", nil, nil, now)
 	if !keepPromptHash {
@@ -351,11 +314,10 @@ func writeContinuationScopeProgressStateForSessionWithPromptHash(t *testing.T, r
 	state.FailureKind = plancontract.PlanExecuteFailureMissingEditPathWithoutNewFileAuth
 	state.FailureReason = "plan would create missing edit path without new-file authorization"
 	statePath, err := SaveProgressState(root, &state)
-	if err != nil {
-		t.Fatalf("write progress state: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write progress state: %v", err))
+
 	if err := os.Chtimes(filepath.Join(root, filepath.FromSlash(statePath)), now, now); err != nil {
-		t.Fatalf("set progress state mtime: %v", err)
+		ginkgo.Fail(fmt.Sprintf("set progress state mtime: %v", err))
 	}
 
 	return statePath

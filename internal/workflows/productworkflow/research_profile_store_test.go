@@ -1,9 +1,12 @@
 package productworkflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
 func validResearchProfileJSONWithID(id string) string {
@@ -29,151 +32,109 @@ func validResearchProfileJSONWithID(id string) string {
 }`
 }
 
-func writeProfileFile(t *testing.T, profilesDir, name, content string) {
-	t.Helper()
+func writeProfileFile(profilesDir, name, content string) {
+	ginkgo.GinkgoHelper()
+	{
 
-	if err := os.WriteFile(filepath.Join(profilesDir, name), []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
+		err := os.WriteFile(filepath.Join(profilesDir, name), []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write %s: %v", name, err))
 	}
+
 }
 
-func createProfilesDir(t *testing.T, projectRoot string) string {
-	t.Helper()
+func createProfilesDir(projectRoot string) string {
+	ginkgo.GinkgoHelper()
 
 	dir := filepath.Join(projectRoot, ".idiom", "research", "profiles")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", dir, err)
+	{
+		err := os.MkdirAll(dir, 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir %s: %v", dir, err))
 	}
 
 	return dir
 }
 
-func TestDiscoverProfilesReturnsSortedValidProfiles(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	writeProfileFile(t, dir, "b.json", validResearchProfileJSONWithID("beta"))
-	writeProfileFile(t, dir, "a.json", validResearchProfileJSONWithID("alpha"))
+var _ = ginkgo.Describe("research profile store", func() {
+	ginkgo.It("DiscoverProfilesReturnsSortedValidProfiles", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		writeProfileFile(dir, "b.json", validResearchProfileJSONWithID("beta"))
+		writeProfileFile(dir, "a.json", validResearchProfileJSONWithID("alpha"))
 
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 2).To(gomega.BeFalse(), fmt.Sprintf("expected 2 profiles, got %d", len(result.Profiles)))
+		gomega.Expect(len(result.Findings) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 findings, got %d", len(result.Findings)))
+		gomega.Expect(result.Profiles[0].ProfileID != "alpha").To(gomega.BeFalse(), fmt.Sprintf("expected first profile_id to be alpha (sorted by filename a.json), got %q", result.Profiles[0].ProfileID))
+		gomega.Expect(result.Profiles[1].ProfileID != "beta").To(gomega.BeFalse(), fmt.Sprintf("expected second profile_id to be beta (sorted by filename b.json), got %q", result.Profiles[1].ProfileID))
 
-	if len(result.Profiles) != 2 {
-		t.Fatalf("expected 2 profiles, got %d", len(result.Profiles))
-	}
+	})
+	ginkgo.It("DiscoverProfilesEmptyDirReturnsNoError", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		createProfilesDir(root)
 
-	if len(result.Findings) != 0 {
-		t.Fatalf("expected 0 findings, got %d", len(result.Findings))
-	}
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 profiles, got %d", len(result.Profiles)))
+		gomega.Expect(len(result.Findings) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 findings, got %d", len(result.Findings)))
 
-	if result.Profiles[0].ProfileID != "alpha" {
-		t.Fatalf("expected first profile_id to be alpha (sorted by filename a.json), got %q", result.Profiles[0].ProfileID)
-	}
+	})
+	ginkgo.It("DiscoverProfilesMissingDirReturnsNoError", func() {
+		root := ginkgo.GinkgoT().TempDir()
 
-	if result.Profiles[1].ProfileID != "beta" {
-		t.Fatalf("expected second profile_id to be beta (sorted by filename b.json), got %q", result.Profiles[1].ProfileID)
-	}
-}
+		result, err := DiscoverProfiles(filepath.Join(root, "nonexistent"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 profiles, got %d", len(result.Profiles)))
+		gomega.Expect(len(result.Findings) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 findings, got %d", len(result.Findings)))
 
-func TestDiscoverProfilesEmptyDirReturnsNoError(t *testing.T) {
-	root := t.TempDir()
-	createProfilesDir(t, root)
+	})
+	ginkgo.It("DiscoverProfilesRejectsInvalidJSON", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		writeProfileFile(dir, "bad.json", `{not valid json`)
 
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 profiles, got %d", len(result.Profiles)))
 
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected 0 profiles, got %d", len(result.Profiles))
-	}
+		found := false
 
-	if len(result.Findings) != 0 {
-		t.Fatalf("expected 0 findings, got %d", len(result.Findings))
-	}
-}
-
-func TestDiscoverProfilesMissingDirReturnsNoError(t *testing.T) {
-	root := t.TempDir()
-
-	result, err := DiscoverProfiles(filepath.Join(root, "nonexistent"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected 0 profiles, got %d", len(result.Profiles))
-	}
-
-	if len(result.Findings) != 0 {
-		t.Fatalf("expected 0 findings, got %d", len(result.Findings))
-	}
-}
-
-func TestDiscoverProfilesRejectsInvalidJSON(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	writeProfileFile(t, dir, "bad.json", `{not valid json`)
-
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected 0 profiles, got %d", len(result.Profiles))
-	}
-
-	found := false
-
-	for _, f := range result.Findings {
-		if f.Kind == "validation_error" && f.Severity == "error" {
-			found = true
+		for _, f := range result.Findings {
+			if f.Kind == "validation_error" && f.Severity == "error" {
+				found = true
+			}
 		}
-	}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected invalid_json error finding, got: %#v", result.Findings))
 
-	if !found {
-		t.Fatalf("expected invalid_json error finding, got: %#v", result.Findings)
-	}
-}
-
-func TestDiscoverProfilesRejectsMissingSchemaVersion(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	writeProfileFile(t, dir, "missing_sv.json", `{
+	})
+	ginkgo.It("DiscoverProfilesRejectsMissingSchemaVersion", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		writeProfileFile(dir, "missing_sv.json", `{
   "schema_version": "",
   "name": "test-profile",
   "researchers": [],
   "merge_policy": {}
 }`)
 
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 profiles, got %d", len(result.Profiles)))
 
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected 0 profiles, got %d", len(result.Profiles))
-	}
+		found := false
 
-	found := false
-
-	for _, f := range result.Findings {
-		if f.Kind == "validation_error" && f.Severity == "error" {
-			found = true
+		for _, f := range result.Findings {
+			if f.Kind == "validation_error" && f.Severity == "error" {
+				found = true
+			}
 		}
-	}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected validation_error finding, got: %#v", result.Findings))
 
-	if !found {
-		t.Fatalf("expected validation_error finding, got: %#v", result.Findings)
-	}
-}
-
-func TestDiscoverProfilesRejectsMissingName(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	writeProfileFile(t, dir, "missing_name.json", `{
+	})
+	ginkgo.It("DiscoverProfilesRejectsMissingName", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		writeProfileFile(dir, "missing_name.json", `{
   "schema_version": "idiom.research_profile.v1",
   "name": "",
   "profile_id": "",
@@ -181,152 +142,115 @@ func TestDiscoverProfilesRejectsMissingName(t *testing.T) {
   "merge_policy": {}
 }`)
 
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 profiles, got %d", len(result.Profiles)))
 
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected 0 profiles, got %d", len(result.Profiles))
-	}
+		found := false
 
-	found := false
-
-	for _, f := range result.Findings {
-		if f.Kind == "validation_error" && f.Severity == "error" {
-			found = true
+		for _, f := range result.Findings {
+			if f.Kind == "validation_error" && f.Severity == "error" {
+				found = true
+			}
 		}
-	}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected validation_error finding for missing name/profile_id, got: %#v", result.Findings))
 
-	if !found {
-		t.Fatalf("expected validation_error finding for missing name/profile_id, got: %#v", result.Findings)
-	}
-}
+	})
+	ginkgo.It("DiscoverProfilesRejectsAbsolutePathFilename", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		escPath := filepath.Join(dir, "absolute.json")
+		{
 
-func TestDiscoverProfilesRejectsAbsolutePathFilename(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	escPath := filepath.Join(dir, "absolute.json")
-
-	if err := os.WriteFile(escPath, []byte(validResearchProfileJSONWithID("esc")), 0o644); err != nil {
-		t.Fatalf("write absolute.json: %v", err)
-	}
-
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	found := false
-
-	for _, f := range result.Findings {
-		if f.Kind == "path_traversal" && f.Severity == "error" {
-			found = true
+			err := os.WriteFile(escPath, []byte(validResearchProfileJSONWithID("esc")), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write absolute.json: %v", err))
 		}
-	}
 
-	if found {
-		t.Fatalf("did not expect path_traversal for normal filename, got: %#v", result.Findings)
-	}
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
 
-	if len(result.Profiles) != 1 {
-		t.Fatalf("expected 1 profile for normal filename, got %d", len(result.Profiles))
-	}
-}
+		found := false
 
-func TestDiscoverProfilesAllowsDoubleDotInMiddle(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	writeProfileFile(t, dir, "my..notes.json", validResearchProfileJSONWithID("dbl"))
-
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Profiles) != 1 {
-		t.Fatalf("expected 1 profile for filename with '..' in middle, got %d", len(result.Profiles))
-	}
-
-	found := false
-
-	for _, f := range result.Findings {
-		if f.Kind == "path_traversal" {
-			found = true
+		for _, f := range result.Findings {
+			if f.Kind == "path_traversal" && f.Severity == "error" {
+				found = true
+			}
 		}
-	}
+		gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("did not expect path_traversal for normal filename, got: %#v", result.Findings))
+		gomega.Expect(len(result.Profiles) != 1).To(gomega.BeFalse(), fmt.Sprintf("expected 1 profile for normal filename, got %d", len(result.Profiles)))
 
-	if found {
-		t.Fatalf("filename with '..' in middle should not be flagged as path traversal, got: %#v", result.Findings)
-	}
-}
+	})
+	ginkgo.It("DiscoverProfilesAllowsDoubleDotInMiddle", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		writeProfileFile(dir, "my..notes.json", validResearchProfileJSONWithID("dbl"))
 
-func TestDiscoverProfilesSkipsNonJSON(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	writeProfileFile(t, dir, "notes.txt", "some text")
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 1).To(gomega.BeFalse(), fmt.Sprintf("expected 1 profile for filename with '..' in middle, got %d", len(result.Profiles)))
 
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		found := false
 
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected 0 profiles, got %d", len(result.Profiles))
-	}
-
-	found := false
-
-	for _, f := range result.Findings {
-		if f.Kind == "non_json_file" && f.Severity == "warning" {
-			found = true
+		for _, f := range result.Findings {
+			if f.Kind == "path_traversal" {
+				found = true
+			}
 		}
-	}
+		gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("filename with '..' in middle should not be flagged as path traversal, got: %#v", result.Findings))
 
-	if !found {
-		t.Fatalf("expected non_json_file warning finding, got: %#v", result.Findings)
-	}
-}
+	})
+	ginkgo.It("DiscoverProfilesSkipsNonJSON", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		writeProfileFile(dir, "notes.txt", "some text")
 
-func TestDiscoverProfilesRejectsSymlinkProfiles(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	outside := filepath.Join(t.TempDir(), "outside.json")
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected 0 profiles, got %d", len(result.Profiles)))
 
-	if err := os.WriteFile(outside, []byte(validResearchProfileJSONWithID("outside")), 0o644); err != nil {
-		t.Fatal(err)
-	}
+		found := false
 
-	if err := os.Symlink(outside, filepath.Join(dir, "linked.json")); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected symlinked profile to be rejected, got %d profile(s)", len(result.Profiles))
-	}
-
-	found := false
-
-	for _, f := range result.Findings {
-		if f.Kind == "profile_symlink" && f.Severity == "error" {
-			found = true
+		for _, f := range result.Findings {
+			if f.Kind == "non_json_file" && f.Severity == "warning" {
+				found = true
+			}
 		}
-	}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected non_json_file warning finding, got: %#v", result.Findings))
 
-	if !found {
-		t.Fatalf("expected profile_symlink error finding, got: %#v", result.Findings)
-	}
-}
+	})
+	ginkgo.It("DiscoverProfilesRejectsSymlinkProfiles", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		outside := filepath.Join(ginkgo.GinkgoT().TempDir(), "outside.json")
+		{
 
-func TestDiscoverProfilesGeneratesProfileIDFromFilename(t *testing.T) {
-	root := t.TempDir()
-	dir := createProfilesDir(t, root)
-	profileNoID := `{
+			err := os.WriteFile(outside, []byte(validResearchProfileJSONWithID("outside")), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+		}
+		{
+
+			err := os.Symlink(outside, filepath.Join(dir, "linked.json"))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+		}
+
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected symlinked profile to be rejected, got %d profile(s)", len(result.Profiles)))
+
+		found := false
+
+		for _, f := range result.Findings {
+			if f.Kind == "profile_symlink" && f.Severity == "error" {
+				found = true
+			}
+		}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected profile_symlink error finding, got: %#v", result.Findings))
+
+	})
+	ginkgo.It("DiscoverProfilesGeneratesProfileIDFromFilename", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dir := createProfilesDir(root)
+		profileNoID := `{
   "schema_version": "idiom.research_profile.v1",
   "name": "test-profile",
   "researchers": [
@@ -345,18 +269,12 @@ func TestDiscoverProfilesGeneratesProfileIDFromFilename(t *testing.T) {
     "stale_local_context": "refresh_or_mark_gap"
   }
 }`
-	writeProfileFile(t, dir, "my-profile.json", profileNoID)
+		writeProfileFile(dir, "my-profile.json", profileNoID)
 
-	result, err := DiscoverProfiles(root)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		result, err := DiscoverProfiles(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unexpected error: %v", err))
+		gomega.Expect(len(result.Profiles) != 1).To(gomega.BeFalse(), fmt.Sprintf("expected 1 profile, got %d", len(result.Profiles)))
+		gomega.Expect(result.Profiles[0].ProfileID != "my-profile").To(gomega.BeFalse(), fmt.Sprintf("expected profile_id \"my-profile\", got %q", result.Profiles[0].ProfileID))
 
-	if len(result.Profiles) != 1 {
-		t.Fatalf("expected 1 profile, got %d", len(result.Profiles))
-	}
-
-	if result.Profiles[0].ProfileID != "my-profile" {
-		t.Fatalf("expected profile_id \"my-profile\", got %q", result.Profiles[0].ProfileID)
-	}
-}
+	})
+})

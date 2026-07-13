@@ -128,15 +128,20 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
       - uses: actions/download-artifact@v4
         with:
           name: goreleaser-dist
           path: dist
       - name: Full install.sh validation from snapshot dist
         run: |
+          IDIOM_SYSTEM_TARGETED=1 \
           IDIOM_TEST_DIST="${PWD}/dist" \
           IDIOM_TEST_GOARCH="${{ matrix.goarch }}" \
-          ./scripts/test-install-docker.sh
+          go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-docker' --fail-on-empty ./internal/systemtests
 
   install-macos:
     needs: snapshot
@@ -152,6 +157,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
       - uses: actions/download-artifact@v4
         with:
           name: goreleaser-dist
@@ -163,7 +172,8 @@ jobs:
           IDIOM_TEST_DIST="${PWD}/dist" \
           IDIOM_TEST_GOARCH="${{ matrix.goarch }}" \
           IDIOM_INSTALL_DIR="${RUNNER_TEMP}/idiom-bin" \
-          ./scripts/test-install-macos.sh
+          IDIOM_SYSTEM_TARGETED=1 \
+          go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-macos' --fail-on-empty ./internal/systemtests
 
   install-dependencies-macos:
     needs: snapshot
@@ -177,6 +187,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
       - uses: actions/download-artifact@v4
         with:
           name: goreleaser-dist
@@ -188,9 +202,9 @@ jobs:
           install_dir="${RUNNER_TEMP}/idiom-bin"
           IDIOM_INSTALL_DIR="${install_dir}" ./scripts/install-snapshot-from-dist.sh --profile full --no-queue
           echo "${install_dir}" >> "$GITHUB_PATH"
-          ./scripts/test-install-dependencies.sh
-          IDIOM_BIN="${install_dir}/idiom" python3 scripts/test-post-install-harness.py
-          IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" ./scripts/test-discovery-tools-e2e.sh
+          IDIOM_SYSTEM_TARGETED=1 go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-dependencies-unix-live' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-post-install-harness' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-discovery-tools' --fail-on-empty ./internal/systemtests
 
   install-dependencies-linux:
     needs: snapshot
@@ -204,6 +218,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
       - uses: actions/download-artifact@v4
         with:
           name: goreleaser-dist
@@ -215,9 +233,9 @@ jobs:
           install_dir="${RUNNER_TEMP}/idiom-bin"
           IDIOM_INSTALL_DIR="${install_dir}" ./scripts/install-snapshot-from-dist.sh --profile full --no-queue
           echo "${install_dir}" >> "$GITHUB_PATH"
-          ./scripts/test-install-dependencies.sh
-          IDIOM_BIN="${install_dir}/idiom" python3 scripts/test-post-install-harness.py
-          IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" ./scripts/test-discovery-tools-e2e.sh
+          IDIOM_SYSTEM_TARGETED=1 go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-dependencies-unix-live' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-post-install-harness' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-discovery-tools' --fail-on-empty ./internal/systemtests
 
   install-windows:
     needs: snapshot
@@ -225,6 +243,10 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
       - uses: actions/download-artifact@v4
         with:
           name: goreleaser-dist
@@ -255,26 +277,15 @@ jobs:
             $env:IDIOM_RELEASE_URL_BASE = "http://127.0.0.1:8080"
             $env:IDIOM_INSTALL_DIR = $installDir
             ./install.ps1 -Profile Full
-            & (Join-Path $installDir "idiom.exe") version | Select-String -SimpleMatch "version: $version" | Out-Null
-            & (Join-Path $installDir "idiom-tool.cmd") list --profile discovery | Out-Null
-
-            $beforeHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $installDir "idiom.exe")).Hash
-            ./install-tools.ps1
-            $afterHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $installDir "idiom.exe")).Hash
-            if ($beforeHash -ne $afterHash) {
-              throw "install-tools.ps1 changed existing idiom.exe"
-            }
-            & (Join-Path $installDir "idiom-tool.cmd") list --profile discovery | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-              throw "idiom-tool.cmd verification failed"
-            }
+            $env:IDIOM_SYSTEM_TARGETED = "1"
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-windows-integrity' --fail-on-empty ./internal/systemtests
 
             $env:Path = "$installDir;$env:Path"
-            ./scripts/test-install-dependencies.ps1
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-dependencies-powershell-live' --fail-on-empty ./internal/systemtests
             $env:IDIOM_BIN = Join-Path $installDir "idiom.exe"
-            python scripts/test-post-install-harness.py
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-post-install-harness' --fail-on-empty ./internal/systemtests
             Remove-Item Env:IDIOM_TOOL_BIN -ErrorAction SilentlyContinue
-            python scripts/test-discovery-tools-e2e.py
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-discovery-tools' --fail-on-empty ./internal/systemtests
           } finally {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }

@@ -3,10 +3,12 @@ package comprehension
 import (
 	"slices"
 	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestNewCompactPackProjection_FromPackResult(t *testing.T) {
+var _ = It("new compact pack projection from pack result", func() {
 	result := PackResult{
 		PackID:       "test-pack-123",
 		Fresh:        true,
@@ -31,78 +33,51 @@ func TestNewCompactPackProjection_FromPackResult(t *testing.T) {
 	}
 
 	p := NewCompactPackProjection(result)
+	Expect(
 
-	// PackID
-	if p.PackID != "test-pack-123" {
-		t.Errorf("expected PackID 'test-pack-123', got %q", p.PackID)
-	}
+		// PackID
+		p.PackID).To(BeEquivalentTo("test-pack-123"), "expected PackID 'test-pack-123', got %q", p.PackID)
+	Expect(
 
-	// Fresh
-	if !p.Fresh {
-		t.Error("expected Fresh=true")
-	}
+		// Fresh
+		p.Fresh).To(BeTrue(), "expected Fresh=true")
+	Expect(
 
-	// Quality
-	if p.Quality.LocalizationConfidence != "high" {
-		t.Errorf("expected LocalizationConfidence 'high', got %q", p.Quality.LocalizationConfidence)
-	}
+		// Quality
+		p.Quality.LocalizationConfidence).To(BeEquivalentTo("high"), "expected LocalizationConfidence 'high', got %q", p.Quality.LocalizationConfidence)
+	Expect(p.Quality.SourceOwnerFound).To(BeTrue(), "expected SourceOwnerFound=true")
+	Expect(len(p.Quality.EvidencePaths)).To(BeEquivalentTo(2), "expected 2 EvidencePaths, got %d", len(p.Quality.EvidencePaths))
+	Expect(len(p.Quality.Reasons)).To(BeEquivalentTo(1), "expected 1 Reason, got %d", len(p.Quality.Reasons))
+	Expect(
 
-	if !p.Quality.SourceOwnerFound {
-		t.Error("expected SourceOwnerFound=true")
-	}
+		// CandidateFiles
+		len(p.CandidateFiles)).To(BeEquivalentTo(2), "expected 2 CandidateFiles, got %d", len(p.CandidateFiles))
+	Expect(p.CandidateFiles[0].Path).To(BeEquivalentTo("internal/foo/bar.go"), "expected file path 'internal/foo/bar.go', got %q", p.CandidateFiles[0].Path)
+	Expect(p.CandidateFiles[0].Role).To(BeEquivalentTo("source"), "expected role 'source', got %q", p.CandidateFiles[0].Role)
+	Expect(
 
-	if len(p.Quality.EvidencePaths) != 2 {
-		t.Errorf("expected 2 EvidencePaths, got %d", len(p.Quality.EvidencePaths))
-	}
+		// CandidateSymbols
+		len(p.CandidateSymbols)).To(BeEquivalentTo(1), "expected 1 CandidateSymbol, got %d", len(p.CandidateSymbols))
+	Expect(p.CandidateSymbols[0].QualifiedName).To(BeEquivalentTo("DoFoo"), "expected QualifiedName 'DoFoo', got %q", p.CandidateSymbols[0].QualifiedName)
+	Expect(
 
-	if len(p.Quality.Reasons) != 1 {
-		t.Errorf("expected 1 Reason, got %d", len(p.Quality.Reasons))
-	}
+		// Tests
+		len(p.Tests)).To(BeEquivalentTo(1), "expected 1 Test, got %d", len(p.Tests))
+	Expect(
 
-	// CandidateFiles
-	if len(p.CandidateFiles) != 2 {
-		t.Errorf("expected 2 CandidateFiles, got %d", len(p.CandidateFiles))
-	}
+		// UnresolvedGaps
+		len(p.UnresolvedGaps)).To(BeEquivalentTo(1), "expected 1 UnresolvedGap, got %d", len(p.UnresolvedGaps))
+	Expect(
 
-	if p.CandidateFiles[0].Path != "internal/foo/bar.go" {
-		t.Errorf("expected file path 'internal/foo/bar.go', got %q", p.CandidateFiles[0].Path)
-	}
+		// BudgetTokens
+		p.BudgetTokens).To(BeEquivalentTo(500), "expected BudgetTokens 500, got %d", p.BudgetTokens)
+	Expect(
 
-	if p.CandidateFiles[0].Role != "source" {
-		t.Errorf("expected role 'source', got %q", p.CandidateFiles[0].Role)
-	}
-
-	// CandidateSymbols
-	if len(p.CandidateSymbols) != 1 {
-		t.Errorf("expected 1 CandidateSymbol, got %d", len(p.CandidateSymbols))
-	}
-
-	if p.CandidateSymbols[0].QualifiedName != "DoFoo" {
-		t.Errorf("expected QualifiedName 'DoFoo', got %q", p.CandidateSymbols[0].QualifiedName)
-	}
-
-	// Tests
-	if len(p.Tests) != 1 {
-		t.Errorf("expected 1 Test, got %d", len(p.Tests))
-	}
-
-	// UnresolvedGaps
-	if len(p.UnresolvedGaps) != 1 {
-		t.Errorf("expected 1 UnresolvedGap, got %d", len(p.UnresolvedGaps))
-	}
-
-	// BudgetTokens
-	if p.BudgetTokens != 500 {
-		t.Errorf("expected BudgetTokens 500, got %d", p.BudgetTokens)
-	}
-
-	// TotalCandidates
-	if p.TotalCandidates != 4 { // 2 files + 1 symbol + 1 test
-		t.Errorf("expected TotalCandidates 4, got %d", p.TotalCandidates)
-	}
-}
-
-func TestAttachPackResultCompactProjectionIncludesLateQualityGaps(t *testing.T) {
+		// TotalCandidates
+		p.TotalCandidates).To(BeEquivalentTo(4), // 2 files + 1 symbol + 1 test
+		"expected TotalCandidates 4, got %d", p.TotalCandidates)
+})
+var _ = It("attach pack result compact projection includes late quality gaps", func() {
 	result := PackResult{
 		PackID:       "weak-source-owner",
 		Fresh:        true,
@@ -118,18 +93,12 @@ func TestAttachPackResultCompactProjectionIncludesLateQualityGaps(t *testing.T) 
 
 	addPackResultGaps(&packContext{status: StatusReport{Fresh: true}}, packCandidates{}, &result)
 	attachPackResultCompactProjection(&result)
-
-	if !slices.Contains(result.CompactProjection.UnresolvedGaps, "reason=weak_source_owner localization_confidence=low") {
-		t.Fatalf("CompactProjection.UnresolvedGaps = %#v, want weak_source_owner", result.CompactProjection.UnresolvedGaps)
-	}
+	Expect(slices.Contains(result.CompactProjection.UnresolvedGaps, "reason=weak_source_owner localization_confidence=low")).To(BeTrue(), "CompactProjection.UnresolvedGaps = %#v, want weak_source_owner", result.CompactProjection.UnresolvedGaps)
 
 	rendered, _ := RenderCompactPackProjection(result.CompactProjection, result.BudgetTokens)
-	if !strings.Contains(rendered, "weak_source_owner") {
-		t.Fatalf("rendered compact projection missing weak_source_owner:\n%s", rendered)
-	}
-}
-
-func TestRenderCompactPackProjection_NoBudget(t *testing.T) {
+	Expect(strings.Contains(rendered, "weak_source_owner")).To(BeTrue(), "rendered compact projection missing weak_source_owner:\n%s", rendered)
+})
+var _ = It("render compact pack projection no budget", func() {
 	result := PackResult{
 		PackID: "pack-no-budget",
 		Fresh:  true,
@@ -153,69 +122,43 @@ func TestRenderCompactPackProjection_NoBudget(t *testing.T) {
 	}
 
 	p := NewCompactPackProjection(result)
-	out, returned := RenderCompactPackProjection(p, 0) // no budget
+	out, returned := RenderCompactPackProjection(p, 0)
+	Expect( // no budget
 
-	// Quality must be present
-	if !strings.Contains(out, "packet_quality:") {
-		t.Error("expected packet_quality section in output")
-	}
+		// Quality must be present
+		strings.Contains(out, "packet_quality:")).To(BeTrue(), "expected packet_quality section in output")
+	Expect(strings.Contains(out, "localization_confidence: medium")).To(BeTrue(), "expected localization_confidence in output")
+	Expect(strings.Contains(out, "source_owner_found: true")).To(BeTrue(), "expected source_owner_found in output")
+	Expect(
 
-	if !strings.Contains(out, "localization_confidence: medium") {
-		t.Error("expected localization_confidence in output")
-	}
+		// pack_id must be present
+		strings.Contains(out, "pack_id: pack-no-budget")).To(BeTrue(), "expected pack_id in output")
+	Expect(
 
-	if !strings.Contains(out, "source_owner_found: true") {
-		t.Error("expected source_owner_found in output")
-	}
+		// fresh must be rendered
+		strings.Contains(out, "fresh: true")).To(BeTrue(), "expected fresh: true in output")
+	Expect(
 
-	// pack_id must be present
-	if !strings.Contains(out, "pack_id: pack-no-budget") {
-		t.Error("expected pack_id in output")
-	}
+		// evidence_note must be present
+		strings.Contains(out, "evidence_note: context_pack is localization evidence")).To(BeTrue(), "expected evidence_note in output")
+	Expect(
 
-	// fresh must be rendered
-	if !strings.Contains(out, "fresh: true") {
-		t.Error("expected fresh: true in output")
-	}
+		// All items rendered (no budget enforcement)
+		strings.Contains(out, "pkg/handler.go")).To(BeTrue(), "expected handler.go in output")
+	Expect(strings.Contains(out, "pkg/service.go")).To(BeTrue(), "expected service.go in output")
+	Expect(strings.Contains(out, "HandleRequest")).To(BeTrue(), "expected HandleRequest in output")
+	Expect(
 
-	// evidence_note must be present
-	if !strings.Contains(out, "evidence_note: context_pack is localization evidence") {
-		t.Error("expected evidence_note in output")
-	}
+		// No omitted section when no budget
+		strings.Contains(out, "omitted:")).To(BeFalse(), "unexpected omitted section when BudgetTokens=0")
+	Expect(
 
-	// All items rendered (no budget enforcement)
-	if !strings.Contains(out, "pkg/handler.go") {
-		t.Error("expected handler.go in output")
-	}
-
-	if !strings.Contains(out, "pkg/service.go") {
-		t.Error("expected service.go in output")
-	}
-
-	if !strings.Contains(out, "HandleRequest") {
-		t.Error("expected HandleRequest in output")
-	}
-
-	// No omitted section when no budget
-	if strings.Contains(out, "omitted:") {
-		t.Error("unexpected omitted section when BudgetTokens=0")
-	}
-
-	// Returned projection should have zero omitted counts
-	if returned.OmittedFiles != 0 {
-		t.Errorf("expected OmittedFiles=0 in unbounded mode, got %d", returned.OmittedFiles)
-	}
-
-	if returned.OmittedSymbols != 0 {
-		t.Errorf("expected OmittedSymbols=0 in unbounded mode, got %d", returned.OmittedSymbols)
-	}
-
-	if returned.OmittedTests != 0 {
-		t.Errorf("expected OmittedTests=0 in unbounded mode, got %d", returned.OmittedTests)
-	}
-}
-
-func TestRenderCompactPackProjection_BudgetTruncation(t *testing.T) {
+		// Returned projection should have zero omitted counts
+		returned.OmittedFiles).To(BeEquivalentTo(0), "expected OmittedFiles=0 in unbounded mode, got %d", returned.OmittedFiles)
+	Expect(returned.OmittedSymbols).To(BeEquivalentTo(0), "expected OmittedSymbols=0 in unbounded mode, got %d", returned.OmittedSymbols)
+	Expect(returned.OmittedTests).To(BeEquivalentTo(0), "expected OmittedTests=0 in unbounded mode, got %d", returned.OmittedTests)
+})
+var _ = It("render compact pack projection budget truncation", func() {
 	// Create a PackResult with many candidates
 	files := make([]PackFile, 20)
 	for i := range files {
@@ -266,50 +209,32 @@ func TestRenderCompactPackProjection_BudgetTruncation(t *testing.T) {
 
 	// Output must be under budget (hard cap contract)
 	est := estimateTokens(out)
-	if est > 300 {
-		t.Errorf("estimateTokens(output) = %d, must be <= budgetTokens=%d", est, 300)
-	}
+	Expect(est > 300).To(BeFalse(), "estimateTokens(output) = %d, must be <= budgetTokens=%d", est, 300)
 
 	// Omitted counts must be populated on the returned struct
 	totalOmitted := returned.OmittedFiles + returned.OmittedSymbols + returned.OmittedTests
-	if totalOmitted == 0 {
-		t.Error("expected at least one omitted count > 0 with BudgetTokens=300 and 35 candidates")
-	}
+	Expect(totalOmitted).NotTo(BeEquivalentTo(0), "expected at least one omitted count > 0 with BudgetTokens=300 and 35 candidates")
+	Expect(
 
-	// pack_id and quality always present
-	if !strings.Contains(out, "pack_id: pack-budget-test") {
-		t.Error("expected pack_id in truncated output")
-	}
+		// pack_id and quality always present
+		strings.Contains(out, "pack_id: pack-budget-test")).To(BeTrue(), "expected pack_id in truncated output")
+	Expect(strings.Contains(out, "packet_quality:")).To(BeTrue(), "expected packet_quality in truncated output")
+	Expect(strings.Contains(out, "localization_confidence: high")).To(BeTrue(), "expected localization_confidence in truncated output")
+	Expect(strings.Contains(out, "source_owner_found: true")).To(BeTrue(), "expected source_owner_found in truncated output")
+	Expect(
 
-	if !strings.Contains(out, "packet_quality:") {
-		t.Error("expected packet_quality in truncated output")
-	}
+		// fresh must be rendered
+		strings.Contains(out, "fresh: true")).To(BeTrue(), "expected fresh: true in output")
+	Expect(
 
-	if !strings.Contains(out, "localization_confidence: high") {
-		t.Error("expected localization_confidence in truncated output")
-	}
+		// evidence_note always present
+		strings.Contains(out, "evidence_note:")).To(BeTrue(), "expected evidence_note in truncated output")
+	Expect(
 
-	if !strings.Contains(out, "source_owner_found: true") {
-		t.Error("expected source_owner_found in truncated output")
-	}
-
-	// fresh must be rendered
-	if !strings.Contains(out, "fresh: true") {
-		t.Error("expected fresh: true in output")
-	}
-
-	// evidence_note always present
-	if !strings.Contains(out, "evidence_note:") {
-		t.Error("expected evidence_note in truncated output")
-	}
-
-	// Omitted section should be present
-	if !strings.Contains(out, "omitted:") {
-		t.Error("expected omitted section with BudgetTokens=300 and 35 candidates")
-	}
-}
-
-func TestRenderCompactPackProjection_BudgetTokensZeroNoTruncation(t *testing.T) {
+		// Omitted section should be present
+		strings.Contains(out, "omitted:")).To(BeTrue(), "expected omitted section with BudgetTokens=300 and 35 candidates")
+})
+var _ = It("render compact pack projection budget tokens zero no truncation", func() {
 	files := make([]PackFile, 15)
 	for i := range files {
 		files[i] = PackFile{Path: "pkg/f.go", Role: "source", Reason: "match"}
@@ -326,30 +251,24 @@ func TestRenderCompactPackProjection_BudgetTokensZeroNoTruncation(t *testing.T) 
 
 	p := NewCompactPackProjection(result)
 	out, returned := RenderCompactPackProjection(p, 0)
+	Expect(
 
-	// fresh: false must be rendered
-	if !strings.Contains(out, "fresh: false") {
-		t.Error("expected fresh: false in output")
-	}
+		// fresh: false must be rendered
+		strings.Contains(out, "fresh: false")).To(BeTrue(), "expected fresh: false in output")
+	Expect(
 
-	// No omitted section
-	if strings.Contains(out, "omitted:") {
-		t.Error("unexpected omitted section when BudgetTokens=0")
-	}
+		// No omitted section
+		strings.Contains(out, "omitted:")).To(BeFalse(), "unexpected omitted section when BudgetTokens=0")
+	Expect(
 
-	// Returned projection has zero omitted counts
-	if returned.OmittedFiles != 0 {
-		t.Errorf("expected OmittedFiles=0, got %d", returned.OmittedFiles)
-	}
+		// Returned projection has zero omitted counts
+		returned.OmittedFiles).To(BeEquivalentTo(0), "expected OmittedFiles=0, got %d", returned.OmittedFiles)
 
 	// All 15 files rendered (no truncation)
 	count := strings.Count(out, "pkg/f.go")
-	if count < 15 {
-		t.Errorf("expected all 15 files rendered with BudgetTokens=0, got %d occurrences", count)
-	}
-}
-
-func TestEstimateTokens(t *testing.T) {
+	Expect(count < 15).To(BeFalse(), "expected all 15 files rendered with BudgetTokens=0, got %d occurrences", count)
+})
+var _ = It("estimate tokens", func() {
 	tests := []struct {
 		text    string
 		wantMin int
@@ -364,13 +283,11 @@ func TestEstimateTokens(t *testing.T) {
 
 	for _, tc := range tests {
 		got := estimateTokens(tc.text)
-		if got < tc.wantMin || got > tc.wantMax {
-			t.Errorf("estimateTokens(%d chars) = %d, want [%d, %d]", len(tc.text), got, tc.wantMin, tc.wantMax)
-		}
+		Expect(got).To(BeNumerically(">=", tc.wantMin), "estimateTokens(%d chars) = %d, want [%d, %d]", len(tc.text), got, tc.wantMin, tc.wantMax)
+		Expect(got).To(BeNumerically("<=", tc.wantMax), "estimateTokens(%d chars) = %d, want [%d, %d]", len(tc.text), got, tc.wantMin, tc.wantMax)
 	}
-}
-
-func TestRenderCompactPackProjection_EmptyQuality(t *testing.T) {
+})
+var _ = It("render compact pack projection empty quality", func() {
 	result := PackResult{
 		PackID:  "pack-empty-quality",
 		Fresh:   true,
@@ -382,52 +299,27 @@ func TestRenderCompactPackProjection_EmptyQuality(t *testing.T) {
 
 	p := NewCompactPackProjection(result)
 	out, _ := RenderCompactPackProjection(p, 0)
+	Expect(
 
-	// fresh must be rendered
-	if !strings.Contains(out, "fresh: true") {
-		t.Error("expected fresh: true in output")
-	}
+		// fresh must be rendered
+		strings.Contains(out, "fresh: true")).To(BeTrue(), "expected fresh: true in output")
+	Expect(
 
-	// Quality section should still render (with unknown confidence)
-	if !strings.Contains(out, "packet_quality:") {
-		t.Error("expected packet_quality section even with empty quality")
-	}
-
-	if !strings.Contains(out, "localization_confidence: unknown") {
-		t.Error("expected unknown localization_confidence for empty quality")
-	}
-
-	if !strings.Contains(out, "source_owner_found: false") {
-		t.Error("expected source_owner_found: false for empty quality")
-	}
-}
-
-func TestNewCompactPackProjection_EmptyResult(t *testing.T) {
+		// Quality section should still render (with unknown confidence)
+		strings.Contains(out, "packet_quality:")).To(BeTrue(), "expected packet_quality section even with empty quality")
+	Expect(strings.Contains(out, "localization_confidence: unknown")).To(BeTrue(), "expected unknown localization_confidence for empty quality")
+	Expect(strings.Contains(out, "source_owner_found: false")).To(BeTrue(), "expected source_owner_found: false for empty quality")
+})
+var _ = It("new compact pack projection empty result", func() {
 	result := PackResult{}
 	p := NewCompactPackProjection(result)
-
-	if p.PackID != "" {
-		t.Errorf("expected empty PackID, got %q", p.PackID)
-	}
-
-	if p.TotalCandidates != 0 {
-		t.Errorf("expected 0 TotalCandidates, got %d", p.TotalCandidates)
-	}
-
-	if len(p.CandidateFiles) != 0 {
-		t.Errorf("expected 0 CandidateFiles, got %d", len(p.CandidateFiles))
-	}
-
-	if len(p.CandidateSymbols) != 0 {
-		t.Errorf("expected 0 CandidateSymbols, got %d", len(p.CandidateSymbols))
-	}
-
-	if len(p.Tests) != 0 {
-		t.Errorf("expected 0 Tests, got %d", len(p.Tests))
-	}
-}
-
-func TestRenderCompactPackProjection_NoCandidates(t *testing.T) {
+	Expect(p.PackID).To(BeEquivalentTo(""), "expected empty PackID, got %q", p.PackID)
+	Expect(p.TotalCandidates).To(BeEquivalentTo(0), "expected 0 TotalCandidates, got %d", p.TotalCandidates)
+	Expect(len(p.CandidateFiles)).To(BeEquivalentTo(0), "expected 0 CandidateFiles, got %d", len(p.CandidateFiles))
+	Expect(len(p.CandidateSymbols)).To(BeEquivalentTo(0), "expected 0 CandidateSymbols, got %d", len(p.CandidateSymbols))
+	Expect(len(p.Tests)).To(BeEquivalentTo(0), "expected 0 Tests, got %d", len(p.Tests))
+})
+var _ = It("render compact pack projection no candidates", func() {
 	result := PackResult{
 		PackID: "pack-no-candidates",
 		Fresh:  false,
@@ -440,44 +332,25 @@ func TestRenderCompactPackProjection_NoCandidates(t *testing.T) {
 
 	p := NewCompactPackProjection(result)
 	out, _ := RenderCompactPackProjection(p, 0)
+	Expect(
 
-	// fresh field
-	if !strings.Contains(out, "fresh: false") {
-		t.Error("expected fresh: false in output")
-	}
+		// fresh field
+		strings.Contains(out, "fresh: false")).To(BeTrue(), "expected fresh: false in output")
+	Expect(
 
-	// Still has quality, pack_id, gaps, and evidence_note
-	if !strings.Contains(out, "pack_id: pack-no-candidates") {
-		t.Error("expected pack_id in output")
-	}
+		// Still has quality, pack_id, gaps, and evidence_note
+		strings.Contains(out, "pack_id: pack-no-candidates")).To(BeTrue(), "expected pack_id in output")
+	Expect(strings.Contains(out, "packet_quality:")).To(BeTrue(), "expected packet_quality in output")
+	Expect(strings.Contains(out, "context_gaps:")).To(BeTrue(), "expected context_gaps in output")
+	Expect(strings.Contains(out, "evidence_note:")).To(BeTrue(), "expected evidence_note in output")
+	Expect(
 
-	if !strings.Contains(out, "packet_quality:") {
-		t.Error("expected packet_quality in output")
-	}
-
-	if !strings.Contains(out, "context_gaps:") {
-		t.Error("expected context_gaps in output")
-	}
-
-	if !strings.Contains(out, "evidence_note:") {
-		t.Error("expected evidence_note in output")
-	}
-
-	// No candidate_files, candidate_symbols, tests sections
-	if strings.Contains(out, "candidate_files:") {
-		t.Error("unexpected candidate_files section with no files")
-	}
-
-	if strings.Contains(out, "candidate_symbols:") {
-		t.Error("unexpected candidate_symbols section with no symbols")
-	}
-
-	if strings.Contains(out, "tests:") {
-		t.Error("unexpected tests section with no tests")
-	}
-}
-
-func TestRenderCompactPackProjection_SmallBudget(t *testing.T) {
+		// No candidate_files, candidate_symbols, tests sections
+		strings.Contains(out, "candidate_files:")).To(BeFalse(), "unexpected candidate_files section with no files")
+	Expect(strings.Contains(out, "candidate_symbols:")).To(BeFalse(), "unexpected candidate_symbols section with no symbols")
+	Expect(strings.Contains(out, "tests:")).To(BeFalse(), "unexpected tests section with no tests")
+})
+var _ = It("render compact pack projection small budget", func() {
 	result := PackResult{
 		PackID: "small-budget",
 		Quality: PackQuality{
@@ -505,31 +378,21 @@ func TestRenderCompactPackProjection_SmallBudget(t *testing.T) {
 
 	// Output must be under budget
 	est := estimateTokens(out)
-	if est > 100 {
-		t.Errorf("estimateTokens(output) = %d, must be <= budgetTokens=%d", est, 100)
-	}
+	Expect(est > 100).To(BeFalse(), "estimateTokens(output) = %d, must be <= budgetTokens=%d", est, 100)
+	// Must have quality and pack_id.
+	Expect(out).To(ContainSubstring("pack_id:"), "expected pack_id with small budget")
+	Expect(out).To(ContainSubstring("packet_quality:"), "expected packet_quality with small budget")
 
-	// Must have quality and pack_id
-	if !strings.Contains(out, "pack_id:") {
-		t.Error("expected pack_id with small budget")
-	}
+	// Omitted section should be present (100 tokens is tight for 6 items).
+	Expect(out).To(ContainSubstring("omitted:"), "expected omitted section with small budget and multiple items")
 
-	if !strings.Contains(out, "packet_quality:") {
-		t.Error("expected packet_quality with small budget")
-	}
-
-	// Omitted section should be present (100 tokens is tight for 6 items)
-	if !strings.Contains(out, "omitted:") {
-		t.Error("expected omitted section with small budget and multiple items")
-	}
-
-	// At least some omitted counts on returned struct
-	if returned.OmittedFiles == 0 && returned.OmittedSymbols == 0 && returned.OmittedTests == 0 {
-		t.Error("expected at least one omitted count > 0 with BudgetTokens=100 and 6 items")
-	}
-}
-
-func TestRenderCompactPackProjection_TinyBudgetHeaderExceeds(t *testing.T) {
+	// At least some omitted counts on returned struct.
+	Expect([]int{returned.OmittedFiles, returned.OmittedSymbols, returned.OmittedTests}).NotTo(
+		Equal([]int{0, 0, 0}),
+		"expected at least one omitted count > 0 with BudgetTokens=100 and 6 items",
+	)
+})
+var _ = It("render compact pack projection tiny budget header exceeds", func() {
 	// Budget so small that even the mandatory header exceeds it.
 	// Per contract Section 4.2.3: "if the mandatory header itself exceeds
 	// budget, return the mandatory header plus a truncation note and do
@@ -555,38 +418,29 @@ func TestRenderCompactPackProjection_TinyBudgetHeaderExceeds(t *testing.T) {
 	p := NewCompactPackProjection(result)
 	// Budget of 5 tokens — far less than the header itself.
 	out, returned := RenderCompactPackProjection(p, 5)
+	Expect(
 
-	// Must still have the mandatory header (pack_id, fresh, quality)
-	if !strings.Contains(out, "context_pack_summary:") {
-		t.Error("expected context_pack_summary in output even when header exceeds budget")
-	}
+		// Must still have the mandatory header (pack_id, fresh, quality)
+		strings.Contains(out, "context_pack_summary:")).To(BeTrue(), "expected context_pack_summary in output even when header exceeds budget")
+	Expect(
 
-	// Must have truncation note
-	if !strings.Contains(out, "truncation_note:") {
-		t.Error("expected truncation_note when header exceeds budget")
-	}
+		// Must have truncation note
+		strings.Contains(out, "truncation_note:")).To(BeTrue(), "expected truncation_note when header exceeds budget")
+	Expect(
 
-	// All items omitted on returned struct
-	if returned.OmittedFiles != 1 {
-		t.Errorf("expected OmittedFiles=1, got %d", returned.OmittedFiles)
-	}
+		// All items omitted on returned struct
+		returned.OmittedFiles).To(BeEquivalentTo(1), "expected OmittedFiles=1, got %d", returned.OmittedFiles)
+	Expect(returned.OmittedSymbols).To(BeEquivalentTo(1), "expected OmittedSymbols=1, got %d", returned.OmittedSymbols)
+	Expect(
 
-	if returned.OmittedSymbols != 1 {
-		t.Errorf("expected OmittedSymbols=1, got %d", returned.OmittedSymbols)
-	}
+		// evidence_note must still be present
+		strings.Contains(out, "evidence_note:")).To(BeTrue(), "expected evidence_note even when header exceeds budget")
+	Expect(
 
-	// evidence_note must still be present
-	if !strings.Contains(out, "evidence_note:") {
-		t.Error("expected evidence_note even when header exceeds budget")
-	}
-
-	// No candidate sections rendered
-	if strings.Contains(out, "candidate_files:") {
-		t.Error("unexpected candidate_files section when header exceeds budget")
-	}
-}
-
-func TestRenderCompactPackProjection_SymbolRendersReason(t *testing.T) {
+		// No candidate sections rendered
+		strings.Contains(out, "candidate_files:")).To(BeFalse(), "unexpected candidate_files section when header exceeds budget")
+})
+var _ = It("render compact pack projection symbol renders reason", func() {
 	result := PackResult{
 		PackID: "symbol-reason-test",
 		Fresh:  true,
@@ -600,19 +454,16 @@ func TestRenderCompactPackProjection_SymbolRendersReason(t *testing.T) {
 
 	p := NewCompactPackProjection(result)
 	out, _ := RenderCompactPackProjection(p, 0)
+	Expect(
 
-	// Symbol reason must appear in output
-	if !strings.Contains(out, "matches query pattern") {
-		t.Error("expected symbol reason in output")
-	}
+		// Symbol reason must appear in output
+		strings.Contains(out, "matches query pattern")).To(BeTrue(), "expected symbol reason in output")
+	Expect(
 
-	// Symbol line should include both the name and the reason
-	if !strings.Contains(out, "DoBar") {
-		t.Error("expected symbol name DoBar in output")
-	}
-}
-
-func TestRenderCompactPackProjection_Budget100(t *testing.T) {
+		// Symbol line should include both the name and the reason
+		strings.Contains(out, "DoBar")).To(BeTrue(), "expected symbol name DoBar in output")
+})
+var _ = It("render compact pack projection budget 100", func() {
 	// Acceptance gate: budget=100 must produce output ≤ 100 tokens.
 	files := make([]PackFile, 20)
 	for i := range files {
@@ -651,21 +502,19 @@ func TestRenderCompactPackProjection_Budget100(t *testing.T) {
 
 	// Hard cap: output must be ≤ budget
 	est := estimateTokens(out)
-	if est > 100 {
-		t.Errorf("estimateTokens(output) = %d, must be <= budgetTokens=%d", est, 100)
-	}
-
-	// Omitted counts must be > 0 (100 tokens is tiny for 30 items)
-	if returned.OmittedFiles == 0 && returned.OmittedSymbols == 0 {
-		t.Error("expected omitted counts > 0 with budget=100 and 30 items")
-	}
-}
+	Expect(est > 100).To(BeFalse(), "estimateTokens(output) = %d, must be <= budgetTokens=%d", est, 100)
+	// At least one omitted count must be nonzero (100 tokens is tiny for 30 items).
+	Expect([]int{returned.OmittedFiles, returned.OmittedSymbols}).NotTo(
+		Equal([]int{0, 0}),
+		"expected omitted counts > 0 with budget=100 and 30 items",
+	)
+})
 
 // TestPackResultCompactProjectionPopulated verifies that the
 // Pack()-style wiring (NewCompactPackProjection followed by
 // RenderCompactPackProjection) correctly populates CompactProjection
 // on a PackResult, matching the logic added to Pack() in Atom 5.
-func TestPackResultCompactProjectionPopulated(t *testing.T) {
+var _ = It("pack result compact projection populated", func() {
 	result := PackResult{
 		PackID:       "wired-pack-1",
 		Fresh:        true,
@@ -697,45 +546,32 @@ func TestPackResultCompactProjectionPopulated(t *testing.T) {
 	_, compactProj := RenderCompactPackProjection(proj, result.BudgetTokens)
 
 	result.CompactProjection = compactProj
+	Expect(
 
-	// CompactProjection must be populated.
-	if result.CompactProjection.PackID != "wired-pack-1" {
-		t.Errorf("expected CompactProjection.PackID 'wired-pack-1', got %q", result.CompactProjection.PackID)
-	}
-
-	if result.CompactProjection.BudgetTokens != 80 {
-		t.Errorf("expected CompactProjection.BudgetTokens 80, got %d", result.CompactProjection.BudgetTokens)
-	}
-
-	if result.CompactProjection.TotalCandidates == 0 {
-		t.Error("expected TotalCandidates > 0")
-	}
+		// CompactProjection must be populated.
+		result.CompactProjection.PackID).To(BeEquivalentTo("wired-pack-1"), "expected CompactProjection.PackID 'wired-pack-1', got %q", result.CompactProjection.PackID)
+	Expect(result.CompactProjection.BudgetTokens).To(BeEquivalentTo(80), "expected CompactProjection.BudgetTokens 80, got %d", result.CompactProjection.BudgetTokens)
+	Expect(result.CompactProjection.TotalCandidates).NotTo(BeEquivalentTo(0), "expected TotalCandidates > 0")
 
 	// With BudgetTokens=80 and 10 items with descriptive reasons,
 	// at least some items should be omitted.
 	totalOmitted := result.CompactProjection.OmittedFiles +
 		result.CompactProjection.OmittedSymbols +
 		result.CompactProjection.OmittedTests
-	if totalOmitted == 0 {
-		t.Errorf("expected at least one omitted count > 0 with BudgetTokens=80 and 10 items; header+tokens used=%d",
-			estimateTokens(strings.Repeat("x", 80*3)))
-	}
+	Expect(totalOmitted).NotTo(BeEquivalentTo(0), "expected at least one omitted count > 0 with BudgetTokens=80 and 10 items; header+tokens used=%d",
+		estimateTokens(strings.Repeat("x", 80*3)))
+	Expect(
 
-	// Quality must be correct.
-	if result.CompactProjection.Quality.LocalizationConfidence != "high" {
-		t.Errorf("expected localization_confidence 'high', got %q",
-			result.CompactProjection.Quality.LocalizationConfidence)
-	}
-
-	if !result.CompactProjection.Quality.SourceOwnerFound {
-		t.Error("expected SourceOwnerFound=true")
-	}
-}
+		// Quality must be correct.
+		result.CompactProjection.Quality.LocalizationConfidence).To(BeEquivalentTo("high"), "expected localization_confidence 'high', got %q",
+		result.CompactProjection.Quality.LocalizationConfidence)
+	Expect(result.CompactProjection.Quality.SourceOwnerFound).To(BeTrue(), "expected SourceOwnerFound=true")
+})
 
 // TestPackResultCompactProjectionUnbounded verifies that when
 // BudgetTokens=0 (unbounded), the CompactProjection has zero omitted
 // counts — matching the contract that BudgetTokens=0 means no cap.
-func TestPackResultCompactProjectionUnbounded(t *testing.T) {
+var _ = It("pack result compact projection unbounded", func() {
 	files := make([]PackFile, 15)
 	for i := range files {
 		files[i] = PackFile{Path: "pkg/f.go", Role: "source", Reason: "match"}
@@ -754,34 +590,27 @@ func TestPackResultCompactProjectionUnbounded(t *testing.T) {
 	_, compactProj := RenderCompactPackProjection(proj, 0)
 
 	result.CompactProjection = compactProj
+	Expect(
 
-	// All omitted counts must be zero (no budget enforcement).
-	if result.CompactProjection.OmittedFiles != 0 {
-		t.Errorf("expected OmittedFiles=0 in unbounded mode, got %d",
-			result.CompactProjection.OmittedFiles)
-	}
+		// All omitted counts must be zero (no budget enforcement).
+		result.CompactProjection.OmittedFiles).To(BeEquivalentTo(0), "expected OmittedFiles=0 in unbounded mode, got %d",
+		result.CompactProjection.OmittedFiles)
+	Expect(result.CompactProjection.OmittedSymbols).To(BeEquivalentTo(0), "expected OmittedSymbols=0 in unbounded mode, got %d",
+		result.CompactProjection.OmittedSymbols)
+	Expect(result.CompactProjection.OmittedTests).To(BeEquivalentTo(0), "expected OmittedTests=0 in unbounded mode, got %d",
+		result.CompactProjection.OmittedTests)
+	Expect(
 
-	if result.CompactProjection.OmittedSymbols != 0 {
-		t.Errorf("expected OmittedSymbols=0 in unbounded mode, got %d",
-			result.CompactProjection.OmittedSymbols)
-	}
-
-	if result.CompactProjection.OmittedTests != 0 {
-		t.Errorf("expected OmittedTests=0 in unbounded mode, got %d",
-			result.CompactProjection.OmittedTests)
-	}
-
-	// TotalCandidates should reflect actual counts.
-	if result.CompactProjection.TotalCandidates != 16 { // 15 files + 1 symbol
-		t.Errorf("expected TotalCandidates 16, got %d",
-			result.CompactProjection.TotalCandidates)
-	}
-}
+		// TotalCandidates should reflect actual counts.
+		result.CompactProjection.TotalCandidates).To(BeEquivalentTo(16), // 15 files + 1 symbol
+		"expected TotalCandidates 16, got %d",
+		result.CompactProjection.TotalCandidates)
+})
 
 // TestLoadCachedPackCompactProjectionFallback verifies that
 // loadCachedPack's zero-value detection works: if CompactProjection
 // is not populated (pre-Atom-5 cached pack), it is recomputed.
-func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
+var _ = It("load cached pack compact projection fallback", func() {
 	// Simulate a pre-Atom-5 cached pack: CompactProjection is zero-value.
 	result := PackResult{
 		PackID:       "legacy-pack",
@@ -797,11 +626,10 @@ func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
 			{Path: "pkg/z.go", Role: "source", Reason: "match"},
 		},
 	}
+	Expect(
 
-	// Verify CompactProjection is initially zero.
-	if result.CompactProjection.PackID != "" {
-		t.Error("expected zero CompactProjection for legacy pack fixture")
-	}
+		// Verify CompactProjection is initially zero.
+		result.CompactProjection.PackID).To(BeEquivalentTo(""), "expected zero CompactProjection for legacy pack fixture")
 
 	// Simulate the loadCachedPack fallback logic.
 	if result.CompactProjection.PackID == "" {
@@ -810,32 +638,27 @@ func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
 
 		result.CompactProjection = compactProj
 	}
+	Expect(
 
-	// Now CompactProjection must be populated.
-	if result.CompactProjection.PackID != "legacy-pack" {
-		t.Errorf("expected CompactProjection.PackID 'legacy-pack' after fallback, got %q",
-			result.CompactProjection.PackID)
-	}
+		// Now CompactProjection must be populated.
+		result.CompactProjection.PackID).To(BeEquivalentTo("legacy-pack"), "expected CompactProjection.PackID 'legacy-pack' after fallback, got %q",
+		result.CompactProjection.PackID)
 
 	// With BudgetTokens=100 and 3 items, at least one omitted.
 	totalOmitted := result.CompactProjection.OmittedFiles +
 		result.CompactProjection.OmittedSymbols +
 		result.CompactProjection.OmittedTests
-	if totalOmitted == 0 {
-		t.Error("expected omitted counts > 0 after fallback with BudgetTokens=100")
-	}
-}
+	Expect(totalOmitted).NotTo(BeEquivalentTo(0), "expected omitted counts > 0 after fallback with BudgetTokens=100")
+})
 
 // TestEstimatedFullTokensSaved_BudgetEnforcement verifies that
 // RenderCompactPackProjection records estimated token savings when
 // budget enforcement omits items (Atom 6).
-func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
+var _ = It("estimated full tokens saved budget enforcement", func() {
 	resetViewCacheCounters()
 
 	fullSaved, _ := TokenSavingsCounters()
-	if fullSaved != 0 {
-		t.Fatalf("expected zero initial savings, got %d", fullSaved)
-	}
+	Expect(fullSaved).To(BeEquivalentTo(0), "expected zero initial savings, got %d", fullSaved)
 
 	// Create a pack with enough items that budget=200 forces omissions
 	// but is large enough that the truncated output is genuinely smaller
@@ -854,26 +677,24 @@ func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
 	}
 	proj := NewCompactPackProjection(result)
 	out, returned := RenderCompactPackProjection(proj, 200)
-
 	// Budget enforcement: at least some items should be omitted.
-	if returned.OmittedFiles == 0 && returned.OmittedSymbols == 0 && returned.OmittedTests == 0 {
-		t.Error("expected at least some omitted items with budget=200 and 15 files")
-	}
+	Expect([]int{returned.OmittedFiles, returned.OmittedSymbols, returned.OmittedTests}).NotTo(
+		Equal([]int{0, 0, 0}),
+		"expected at least some omitted items with budget=200 and 15 files",
+	)
 
-	t.Logf("output tokens=%d, omitted files=%d", estimateTokens(out), returned.OmittedFiles)
+	GinkgoWriter.Printf("output tokens=%d, omitted files=%d", estimateTokens(out), returned.OmittedFiles)
 
 	// Savings counter must be > 0 (genuine savings from compact projection).
 	fullSaved, _ = TokenSavingsCounters()
-	if fullSaved <= 0 {
-		t.Errorf("expected estimatedFullTokensSaved > 0 after budget enforcement, got %d", fullSaved)
-	}
+	Expect(fullSaved <= 0).To(BeFalse(), "expected estimatedFullTokensSaved > 0 after budget enforcement, got %d", fullSaved)
 
-	t.Logf("estimatedFullTokensSaved=%d from budget=200 render", fullSaved)
-}
+	GinkgoWriter.Printf("estimatedFullTokensSaved=%d from budget=200 render", fullSaved)
+})
 
 // TestEstimatedFullTokensSaved_UnboundedNoSavings verifies that
 // unbounded rendering (BudgetTokens=0) does not record false savings.
-func TestEstimatedFullTokensSaved_UnboundedNoSavings(t *testing.T) {
+var _ = It("estimated full tokens saved unbounded no savings", func() {
 	resetViewCacheCounters()
 
 	result := PackResult{
@@ -889,17 +710,15 @@ func TestEstimatedFullTokensSaved_UnboundedNoSavings(t *testing.T) {
 	RenderCompactPackProjection(proj, 0) // unbounded
 
 	fullSaved, _ := TokenSavingsCounters()
-	if fullSaved != 0 {
-		t.Errorf("expected zero savings for unbounded render, got %d", fullSaved)
-	}
-}
+	Expect(fullSaved).To(BeEquivalentTo(0), "expected zero savings for unbounded render, got %d", fullSaved)
+})
 
 // TestEstimatedFullTokensSaved_HeaderExceedsBudget verifies that the
 // counter records savings when the header alone exceeds budget
 // (edge case: all items omitted). Uses enough candidates that the
 // full unbounded output genuinely exceeds the truncated output
 // (truncation note costs less than rendering all omitted items).
-func TestEstimatedFullTokensSaved_HeaderExceedsBudget(t *testing.T) {
+var _ = It("estimated full tokens saved header exceeds budget", func() {
 	resetViewCacheCounters()
 
 	// Many files so full unbounded rendering >> truncated output.
@@ -922,23 +741,17 @@ func TestEstimatedFullTokensSaved_HeaderExceedsBudget(t *testing.T) {
 	}
 	proj := NewCompactPackProjection(result)
 	out, returned := RenderCompactPackProjection(proj, 15)
+	Expect(
 
-	// All items should be omitted (header exceeds budget).
-	if returned.OmittedFiles != 20 {
-		t.Errorf("expected all 20 files omitted when header exceeds budget, got OmittedFiles=%d", returned.OmittedFiles)
-	}
-
-	if !strings.Contains(out, "truncation_note: budget exhausted by header") {
-		t.Error("expected truncation note in output")
-	}
+		// All items should be omitted (header exceeds budget).
+		returned.OmittedFiles).To(BeEquivalentTo(20), "expected all 20 files omitted when header exceeds budget, got OmittedFiles=%d", returned.OmittedFiles)
+	Expect(strings.Contains(out, "truncation_note: budget exhausted by header")).To(BeTrue(), "expected truncation note in output")
 
 	// Savings counter should record the delta: full output (header +
 	// 20 files + evidence) >> truncated output (header + truncation +
 	// evidence), so savings > 0.
 	fullSaved, _ := TokenSavingsCounters()
-	if fullSaved <= 0 {
-		t.Errorf("expected estimatedFullTokensSaved > 0 when header exceeds budget with many files, got %d", fullSaved)
-	}
+	Expect(fullSaved <= 0).To(BeFalse(), "expected estimatedFullTokensSaved > 0 when header exceeds budget with many files, got %d", fullSaved)
 
-	t.Logf("estimatedFullTokensSaved=%d from header-exceeds-budget render", fullSaved)
-}
+	GinkgoWriter.Printf("estimatedFullTokensSaved=%d from header-exceeds-budget render", fullSaved)
+})

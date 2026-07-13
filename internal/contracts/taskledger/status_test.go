@@ -1,41 +1,32 @@
 package taskledger
 
 import (
-	"slices"
-	"testing"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestParseNormalizesAndValidatesTaskLedgerStatus(t *testing.T) {
-	tests := []struct {
-		input string
-		want  Status
-		valid bool
-	}{
-		{input: " pending ", want: StatusPending, valid: true},
-		{input: "IN-PROGRESS", want: StatusInProgress, valid: true},
-		{input: "completed", want: StatusCompleted, valid: true},
-		{input: "blocked", want: StatusBlocked, valid: true},
-		{input: "cancelled", want: StatusCancelled, valid: true},
-		{input: "waiting", want: Status("waiting"), valid: false},
-	}
+var _ = ginkgo.Describe("Task-ledger status", func() {
+	ginkgo.DescribeTable("normalizes and validates status values",
+		func(input string, expected Status, expectedValid bool) {
+			actual, valid := Parse(input)
+			gomega.Expect(actual).To(gomega.Equal(expected))
+			gomega.Expect(valid).To(gomega.Equal(expectedValid))
+		},
+		ginkgo.Entry("pending", " pending ", StatusPending, true),
+		ginkgo.Entry("in progress", "IN-PROGRESS", StatusInProgress, true),
+		ginkgo.Entry("completed", "completed", StatusCompleted, true),
+		ginkgo.Entry("blocked", "blocked", StatusBlocked, true),
+		ginkgo.Entry("cancelled", "cancelled", StatusCancelled, true),
+		ginkgo.Entry("unknown", "waiting", Status("waiting"), false),
+	)
 
-	for _, test := range tests {
-		got, valid := Parse(test.input)
-		if got != test.want || valid != test.valid {
-			t.Fatalf("Parse(%q) = (%q, %t), want (%q, %t)", test.input, got, valid, test.want, test.valid)
-		}
-	}
-}
-
-func TestValuesAndLifecyclePredicatesStayAligned(t *testing.T) {
-	want := []string{"pending", "in_progress", "completed", "blocked", "cancelled"}
-	if got := Values(); !slices.Equal(got, want) {
-		t.Fatalf("Values() = %v, want %v", got, want)
-	}
-	if !StatusPending.Open() || !StatusInProgress.Open() || StatusBlocked.Open() {
-		t.Fatal("Open must identify only pending and in-progress work")
-	}
-	if !StatusCompleted.Finished() || !StatusCancelled.Finished() || StatusBlocked.Finished() {
-		t.Fatal("Finished must identify only completed and cancelled work")
-	}
-}
+	ginkgo.It("keeps values and lifecycle predicates aligned", func() {
+		gomega.Expect(Values()).To(gomega.Equal([]string{"pending", "in_progress", "completed", "blocked", "cancelled"}))
+		gomega.Expect(StatusPending.Open()).To(gomega.BeTrue())
+		gomega.Expect(StatusInProgress.Open()).To(gomega.BeTrue())
+		gomega.Expect(StatusBlocked.Open()).To(gomega.BeFalse())
+		gomega.Expect(StatusCompleted.Finished()).To(gomega.BeTrue())
+		gomega.Expect(StatusCancelled.Finished()).To(gomega.BeTrue())
+		gomega.Expect(StatusBlocked.Finished()).To(gomega.BeFalse())
+	})
+})

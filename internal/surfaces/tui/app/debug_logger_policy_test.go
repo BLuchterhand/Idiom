@@ -1,57 +1,66 @@
 package app
 
 import (
+	"fmt"
 	"path/filepath"
-	"testing"
 
 	"idiom/internal/platform/config"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestNewSuppressesDefaultDebugLoggerDuringTests(t *testing.T) {
-	t.Chdir(t.TempDir())
+var _ = ginkgo.It("new suppresses default debug logger during tests", func() {
+	t := ginkgo.GinkgoT()
+	root := t.TempDir()
 
 	cfg := config.Default()
 	cfg.Chat.DebugLogDir = filepath.Join("logs", "conversations")
+	cfg.Chat.ProjectRoot = root
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
 
 	model := New(cfg)
 	defer model.Close()
 
-	if model.debugLogger != nil || model.DebugLogPath() != "" {
-		t.Fatalf("default test debug logger should be suppressed, logger=%v path=%q", model.debugLogger, model.DebugLogPath())
+	gomega.Expect(model.debugLogger).To(gomega.BeNil(), fmt.Sprintf("default test debug logger should be suppressed, logger=%v path=%q", model.debugLogger, model.DebugLogPath()))
+	gomega.Expect(model.DebugLogPath()).To(gomega.Equal(""), fmt.Sprintf("default test debug logger should be suppressed, logger=%v path=%q", model.debugLogger, model.DebugLogPath()))
+	{
+		matches, _ := filepath.Glob(filepath.Join(root, "logs", "conversations", "*.jsonl"))
+		gomega.Expect(len(matches)).To(gomega.Equal(0), fmt.Sprintf("default test debug logger should not create conversation logs: %#v", matches))
 	}
-	if matches, _ := filepath.Glob(filepath.Join("logs", "conversations", "*.jsonl")); len(matches) != 0 {
-		t.Fatalf("default test debug logger should not create conversation logs: %#v", matches)
-	}
-}
+})
 
-func TestNewSuppressesEmptyDebugLoggerDuringTests(t *testing.T) {
-	t.Chdir(t.TempDir())
+var _ = ginkgo.It("new suppresses empty debug logger during tests", func() {
+	t := ginkgo.GinkgoT()
+	root := t.TempDir()
 
 	cfg := config.Default()
 	cfg.Chat.DebugLogDir = ""
+	cfg.Chat.ProjectRoot = root
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
 
 	model := New(cfg)
 	defer model.Close()
 
-	if model.debugLogger != nil || model.DebugLogPath() != "" {
-		t.Fatalf("empty test debug logger should be suppressed, logger=%v path=%q", model.debugLogger, model.DebugLogPath())
+	gomega.Expect(model.debugLogger).To(gomega.BeNil(), fmt.Sprintf("empty test debug logger should be suppressed, logger=%v path=%q", model.debugLogger, model.DebugLogPath()))
+	gomega.Expect(model.DebugLogPath()).To(gomega.Equal(""), fmt.Sprintf("empty test debug logger should be suppressed, logger=%v path=%q", model.debugLogger, model.DebugLogPath()))
+	{
+		matches, _ := filepath.Glob(filepath.Join(root, "logs", "conversations", "*.jsonl"))
+		gomega.Expect(len(matches)).To(gomega.Equal(0), fmt.Sprintf("empty test debug logger should not fall back to default logs: %#v", matches))
 	}
-	if matches, _ := filepath.Glob(filepath.Join("logs", "conversations", "*.jsonl")); len(matches) != 0 {
-		t.Fatalf("empty test debug logger should not fall back to default logs: %#v", matches)
-	}
-}
+})
 
-func TestNewKeepsExplicitDebugLoggerDuringTests(t *testing.T) {
+var _ = ginkgo.It("new keeps explicit debug logger during tests", func() {
+	t := ginkgo.GinkgoT()
 	cfg := config.Default()
 	cfg.Chat.DebugLogDir = t.TempDir()
 
 	model := New(cfg)
 	defer model.Close()
 
-	if model.debugLogger == nil || model.DebugLogPath() == "" {
-		t.Fatal("explicit test debug log dir should still create a logger")
-	}
-	if !filepath.IsAbs(model.DebugLogPath()) {
-		t.Fatalf("explicit debug log path should be absolute, got %q", model.DebugLogPath())
-	}
-}
+	gomega.Expect(model.debugLogger).To(gomega.Not(gomega.BeNil()), fmt.Sprint("explicit test debug log dir should still create a logger"))
+	gomega.Expect(model.DebugLogPath()).To(gomega.Not(gomega.Equal("")), fmt.Sprint("explicit test debug log dir should still create a logger"))
+	gomega.Expect(filepath.IsAbs(model.DebugLogPath())).To(gomega.BeTrue(), fmt.Sprintf("explicit debug log path should be absolute, got %q", model.DebugLogPath()))
+})

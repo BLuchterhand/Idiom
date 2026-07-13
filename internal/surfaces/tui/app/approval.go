@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -14,6 +16,7 @@ import (
 // PreExecute hook blocks on response until the UI thread resolves it.
 type pendingApproval struct {
 	request  workspace.ToolRequest
+	targets  []string
 	mode     string
 	response chan approvalResponse
 }
@@ -21,6 +24,13 @@ type pendingApproval struct {
 type approvalResponse struct {
 	allow bool
 	scope workspace.SystemSearchAccessScope
+}
+
+// approvalAwaitingMsg carries the identity of the request that owns an
+// awaiting-approval status. Update ignores the message after that request is
+// resolved, so delayed UI delivery cannot replace a newer terminal status.
+type approvalAwaitingMsg struct {
+	pending *pendingApproval
 }
 
 // summary returns a one-line description the UI can show to the user so
@@ -31,6 +41,9 @@ func (p *pendingApproval) summary() string {
 	}
 
 	req := p.request
+	if len(p.targets) > 0 {
+		return fmt.Sprintf("%s: %s", req.Tool, textutil.Truncate(strings.Join(p.targets, ", "), 120))
+	}
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameShell, "bash":
 		return fmt.Sprintf("%s: %s", req.Tool, textutil.Truncate(strings.TrimSpace(req.Command), 120))
@@ -59,46 +72,39 @@ func (p *pendingApproval) approveHint() string {
 	return "/approve or /deny"
 }
 
-// requestApproval is called from the runner goroutine when a tool hits
-// an Ask rule. It registers the pending request, signals the UI, and
-// blocks until the UI resolves it via /approve or /deny.
-//
-// Only one approval can be outstanding at a time. If another tool call
-// hits Ask while a prior one is still unresolved, the caller blocks on
-// approvalSerial until the UI unblocks the slot. This preserves the
-// invariant that the banner always matches a real request the user is
-// being asked about — no silent clobbers.
-func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool {
-	return m.requestApprovalResponse(req, modeName).allow
+// requestApproval is called from the prompt execution goroutine when a tool
+// hits an Ask rule. It transfers pending-request ownership to Update and blocks
+// until the UI resolves it via /approve or /deny. Serializing requests keeps
+// the visible banner bound to the request that is actually waiting.
+func (m *promptExecutionSession) requestApproval(req workspace.ToolRequest, modeName string) bool {
+	return m.requestApprovalResponse(m.promptExecutionContext, req, modeName, nil).allow
 }
 
-func (m *Model) requestApprovalResponse(req workspace.ToolRequest, modeName string) approvalResponse {
+func (m *promptExecutionSession) requestApprovalResponse(ctx context.Context, req workspace.ToolRequest, modeName string, targets []string) approvalResponse {
 	if m == nil {
 		return approvalResponse{}
 	}
-
-	// In headless mode (idiom run --prompt --json, idiom artifact, idiom
-	// implement) there is no TUI thread to call resolveApproval, so
-	// blocking on the response channel hangs the lane forever. Auto-deny
-	// instead so the runner's doom-loop / approval-required path closes
-	// cleanly with the rejected-blocker shape callers expect.
-	if m.eventStream != nil || m.suppressPromptTranscript || m.nonInteractive {
-		reason := "headless mode (json event stream active); no TUI available to approve"
-		if m.eventStream == nil {
-			reason = "headless prompt runner; no TUI available to approve"
+	if ctx == nil {
+		ctx = m.promptExecutionContext
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return approvalResponse{}
+	default:
+	}
+	if m.eventStream != nil || m.nonInteractive {
+		if m.eventStream != nil {
+			m.eventStream.emit(map[string]any{
+				"event":   "approval_auto_denied",
+				"tool":    req.Tool,
+				"mode":    modeName,
+				"reason":  "headless mode (json event stream active); no TUI available to approve",
+				"session": m.eventStream.sessionID,
+			})
 		}
-
-		if m.eventStream == nil {
-			return approvalResponse{}
-		}
-
-		m.emitJSONEvent(map[string]any{
-			"event":   "approval_auto_denied",
-			"tool":    req.Tool,
-			"mode":    modeName,
-			"reason":  reason,
-			"session": m.eventStream.sessionID,
-		})
 
 		return approvalResponse{}
 	}
@@ -106,21 +112,85 @@ func (m *Model) requestApprovalResponse(req workspace.ToolRequest, modeName stri
 	m.approvalSerial.Lock()
 	defer m.approvalSerial.Unlock()
 
-	resp := make(chan approvalResponse, 1)
+	response := make(chan approvalResponse, 1)
 	pending := &pendingApproval{
 		request:  req,
+		targets:  append([]string(nil), targets...),
 		mode:     modeName,
-		response: resp,
+		response: response,
+	}
+	m.queueUIEvent(approvalPendingMsg{pending: pending})
+	m.queueUIEvent(approvalAwaitingMsg{pending: pending})
+
+	select {
+	case decision := <-response:
+		select {
+		case <-ctx.Done():
+			return approvalResponse{}
+		default:
+			return decision
+		}
+	case <-ctx.Done():
+		m.queueUIEvent(approvalClearedMsg{pending: pending})
+
+		return approvalResponse{}
+	}
+}
+
+// tuiMutationApprover is the trusted UI adapter for workspace-owned mutation
+// authorization. It can only answer for the immutable execution session that
+// created it; workspace remains responsible for canonical scope checks and
+// the one-use authorization receipt.
+type tuiMutationApprover struct {
+	session   *promptExecutionSession
+	sessionID string
+}
+
+func (a *tuiMutationApprover) ApproveWorkspaceMutation(ctx context.Context, req workspace.MutationApprovalRequest) (workspace.MutationApprovalDecision, error) {
+	if a == nil || a.session == nil {
+		return workspace.MutationApprovalDecision{}, fmt.Errorf("TUI mutation approver is not configured")
+	}
+	expectedSessionID := strings.TrimSpace(a.sessionID)
+	contextSessionID, bound := workspace.ExecutionSessionIDFromContext(ctx)
+	if expectedSessionID == "" || !bound || strings.TrimSpace(contextSessionID) != expectedSessionID || strings.TrimSpace(req.SessionID) != expectedSessionID {
+		return workspace.MutationApprovalDecision{}, fmt.Errorf("mutation approval execution session does not match the prompt session")
+	}
+	if err := ctx.Err(); err != nil {
+		return workspace.MutationApprovalDecision{}, err
 	}
 
-	m.approvalMu.Lock()
+	displayTargets := make([]string, 0, len(req.Targets))
+	for _, target := range req.Targets {
+		displayPath := textutil.FirstNonEmpty(strings.TrimSpace(target.RequestedPath), strings.TrimSpace(target.Identity.CanonicalID))
+		if displayPath != "" && !slices.Contains(displayTargets, displayPath) {
+			displayTargets = append(displayTargets, displayPath)
+		}
+	}
+	request := workspace.ToolRequest{
+		Tool:        strings.TrimSpace(req.Tool),
+		Description: strings.TrimSpace(req.Description),
+	}
+	if len(displayTargets) == 1 {
+		request.Path = displayTargets[0]
+	}
+	modeName := string(currentMode(a.session.agentModeName, a.session.cfg.Chat.AgentMode).Name)
+	response := a.session.requestApprovalResponse(ctx, request, modeName, displayTargets)
+	if err := ctx.Err(); err != nil {
+		return workspace.MutationApprovalDecision{}, err
+	}
+	return workspace.MutationApprovalDecision{Approved: response.allow}, nil
+}
 
-	m.approvalPending = pending
-	m.approvalMu.Unlock()
+func (m *Model) handleApprovalAwaiting(msg approvalAwaitingMsg) {
+	if m == nil || msg.pending == nil {
+		return
+	}
 
-	m.events <- infoMsg{text: fmt.Sprintf("Awaiting approval (%s mode): %s", modeName, pending.approveHint())}
+	if m.currentApproval() != msg.pending {
+		return
+	}
 
-	return <-resp
+	m.status = fmt.Sprintf("Awaiting approval (%s mode): %s", msg.pending.mode, msg.pending.approveHint())
 }
 
 // resolveApproval is called from the UI thread when the user types

@@ -1,0 +1,10 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read the label target source before editing\",\"why_not_answering\":\"need source-body evidence for the edit target\"}",
+  "{\"tool\":\"code_navigate\",\"capability\":\"file_outline\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"inspect the same target outline before writing\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":8,\"named_gap\":\"refresh the exact target window before editing\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"understand why the current label was introduced before editing\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label after model-selected inspection\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"refresh the changed source before the final report\"}",
+  "Implemented the label change after every authorized same-target inspection executed unchanged. Verification: Source sanity passed."
+]

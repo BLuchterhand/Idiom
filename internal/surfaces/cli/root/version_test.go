@@ -3,57 +3,39 @@ package root
 import (
 	"bytes"
 	"runtime"
-	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
 // TestRunVersionMainPrintsVersion verifies the default unset-ldflags
 // build prints "version: dev" — the development sentinel — plus the
 // runtime version line. A go-install or go-build user without
 // goreleaser's -ldflags should still get a recognizable answer.
-func TestRunVersionMainPrintsVersion(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+var _ = ginkgo.Describe("Version output", func() {
+	ginkgo.It("prints the development version and runtime details", func() {
+		var stdout, stderr bytes.Buffer
+		gomega.Expect(runVersionMain(nil, &stdout, &stderr)).To(gomega.Equal(0), "stderr=%s", stderr.String())
 
-	if got := runVersionMain(nil, &stdout, &stderr); got != 0 {
-		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
-	}
+		gomega.Expect(stdout.String()).To(gomega.And(
+			gomega.ContainSubstring("version: "),
+			gomega.ContainSubstring("go: "),
+			gomega.ContainSubstring(runtime.Version()),
+			gomega.ContainSubstring("os/arch: "),
+		))
+	})
 
-	out := stdout.String()
-	if !strings.Contains(out, "version: ") {
-		t.Fatalf("output missing 'version: ' line; got: %s", out)
-	}
+	// TestRunVersionMainHonorsLdflagsInjection verifies that the package-
+	// level `version` variable is what gets printed. goreleaser injects
+	// this at build time via -ldflags '-X main.version=...', so the
+	// build-time override path is the contract this test guards.
+	ginkgo.It("honors the version injected by build ldflags", func() {
+		original := version
+		ginkgo.DeferCleanup(func() { version = original })
+		version = "v9.9.9-test"
 
-	if !strings.Contains(out, "go: ") {
-		t.Fatalf("output missing 'go: ' line; got: %s", out)
-	}
-
-	if !strings.Contains(out, runtime.Version()) {
-		t.Fatalf("output missing runtime.Version() %q; got: %s", runtime.Version(), out)
-	}
-
-	if !strings.Contains(out, "os/arch: ") {
-		t.Fatalf("output missing 'os/arch: ' line; got: %s", out)
-	}
-}
-
-// TestRunVersionMainHonorsLdflagsInjection verifies that the package-
-// level `version` variable is what gets printed. goreleaser injects
-// this at build time via -ldflags '-X main.version=...', so the
-// build-time override path is the contract this test guards.
-func TestRunVersionMainHonorsLdflagsInjection(t *testing.T) {
-	original := version
-
-	t.Cleanup(func() { version = original })
-
-	version = "v9.9.9-test"
-
-	var stdout, stderr bytes.Buffer
-
-	if got := runVersionMain(nil, &stdout, &stderr); got != 0 {
-		t.Fatalf("expected exit 0, got %d", got)
-	}
-
-	if !strings.Contains(stdout.String(), "version: v9.9.9-test") {
-		t.Fatalf("expected version override to surface in output; got: %s", stdout.String())
-	}
-}
+		var stdout, stderr bytes.Buffer
+		gomega.Expect(runVersionMain(nil, &stdout, &stderr)).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("version: v9.9.9-test"))
+	})
+})

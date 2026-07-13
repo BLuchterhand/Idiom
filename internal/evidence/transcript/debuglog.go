@@ -10,19 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"idiom/internal/contracts/runprofile"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/redaction"
-)
-
-type DebugLogMode string
-
-const (
-	DebugLogModeRedacted DebugLogMode = "redacted"
-	DebugLogModeFull     DebugLogMode = "full"
 )
 
 type DebugLoggerOptions struct {
 	Dir           string
-	Mode          DebugLogMode
+	Mode          runprofile.DebugLogMode
 	WorkspaceRoot string
 	// ResumePath, when non-empty, opens that existing log file in
 	// append mode instead of creating a fresh one under Dir. The file
@@ -45,7 +40,7 @@ type DebugLogger struct {
 	mu                 sync.Mutex
 	path               string
 	file               *os.File
-	mode               DebugLogMode
+	mode               runprofile.DebugLogMode
 	workspaceRoot      string
 	lastMessageRole    string
 	lastMessageContent string
@@ -90,6 +85,7 @@ type ToolResultDetail struct {
 	DiscoveryScope string
 	DiscoveryCost  string
 	ExtraFields    map[string]any
+	Facts          *toolfacts.ToolResultFacts
 }
 
 type ToolRequestDetail struct {
@@ -232,7 +228,7 @@ func NewDebugLogger(opts DebugLoggerOptions) (*DebugLogger, error) {
 	}
 
 	if opts.Mode == "" {
-		opts.Mode = DebugLogModeRedacted
+		opts.Mode = runprofile.DebugLogModeRedacted
 	}
 
 	var filename string
@@ -277,21 +273,21 @@ func (l *DebugLogger) Path() string {
 	return l.path
 }
 
-func (l *DebugLogger) Mode() DebugLogMode {
+func (l *DebugLogger) Mode() runprofile.DebugLogMode {
 	if l == nil {
-		return DebugLogModeRedacted
+		return runprofile.DebugLogModeRedacted
 	}
 
 	return l.mode
 }
 
-func (l *DebugLogger) SetMode(mode DebugLogMode) {
+func (l *DebugLogger) SetMode(mode runprofile.DebugLogMode) {
 	if l == nil {
 		return
 	}
 
 	if mode == "" {
-		mode = DebugLogModeRedacted
+		mode = runprofile.DebugLogModeRedacted
 	}
 
 	l.mode = mode
@@ -321,7 +317,7 @@ func (l *DebugLogger) LogSessionStart(start SessionStart) error {
 		record["ctx_size"] = start.CtxSize
 	}
 
-	if l.mode == DebugLogModeFull {
+	if l.mode == runprofile.DebugLogModeFull {
 		record["system_prompt"] = start.SystemPrompt
 	} else if digest := digestText(start.SystemPrompt); digest != "" {
 		record["system_prompt_digest"] = digest
@@ -355,7 +351,7 @@ func (l *DebugLogger) LogContext(contextSources []string, systemPrompt string, w
 		"workspace_mode":       workspaceMode,
 		"explore_thoroughness": thoroughness,
 	}
-	if l.mode == DebugLogModeFull {
+	if l.mode == runprofile.DebugLogModeFull {
 		record["system_prompt"] = systemPrompt
 	} else if digest := digestText(systemPrompt); digest != "" {
 		record["system_prompt_digest"] = digest
@@ -459,6 +455,10 @@ func (l *DebugLogger) LogToolResultDetail(d ToolResultDetail) error {
 
 	if strings.TrimSpace(d.DiscoveryCost) != "" {
 		record["discovery_cost"] = strings.TrimSpace(d.DiscoveryCost)
+	}
+
+	for key, value := range PrivacySafeToolResultFactFields(d.Facts) {
+		record[key] = value
 	}
 
 	l.addToolResultExtraFields(record, d.ExtraFields)
@@ -664,7 +664,7 @@ func (l *DebugLogger) LogPhase(lane string, phase string, state string, detail s
 }
 
 func (l *DebugLogger) sanitizeToolRaw(raw string) string {
-	if l == nil || l.mode == DebugLogModeFull || strings.TrimSpace(raw) == "" {
+	if l == nil || l.mode == runprofile.DebugLogModeFull || strings.TrimSpace(raw) == "" {
 		return raw
 	}
 
@@ -715,7 +715,7 @@ func (l *DebugLogger) sanitizeValue(key string, value any) any {
 }
 
 func (l *DebugLogger) sanitizeText(text string) string {
-	if l == nil || l.mode == DebugLogModeFull || strings.TrimSpace(text) == "" {
+	if l == nil || l.mode == runprofile.DebugLogModeFull || strings.TrimSpace(text) == "" {
 		return text
 	}
 

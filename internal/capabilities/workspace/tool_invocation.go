@@ -83,7 +83,7 @@ func (s *ConfiguredToolSurface) InvokeTool(ctx context.Context, req ToolRequest,
 		}))
 	}
 
-	result := ToolResult{}
+	var result ToolResult
 	outcome := ToolInvocationOutcome{}
 	durationMillis := int64(0)
 	exposureDecision := opts.Exposure.decision(req.Tool)

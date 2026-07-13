@@ -15,6 +15,7 @@ import (
 
 	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
+	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -59,6 +60,20 @@ type planRenderedRow struct {
 // plan markdown files live.
 const planDirName = ".planning"
 
+func planningArtifactPath(root string, sessionID string, suffix string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+
+	dir := planDirName
+	if root = strings.TrimSpace(root); root != "" {
+		dir = filepath.Join(root, planDirName)
+	}
+
+	return filepath.Join(dir, sessionID+suffix)
+}
+
 // ensurePlanPath derives the plan file path for this session from the active
 // debug-log path. The plan file mirrors the session id so the plan and the
 // conversation stay linked.
@@ -67,33 +82,19 @@ func (m *Model) ensurePlanPath() string {
 		return m.planPath
 	}
 
-	id := m.sessionID()
-	if id == "" {
-		return ""
+	root := ""
+	if m.workspace != nil {
+		root = m.workspace.Root()
 	}
-
-	dir := planDirName
-	if root := m.workspace.Root(); root != "" {
-		dir = filepath.Join(root, planDirName)
-	}
-
-	_ = os.MkdirAll(dir, 0o755)
-	m.planPath = filepath.Join(dir, id+".md")
-
-	return m.planPath
-}
-
-// sessionID extracts the session id from the debug-log path. Returns "" if
-// the debug logger hasn't been initialized yet.
-func (m *Model) sessionID() string {
-	path := strings.TrimSpace(m.debugLogPath)
+	path := planningArtifactPath(root, sessionlog.SessionIDFromPath(m.debugLogPath), ".md")
 	if path == "" {
 		return ""
 	}
 
-	base := filepath.Base(path)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	m.planPath = path
 
-	return strings.TrimSuffix(base, ".jsonl")
+	return m.planPath
 }
 
 // loadPlanContent re-reads the plan file from disk. Safe to call anytime;
@@ -163,14 +164,14 @@ func (m *Model) renderPlanPanelContent() {
 	// Diff overlay takes precedence — when the user picks an entry,
 	// we swap the entire panel content for the colored diff so the
 	// familiar j/k scrolling applies to the diff payload directly.
-	if m.plan.overlayID != "" && m.plan.overlayBody != "" {
+	if m.planUI.overlayID != "" && m.planUI.overlayBody != "" {
 		var b strings.Builder
 
 		title := "◇ Plan · diff · Esc to close"
 		b.WriteString(panelTitleStyle.Width(w).Render(title))
 		b.WriteString("\n")
-		b.WriteString(m.plan.overlayBody)
-		m.plan.renderedRows = nil
+		b.WriteString(m.planUI.overlayBody)
+		m.planUI.renderedRows = nil
 		m.planViewport.SetContent(strings.TrimRight(b.String(), "\n"))
 
 		return
@@ -200,7 +201,7 @@ func (m *Model) renderPlanPanelContent() {
 	path := m.ensurePlanPath()
 
 	if strings.TrimSpace(content) == "" {
-		m.plan.renderedRows = nil
+		m.planUI.renderedRows = nil
 		lines := []string{
 			"No plan yet.",
 			"",
@@ -247,7 +248,7 @@ func (m *Model) renderPlanPanelContent() {
 
 	if m.panelTab == panelTabPlan && m.history.focused && len(selectableRows) > 0 {
 		m.normalizePlanCursor(selectableRows)
-		cursorLineIdx = selectableRows[m.plan.cursor].LineIdx
+		cursorLineIdx = selectableRows[m.planUI.cursor].LineIdx
 	}
 
 	lines := strings.Split(content, "\n")
@@ -271,7 +272,7 @@ func (m *Model) renderPlanPanelContent() {
 		renderedRows = appendPlanRenderedRows(renderedRows, rendered, displayLine.LineIdx)
 	}
 
-	m.plan.renderedRows = renderedRows
+	m.planUI.renderedRows = renderedRows
 	m.planViewport.SetContent(strings.TrimRight(b.String(), "\n"))
 }
 
@@ -360,17 +361,17 @@ func (m *Model) visitVisiblePlanLines(content string, visit func(lineIdx int, ra
 
 func (m *Model) normalizePlanCursor(rows []planSelectableRow) {
 	if len(rows) == 0 {
-		m.plan.cursor = 0
+		m.planUI.cursor = 0
 
 		return
 	}
 
-	if m.plan.cursor < 0 {
-		m.plan.cursor = 0
+	if m.planUI.cursor < 0 {
+		m.planUI.cursor = 0
 	}
 
-	if m.plan.cursor >= len(rows) {
-		m.plan.cursor = len(rows) - 1
+	if m.planUI.cursor >= len(rows) {
+		m.planUI.cursor = len(rows) - 1
 	}
 }
 
@@ -381,22 +382,22 @@ func (m *Model) openPlanDiffOverlayForItem(item planItemMeta) bool {
 
 	entry, err := m.loadPlanDiffEntry(item.DiffID)
 	if err != nil {
-		m.plan.overlayID = item.DiffID
-		m.plan.overlayBody = diffHeaderStyle.Render(fmt.Sprintf("(could not load diff %s: %v)", item.DiffID, err))
+		m.planUI.overlayID = item.DiffID
+		m.planUI.overlayBody = diffHeaderStyle.Render(fmt.Sprintf("(could not load diff %s: %v)", item.DiffID, err))
 
 		return true
 	}
 
-	m.plan.overlayID = item.DiffID
-	m.plan.overlayBody = renderPlanDiffOverlay(entry)
+	m.planUI.overlayID = item.DiffID
+	m.planUI.overlayBody = renderPlanDiffOverlay(entry)
 
 	return true
 }
 
 // closePlanDiffOverlay switches back to the plan list view.
 func (m *Model) closePlanDiffOverlay() {
-	m.plan.overlayID = ""
-	m.plan.overlayBody = ""
+	m.planUI.overlayID = ""
+	m.planUI.overlayBody = ""
 }
 
 // handlePlanPanelKey consumes a key press when the plan panel has
@@ -409,7 +410,7 @@ func (m *Model) closePlanDiffOverlay() {
 // through so the shared viewport scrolling handles the diff text.
 func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	// Overlay mode: Esc closes; scroll keys fall through.
-	if m.plan.overlayID != "" {
+	if m.planUI.overlayID != "" {
 		if msg.Type == tea.KeyEsc {
 			m.closePlanDiffOverlay()
 			m.renderPlanPanelContent()
@@ -422,16 +423,16 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 	switch msg.Type {
 	case tea.KeyUp:
-		if m.plan.cursor > 0 {
-			m.plan.cursor--
+		if m.planUI.cursor > 0 {
+			m.planUI.cursor--
 			m.renderPlanPanelContent()
 		}
 
 		return true, m.waitForEventCmd()
 	case tea.KeyDown:
 		rows := m.currentPlanSelectableRows()
-		if m.plan.cursor < len(rows)-1 {
-			m.plan.cursor++
+		if m.planUI.cursor < len(rows)-1 {
+			m.planUI.cursor++
 			m.renderPlanPanelContent()
 		}
 
@@ -449,15 +450,15 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		switch string(msg.Runes) {
 		case "j":
 			rows := m.currentPlanSelectableRows()
-			if m.plan.cursor < len(rows)-1 {
-				m.plan.cursor++
+			if m.planUI.cursor < len(rows)-1 {
+				m.planUI.cursor++
 				m.renderPlanPanelContent()
 			}
 
 			return true, m.waitForEventCmd()
 		case "k":
-			if m.plan.cursor > 0 {
-				m.plan.cursor--
+			if m.planUI.cursor > 0 {
+				m.planUI.cursor--
 				m.renderPlanPanelContent()
 			}
 
@@ -475,16 +476,16 @@ func (m *Model) activateSelectedPlanRow() {
 	}
 
 	m.normalizePlanCursor(rows)
-	row := rows[m.plan.cursor]
+	row := rows[m.planUI.cursor]
 
 	switch row.Kind {
 	case planSelectableHeading:
-		if m.plan.collapsedHeadings == nil {
-			m.plan.collapsedHeadings = make(map[string]bool)
+		if m.planUI.collapsedHeadings == nil {
+			m.planUI.collapsedHeadings = make(map[string]bool)
 		}
 
-		m.plan.collapsedHeadings[row.HeadingKey] = !m.plan.collapsedHeadings[row.HeadingKey]
-		if m.plan.collapsedHeadings[row.HeadingKey] {
+		m.planUI.collapsedHeadings[row.HeadingKey] = !m.planUI.collapsedHeadings[row.HeadingKey]
+		if m.planUI.collapsedHeadings[row.HeadingKey] {
 			m.status = "Collapsed " + row.Heading + "."
 		} else {
 			m.status = "Expanded " + row.Heading + "."
@@ -571,11 +572,11 @@ func (m *Model) planFocusedLineText(raw string, lineIdx int) string {
 }
 
 func (m *Model) planHeadingCollapsed(lineIdx int, raw string) bool {
-	if m == nil || m.plan.collapsedHeadings == nil {
+	if m == nil || m.planUI.collapsedHeadings == nil {
 		return false
 	}
 
-	return m.plan.collapsedHeadings[planHeadingKey(lineIdx, raw)]
+	return m.planUI.collapsedHeadings[planHeadingKey(lineIdx, raw)]
 }
 
 func planHeadingControlText(title string, collapsed bool) string {
@@ -630,7 +631,7 @@ func (m *Model) prepareEditPlanCmd() (tea.Cmd, string, error) {
 	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		template := fmt.Sprintf("# Plan — %s\n\n## Goals\n- [ ] \n\n## Steps\n- [ ] \n\n## Notes\n\n", m.sessionID())
+		template := fmt.Sprintf("# Plan — %s\n\n## Goals\n- [ ] \n\n## Steps\n- [ ] \n\n## Notes\n\n", sessionlog.SessionIDFromPath(m.debugLogPath))
 		if err := os.WriteFile(path, []byte(template), 0o644); err != nil {
 			return nil, "", fmt.Errorf("create plan: %w", err)
 		}

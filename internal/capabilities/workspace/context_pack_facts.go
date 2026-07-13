@@ -5,6 +5,7 @@ import (
 
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/contracts/toolfacts"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -18,6 +19,7 @@ func contextPackToolResultFacts(result comprehension.PackResult) *toolfacts.Tool
 	}
 
 	facts := &toolfacts.ToolResultFacts{
+		ArtifactIDs:            textutil.UniqueNonEmpty([]string{result.PackID, result.ArtifactPath}),
 		CandidatePaths:         discoveryFactCandidatePaths(comprehension.RankedPackCandidatePaths(result)),
 		CandidateSymbols:       comprehension.RankedPackCandidateSymbols(result),
 		HasDiscoveryTargets:    len(result.CandidateFiles) > 0 || len(result.CandidateSymbols) > 0 || len(result.Tests) > 0,
@@ -26,7 +28,7 @@ func contextPackToolResultFacts(result comprehension.PackResult) *toolfacts.Tool
 		LocalizationConfidence: strings.TrimSpace(result.Quality.LocalizationConfidence),
 	}
 
-	if len(facts.CandidatePaths) == 0 && len(facts.CandidateSymbols) == 0 && !facts.HasDiscoveryTargets && !facts.SourceOwnerFound && facts.LocalizationConfidence == "" {
+	if len(facts.ArtifactIDs) == 0 && len(facts.CandidatePaths) == 0 && len(facts.CandidateSymbols) == 0 && !facts.HasDiscoveryTargets && !facts.SourceOwnerFound && facts.LocalizationConfidence == "" {
 		return nil
 	}
 

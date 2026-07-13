@@ -2,16 +2,19 @@ package productworkflow
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestValidateProductArtifactRejectsInvalidPRD(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "prd.md")
-	writeProductArtifactValidationFile(t, path, `---
+var _ = ginkgo.Describe("artifact validation", func() {
+	ginkgo.It("ValidateProductArtifactRejectsInvalidPRD", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		path := filepath.Join(root, "prd.md")
+		writeProductArtifactValidationFile(path, `---
 schema_version: idiom.prd.v1
 prd_id: prd-test
 status: draft
@@ -28,71 +31,72 @@ created_at: 2026-05-17T00:00:00Z
 | REQ-1 | must | do it |
 `)
 
-	result := ValidateProductArtifact(ProductArtifactValidationOptions{
-		Kind: "prd",
-		Path: path,
-	})
+		result := ValidateProductArtifact(ProductArtifactValidationOptions{
+			Kind: "prd",
+			Path: path,
+		})
+		gomega.Expect(result.Status).To(gomega.Equal(ProductWorkflowStatusFail), fmt.Sprintf("expected parser failure, got %#v", result))
+		gomega.Expect(result.Error).To(gomega.ContainSubstring("PRD has no requirements"), fmt.Sprintf("expected parser failure, got %#v", result))
 
-	if result.Status != ProductWorkflowStatusFail || !strings.Contains(result.Error, "PRD has no requirements") {
-		t.Fatalf("expected parser failure, got %#v", result)
+	})
+	ginkgo.It("ValidateProductArtifactRejectsUnknownADRTDDObligation", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		prdPath := filepath.Join(root, "prd.md")
+		tddPath := filepath.Join(root, "tdd.json")
+		adrPath := filepath.Join(root, "adr.md")
+
+		writeProductArtifactValidationFile(prdPath, RenderPRDMarkdown(validPRDDoc()))
+		writeProductArtifactValidationJSON(tddPath, TDDLedger{
+			SchemaVersion: "idiom.tdd_obligations.v2.fixture",
+			EffortID:      "test-effort",
+			TaskID:        "task-001",
+			CoverageTier:  "unit",
+			Coverage:      TDDCoverage{MutationMinScore: 80},
+			Obligations: []TDDObligation{{
+				ID:             "T1",
+				Type:           "acceptance",
+				Behavior:       "test",
+				Owner:          "test",
+				Command:        "go test",
+				RequiredBefore: "close",
+				Status:         "pending",
+			}},
+		})
+
+		adr := validADRDoc()
+		adr.FrontMatter.TDDObligations = []string{"missing-generated-obligation"}
+		writeProductArtifactValidationFile(adrPath, RenderADRMarkdown(adr))
+
+		result := ValidateProductArtifact(ProductArtifactValidationOptions{
+			Kind:          "adr",
+			Path:          adrPath,
+			PRDPath:       prdPath,
+			TDDLedgerPath: tddPath,
+		})
+		gomega.Expect(result.Status).To(gomega.Equal(ProductWorkflowStatusFail), fmt.Sprintf("expected ADR TDD cross-link failure, got %#v", result))
+		gomega.Expect(result.Error).To(gomega.ContainSubstring("tdd_obligation"), fmt.Sprintf("expected ADR TDD cross-link failure, got %#v", result))
+
+	})
+})
+
+func writeProductArtifactValidationFile(path string, body string) {
+	ginkgo.GinkgoHelper()
+	{
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir %s: %v", filepath.Dir(path), err))
 	}
+	{
+
+		err := os.WriteFile(path, []byte(body), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write %s: %v", path, err))
+	}
+
 }
 
-func TestValidateProductArtifactRejectsUnknownADRTDDObligation(t *testing.T) {
-	root := t.TempDir()
-	prdPath := filepath.Join(root, "prd.md")
-	tddPath := filepath.Join(root, "tdd.json")
-	adrPath := filepath.Join(root, "adr.md")
-
-	writeProductArtifactValidationFile(t, prdPath, RenderPRDMarkdown(validPRDDoc()))
-	writeProductArtifactValidationJSON(t, tddPath, TDDLedger{
-		SchemaVersion: "idiom.tdd_obligations.v2.fixture",
-		EffortID:      "test-effort",
-		TaskID:        "task-001",
-		CoverageTier:  "unit",
-		Coverage:      TDDCoverage{MutationMinScore: 80},
-		Obligations: []TDDObligation{{
-			ID:             "T1",
-			Type:           "acceptance",
-			Behavior:       "test",
-			Owner:          "test",
-			Command:        "go test",
-			RequiredBefore: "close",
-			Status:         "pending",
-		}},
-	})
-
-	adr := validADRDoc()
-	adr.FrontMatter.TDDObligations = []string{"missing-generated-obligation"}
-	writeProductArtifactValidationFile(t, adrPath, RenderADRMarkdown(adr))
-
-	result := ValidateProductArtifact(ProductArtifactValidationOptions{
-		Kind:          "adr",
-		Path:          adrPath,
-		PRDPath:       prdPath,
-		TDDLedgerPath: tddPath,
-	})
-
-	if result.Status != ProductWorkflowStatusFail || !strings.Contains(result.Error, "tdd_obligation") {
-		t.Fatalf("expected ADR TDD cross-link failure, got %#v", result)
-	}
-}
-
-func writeProductArtifactValidationFile(t *testing.T, path string, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-func writeProductArtifactValidationJSON(t *testing.T, path string, value any) {
-	t.Helper()
+func writeProductArtifactValidationJSON(path string, value any) {
+	ginkgo.GinkgoHelper()
 	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal fixture: %v", err)
-	}
-	writeProductArtifactValidationFile(t, path, string(data))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal fixture: %v", err))
+
+	writeProductArtifactValidationFile(path, string(data))
 }

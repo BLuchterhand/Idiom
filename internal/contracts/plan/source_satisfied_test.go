@@ -1,190 +1,77 @@
 package plan
 
 import (
-	"reflect"
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestSourceSatisfiedAnswerCoversPathsRequiresExplicitDecision(t *testing.T) {
-	answer := "Decision: source-satisfied\n- a.txt: already present.\n- b.txt: current-state evidence."
-	if !SourceSatisfiedAnswerCoversPaths(answer, []string{"a.txt", "b.txt"}) {
-		t.Fatalf("expected explicit source-satisfied answer to cover both paths")
-	}
+var _ = Describe("Source-satisfied answers", func() {
+	It("requires an explicit decision covering every required path", func() {
+		answer := "Decision: source-satisfied\n- a.txt: already present.\n- b.txt: current-state evidence."
+		Expect(SourceSatisfiedAnswerCoversPaths(answer, []string{"a.txt", "b.txt"})).To(BeTrue())
+		Expect(SourceSatisfiedAnswerCoversPaths("a.txt and b.txt already present", []string{"a.txt", "b.txt"})).To(BeFalse())
+		Expect(SourceSatisfiedAnswerCoversPaths(answer, []string{"a.txt", "c.txt"})).To(BeFalse())
+	})
 
-	if SourceSatisfiedAnswerCoversPaths("a.txt and b.txt already present", []string{"a.txt", "b.txt"}) {
-		t.Fatalf("non-decision prose must not cover source-satisfied paths")
-	}
+	It("rejects stale-anchor intent", func() {
+		answer := "Decision: source-satisfied\n- pkg/x.go: stale anchor; old_text no longer applies."
+		Expect(SourceSatisfiedAnswerIntent(answer)).To(BeFalse())
+		Expect(SourceSatisfiedAnswerCoversPaths(answer, []string{"pkg/x.go"})).To(BeFalse())
+	})
 
-	if SourceSatisfiedAnswerCoversPaths(answer, []string{"a.txt", "c.txt"}) {
-		t.Fatalf("missing path mention must not cover required paths")
-	}
-}
-
-func TestSourceSatisfiedAnswerRejectsStaleAnchorIntent(t *testing.T) {
-	answer := "Decision: source-satisfied\n- pkg/x.go: stale anchor; old_text no longer applies."
-	if SourceSatisfiedAnswerIntent(answer) {
-		t.Fatalf("stale-anchor prose must not satisfy source-satisfied intent")
-	}
-	if SourceSatisfiedAnswerCoversPaths(answer, []string{"pkg/x.go"}) {
-		t.Fatalf("stale-anchor prose must not cover required paths")
-	}
-}
-
-func TestSourceSatisfiedAnswerCoversPathsRequiresExactPathMentions(t *testing.T) {
-	cases := []struct {
-		name   string
-		answer string
-	}{
-		{
-			name:   "sibling prefix",
-			answer: "Decision: source-satisfied\n- ba.txt: already present.",
+	DescribeTable("requires exact path mentions",
+		func(answer string) {
+			Expect(SourceSatisfiedAnswerCoversPaths(answer, []string{"a.txt"})).To(BeFalse())
 		},
-		{
-			name:   "backup suffix",
-			answer: "Decision: source-satisfied\n- a.txt.bak: already present.",
-		},
-		{
-			name:   "old suffix in directory",
-			answer: "Decision: source-satisfied\n- dir/a.txt.old: already present.",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if SourceSatisfiedAnswerCoversPaths(tc.answer, []string{"a.txt"}) {
-				t.Fatalf("nearby path mention must not cover required path: %q", tc.answer)
-			}
-		})
-	}
-}
+		Entry("sibling prefix", "Decision: source-satisfied\n- ba.txt: already present."),
+		Entry("backup suffix", "Decision: source-satisfied\n- a.txt.bak: already present."),
+		Entry("old suffix in directory", "Decision: source-satisfied\n- dir/a.txt.old: already present."),
+	)
 
-func TestSourceSatisfiedMissingCoveragePathsUsesExactCoverage(t *testing.T) {
-	answer := "Decision: source-satisfied\n- a.txt.bak: already present.\n- b.txt: already present.\n- ./Dockerfile: already present."
-	got := SourceSatisfiedMissingCoveragePaths(answer, []string{"a.txt", "b.txt", "Dockerfile"})
-	want := []string{"a.txt"}
+	It("reports exact missing coverage paths", func() {
+		answer := "Decision: source-satisfied\n- a.txt.bak: already present.\n- b.txt: already present.\n- ./Dockerfile: already present."
+		Expect(SourceSatisfiedMissingCoveragePaths(answer, []string{"a.txt", "b.txt", "Dockerfile"})).To(Equal([]string{"a.txt"}))
+	})
 
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("SourceSatisfiedMissingCoveragePaths() = %#v, want %#v", got, want)
-	}
-}
+	It("uses scope path normalization", func() {
+		answer := "Decision: source-satisfied\n- pkg/feature.go: already present."
+		Expect(SourceSatisfiedAnswerCoversPaths(answer, []string{`pkg\feature.go`})).To(BeTrue())
+		Expect(SourceSatisfiedMissingCoveragePaths(answer, []string{"../secret.go", "/tmp/abs.go", "pkg/./bad.go"})).To(BeEmpty())
+	})
 
-func TestSourceSatisfiedCoverageUsesScopePathNormalization(t *testing.T) {
-	answer := "Decision: source-satisfied\n- pkg/feature.go: already present."
-	if !SourceSatisfiedAnswerCoversPaths(answer, []string{`pkg\feature.go`}) {
-		t.Fatalf("expected source-satisfied coverage to normalize backslash required paths")
-	}
+	It("requires decision intent before reporting coverage", func() {
+		Expect(SourceSatisfiedMissingCoveragePaths(
+			"a.txt and b.txt are already present", []string{"b.txt", "a.txt"},
+		)).To(Equal([]string{"a.txt", "b.txt"}))
+	})
 
-	if got := SourceSatisfiedMissingCoveragePaths(answer, []string{"../secret.go", "/tmp/abs.go", "pkg/./bad.go"}); len(got) != 0 {
-		t.Fatalf("invalid required paths should be dropped by scope normalization, got %#v", got)
-	}
-}
+	DescribeTable("accepts exact extensionless paths",
+		func(answer string, requiredPaths []string) {
+			Expect(SourceSatisfiedAnswerCoversPaths(answer, requiredPaths)).To(BeTrue())
+		},
+		Entry("Dockerfile", "Decision: source-satisfied\n- Dockerfile: already present.", []string{"Dockerfile"}),
+		Entry("build file", "Decision: source-satisfied\n- BUILD: already present.", []string{"BUILD"}),
+		Entry("nested Makefile", "Decision: source-satisfied\n- cmd/foo/Makefile: already present.", []string{"cmd/foo/Makefile"}),
+		Entry("dot-slash Dockerfile", "Decision: source-satisfied\n- ./Dockerfile: already present.", []string{"Dockerfile"}),
+		Entry("backticked Dockerfile", "Decision: source-satisfied\n- `Dockerfile`: already present.", []string{"Dockerfile"}),
+		Entry("bold Dockerfile", "Decision: source-satisfied\n- **Dockerfile**: already present.", []string{"Dockerfile"}),
+	)
 
-func TestSourceSatisfiedMissingCoveragePathsRequiresDecisionIntent(t *testing.T) {
-	got := SourceSatisfiedMissingCoveragePaths("a.txt and b.txt are already present", []string{"b.txt", "a.txt"})
-	want := []string{"a.txt", "b.txt"}
+	DescribeTable("rejects near matches for extensionless paths",
+		func(answer string, requiredPaths []string) {
+			Expect(SourceSatisfiedAnswerCoversPaths(answer, requiredPaths)).To(BeFalse())
+		},
+		Entry("backup suffix", "Decision: source-satisfied\n- Dockerfile.bak: already present.", []string{"Dockerfile"}),
+		Entry("sibling prefix", "Decision: source-satisfied\n- OldDockerfile: already present.", []string{"Dockerfile"}),
+		Entry("nested is not root", "Decision: source-satisfied\n- deploy/Dockerfile: already present.", []string{"Dockerfile"}),
+		Entry("root is not nested", "Decision: source-satisfied\n- Dockerfile: already present.", []string{"deploy/Dockerfile"}),
+		Entry("prose does not cover root", "Decision: source-satisfied\n- deploy/Dockerfile: already present; root Dockerfile is not covered.", []string{"Dockerfile"}),
+	)
 
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("SourceSatisfiedMissingCoveragePaths() = %#v, want %#v", got, want)
-	}
-}
-
-func TestSourceSatisfiedAnswerCoversExtensionlessRequiredPaths(t *testing.T) {
-	cases := []struct {
-		name          string
-		answer        string
-		requiredPaths []string
-	}{
-		{
-			name:          "dockerfile",
-			answer:        "Decision: source-satisfied\n- Dockerfile: already present.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-		{
-			name:          "build file",
-			answer:        "Decision: source-satisfied\n- BUILD: already present.",
-			requiredPaths: []string{"BUILD"},
-		},
-		{
-			name:          "nested makefile",
-			answer:        "Decision: source-satisfied\n- cmd/foo/Makefile: already present.",
-			requiredPaths: []string{"cmd/foo/Makefile"},
-		},
-		{
-			name:          "dot slash dockerfile",
-			answer:        "Decision: source-satisfied\n- ./Dockerfile: already present.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-		{
-			name:          "backticked dockerfile",
-			answer:        "Decision: source-satisfied\n- `Dockerfile`: already present.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-		{
-			name:          "bold dockerfile",
-			answer:        "Decision: source-satisfied\n- **Dockerfile**: already present.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if !SourceSatisfiedAnswerCoversPaths(tc.answer, tc.requiredPaths) {
-				t.Fatalf("expected exact extensionless path mention to cover required path: %q", tc.answer)
-			}
-		})
-	}
-}
-
-func TestSourceSatisfiedAnswerCoversExtensionlessRequiredPathsRejectsNearMatches(t *testing.T) {
-	cases := []struct {
-		name          string
-		answer        string
-		requiredPaths []string
-	}{
-		{
-			name:          "backup suffix",
-			answer:        "Decision: source-satisfied\n- Dockerfile.bak: already present.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-		{
-			name:          "sibling prefix",
-			answer:        "Decision: source-satisfied\n- OldDockerfile: already present.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-		{
-			name:          "nested path is not root file",
-			answer:        "Decision: source-satisfied\n- deploy/Dockerfile: already present.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-		{
-			name:          "root path is not nested file",
-			answer:        "Decision: source-satisfied\n- Dockerfile: already present.",
-			requiredPaths: []string{"deploy/Dockerfile"},
-		},
-		{
-			name:          "prose mention after nested path is not root file",
-			answer:        "Decision: source-satisfied\n- deploy/Dockerfile: already present; root Dockerfile is not covered.",
-			requiredPaths: []string{"Dockerfile"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if SourceSatisfiedAnswerCoversPaths(tc.answer, tc.requiredPaths) {
-				t.Fatalf("nearby extensionless path mention must not cover required path: %q", tc.answer)
-			}
-		})
-	}
-}
-
-func TestSourceSatisfiedEvidencePathsRequiresExplicitDecision(t *testing.T) {
-	answer := "Decision: source-satisfied\n- ./b.txt: already present.\n- a.txt: current-state evidence.\n- b.txt: duplicate."
-	got := SourceSatisfiedEvidencePaths(answer)
-	want := []string{"a.txt", "b.txt"}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("SourceSatisfiedEvidencePaths() = %#v, want %#v", got, want)
-	}
-
-	blocker := "<<QUESTION>>: use Decision: source-satisfied if pkg/parser.go is already implemented"
-	if paths := SourceSatisfiedEvidencePaths(blocker); len(paths) != 0 {
-		t.Fatalf("blocker remedy text must not produce evidence paths, got %#v", paths)
-	}
-}
+	It("extracts normalized evidence paths only from an explicit decision", func() {
+		answer := "Decision: source-satisfied\n- ./b.txt: already present.\n- a.txt: current-state evidence.\n- b.txt: duplicate."
+		Expect(SourceSatisfiedEvidencePaths(answer)).To(Equal([]string{"a.txt", "b.txt"}))
+		blocker := "<<QUESTION>>: use Decision: source-satisfied if pkg/parser.go is already implemented"
+		Expect(SourceSatisfiedEvidencePaths(blocker)).To(BeEmpty())
+	})
+})

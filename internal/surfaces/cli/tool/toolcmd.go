@@ -50,7 +50,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 			return 2
 		}
 
-		code := RunListWithConfig(stdout, *listConfigPath, profile)
+		code := RunListWithConfig(stdout, stderr, *listConfigPath, profile)
 		telemetry.LogPhase(rec, "tool_list", map[string]any{"exit_code": code})
 
 		return code
@@ -310,14 +310,31 @@ func toolManifestExample(toolName string) (workspace.ToolManifestEntry, bool) {
 	return workspace.ToolManifestEntry{}, false
 }
 
-func RunListWithConfig(stdout io.Writer, configPath string, profile string) int {
-	cfg, _ := cmdconfig.Load(configPath)
+func RunListWithConfig(stdout io.Writer, stderr io.Writer, configPath string, profile string) int {
+	cfg, err := cmdconfig.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load tool config %q: %v\n", configPath, err)
+
+		return 1
+	}
 
 	surfaceSetup := workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{
 		Profile: profile,
 		List:    true,
 	})
 	defer surfaceSetup.Close()
+	if surfaceSetup.ExternalToolsError != nil {
+		fmt.Fprintf(stderr, "load external tool registry: %v\n", surfaceSetup.ExternalToolsError)
+
+		return 1
+	}
+	if len(surfaceSetup.MCPFailures) > 0 {
+		for _, failure := range surfaceSetup.MCPFailures {
+			fmt.Fprintf(stderr, "configure MCP tool surface: %s\n", failure)
+		}
+
+		return 1
+	}
 
 	for _, tool := range surfaceSetup.ListToolNamesForProfile(profile) {
 		fmt.Fprintln(stdout, tool)

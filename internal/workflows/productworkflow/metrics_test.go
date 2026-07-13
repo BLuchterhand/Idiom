@@ -1,191 +1,164 @@
 package productworkflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestProductWorkflowMetrics(t *testing.T) {
-	t.Run("collects deterministic counts", func(t *testing.T) {
-		root := writeMetricsFixture(t)
+var _ = ginkgo.Describe("metrics", func() {
+	ginkgo.It("ProductWorkflowMetrics", func() {
+		ginkgo.By("collects deterministic counts", func() {
+			root := writeMetricsFixture()
 
-		metrics, err := BuildProductWorkflowMetrics(root)
-		if err != nil {
-			t.Fatalf("BuildProductWorkflowMetrics() error = %v", err)
-		}
+			metrics, err := BuildProductWorkflowMetrics(root)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("BuildProductWorkflowMetrics() error = %v", err))
+			gomega.Expect(metrics.CurrentPhase).To(gomega.Equal("phase-5"), fmt.Sprintf("unexpected phase/state: %s/%s", metrics.CurrentPhase, metrics.CurrentState))
+			gomega.Expect(metrics.CurrentState).To(gomega.Equal("implementing"), fmt.Sprintf("unexpected phase/state: %s/%s", metrics.CurrentPhase, metrics.CurrentState))
+			gomega.Expect(metrics.StateRevision != 7).To(gomega.BeFalse(), fmt.Sprintf("StateRevision = %d, want 7", metrics.StateRevision))
+			gomega.Expect(metrics.GateStatusCounts["pass"]).To(gomega.Equal(1), fmt.Sprintf("unexpected gate counts: %#v", metrics.GateStatusCounts))
+			gomega.Expect(metrics.GateStatusCounts["fail"]).To(gomega.Equal(1), fmt.Sprintf("unexpected gate counts: %#v", metrics.GateStatusCounts))
+			gomega.Expect(metrics.TDDObligationTotal).To(gomega.Equal(2), fmt.Sprintf("unexpected TDD counts: total=%d status=%#v", metrics.TDDObligationTotal, metrics.TDDStatusCounts))
+			gomega.Expect(metrics.TDDStatusCounts["pending"]).To(gomega.Equal(1), fmt.Sprintf("unexpected TDD counts: total=%d status=%#v", metrics.TDDObligationTotal, metrics.TDDStatusCounts))
+			gomega.Expect(metrics.TDDStatusCounts["done"]).To(gomega.Equal(1), fmt.Sprintf("unexpected TDD counts: total=%d status=%#v", metrics.TDDObligationTotal, metrics.TDDStatusCounts))
+			gomega.Expect(metrics.TDDTypeCounts["acceptance"]).To(gomega.Equal(1), fmt.Sprintf("unexpected TDD type counts: %#v", metrics.TDDTypeCounts))
+			gomega.Expect(metrics.TDDTypeCounts["contract"]).To(gomega.Equal(1), fmt.Sprintf("unexpected TDD type counts: %#v", metrics.TDDTypeCounts))
+			gomega.Expect(metrics.LedgerRecordCount).To(gomega.Equal(2), fmt.Sprintf("unexpected ledger counts: %#v", metrics))
+			gomega.Expect(metrics.LedgerAtomRecordCount).To(gomega.Equal(1), fmt.Sprintf("unexpected ledger counts: %#v", metrics))
+			gomega.Expect(metrics.ReportTypeCounts["implementation"]).To(gomega.Equal(1), fmt.Sprintf("unexpected report type counts: %#v", metrics.ReportTypeCounts))
+			gomega.Expect(metrics.ReportTypeCounts["review"]).To(gomega.Equal(1), fmt.Sprintf("unexpected report type counts: %#v", metrics.ReportTypeCounts))
+			gomega.Expect(metrics.ReportTypeCounts["investigation"]).To(gomega.Equal(1), fmt.Sprintf("unexpected report type counts: %#v", metrics.ReportTypeCounts))
+			gomega.Expect(metrics.ReportStatusCounts["implementation_completed"]).To(gomega.Equal(1), fmt.Sprintf("unexpected report status counts: %#v", metrics.ReportStatusCounts))
+			gomega.Expect(metrics.ReportStatusCounts["review_pending"]).To(gomega.Equal(1), fmt.Sprintf("unexpected report status counts: %#v", metrics.ReportStatusCounts))
+			gomega.Expect(metrics.ReportStatusCounts["investigation_pending"]).To(gomega.Equal(1), fmt.Sprintf("unexpected report status counts: %#v", metrics.ReportStatusCounts))
+			gomega.Expect(metrics.ArtifactPathCount).To(gomega.Equal(2), fmt.Sprintf("unexpected artifact/evidence counts: %#v", metrics))
+			gomega.Expect(metrics.EvidenceCardCount).To(gomega.Equal(1), fmt.Sprintf("unexpected artifact/evidence counts: %#v", metrics))
+			gomega.Expect(metrics.TraceabilityRowCount).To(gomega.Equal(1), fmt.Sprintf("unexpected artifact/evidence counts: %#v", metrics))
+			gomega.Expect(metrics.PRDRequirementCount).To(gomega.Equal(1), fmt.Sprintf("unexpected artifact/evidence counts: %#v", metrics))
+			gomega.Expect(metrics.ADRCount).To(gomega.Equal(1), fmt.Sprintf("unexpected artifact/evidence counts: %#v", metrics))
+			gomega.Expect(metrics.EvidenceLinkCounts["prd_requirement_evidence_refs"]).To(gomega.Equal(1), fmt.Sprintf("unexpected evidence link counts: %#v", metrics.EvidenceLinkCounts))
+			gomega.Expect(metrics.EvidenceLinkCounts["adr_evidence_refs"]).To(gomega.Equal(1), fmt.Sprintf("unexpected evidence link counts: %#v", metrics.EvidenceLinkCounts))
+			gomega.Expect(metrics.EvidenceLinkCounts["traceability_evidence_links"]).To(gomega.Equal(1), fmt.Sprintf("unexpected evidence link counts: %#v", metrics.EvidenceLinkCounts))
+			gomega.Expect(metrics.NextValidActionCount).To(gomega.Equal(2), fmt.Sprintf("unexpected progress counts: %#v", metrics))
+			gomega.Expect(metrics.BlockerCount).To(gomega.Equal(1), fmt.Sprintf("unexpected progress counts: %#v", metrics))
+			gomega.Expect(metrics.OpenObligationCount).To(gomega.Equal(2), fmt.Sprintf("unexpected progress counts: %#v", metrics))
 
-		if metrics.CurrentPhase != "phase-5" || metrics.CurrentState != "implementing" {
-			t.Fatalf("unexpected phase/state: %s/%s", metrics.CurrentPhase, metrics.CurrentState)
-		}
+		})
+		ginkgo.By("fails closed on malformed artifacts", func() {
+			root := writeMetricsFixture()
+			writeFixtureFile(root, "tdd.json", "{bad")
 
-		if metrics.StateRevision != 7 {
-			t.Fatalf("StateRevision = %d, want 7", metrics.StateRevision)
-		}
+			_, err := BuildProductWorkflowMetrics(root)
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).NotTo(gomega.ContainSubstring(root))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("tdd.json"))
 
-		if metrics.GateStatusCounts["pass"] != 1 || metrics.GateStatusCounts["fail"] != 1 {
-			t.Fatalf("unexpected gate counts: %#v", metrics.GateStatusCounts)
-		}
-
-		if metrics.TDDObligationTotal != 2 || metrics.TDDStatusCounts["pending"] != 1 || metrics.TDDStatusCounts["done"] != 1 {
-			t.Fatalf("unexpected TDD counts: total=%d status=%#v", metrics.TDDObligationTotal, metrics.TDDStatusCounts)
-		}
-
-		if metrics.TDDTypeCounts["acceptance"] != 1 || metrics.TDDTypeCounts["contract"] != 1 {
-			t.Fatalf("unexpected TDD type counts: %#v", metrics.TDDTypeCounts)
-		}
-
-		if metrics.LedgerRecordCount != 2 || metrics.LedgerAtomRecordCount != 1 {
-			t.Fatalf("unexpected ledger counts: %#v", metrics)
-		}
-
-		if metrics.ReportTypeCounts["implementation"] != 1 || metrics.ReportTypeCounts["review"] != 1 || metrics.ReportTypeCounts["investigation"] != 1 {
-			t.Fatalf("unexpected report type counts: %#v", metrics.ReportTypeCounts)
-		}
-
-		if metrics.ReportStatusCounts["implementation_completed"] != 1 || metrics.ReportStatusCounts["review_pending"] != 1 || metrics.ReportStatusCounts["investigation_pending"] != 1 {
-			t.Fatalf("unexpected report status counts: %#v", metrics.ReportStatusCounts)
-		}
-
-		if metrics.ArtifactPathCount != 2 || metrics.EvidenceCardCount != 1 || metrics.TraceabilityRowCount != 1 || metrics.PRDRequirementCount != 1 || metrics.ADRCount != 1 {
-			t.Fatalf("unexpected artifact/evidence counts: %#v", metrics)
-		}
-
-		if metrics.EvidenceLinkCounts["prd_requirement_evidence_refs"] != 1 || metrics.EvidenceLinkCounts["adr_evidence_refs"] != 1 || metrics.EvidenceLinkCounts["traceability_evidence_links"] != 1 {
-			t.Fatalf("unexpected evidence link counts: %#v", metrics.EvidenceLinkCounts)
-		}
-
-		if metrics.NextValidActionCount != 2 || metrics.BlockerCount != 1 || metrics.OpenObligationCount != 2 {
-			t.Fatalf("unexpected progress counts: %#v", metrics)
-		}
-	})
-
-	t.Run("fails closed on malformed artifacts", func(t *testing.T) {
-		root := writeMetricsFixture(t)
-		writeFixtureFile(t, root, "tdd.json", "{bad")
-
-		if _, err := BuildProductWorkflowMetrics(root); err == nil {
-			t.Fatal("expected error for malformed tdd.json")
-		} else if strings.Contains(err.Error(), root) {
-			t.Fatalf("metrics error should not leak absolute root path, got %q", err.Error())
-		} else if !strings.Contains(err.Error(), "tdd.json") {
-			t.Fatalf("metrics error should include relative artifact path, got %q", err.Error())
-		}
-	})
-
-	t.Run("fails closed without leaking missing artifact absolute path", func(t *testing.T) {
-		root := writeMetricsFixture(t)
-		if err := os.Remove(filepath.Join(root, "tdd.json")); err != nil {
-			t.Fatalf("remove tdd.json: %v", err)
-		}
-
-		if _, err := BuildProductWorkflowMetrics(root); err == nil {
-			t.Fatal("expected error for missing tdd.json")
-		} else if strings.Contains(err.Error(), root) {
-			t.Fatalf("metrics error should not leak absolute root path, got %q", err.Error())
-		} else if !strings.Contains(err.Error(), "read tdd.json: file not found") {
-			t.Fatalf("expected stable relative missing-file error, got %q", err.Error())
-		}
-	})
-
-	t.Run("rejects unsafe artifact paths", func(t *testing.T) {
-		root := writeMetricsFixture(t)
-		writeFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"metrics-effort","adrs":[{"adr_id":"ADR-1","title":"A","status":"accepted","path":"../../outside.md","coverage_tier":"unit","prd_refs":["REQ-1"],"created_at":"2026-05-17T00:00:00Z"}]}`)
-
-		if _, err := BuildProductWorkflowMetrics(root); err == nil {
-			t.Fatal("expected unsafe ADR path to fail closed")
-		} else if strings.Contains(err.Error(), root) {
-			t.Fatalf("metrics error should not leak absolute root path, got %q", err.Error())
-		} else if !strings.Contains(err.Error(), "artifact path must be effort-relative") {
-			t.Fatalf("expected unsafe artifact path error, got %q", err.Error())
-		}
-	})
-
-	t.Run("fails closed on unbounded metric values", func(t *testing.T) {
-		tests := []struct {
-			name    string
-			path    string
-			oldText string
-			newText string
-			content string
-		}{
+		})
+		ginkgo.By("fails closed without leaking missing artifact absolute path", func() {
+			root := writeMetricsFixture()
 			{
-				name:    "workflow gate status",
-				path:    "workflow_state.json",
-				oldText: `"status":"fail"`,
-				newText: `"status":"surprise"`,
-			},
-			{
-				name:    "tdd status",
-				path:    "tdd.json",
-				oldText: `"status":"done"`,
-				newText: `"status":"surprise"`,
-			},
-			{
-				name:    "ledger record type",
-				path:    "implementation_ledger.jsonl",
-				oldText: `"record_type":"verification_completed"`,
-				newText: `"record_type":"surprise"`,
-			},
-			{
-				name:    "review status",
-				path:    "reports/test-review.json",
-				content: `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"surprise","findings":[],"checks":{"metrics":"pass"},"reviewed_at":"2026-05-17T00:02:00Z","commands_reviewed":["go test"],"created_at":"2026-05-17T00:00:00Z"}`,
-			},
-			{
-				name:    "investigation status",
-				path:    "reports/test-investigation.json",
-				oldText: `"status":"pending"`,
-				newText: `"status":"surprise"`,
-			},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				root := writeMetricsFixture(t)
-				abs := filepath.Join(root, tt.path)
-				updated := tt.content
+				err := os.Remove(filepath.Join(root, "tdd.json"))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("remove tdd.json: %v", err))
+			}
 
-				if updated == "" {
-					data, err := os.ReadFile(abs)
-					if err != nil {
-						t.Fatalf("read fixture: %v", err)
+			_, err := BuildProductWorkflowMetrics(root)
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).NotTo(gomega.ContainSubstring(root))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("read tdd.json: file not found"))
+
+		})
+		ginkgo.By("rejects unsafe artifact paths", func() {
+			root := writeMetricsFixture()
+			writeFixtureFile(root, "adrs/index.json", `{"schema_version":"v1","effort_id":"metrics-effort","adrs":[{"adr_id":"ADR-1","title":"A","status":"accepted","path":"../../outside.md","coverage_tier":"unit","prd_refs":["REQ-1"],"created_at":"2026-05-17T00:00:00Z"}]}`)
+
+			_, err := BuildProductWorkflowMetrics(root)
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).NotTo(gomega.ContainSubstring(root))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("artifact path must be effort-relative"))
+
+		})
+		ginkgo.By("fails closed on unbounded metric values", func() {
+			tests := []struct {
+				name    string
+				path    string
+				oldText string
+				newText string
+				content string
+			}{
+				{
+					name:    "workflow gate status",
+					path:    "workflow_state.json",
+					oldText: `"status":"fail"`,
+					newText: `"status":"surprise"`,
+				},
+				{
+					name:    "tdd status",
+					path:    "tdd.json",
+					oldText: `"status":"done"`,
+					newText: `"status":"surprise"`,
+				},
+				{
+					name:    "ledger record type",
+					path:    "implementation_ledger.jsonl",
+					oldText: `"record_type":"verification_completed"`,
+					newText: `"record_type":"surprise"`,
+				},
+				{
+					name:    "review status",
+					path:    "reports/test-review.json",
+					content: `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"surprise","findings":[],"checks":{"metrics":"pass"},"reviewed_at":"2026-05-17T00:02:00Z","commands_reviewed":["go test"],"created_at":"2026-05-17T00:00:00Z"}`,
+				},
+				{
+					name:    "investigation status",
+					path:    "reports/test-investigation.json",
+					oldText: `"status":"pending"`,
+					newText: `"status":"surprise"`,
+				},
+			}
+			for _, tt := range tests {
+				ginkgo.By(tt.name, func() {
+					root := writeMetricsFixture()
+					abs := filepath.Join(root, tt.path)
+					updated := tt.content
+
+					if updated == "" {
+						data, err := os.ReadFile(abs)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read fixture: %v", err))
+
+						updated = strings.Replace(string(data), tt.oldText, tt.newText, 1)
+						gomega.Expect(updated == string(data)).To(gomega.BeFalse(), fmt.Sprintf("fixture replacement %q not found", tt.oldText))
+
+					}
+					{
+
+						err := os.WriteFile(abs, []byte(updated), 0o644)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write fixture: %v", err))
 					}
 
-					updated = strings.Replace(string(data), tt.oldText, tt.newText, 1)
-					if updated == string(data) {
-						t.Fatalf("fixture replacement %q not found", tt.oldText)
-					}
-				}
+					_, err := BuildProductWorkflowMetrics(root)
+					gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected metrics to fail closed"))
+					gomega.Expect(err.Error()).To(gomega.Or(
+						gomega.ContainSubstring("unsupported"),
+						gomega.ContainSubstring("invalid status"),
+						gomega.ContainSubstring("unknown record_type"),
+					), fmt.Sprintf("expected unsupported/invalid-status error, got %v", err))
+					gomega.Expect(strings.Contains(err.Error(), root)).To(gomega.BeFalse(), fmt.Sprintf("metrics error should not leak absolute root path, got %q", err.Error()))
 
-				if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
-					t.Fatalf("write fixture: %v", err)
-				}
-
-				_, err := BuildProductWorkflowMetrics(root)
-				if err == nil {
-					t.Fatal("expected metrics to fail closed")
-				}
-
-				if !strings.Contains(err.Error(), "unsupported") &&
-					!strings.Contains(err.Error(), "invalid status") &&
-					!strings.Contains(err.Error(), "unknown record_type") {
-					t.Fatalf("expected unsupported/invalid-status error, got %v", err)
-				}
-
-				if strings.Contains(err.Error(), root) {
-					t.Fatalf("metrics error should not leak absolute root path, got %q", err.Error())
-				}
-			})
-		}
+				})
+			}
+		})
 	})
-}
+})
 
-func writeMetricsFixture(t *testing.T) string {
-	t.Helper()
+func writeMetricsFixture() string {
+	ginkgo.GinkgoHelper()
 
-	root := t.TempDir()
-	writeFixtureFile(t, root, "workflow_state.json", `{
+	root := ginkgo.GinkgoT().TempDir()
+	writeFixtureFile(root, "workflow_state.json", `{
   "schema_version":"idiom.product_workflow_state.v0.fixture",
   "effort_id":"metrics-effort",
   "task_id":"impl-metrics",
@@ -204,7 +177,7 @@ func writeMetricsFixture(t *testing.T) string {
   "durability_level":"source_controlled",
   "next_valid_actions":["close","retest"]
 }`)
-	writeFixtureFile(t, root, "tdd.json", `{
+	writeFixtureFile(root, "tdd.json", `{
   "schema_version":"idiom.tdd_obligations.v2.fixture",
   "effort_id":"metrics-effort",
   "task_id":"impl-metrics",
@@ -215,16 +188,16 @@ func writeMetricsFixture(t *testing.T) string {
     {"id":"TDD-2","type":"contract","behavior":"b2","owner":"team","command":"go test","required_before":"close","status":"done"}
   ]
 }`)
-	writeFixtureFile(t, root, "evidence/evidence.jsonl", `{"card_id":"EV-1","kind":"finding","source_handle":"file://x","claim":"c","confidence":"high","freshness":"current","uncertainty":"","evidence_refs":["x:1"],"researcher_id":"r","timestamp":"2026-05-17T00:00:00Z"}`)
-	writeFixtureFile(t, root, "evidence/traceability_matrix.json", `{
+	writeFixtureFile(root, "evidence/evidence.jsonl", `{"card_id":"EV-1","kind":"finding","source_handle":"file://x","claim":"c","confidence":"high","freshness":"current","uncertainty":"","evidence_refs":["x:1"],"researcher_id":"r","timestamp":"2026-05-17T00:00:00Z"}`)
+	writeFixtureFile(root, "evidence/traceability_matrix.json", `{
   "schema_version":"idiom.traceability_matrix.v1.fixture",
   "effort_id":"metrics-effort",
   "task_id":"impl-metrics",
   "created_at":"2026-05-17T00:00:00Z",
   "matrix":[{"evidence_card":"EV-1","prd_requirement":"REQ-1","adr":"ADR-1","tdd_obligation":"TDD-1","brief":"briefs/test.md","report":"reports/r.json"}]
 }`)
-	writeFixtureFile(t, root, "implementation_ledger.jsonl", `{"record_type":"atom_planned","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"m","command":"c"},"reviewer":{"id":"rev","model":"m","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["a.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/i-implementation.json","review":"reports/r-review.json","investigation":"reports/x-investigation.json"}}`+"\n"+`{"record_type":"verification_completed","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:01:00Z"}`)
-	writeFixtureFile(t, root, "prd.md", `---
+	writeFixtureFile(root, "implementation_ledger.jsonl", `{"record_type":"atom_planned","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"m","command":"c"},"reviewer":{"id":"rev","model":"m","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["a.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/i-implementation.json","review":"reports/r-review.json","investigation":"reports/x-investigation.json"}}`+"\n"+`{"record_type":"verification_completed","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:01:00Z"}`)
+	writeFixtureFile(root, "prd.md", `---
 schema_version: idiom.prd.v1
 prd_id: prd-1
 status: accepted
@@ -247,8 +220,8 @@ acceptance_profile: reviewer
 - **tdd_obligations**: ["TDD-1"]
 - **open_questions**: []
 `)
-	writeFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"metrics-effort","adrs":[{"adr_id":"ADR-1","title":"A","status":"accepted","path":"ADR-1.md","coverage_tier":"unit","prd_refs":["REQ-1"],"created_at":"2026-05-17T00:00:00Z"}]}`)
-	writeFixtureFile(t, root, "adrs/ADR-1.md", `---
+	writeFixtureFile(root, "adrs/index.json", `{"schema_version":"v1","effort_id":"metrics-effort","adrs":[{"adr_id":"ADR-1","title":"A","status":"accepted","path":"ADR-1.md","coverage_tier":"unit","prd_refs":["REQ-1"],"created_at":"2026-05-17T00:00:00Z"}]}`)
+	writeFixtureFile(root, "adrs/ADR-1.md", `---
 schema_version: idiom.adr.v1
 adr_id: ADR-1
 status: accepted
@@ -279,24 +252,27 @@ x
 ## Open Questions
 x
 `)
-	writeFixtureFile(t, root, "reports/test-implementation.json", `{"schema_version":"idiom.implementation_report.v1.fixture","task_id":"impl-metrics","effort_id":"metrics-effort","implementor_id":"impl","runtime":"opencode","model":"m","completed_at":"2026-05-17T00:00:00Z","complexity_tier":"C1","scope_statement":"s","code_changes":false,"changed_paths":[],"verification":{"run_by_implementor":false,"commands":[],"status":"pending"},"privacy_note":"No raw prompts stored.","open_blockers":[],"reviewer_id":"rev"}`)
-	writeFixtureFile(t, root, "reports/test-review.json", `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"pending","findings":[],"checks":{},"reviewed_at":"","commands_reviewed":[],"created_at":"2026-05-17T00:00:00Z"}`)
-	writeFixtureFile(t, root, "reports/test-investigation.json", `{"schema_version":"idiom.investigation_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","status":"pending","created_at":"2026-05-17T00:00:00Z","scope":{"files":["a.go"]},"tests":{"focused":"go test"},"coverage":{"tier":"unit"},"traceability":{"checked":false},"privacy_audit":{"no_raw_prompts":true},"reviewer_findings":[],"blockers":[],"next_valid_action":"","completed_at":""}`)
+	writeFixtureFile(root, "reports/test-implementation.json", `{"schema_version":"idiom.implementation_report.v1.fixture","task_id":"impl-metrics","effort_id":"metrics-effort","implementor_id":"impl","runtime":"opencode","model":"m","completed_at":"2026-05-17T00:00:00Z","complexity_tier":"C1","scope_statement":"s","code_changes":false,"changed_paths":[],"verification":{"run_by_implementor":false,"commands":[],"status":"pending"},"privacy_note":"No raw prompts stored.","open_blockers":[],"reviewer_id":"rev"}`)
+	writeFixtureFile(root, "reports/test-review.json", `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"pending","findings":[],"checks":{},"reviewed_at":"","commands_reviewed":[],"created_at":"2026-05-17T00:00:00Z"}`)
+	writeFixtureFile(root, "reports/test-investigation.json", `{"schema_version":"idiom.investigation_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","status":"pending","created_at":"2026-05-17T00:00:00Z","scope":{"files":["a.go"]},"tests":{"focused":"go test"},"coverage":{"tier":"unit"},"traceability":{"checked":false},"privacy_audit":{"no_raw_prompts":true},"reviewer_findings":[],"blockers":[],"next_valid_action":"","completed_at":""}`)
 
 	return root
 }
 
-func writeFixtureFile(t *testing.T, root, relPath, content string) {
-	t.Helper()
+func writeFixtureFile(root, relPath, content string) {
+	ginkgo.GinkgoHelper()
 
 	abs := filepath.Join(root, relPath)
 	mkdirPath := filepath.Dir(abs)
+	{
 
-	if err := os.MkdirAll(mkdirPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(%s): %v", mkdirPath, err)
+		err := os.MkdirAll(mkdirPath, 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("MkdirAll(%s): %v", mkdirPath, err))
+	}
+	{
+
+		err := os.WriteFile(abs, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("WriteFile(%s): %v", abs, err))
 	}
 
-	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
-		t.Fatalf("WriteFile(%s): %v", abs, err)
-	}
 }

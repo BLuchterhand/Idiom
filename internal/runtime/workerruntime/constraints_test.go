@@ -1,8 +1,12 @@
 package workerruntime
 
-import "testing"
+import (
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
+)
 
-func TestConstraintVocabulary(t *testing.T) {
+var _ = ginkgo.It("constraint vocabulary", func() {
 	for _, id := range []ConstraintID{
 		ConstraintPlanThenExecuteSubmitPlanReady,
 		ConstraintRequiredEditPathsDefineWriteScope,
@@ -11,8 +15,6 @@ func TestConstraintVocabulary(t *testing.T) {
 		ConstraintAnswerReadinessReached,
 		ConstraintChildPacketAvailable,
 	} {
-		if !ConstraintPresent([]string{" " + string(id) + " "}, id) {
-			t.Fatalf("ConstraintPresent did not find %q", id)
-		}
+		gomega.Expect(ConstraintPresent([]string{" " + string(id) + " "}, id)).To(gomega.BeTrue(), fmt.Sprintf("ConstraintPresent did not find %q", id))
 	}
-}
+})

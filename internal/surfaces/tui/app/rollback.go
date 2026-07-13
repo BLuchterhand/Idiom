@@ -1,152 +1,321 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/capabilities/workspace/patching"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
-// rollbackEntry captures file content before an edit for the /undo command.
-// Unlike planWriteSnapshot (which powers the plan diff overlay), this type
-// feeds undoLast so the user can step backwards through write-tool mutations.
-//
-// Each write-class tool produces one entry; apply_patch produces one per
-// affected path. Entries are ordered oldest-first; /undo pops from the tail.
+const (
+	rollbackUnavailableEvidence = "workspace did not provide exact rollback evidence"
+	rollbackUnattributed        = "committed mutation has no attributed execution session"
+)
+
+// rollbackEntry retains only workspace-owned reverse-mutation authority and
+// its immutable execution identity. Preimage bodies, roots, inode evidence,
+// and digests remain private to workspace.
 type rollbackEntry struct {
-	path     string
-	contents []byte
-	existed  bool
+	id                uint64
+	rollback          *workspace.MutationRollback
+	sessionID         string
+	paths             []string
+	unavailableReason string
 }
 
-// recordRollbackSnapshot captures the pre-edit state of files a
-// write-class tool is about to modify. Called from PreExecute after the
-// tool-rule check returns Allow (or user-approved Ask). Read-only tools
-// produce no snapshots. Errors reading the file are swallowed — /undo
-// will just be missing that entry rather than blocking the tool call.
-func (m *Model) recordRollbackSnapshot(req workspace.ToolRequest) {
+// rollbackRegistry is the cancellation-safe owner of undo capabilities shared
+// by the live Model and each detached prompt session. A worker records a
+// committed mutation here before its completion projection, so canceling the
+// turn cannot discard rollback authority while the worker drains.
+type rollbackRegistry struct {
+	mu       sync.Mutex
+	nextID   uint64
+	activeID uint64
+	entries  []rollbackEntry
+}
+
+func newRollbackRegistry(entries []rollbackEntry) *rollbackRegistry {
+	registry := &rollbackRegistry{}
+	for _, entry := range entries {
+		registry.appendLocked(entry)
+	}
+
+	return registry
+}
+
+func (r *rollbackRegistry) append(entry rollbackEntry) rollbackEntry {
+	if r == nil {
+		return rollbackEntry{}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.appendLocked(entry)
+}
+
+func (r *rollbackRegistry) appendLocked(entry rollbackEntry) rollbackEntry {
+	r.nextID++
+	entry.id = r.nextID
+	entry.paths = append([]string(nil), entry.paths...)
+	r.entries = append(r.entries, entry)
+
+	return entry
+}
+
+func (r *rollbackRegistry) snapshot() []rollbackEntry {
+	if r == nil {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return cloneRollbackHistory(r.entries)
+}
+
+func (r *rollbackRegistry) beginLatest() (rollbackEntry, error) {
+	if r == nil {
+		return rollbackEntry{}, fmt.Errorf("no rollback history — nothing to undo")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.activeID != 0 {
+		return rollbackEntry{}, fmt.Errorf("an undo operation is already in progress")
+	}
+	if len(r.entries) == 0 {
+		return rollbackEntry{}, fmt.Errorf("no rollback history — nothing to undo")
+	}
+
+	entry := r.entries[len(r.entries)-1]
+	if entry.rollback == nil || strings.TrimSpace(entry.unavailableReason) != "" {
+		reason := strings.TrimSpace(entry.unavailableReason)
+		if reason == "" {
+			reason = rollbackUnavailableEvidence
+		}
+
+		return rollbackEntry{}, fmt.Errorf("latest committed mutation cannot be undone: %s", reason)
+	}
+
+	r.activeID = entry.id
+
+	return entry, nil
+}
+
+func (r *rollbackRegistry) finish(entryID uint64, consume bool) {
+	if r == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.activeID != entryID {
+		return
+	}
+	r.activeID = 0
+	if !consume {
+		return
+	}
+
+	for index := range r.entries {
+		if r.entries[index].id != entryID {
+			continue
+		}
+		r.entries = append(r.entries[:index], r.entries[index+1:]...)
+
+		return
+	}
+}
+
+func (m *Model) ensureRollbackRegistry() *rollbackRegistry {
+	if m == nil {
+		return nil
+	}
+	if m.rollbackRegistry == nil {
+		m.rollbackRegistry = newRollbackRegistry(m.rollbackHistory)
+	}
+
+	return m.rollbackRegistry
+}
+
+func (m *promptExecutionSession) ensureRollbackRegistry() *rollbackRegistry {
+	if m == nil {
+		return nil
+	}
+	if m.rollbackRegistry == nil {
+		m.rollbackRegistry = newRollbackRegistry(m.rollbackHistory)
+	}
+
+	return m.rollbackRegistry
+}
+
+// recordMutationRollback projects one successful or partially committed tool
+// result into exactly one undo entry. It binds the actual execution context,
+// including nested plan-execute identity, rather than the outer session
+// snapshot. Planned and failed-before-commit targets never acquire authority.
+func (m *promptExecutionSession) recordMutationRollback(executionCtx context.Context, result workspace.ToolResult) {
 	if m == nil || m.workspace == nil {
 		return
 	}
-
-	paths := rollbackPathsForRequest(req)
-	if len(paths) == 0 {
+	receipt := result.CommitReceipt()
+	if receipt == nil || len(receipt.ChangedPaths()) == 0 {
 		return
 	}
 
-	root := m.workspace.CWD()
+	paths := receipt.ChangedPaths()
+	sessionID, bound := workspace.ExecutionSessionIDFromContext(executionCtx)
+	sessionID = strings.TrimSpace(sessionID)
+	if !bound || sessionID == "" {
+		m.recordUnavailableMutationRollback(paths, rollbackUnattributed)
 
-	for _, path := range paths {
-		abs := path
-		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(root, abs)
-		}
-
-		data, err := os.ReadFile(abs)
-		if err != nil {
-			if os.IsNotExist(err) {
-				m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{path: abs, existed: false})
-			}
-
-			continue
-		}
-
-		m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{
-			path:     abs,
-			contents: append([]byte(nil), data...),
-			existed:  true,
-		})
+		return
 	}
+
+	rollback, err := receipt.Rollback()
+	if err != nil || rollback == nil {
+		m.recordUnavailableMutationRollback(paths, rollbackUnavailableEvidence)
+
+		return
+	}
+
+	registry := m.ensureRollbackRegistry()
+	registry.append(rollbackEntry{
+		rollback:  rollback,
+		sessionID: sessionID,
+		paths:     rollback.Paths(),
+	})
+	m.rollbackHistory = registry.snapshot()
 }
 
-// rollbackPathsForRequest returns the file paths a write-class tool
-// will touch. Non-write tools (read_file, search_*, shell) return nil.
-func rollbackPathsForRequest(req workspace.ToolRequest) []string {
-	switch strings.TrimSpace(req.Tool) {
-	case "edit_file", "write_file", "append_file":
-		if p := strings.TrimSpace(req.Path); p != "" {
-			return []string{p}
-		}
-	case "apply_patch":
-		ops, err := patching.Parse(req.Content)
-		if err != nil {
-			return nil
-		}
+func (m *promptExecutionSession) recordUnavailableMutationRollback(paths []string, reason string) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = rollbackUnavailableEvidence
+	}
 
-		return patching.OpPaths(ops)
+	registry := m.ensureRollbackRegistry()
+	registry.append(rollbackEntry{
+		paths:             append([]string(nil), paths...),
+		unavailableReason: reason,
+	})
+	m.rollbackHistory = registry.snapshot()
+	m.logMessage("mutation_rollback_unavailable", reason)
+	m.queueUIEvent(infoMsg{text: "Undo unavailable for committed mutation: " + reason})
+}
+
+type undoCompletedMsg struct {
+	generation uint64
+	result     workspace.MutationRollbackResult
+	summary    string
+	err        error
+}
+
+// startUndo begins an undo on the Model-owned operation group. The UI thread
+// reserves the latest capability synchronously, then returns without waiting
+// for the workspace transaction gate. Closing the program cancels an undo that
+// has not committed a reverse effect; partial progress remains resumable.
+func (m *Model) startUndo() error {
+	if m == nil {
+		return fmt.Errorf("no active session")
+	}
+	if m.workspace == nil {
+		return fmt.Errorf("workspace is unavailable")
+	}
+	if m.events == nil {
+		return fmt.Errorf("TUI event stream is unavailable")
+	}
+
+	m.undoPresentationGeneration++
+	generation := m.undoPresentationGeneration
+	registry := m.ensureRollbackRegistry()
+	entry, err := registry.beginLatest()
+	if err != nil {
+		m.rollbackHistory = registry.snapshot()
+
+		return err
+	}
+
+	operationGroup := m.ensureBackgroundOperations()
+	workspaceManager := m.workspace
+	events := m.events
+	started := operationGroup.start(func(ctx context.Context) {
+		result, summary, operationErr := executeUndo(ctx, workspaceManager, entry)
+		registry.finish(entry.id, result.Status == workspace.MutationRollbackComplete)
+
+		select {
+		case events <- undoCompletedMsg{generation: generation, result: result, summary: summary, err: operationErr}:
+		case <-ctx.Done():
+		}
+	})
+	if !started {
+		registry.finish(entry.id, false)
+
+		return fmt.Errorf("TUI is shutting down")
 	}
 
 	return nil
 }
 
-// recordRollbackSnapshotsForPaths captures pre-edit state for an explicit set
-// of workspace-relative paths, used when deterministic executor phases mutate
-// files outside the app runner's normal PreExecute hook.
-func (m *Model) recordRollbackSnapshotsForPaths(paths []string) {
-	if m == nil || m.workspace == nil || len(paths) == 0 {
-		return
+func executeUndo(ctx context.Context, manager *workspace.Manager, entry rollbackEntry) (workspace.MutationRollbackResult, string, error) {
+	if ctx == nil {
+		return workspace.MutationRollbackResult{}, "", fmt.Errorf("undo context is required")
 	}
 
-	root := m.workspace.CWD()
-
-	for _, path := range paths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-
-		abs := path
-		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(root, abs)
-		}
-
-		data, err := os.ReadFile(abs)
-		if err != nil {
-			if os.IsNotExist(err) {
-				m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{path: abs, existed: false})
-			}
-
-			continue
-		}
-
-		m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{
-			path:     abs,
-			contents: append([]byte(nil), data...),
-			existed:  true,
-		})
+	executionCtx := workspace.WithExecutionSessionID(ctx, entry.sessionID)
+	result, err := manager.RollbackMutation(executionCtx, entry.rollback)
+	if err != nil {
+		return result, "", fmt.Errorf("undo workspace mutation: %w", err)
 	}
+	if result.Status != workspace.MutationRollbackComplete {
+		return result, "", fmt.Errorf("undo workspace mutation remained %s", result.Status)
+	}
+
+	paths := append([]string(nil), entry.paths...)
+	if len(paths) == 0 {
+		for _, effect := range result.Effects {
+			paths = append(paths, effect.CanonicalID)
+		}
+	}
+
+	return result, fmt.Sprintf("Undone: restored %s", strings.Join(paths, ", ")), nil
 }
 
-// undoLast restores the most recent rollback entry. Returns a summary
-// suitable for the status line, or an error if there's nothing to undo
-// or the file can't be restored.
-func (m *Model) undoLast() (string, error) {
+func (m *Model) handleUndoCompleted(msg undoCompletedMsg) (tea.Cmd, bool) {
 	if m == nil {
-		return "", fmt.Errorf("no active session")
+		return nil, false
 	}
 
-	if len(m.rollbackHistory) == 0 {
-		return "", fmt.Errorf("no rollback history — nothing to undo")
+	m.rollbackHistory = m.ensureRollbackRegistry().snapshot()
+	if encoded, err := json.Marshal(msg.result); err == nil {
+		m.logMessage("mutation_rollback", string(encoded))
 	}
-
-	entry := m.rollbackHistory[len(m.rollbackHistory)-1]
-
-	m.rollbackHistory = m.rollbackHistory[:len(m.rollbackHistory)-1]
-
-	if !entry.existed {
-		if err := os.Remove(entry.path); err != nil && !os.IsNotExist(err) {
-			return "", fmt.Errorf("remove %s: %w", entry.path, err)
+	var refreshErr error
+	var refreshCmd tea.Cmd
+	if len(msg.result.Effects) > 0 {
+		refreshErr = m.reloadPromptStackWithProfiles(m.activeProfiles)
+		if refreshErr != nil {
+			m.setContextError("Prompt context failed after undo: " + refreshErr.Error())
 		}
-
-		return "Undone: removed " + m.displayPath(entry.path), nil
+		refreshCmd, _ = m.handlePlanRefresh(planRefreshMsg{})
+	}
+	if msg.generation != m.undoPresentationGeneration {
+		return refreshCmd, false
+	}
+	if msg.err != nil {
+		m.status = "Undo failed: " + msg.err.Error()
+	} else if refreshErr != nil {
+		m.status = "Undo completed, but prompt context refresh failed: " + refreshErr.Error()
+	} else {
+		m.status = msg.summary
 	}
 
-	if err := os.WriteFile(entry.path, entry.contents, 0o644); err != nil {
-		return "", fmt.Errorf("write %s: %w", entry.path, err)
-	}
-
-	return "Undone: restored " + m.displayPath(entry.path), nil
+	return refreshCmd, false
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"idiom/internal/runtime/sessionlog"
 )
 
 // planItemMeta describes one clickable plan entry. DiffID is the id the
@@ -78,7 +80,11 @@ func (m *Model) loadPlanDiffEntry(id string) (*planDiffEntry, error) {
 		return nil, fmt.Errorf("empty diff id")
 	}
 
-	path := m.diffsPath()
+	root := ""
+	if m.workspace != nil {
+		root = m.workspace.Root()
+	}
+	path := planningArtifactPath(root, sessionlog.SessionIDFromPath(m.debugLogPath), ".diffs.jsonl")
 	if path == "" {
 		return nil, fmt.Errorf("no session diffs path")
 	}

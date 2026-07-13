@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 )
 
 type sidecarSmokeTranscript struct {
@@ -76,49 +77,40 @@ type p86MCPIntegrationProof struct {
 	LinkedP78ProofID string `json:"linked_p7_8_proof_id"`
 }
 
-func TestSidecarSmokeTranscript(t *testing.T) {
-	repoRoot := sidecarValidationRepoRoot(t)
+var _ = ginkgo.It("sidecar smoke transcript", func() {
+	t := ginkgo.GinkgoT()
+	repoRoot := sidecarValidationRepoRoot()
 	transcriptPath := filepath.Join(repoRoot, "testdata", "sidecar", "discovery-smoke.transcript.json")
 
 	data, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		t.Fatalf("read smoke transcript: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read smoke transcript: %v", err))
 
 	var transcript sidecarSmokeTranscript
 
-	if err := json.Unmarshal(data, &transcript); err != nil {
-		t.Fatalf("decode smoke transcript: %v", err)
-	}
+	gomega.Expect(json.Unmarshal(data, &transcript)).To(gomega.Succeed(), "decode smoke transcript")
 
-	if transcript.SchemaVersion != "idiom.sidecar_smoke_transcript.v1" || len(transcript.Steps) == 0 {
-		t.Fatalf("unexpected smoke transcript header: %#v", transcript)
-	}
+	gomega.Expect(transcript.SchemaVersion).To(gomega.BeEquivalentTo("idiom.sidecar_smoke_transcript.v1"), fmt.Sprintf("unexpected smoke transcript header: %#v", transcript))
+	gomega.Expect(transcript.Steps).NotTo(gomega.HaveLen(0), fmt.Sprintf("unexpected smoke transcript header: %#v", transcript))
 
 	root := t.TempDir()
-	writeSidecarRecipeWorkspace(t, root)
+	writeSidecarRecipeWorkspace(root)
 
-	configPath := writeMainConfigRoot(t, root)
+	configPath := writeMainConfigRoot(root)
 	for _, step := range transcript.Steps {
-		t.Run(step.ID, func(t *testing.T) {
+		ginkgo.By(step.ID)
+		func() {
 			var stdout, stderr bytes.Buffer
 
 			code := runMain(sidecarSmokeArgsWithConfig(step.Argv, configPath), &stdout, &stderr)
 
-			if code != step.ExitCode {
-				t.Fatalf("exit code = %d, want %d\nstdout=%s\nstderr=%s", code, step.ExitCode, stdout.String(), stderr.String())
-			}
+			gomega.Expect(code).To(gomega.BeEquivalentTo(step.ExitCode), fmt.Sprintf("exit code = %d, want %d\nstdout=%s\nstderr=%s", code, step.ExitCode, stdout.String(), stderr.String()))
 
 			for _, want := range step.StdoutIncludes {
-				if !strings.Contains(stdout.String(), want) {
-					t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
-				}
+				gomega.Expect(stdout.String()).To(gomega.ContainSubstring(want), fmt.Sprintf("stdout missing %q:\n%s", want, stdout.String()))
 			}
 
 			for _, forbidden := range step.StdoutExcludes {
-				if strings.Contains(stdout.String(), forbidden) {
-					t.Fatalf("stdout unexpectedly contains %q:\n%s", forbidden, stdout.String())
-				}
+				gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("stdout unexpectedly contains %q:\n%s", forbidden, stdout.String()))
 			}
 
 			if !step.JSON {
@@ -127,74 +119,53 @@ func TestSidecarSmokeTranscript(t *testing.T) {
 
 			var payload any
 
-			if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-				t.Fatalf("decode JSON stdout: %v\n%s", err, stdout.String())
-			}
+			gomega.Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(gomega.Succeed(), "decode JSON stdout:\n%s", stdout.String())
 
 			for path, want := range step.ExpectJSONString {
 				got, ok := jsonValueAtDottedPath(payload, path)
-				if !ok {
-					t.Fatalf("missing JSON path %s in %s", path, stdout.String())
-				}
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing JSON path %s in %s", path, stdout.String()))
 
-				if fmt.Sprint(got) != want {
-					t.Fatalf("JSON path %s = %q, want %q", path, fmt.Sprint(got), want)
-				}
+				gomega.Expect(fmt.Sprint(got)).To(gomega.BeEquivalentTo(want), fmt.Sprintf("JSON path %s = %q, want %q", path, fmt.Sprint(got), want))
 			}
 
 			for _, path := range step.ExpectJSONNull {
 				got, ok := jsonValueAtDottedPath(payload, path)
-				if !ok {
-					t.Fatalf("missing JSON path %s in %s", path, stdout.String())
-				}
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing JSON path %s in %s", path, stdout.String()))
 
-				if got != nil {
-					t.Fatalf("JSON path %s = %#v, want null", path, got)
-				}
+				gomega.Expect(got).To(gomega.BeNil(), fmt.Sprintf("JSON path %s = %#v, want null", path, got))
 			}
 
 			for _, path := range step.ExpectJSONPresent {
-				if _, ok := jsonValueAtDottedPath(payload, path); !ok {
-					t.Fatalf("missing JSON path %s in %s", path, stdout.String())
+				{
+					_, ok := jsonValueAtDottedPath(payload, path)
+					gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing JSON path %s in %s", path, stdout.String()))
 				}
 			}
 
 			for _, path := range step.ExpectJSONNonEmpty {
 				got, ok := jsonValueAtDottedPath(payload, path)
-				if !ok {
-					t.Fatalf("missing JSON path %s in %s", path, stdout.String())
-				}
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing JSON path %s in %s", path, stdout.String()))
 
-				if jsonValueEmpty(got) {
-					t.Fatalf("JSON path %s is empty: %#v", path, got)
-				}
+				gomega.Expect(jsonValueEmpty(got)).To(gomega.BeFalse(), fmt.Sprintf("JSON path %s is empty: %#v", path, got))
 			}
-		})
+		}()
 	}
-}
-
-func TestP78IntegrationProofRecords(t *testing.T) {
-	repoRoot := sidecarValidationRepoRoot(t)
+})
+var _ = ginkgo.It("p78 integration proof records", func() {
+	repoRoot := sidecarValidationRepoRoot()
 	proofsPath := filepath.Join(repoRoot, "testdata", "sidecar", "integration-proofs.json")
 
 	data, err := os.ReadFile(proofsPath)
-	if err != nil {
-		t.Fatalf("read integration proofs: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read integration proofs: %v", err))
 
 	var proofs p78IntegrationProofSet
 
-	if err := json.Unmarshal(data, &proofs); err != nil {
-		t.Fatalf("decode integration proofs: %v", err)
-	}
+	gomega.Expect(json.Unmarshal(data, &proofs)).To(gomega.Succeed(), "decode integration proofs")
 
-	if proofs.SchemaVersion != "idiom.sidecar_integration_proofs.v1" {
-		t.Fatalf("unexpected proof schema version %q", proofs.SchemaVersion)
-	}
+	gomega.Expect(proofs.SchemaVersion).To(gomega.BeEquivalentTo("idiom.sidecar_integration_proofs.v1"), fmt.Sprintf("unexpected proof schema version %q", proofs.SchemaVersion))
 
-	if proofs.SharedContract.SidecarSchemaVersion != "idiom.tool.v1" || proofs.SharedContract.Profile != "discovery" {
-		t.Fatalf("proofs are not tied to the shared discovery sidecar contract: %#v", proofs.SharedContract)
-	}
+	gomega.Expect(proofs.SharedContract.SidecarSchemaVersion).To(gomega.BeEquivalentTo("idiom.tool.v1"), fmt.Sprintf("proofs are not tied to the shared discovery sidecar contract: %#v", proofs.SharedContract))
+	gomega.Expect(proofs.SharedContract.Profile).To(gomega.BeEquivalentTo("discovery"), fmt.Sprintf("proofs are not tied to the shared discovery sidecar contract: %#v", proofs.SharedContract))
 
 	for _, required := range []string{
 		"sidecar.schema_version",
@@ -205,21 +176,15 @@ func TestP78IntegrationProofRecords(t *testing.T) {
 		"sidecar.structured_output",
 		"sidecar.error",
 	} {
-		if !stringSliceContains(proofs.SharedContract.RequiredEnvelopeFields, required) {
-			t.Fatalf("shared contract missing required envelope field %q", required)
-		}
+		gomega.Expect(stringSliceContains(proofs.SharedContract.RequiredEnvelopeFields, required)).To(gomega.BeTrue(), fmt.Sprintf("shared contract missing required envelope field %q", required))
 	}
 
 	for _, required := range proofs.SharedContract.RequiredReadinessFields {
-		if strings.TrimSpace(required) == "" {
-			t.Fatalf("blank readiness field in shared contract: %#v", proofs.SharedContract.RequiredReadinessFields)
-		}
+		gomega.Expect(strings.TrimSpace(required)).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("blank readiness field in shared contract: %#v", proofs.SharedContract.RequiredReadinessFields))
 	}
 
 	transcript, err := readSidecarSmokeTranscript(repoRoot)
-	if err != nil {
-		t.Fatalf("read smoke transcript: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read smoke transcript: %v", err))
 
 	transcriptSteps := map[string]sidecarSmokeStep{}
 	for _, step := range transcript.Steps {
@@ -227,44 +192,35 @@ func TestP78IntegrationProofRecords(t *testing.T) {
 	}
 
 	docData, err := os.ReadFile(filepath.Join(repoRoot, "docs", "sidecar-integration-proofs.md"))
-	if err != nil {
-		t.Fatalf("read integration proof docs: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read integration proof docs: %v", err))
 
 	doc := string(docData)
 
 	seenPaths := map[string]bool{}
 
 	for _, proof := range proofs.Proofs {
-		if proof.ID == "" || proof.Path == "" {
-			t.Fatalf("proof missing id/path: %#v", proof)
-		}
+		gomega.Expect(proof.ID).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("proof missing id/path: %#v", proof))
+		gomega.Expect(proof.Path).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("proof missing id/path: %#v", proof))
 
 		seenPaths[proof.Path] = true
-		if !strings.Contains(doc, proof.Path) {
-			t.Fatalf("integration proof docs do not mention path %q", proof.Path)
-		}
+		gomega.Expect(doc).To(gomega.ContainSubstring(proof.Path), fmt.Sprintf("integration proof docs do not mention path %q", proof.Path))
 
-		if !proof.Consumes.Profile || !proof.Consumes.Schema || !proof.Consumes.Freshness || !proof.Consumes.Audit || !proof.Consumes.Contract {
-			t.Fatalf("proof %s does not consume the complete shared sidecar contract: %#v", proof.ID, proof.Consumes)
-		}
+		gomega.Expect(proof.Consumes.Profile).To(gomega.BeTrue(), fmt.Sprintf("proof %s does not consume the complete shared sidecar contract: %#v", proof.ID, proof.Consumes))
+		gomega.Expect(proof.Consumes.Schema).To(gomega.BeTrue(), fmt.Sprintf("proof %s does not consume the complete shared sidecar contract: %#v", proof.ID, proof.Consumes))
+		gomega.Expect(proof.Consumes.Freshness).To(gomega.BeTrue(), fmt.Sprintf("proof %s does not consume the complete shared sidecar contract: %#v", proof.ID, proof.Consumes))
+		gomega.Expect(proof.Consumes.Audit).To(gomega.BeTrue(), fmt.Sprintf("proof %s does not consume the complete shared sidecar contract: %#v", proof.ID, proof.Consumes))
+		gomega.Expect(proof.Consumes.Contract).To(gomega.BeTrue(), fmt.Sprintf("proof %s does not consume the complete shared sidecar contract: %#v", proof.ID, proof.Consumes))
 
 		for _, required := range proofs.SharedContract.RequiredReadinessFields {
-			if !proof.Readiness[required] {
-				t.Fatalf("proof %s readiness %q is not true: %#v", proof.ID, required, proof.Readiness)
-			}
+			gomega.Expect(proof.Readiness[required]).To(gomega.BeTrue(), fmt.Sprintf("proof %s readiness %q is not true: %#v", proof.ID, required, proof.Readiness))
 		}
 
 		for field, leaked := range proof.Privacy {
-			if leaked {
-				t.Fatalf("proof %s privacy field %s reports leaked content", proof.ID, field)
-			}
+			gomega.Expect(leaked).To(gomega.BeFalse(), fmt.Sprintf("proof %s privacy field %s reports leaked content", proof.ID, field))
 		}
 
 		proofPayload, err := json.Marshal(proof)
-		if err != nil {
-			t.Fatalf("marshal proof %s for privacy scan: %v", proof.ID, err)
-		}
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal proof %s for privacy scan: %v", proof.ID, err))
 
 		for _, pattern := range []string{
 			"/Users/",
@@ -277,130 +233,91 @@ func TestP78IntegrationProofRecords(t *testing.T) {
 			"github_pat_",
 			"xoxb-",
 		} {
-			if strings.Contains(string(proofPayload), pattern) {
-				t.Fatalf("integration proof fixture contains forbidden privacy pattern %q", pattern)
-			}
+			gomega.Expect(string(proofPayload)).NotTo(gomega.ContainSubstring(pattern), fmt.Sprintf("integration proof fixture contains forbidden privacy pattern %q", pattern))
 		}
 
 		switch proof.Path {
 		case "shell_ci_script":
-			assertP78ExecutableProof(t, proof, transcriptSteps)
+			assertP78ExecutableProof(proof, transcriptSteps)
 
-			if proof.ScriptPath == "" {
-				t.Fatalf("shell/CI proof must reference a script path")
-			}
+			gomega.Expect(proof.ScriptPath).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("shell/CI proof must reference a script path"))
 
 			scriptData, err := os.ReadFile(filepath.Join(repoRoot, proof.ScriptPath))
-			if err != nil {
-				t.Fatalf("read shell/CI proof script: %v", err)
-			}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read shell/CI proof script: %v", err))
 
 			script := string(scriptData)
 			for _, required := range []string{"idiom.tool.v1", "--profile discovery", "sidecar.audit_event_ids", "sidecar.freshness.policy"} {
-				if !strings.Contains(script, required) {
-					t.Fatalf("shell/CI proof script missing %q", required)
-				}
+				gomega.Expect(script).To(gomega.ContainSubstring(required), fmt.Sprintf("shell/CI proof script missing %q", required))
 			}
 		case "external_coding_agent_workflow":
-			assertP78ExecutableProof(t, proof, transcriptSteps)
+			assertP78ExecutableProof(proof, transcriptSteps)
 
-			if proof.ScriptPath != "" {
-				t.Fatalf("external coding-agent proof should be a generic workflow recipe, not a script-specific path")
-			}
+			gomega.Expect(proof.ScriptPath).To(gomega.BeEquivalentTo(""), fmt.Sprintf("external coding-agent proof should be a generic workflow recipe, not a script-specific path"))
 		case "mcp_stdio":
-			if proof.Status != "test_validated" {
-				t.Fatalf("MCP proof must be test validated, got %q", proof.Status)
-			}
+			gomega.Expect(proof.Status).To(gomega.BeEquivalentTo("test_validated"), fmt.Sprintf("MCP proof must be test validated, got %q", proof.Status))
 
-			if !proof.Readiness["protocol_implemented"] || proof.Readiness["phase8_deferred"] || proof.Readiness["reviewed_placeholder"] || !proof.Readiness["executable_evidence"] {
-				t.Fatalf("MCP proof readiness is not executable: %#v", proof.Readiness)
-			}
+			gomega.Expect(proof.Readiness["protocol_implemented"]).To(gomega.BeTrue(), fmt.Sprintf("MCP proof readiness is not executable: %#v", proof.Readiness))
+			gomega.Expect(proof.Readiness["phase8_deferred"]).To(gomega.BeFalse(), fmt.Sprintf("MCP proof readiness is not executable: %#v", proof.Readiness))
+			gomega.Expect(proof.Readiness["reviewed_placeholder"]).To(gomega.BeFalse(), fmt.Sprintf("MCP proof readiness is not executable: %#v", proof.Readiness))
+			gomega.Expect(proof.Readiness["executable_evidence"]).To(gomega.BeTrue(), fmt.Sprintf("MCP proof readiness is not executable: %#v", proof.Readiness))
 
-			if proof.Phase8WorkPackage != "P8.6" {
-				t.Fatalf("MCP proof must tie back to P8.6, got %q", proof.Phase8WorkPackage)
-			}
+			gomega.Expect(proof.Phase8WorkPackage).To(gomega.BeEquivalentTo("P8.6"), fmt.Sprintf("MCP proof must tie back to P8.6, got %q", proof.Phase8WorkPackage))
 
-			if proof.ReplayFixture != "testdata/sidecar/mcp-stdio-integration-proof.json" ||
-				!strings.Contains(proof.ReplayTest, "TestP86MCPStdioIntegrationProofReplay") ||
-				!proof.ProductEvidenceExportParity {
-
-				t.Fatalf("MCP proof missing replay/product-evidence linkage: %#v", proof)
-			}
+			gomega.Expect(proof.ReplayFixture).To(gomega.BeEquivalentTo("testdata/sidecar/mcp-stdio-integration-proof.json"), fmt.Sprintf("MCP proof missing replay/product-evidence linkage: %#v", proof))
+			gomega.Expect(proof.ReplayTest).To(gomega.Equal("go test ./internal/surfaces/cli/mcp -ginkgo.focus='P8\\.6 MCP stdio proof replays the release proof without leaking protected evidence' -ginkgo.fail-on-empty -count=1"), fmt.Sprintf("MCP proof missing executable Ginkgo replay linkage: %#v", proof))
+			gomega.Expect(proof.ProductEvidenceExportParity).To(gomega.BeTrue(), fmt.Sprintf("MCP proof missing replay/product-evidence linkage: %#v", proof))
 
 			readinessFields, ok := proof.MCPContract["readiness_fields"].([]any)
-			if !ok || len(readinessFields) == 0 {
-				t.Fatalf("MCP contract missing readiness_fields: %#v", proof.MCPContract)
-			}
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("MCP contract missing readiness_fields: %#v", proof.MCPContract))
+			gomega.Expect(readinessFields).NotTo(gomega.HaveLen(0), fmt.Sprintf("MCP contract missing readiness_fields: %#v", proof.MCPContract))
 
 			for _, value := range readinessFields {
 				field, ok := value.(string)
-				if !ok || strings.TrimSpace(field) == "" {
-					t.Fatalf("MCP contract has malformed readiness field %#v: %#v", value, proof.MCPContract)
-				}
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("MCP contract has malformed readiness field %#v: %#v", value, proof.MCPContract))
+				gomega.Expect(strings.TrimSpace(field)).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("MCP contract has malformed readiness field %#v: %#v", value, proof.MCPContract))
 
-				if !proof.Readiness[field] {
-					t.Fatalf("MCP proof missing declared readiness field %q: %#v", field, proof.Readiness)
-				}
+				gomega.Expect(proof.Readiness[field]).To(gomega.BeTrue(), fmt.Sprintf("MCP proof missing declared readiness field %q: %#v", field, proof.Readiness))
 			}
 
-			if !proof.Readiness["roots_resources_present"] {
-				t.Fatalf("MCP proof missing required P8.6 readiness fields: %#v", proof.Readiness)
-			}
+			gomega.Expect(proof.Readiness["roots_resources_present"]).To(gomega.BeTrue(), fmt.Sprintf("MCP proof missing required P8.6 readiness fields: %#v", proof.Readiness))
 
-			if proof.MCPContract["transport"] != "mcp_stdio" || proof.MCPContract["sidecar_schema_version"] != "idiom.tool.v1" || proof.MCPContract["profile"] != "discovery" {
-				t.Fatalf("MCP contract does not preserve sidecar shape: %#v", proof.MCPContract)
-			}
+			gomega.Expect(proof.MCPContract["transport"]).To(gomega.BeEquivalentTo("mcp_stdio"), fmt.Sprintf("MCP contract does not preserve sidecar shape: %#v", proof.MCPContract))
+			gomega.Expect(proof.MCPContract["sidecar_schema_version"]).To(gomega.BeEquivalentTo("idiom.tool.v1"), fmt.Sprintf("MCP contract does not preserve sidecar shape: %#v", proof.MCPContract))
+			gomega.Expect(proof.MCPContract["profile"]).To(gomega.BeEquivalentTo("discovery"), fmt.Sprintf("MCP contract does not preserve sidecar shape: %#v", proof.MCPContract))
 
 			for _, class := range []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"} {
-				if !stringSliceContains(proof.ClientClassifications, class) {
-					t.Fatalf("MCP proof missing classification %q: %#v", class, proof.ClientClassifications)
-				}
+				gomega.Expect(stringSliceContains(proof.ClientClassifications, class)).To(gomega.BeTrue(), fmt.Sprintf("MCP proof missing classification %q: %#v", class, proof.ClientClassifications))
 			}
 
 			replayData, err := os.ReadFile(filepath.Join(repoRoot, proof.ReplayFixture))
-			if err != nil {
-				t.Fatalf("read MCP replay fixture: %v", err)
-			}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read MCP replay fixture: %v", err))
 
 			var replay p86MCPIntegrationProof
 
-			if err := json.Unmarshal(replayData, &replay); err != nil {
-				t.Fatalf("decode MCP replay fixture: %v", err)
-			}
+			gomega.Expect(json.Unmarshal(replayData, &replay)).To(gomega.Succeed(), "decode MCP replay fixture")
 
-			if replay.LinkedP78ProofID != proof.ID {
-				t.Fatalf("MCP replay fixture links to %q, want %q", replay.LinkedP78ProofID, proof.ID)
-			}
+			gomega.Expect(replay.LinkedP78ProofID).To(gomega.BeEquivalentTo(proof.ID), fmt.Sprintf("MCP replay fixture links to %q, want %q", replay.LinkedP78ProofID, proof.ID))
 
-			if !strings.Contains(strings.Join(proof.Limitations, " "), "metadata-only") {
-				t.Fatalf("MCP proof must preserve resource-body limitation: %#v", proof.Limitations)
-			}
+			gomega.Expect(strings.Join(proof.Limitations, " ")).To(gomega.ContainSubstring("metadata-only"), fmt.Sprintf("MCP proof must preserve resource-body limitation: %#v", proof.Limitations))
 		default:
-			t.Fatalf("unexpected proof path %q", proof.Path)
+			ginkgo.Fail(fmt.Sprintf("unexpected proof path %q", proof.Path), 1)
 		}
 	}
 
 	for _, requiredPath := range []string{"shell_ci_script", "external_coding_agent_workflow", "mcp_stdio"} {
-		if !seenPaths[requiredPath] {
-			t.Fatalf("missing P7.8 proof path %q", requiredPath)
-		}
+		gomega.Expect(seenPaths[requiredPath]).To(gomega.BeTrue(), fmt.Sprintf("missing P7.8 proof path %q", requiredPath))
 	}
-}
-
-func TestSidecarRecipesCoverCallerClassesAndCompatibility(t *testing.T) {
-	repoRoot := sidecarValidationRepoRoot(t)
+})
+var _ = ginkgo.It("sidecar recipes cover caller classes and compatibility", func() {
+	repoRoot := sidecarValidationRepoRoot()
 
 	data, err := os.ReadFile(filepath.Join(repoRoot, "docs", "sidecar-recipes.md"))
-	if err != nil {
-		t.Fatalf("read sidecar recipes: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read sidecar recipes: %v", err))
 
 	doc := string(data)
 
 	transcript, err := readSidecarSmokeTranscript(repoRoot)
-	if err != nil {
-		t.Fatalf("read smoke transcript: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read smoke transcript: %v", err))
 
 	for _, required := range []string{
 		"Shell Or CI Script",
@@ -418,9 +335,7 @@ func TestSidecarRecipesCoverCallerClassesAndCompatibility(t *testing.T) {
 		"The caller owns strategy",
 		"Idiom owns the contract",
 	} {
-		if !strings.Contains(doc, required) {
-			t.Fatalf("sidecar recipes missing %q", required)
-		}
+		gomega.Expect(doc).To(gomega.ContainSubstring(required), fmt.Sprintf("sidecar recipes missing %q", required))
 	}
 
 	documentedSteps := map[string]bool{}
@@ -432,65 +347,59 @@ func TestSidecarRecipesCoverCallerClassesAndCompatibility(t *testing.T) {
 		}
 
 		documentedSteps[step.ID] = true
-		if !strings.Contains(normalizedDoc, normalizedShellSnippet(step.Command)) {
-			t.Fatalf("sidecar recipes do not document executable step %q command %q", step.ID, step.Command)
-		}
+		gomega.Expect(normalizedDoc).To(gomega.ContainSubstring(normalizedShellSnippet(step.Command)), fmt.Sprintf("sidecar recipes do not document executable step %q command %q", step.ID, step.Command))
 	}
 
 	for _, requiredStep := range []string{
 		"external-harness-context-query",
 		"local-private-context-pack",
 	} {
-		if !documentedSteps[requiredStep] {
-			t.Fatalf("smoke transcript missing documented executable recipe step %q", requiredStep)
-		}
+		gomega.Expect(documentedSteps[requiredStep]).To(gomega.BeTrue(), fmt.Sprintf("smoke transcript missing documented executable recipe step %q", requiredStep))
 	}
-}
+})
 
-func assertP78ExecutableProof(t *testing.T, proof p78IntegrationProof, transcriptSteps map[string]sidecarSmokeStep) {
-	t.Helper()
+func assertP78ExecutableProof(proof p78IntegrationProof, transcriptSteps map[string]sidecarSmokeStep) {
+	ginkgo.GinkgoHelper()
 
-	if proof.Status != "test_validated" {
-		t.Fatalf("proof %s should be test-validated, got %q", proof.ID, proof.Status)
-	}
+	gomega.Expect(proof.Status).To(gomega.BeEquivalentTo("test_validated"), fmt.Sprintf("proof %s should be test-validated, got %q", proof.ID, proof.Status))
 
-	if !proof.Readiness["executable_evidence"] || proof.Readiness["reviewed_placeholder"] || !proof.Readiness["protocol_implemented"] || proof.Readiness["phase8_deferred"] {
-		t.Fatalf("proof %s readiness is not executable: %#v", proof.ID, proof.Readiness)
-	}
+	gomega.Expect(proof.Readiness["executable_evidence"]).To(gomega.BeTrue(), fmt.Sprintf("proof %s readiness is not executable: %#v", proof.ID, proof.Readiness))
+	gomega.Expect(proof.Readiness["reviewed_placeholder"]).To(gomega.BeFalse(), fmt.Sprintf("proof %s readiness is not executable: %#v", proof.ID, proof.Readiness))
+	gomega.Expect(proof.Readiness["protocol_implemented"]).To(gomega.BeTrue(), fmt.Sprintf("proof %s readiness is not executable: %#v", proof.ID, proof.Readiness))
+	gomega.Expect(proof.Readiness["phase8_deferred"]).To(gomega.BeFalse(), fmt.Sprintf("proof %s readiness is not executable: %#v", proof.ID, proof.Readiness))
 
-	if len(proof.TranscriptStepIDs) == 0 {
-		t.Fatalf("proof %s must reference at least one transcript step", proof.ID)
-	}
+	gomega.Expect(proof.TranscriptStepIDs).NotTo(gomega.BeEmpty(), fmt.Sprintf("proof %s must reference at least one transcript step", proof.ID))
 
 	for _, stepID := range proof.SetupStepIDs {
-		if _, ok := transcriptSteps[stepID]; !ok {
-			t.Fatalf("proof %s references missing setup transcript step %q", proof.ID, stepID)
+		{
+			_, ok := transcriptSteps[stepID]
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("proof %s references missing setup transcript step %q", proof.ID, stepID))
 		}
 	}
 
 	for _, stepID := range proof.TranscriptStepIDs {
 		step, ok := transcriptSteps[stepID]
-		if !ok {
-			t.Fatalf("proof %s references missing proof transcript step %q", proof.ID, stepID)
-		}
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("proof %s references missing proof transcript step %q", proof.ID, stepID))
 
 		if !step.JSON {
 			continue
 		}
 
 		for _, required := range []string{"sidecar.schema_version", "sidecar.profile", "sidecar.contract.id"} {
-			if _, ok := step.ExpectJSONString[required]; !ok {
-				t.Fatalf("transcript step %s does not assert %s", stepID, required)
+			{
+				_, ok := step.ExpectJSONString[required]
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("transcript step %s does not assert %s", stepID, required))
 			}
 		}
 
-		if _, ok := step.ExpectJSONString["sidecar.freshness.policy"]; !ok && !stringSliceContains(step.ExpectJSONNull, "sidecar.freshness") {
-			t.Fatalf("transcript step %s does not assert freshness presence or explicit null", stepID)
+		{
+			_, ok := step.ExpectJSONString["sidecar.freshness.policy"]
+			if !ok {
+				gomega.Expect(stringSliceContains(step.ExpectJSONNull, "sidecar.freshness")).To(gomega.BeTrue(), fmt.Sprintf("transcript step %s does not assert freshness presence or explicit null", stepID))
+			}
 		}
 
-		if !stringSliceContains(step.ExpectJSONPresent, "sidecar.audit_event_ids") {
-			t.Fatalf("transcript step %s does not assert sidecar audit field presence", stepID)
-		}
+		gomega.Expect(stringSliceContains(step.ExpectJSONPresent, "sidecar.audit_event_ids")).To(gomega.BeTrue(), fmt.Sprintf("transcript step %s does not assert sidecar audit field presence", stepID))
 	}
 }
 
@@ -511,10 +420,11 @@ func readSidecarSmokeTranscript(repoRoot string) (sidecarSmokeTranscript, error)
 	return transcript, nil
 }
 
-func writeSidecarRecipeWorkspace(t *testing.T, root string) {
-	t.Helper()
-	writeSidecarRecipeFile(t, filepath.Join(root, "go.mod"), "module example.com/sidecar\n\ngo 1.22\n")
-	writeSidecarRecipeFile(t, filepath.Join(root, "cmd", "tool", "main.go"), `package main
+func writeSidecarRecipeWorkspace(root string) {
+	ginkgo.GinkgoHelper()
+
+	writeSidecarRecipeFile(filepath.Join(root, "go.mod"), "module example.com/sidecar\n\ngo 1.22\n")
+	writeSidecarRecipeFile(filepath.Join(root, "cmd", "tool", "main.go"), `package main
 
 func main() {
 	_ = callToolMain()
@@ -528,7 +438,7 @@ func runToolMainWithTelemetry() string {
 	return "sidecar-private-body-sentinel"
 }
 `)
-	writeSidecarRecipeFile(t, filepath.Join(root, "auth", "retry.go"), `package auth
+	writeSidecarRecipeFile(filepath.Join(root, "auth", "retry.go"), `package auth
 
 func Authenticate() string {
 	return retryRequest()
@@ -540,16 +450,12 @@ func retryRequest() string {
 `)
 }
 
-func writeSidecarRecipeFile(t *testing.T, path string, content string) {
-	t.Helper()
+func writeSidecarRecipeFile(path string, content string) {
+	ginkgo.GinkgoHelper()
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(gomega.Succeed(), "create directory %s", filepath.Dir(path))
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(content), 0o644)).To(gomega.Succeed(), "write %s", path)
 }
 
 func normalizedShellSnippet(value string) string {

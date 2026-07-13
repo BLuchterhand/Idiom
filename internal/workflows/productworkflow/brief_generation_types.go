@@ -13,6 +13,11 @@ type BriefGenerationInput struct {
 	PromotionEvents       []BehavioralCoveragePromotionEvent
 	CoverageEvaluation    CoverageGateEvaluation
 	ExistingWorkspacePath map[string]bool
+	adrGeneration         ADRGenerationToken
+	tddGeneration         tddGenerationToken
+	productEventsPath     string
+	productEventsBody     []byte
+	productEventsLoaded   bool
 }
 
 type BriefGenerationResult struct {

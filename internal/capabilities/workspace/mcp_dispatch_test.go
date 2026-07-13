@@ -1,204 +1,215 @@
 package workspace
 
+//go:generate go tool mockgen -destination=mock_mcp_transport_test.go -package=workspace -mock_names=Transport=MockMCPTransport -typed idiom/internal/capabilities/mcp Transport
+
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"testing"
+	"sync"
 	"time"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 )
 
-// fakeMCPServer answers initialize + tools/list with a single canned tool.
-// CallTool isn't exercised here — these tests cover the LLM-facing
-// surface (BuildToolDefinitions / AllowedTools), not dispatch.
-func fakeMCPServer(t *testing.T, toolName, description, schema string) *httptest.Server {
-	t.Helper()
-
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-
-		w.Header().Set("Content-Type", "text/event-stream")
-
-		switch {
-		case strings.Contains(string(body), `"method":"initialize"`):
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}`)
-		case strings.Contains(string(body), `"method":"tools/list"`):
-			// When schema is empty, omit inputSchema entirely so the
-			// fan-in's "no schema → default object" fallback is
-			// exercised. Otherwise pass the literal JSON through.
-			if schema == "" {
-				fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":%q,\"description\":%q}]}}\n",
-					toolName, description)
-			} else {
-				fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":%q,\"description\":%q,\"inputSchema\":%s}]}}\n",
-					toolName, description, schema)
-			}
-		}
-	}))
+type mcpCallObservation struct {
+	Name      string
+	Arguments json.RawMessage
 }
 
-func registerFakeMCP(t *testing.T, name string, srv *httptest.Server) *mcp.Registry {
-	t.Helper()
+// test-double: scripted-protocol-peer
+type mcpProtocolScript struct {
+	Tool          mcp.Tool
+	CallReplyText string
+}
 
-	tr, err := mcp.StartHTTP(srv.URL, nil, 5*time.Second, true)
-	if err != nil {
-		t.Fatalf("StartHTTP: %v", err)
-	}
+func registerMockMCP(name string, script mcpProtocolScript) (*mcp.Registry, <-chan mcpCallObservation) {
+	ginkgo.GinkgoHelper()
 
-	client := mcp.NewClient(tr)
+	inbox := make(chan mcp.TransportMessage, 4)
+	calls := make(chan mcpCallObservation, 1)
+	closed := make(chan struct{})
+	var closeOnce sync.Once
+	transport := NewMockMCPTransport(gomock.NewController(ginkgo.GinkgoT()))
+	transport.EXPECT().Send(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
+		func(ctx context.Context, payload []byte) error {
+			response, err := mcpFixtureResponse(ctx, payload, script, calls)
+			if err != nil {
+				return err
+			}
+			if len(response) == 0 {
+				return nil
+			}
+			select {
+			case inbox <- mcp.TransportMessage{Payload: response}:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-closed:
+				return io.ErrClosedPipe
+			}
+		},
+	)
+	transport.EXPECT().Receive(gomock.Any()).AnyTimes().DoAndReturn(
+		func(ctx context.Context) (mcp.TransportMessage, error) {
+			select {
+			case message := <-inbox:
+				return message, nil
+			case <-ctx.Done():
+				return mcp.TransportMessage{}, ctx.Err()
+			case <-closed:
+				return mcp.TransportMessage{}, io.EOF
+			}
+		},
+	)
+	transport.EXPECT().Close().Times(1).DoAndReturn(func() error {
+		closeOnce.Do(func() { close(closed) })
+		return nil
+	})
+
+	client := mcp.NewClient(transport)
 	reg := mcp.NewRegistry()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
 	defer cancel()
+	gomega.Expect(reg.RegisterExisting(ctx, name, client)).To(gomega.Succeed())
+	ginkgo.DeferCleanup(func() { reg.Close() })
 
-	if err := reg.RegisterExisting(ctx, name, client); err != nil {
-		t.Fatalf("RegisterExisting: %v", err)
-	}
-
-	t.Cleanup(func() { reg.Close() })
-
-	return reg
+	return reg, calls
 }
 
-func TestManagerBuildToolDefinitions_NoRegistryReturnsBuiltinsOnly(t *testing.T) {
-	mgr := NewManager(config.Workspace{})
-	got := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
-	want := BuildToolDefinitions(nil)
-
-	if len(got) != len(want) {
-		t.Fatalf("with no registry, manager returned %d defs, package returned %d", len(got), len(want))
+func mcpFixtureResponse(ctx context.Context, payload []byte, script mcpProtocolScript, calls chan<- mcpCallObservation) ([]byte, error) {
+	var request struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      int64           `json:"id"`
+		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return nil, fmt.Errorf("decode MCP fixture request: %w", err)
+	}
+	if request.JSONRPC != "2.0" {
+		return nil, fmt.Errorf("MCP fixture received JSON-RPC version %q", request.JSONRPC)
+	}
+	if request.Method == "notifications/initialized" {
+		return nil, nil
 	}
 
-	for _, def := range got {
-		if strings.HasPrefix(def.Name, "mcp:") {
-			t.Fatalf("unexpected mcp:* tool with no registry: %q", def.Name)
+	var result any
+	switch request.Method {
+	case "initialize":
+		result = map[string]any{"protocolVersion": mcp.ProtocolVersion}
+	case "tools/list":
+		result = map[string]any{"tools": []mcp.Tool{script.Tool}}
+	case "tools/call":
+		var params struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
 		}
-	}
-}
-
-func TestManagerBuildToolDefinitions_AppendsMCPTools(t *testing.T) {
-	srv := fakeMCPServer(t, "web_search_exa", "Search the web", `{"type":"object","properties":{"query":{"type":"string"}}}`)
-	defer srv.Close()
-
-	reg := registerFakeMCP(t, "exa", srv)
-
-	mgr := NewManager(config.Workspace{})
-	mgr.toolSurface.SetMCPRegistry(reg)
-
-	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
-
-	var found *ToolDefinition
-
-	for i := range defs {
-		if defs[i].Name == "mcp:exa/web_search_exa" {
-			found = &defs[i]
-			break
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, fmt.Errorf("decode MCP fixture tool call: %w", err)
 		}
-	}
-
-	if found == nil {
-		t.Fatalf("did not find mcp:exa/web_search_exa among %d defs", len(defs))
-	}
-
-	if !strings.HasPrefix(found.Description, "[mcp:exa] ") {
-		t.Fatalf("description should start with provenance prefix, got %q", found.Description)
-	}
-
-	if !strings.Contains(found.Description, "Search the web") {
-		t.Fatalf("description should contain upstream text, got %q", found.Description)
-	}
-
-	if !strings.Contains(found.ParametersJSON, `"query"`) {
-		t.Fatalf("parameters should pass upstream inputSchema through, got %q", found.ParametersJSON)
-	}
-}
-
-func TestManagerBuildToolDefinitions_AllowedFiltersMCPTools(t *testing.T) {
-	srv := fakeMCPServer(t, "web_search_exa", "Search", "")
-	defer srv.Close()
-
-	reg := registerFakeMCP(t, "exa", srv)
-
-	mgr := NewManager(config.Workspace{})
-	mgr.toolSurface.SetMCPRegistry(reg)
-
-	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions([]string{"read_file"})
-	for _, def := range defs {
-		if strings.HasPrefix(def.Name, "mcp:") {
-			t.Fatalf("allowed list excluded mcp tools, but %q slipped through", def.Name)
+		select {
+		case calls <- mcpCallObservation{Name: params.Name, Arguments: append(json.RawMessage(nil), params.Arguments...)}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
+		content, err := json.Marshal(map[string]string{"type": "text", "text": script.CallReplyText})
+		if err != nil {
+			return nil, fmt.Errorf("encode MCP fixture content: %w", err)
+		}
+		result = mcp.ToolCallResult{Content: []json.RawMessage{content}}
+	default:
+		return nil, fmt.Errorf("MCP fixture received unsupported method %q", request.Method)
 	}
 
-	defs = mgr.ToolSurfaceSnapshot().BuildToolDefinitions([]string{"mcp:exa/web_search_exa"})
-	if len(defs) != 1 {
-		t.Fatalf("expected 1 def with allow=[mcp:exa/web_search_exa], got %d", len(defs))
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("encode MCP fixture result: %w", err)
 	}
-
-	if defs[0].Name != "mcp:exa/web_search_exa" {
-		t.Fatalf("got %q", defs[0].Name)
-	}
+	return json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      int64           `json:"id"`
+		Result  json.RawMessage `json:"result"`
+	}{JSONRPC: "2.0", ID: request.ID, Result: resultJSON})
 }
 
-func TestManagerAllowedTools_AppendsMCPNames(t *testing.T) {
-	srv := fakeMCPServer(t, "web_search_exa", "", "")
-	defer srv.Close()
+var _ = ginkgo.Describe("mcp dispatch", func() {
+	ginkgo.It("manager build tool definitions_no registry returns builtins only", func() {
+		mgr := NewManager(config.Workspace{})
+		got := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
+		want := BuildToolDefinitions(nil)
+		gomega.Expect(got).To(gomega.HaveLen(len(want)), fmt.Sprintf("with no registry, manager returned %d defs, package returned %d", len(got), len(want)))
 
-	reg := registerFakeMCP(t, "exa", srv)
+		for _, def := range got {
+			gomega.Expect(strings.HasPrefix(def.Name, "mcp:")).To(gomega.BeFalse(), fmt.Sprintf("unexpected mcp:* tool with no registry: %q", def.Name))
 
-	mgr := NewManager(config.Workspace{})
-	before := mgr.ToolSurfaceSnapshot().AllowedTools()
-	mgr.toolSurface.SetMCPRegistry(reg)
+		}
+	})
+	ginkgo.It("manager build tool definitions_appends mcp tools", func() {
+		reg, _ := registerMockMCP("exa", mcpProtocolScript{Tool: mcp.Tool{
+			Name:        "web_search_exa",
+			Description: "Search the web",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
+		}})
 
-	after := mgr.ToolSurfaceSnapshot().AllowedTools()
+		mgr := NewManager(config.Workspace{})
+		mgr.toolSurface.SetMCPRegistry(reg)
 
-	if len(after) != len(before)+1 {
-		t.Fatalf("expected exactly one new tool added, got %d → %d", len(before), len(after))
-	}
+		defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
 
-	if after[len(after)-1] != "mcp:exa/web_search_exa" {
-		t.Fatalf("last tool = %q, want mcp:exa/web_search_exa", after[len(after)-1])
-	}
-}
+		var found *ToolDefinition
 
-// fakeMCPCallServer also handles tools/call so dispatch can be exercised.
-// The handler parses the JSON-RPC id off each request and echoes it back
-// in the reply so the test does not have to predict the client's ID
-// allocation order.
-func fakeMCPCallServer(t *testing.T, toolName, callReplyText string) *httptest.Server {
-	t.Helper()
+		for i := range defs {
+			if defs[i].Name == "mcp:exa/web_search_exa" {
+				found = &defs[i]
+				break
+			}
+		}
+		gomega.Expect(found).NotTo(gomega.BeNil(), fmt.Sprintf("did not find mcp:exa/web_search_exa among %d defs", len(defs)))
+		gomega.Expect(strings.HasPrefix(found.Description, "[mcp:exa] ")).To(gomega.BeTrue(), fmt.Sprintf("description should start with provenance prefix, got %q", found.Description))
+		gomega.Expect(found.Description).To(gomega.ContainSubstring("Search the web"), fmt.Sprintf("description should contain upstream text, got %q", found.Description))
+		gomega.Expect(found.ParametersJSON).To(gomega.ContainSubstring(`"query"`), fmt.Sprintf("parameters should pass upstream inputSchema through, got %q", found.ParametersJSON))
 
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+	})
+	ginkgo.It("manager build tool definitions_allowed filters mcp tools", func() {
+		reg, _ := registerMockMCP("exa", mcpProtocolScript{Tool: mcp.Tool{Name: "web_search_exa", Description: "Search"}})
 
-		var probe struct {
-			ID     int64  `json:"id"`
-			Method string `json:"method"`
+		mgr := NewManager(config.Workspace{})
+		mgr.toolSurface.SetMCPRegistry(reg)
+
+		defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions([]string{"read_file"})
+		for _, def := range defs {
+			gomega.Expect(strings.HasPrefix(def.Name, "mcp:")).To(gomega.BeFalse(), fmt.Sprintf("allowed list excluded mcp tools, but %q slipped through", def.Name))
+
 		}
 
-		_ = json.Unmarshal(body, &probe)
+		defs = mgr.ToolSurfaceSnapshot().BuildToolDefinitions([]string{"mcp:exa/web_search_exa"})
+		gomega.Expect(defs).To(gomega.HaveLen(1), fmt.Sprintf("expected 1 def with allow=[mcp:exa/web_search_exa], got %d", len(defs)))
+		gomega.Expect(defs[0].Name).To(gomega.Equal("mcp:exa/web_search_exa"), fmt.Sprintf("got %q", defs[0].Name))
 
-		w.Header().Set("Content-Type", "text/event-stream")
+	})
+	ginkgo.It("manager allowed tools_appends mcp names", func() {
+		reg, _ := registerMockMCP("exa", mcpProtocolScript{Tool: mcp.Tool{Name: "web_search_exa"}})
 
-		switch probe.Method {
-		case "initialize":
-			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2024-11-05\"}}\n", probe.ID)
-		case "tools/list":
-			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":%q,\"description\":\"x\",\"inputSchema\":{\"type\":\"object\"}}]}}\n",
-				probe.ID, toolName)
-		case "tools/call":
-			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n",
-				probe.ID, callReplyText)
-		}
-	}))
-}
+		mgr := NewManager(config.Workspace{})
+		before := mgr.ToolSurfaceSnapshot().AllowedTools()
+		mgr.toolSurface.SetMCPRegistry(reg)
+
+		after := mgr.ToolSurfaceSnapshot().AllowedTools()
+		gomega.Expect(after).To(gomega.HaveLen(len(before)+1), fmt.Sprintf("expected exactly one new tool added, got %d → %d", len(before), len(after)))
+		gomega.Expect(after[len(after)-1]).To(gomega.Equal("mcp:exa/web_search_exa"), fmt.Sprintf("last tool = %q, want mcp:exa/web_search_exa", after[len(after)-1]))
+
+	})
+})
+
+var
 
 // MCP tools must not be classified as workspace narrowing — they are
 // external retrieval, not workspace inspection. The current switch in
@@ -207,91 +218,72 @@ func fakeMCPCallServer(t *testing.T, toolName, callReplyText string) *httptest.S
 // rewrites the switch (e.g. to a prefix check) does not silently
 // upgrade mcp:* tools to "narrowing" and unlock the broad-inspection
 // gate prematurely.
-func TestMCPToolsAreNotNarrowing(t *testing.T) {
-	req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"hello"}`)}
-	if IsNarrowingRequest(req) {
-		t.Fatalf("IsNarrowingRequest(mcp:*) = true, want false (external retrieval is not workspace narrowing)")
-	}
+_ = ginkgo.Describe("mcp dispatch", func() {
+	ginkgo.It("mcp tools are not narrowing", func() {
+		req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"hello"}`)}
+		gomega.Expect(IsNarrowingRequest(req)).To(gomega.BeFalse(), fmt.Sprintf("IsNarrowingRequest(mcp:*) = true, want false (external retrieval is not workspace narrowing)"))
 
-	mgr := NewManager(config.Workspace{})
-	if mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: req.Tool, Summary: "ok"}) {
-		t.Fatalf("ShouldClearBroadInspectionLock(mcp:*) = true, want false")
-	}
-}
+		mgr := NewManager(config.Workspace{})
+		gomega.Expect(mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: req.Tool, Summary: "ok"})).To(gomega.BeFalse(), fmt.Sprintf("ShouldClearBroadInspectionLock(mcp:*) = true, want false"))
 
-func TestManagerExecute_DispatchesMCPCall(t *testing.T) {
-	srv := fakeMCPCallServer(t, "echo", "hello back")
-	defer srv.Close()
+	})
+	ginkgo.It("manager execute_dispatches mcp call", func() {
+		reg, calls := registerMockMCP("fake", mcpProtocolScript{
+			Tool:          mcp.Tool{Name: "echo", Description: "x", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			CallReplyText: "hello back",
+		})
 
-	reg := registerFakeMCP(t, "fake", srv)
+		mgr := NewManager(config.Workspace{})
+		mgr.toolSurface.SetMCPRegistry(reg)
 
-	mgr := NewManager(config.Workspace{})
-	mgr.toolSurface.SetMCPRegistry(reg)
+		req := ToolRequest{Tool: "mcp:fake/echo", Args: []byte(`{"text":"hello"}`)}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
-	req := ToolRequest{Tool: "mcp:fake/echo", Args: []byte(`{"text":"hello"}`)}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	defer cancel()
+		result := mgr.Execute(ctx, req)
+		gomega.Expect(result.Error).To(gomega.Equal(""), fmt.Sprintf("unexpected error: %s", result.Error))
+		gomega.Expect(result.Tool).To(gomega.Equal("mcp:fake/echo"), fmt.Sprintf("Tool = %q", result.Tool))
+		gomega.Expect(result.Output).To(gomega.Equal("hello back"), fmt.Sprintf("Output = %q, want %q", result.Output, "hello back"))
+		gomega.Expect(result.Summary).To(gomega.Equal("MCP mcp:fake/echo"), fmt.Sprintf("Summary = %q", result.Summary))
+		call := <-calls
+		gomega.Expect(call.Name).To(gomega.Equal("echo"))
+		gomega.Expect(call.Arguments).To(gomega.MatchJSON(`{"text":"hello"}`))
 
-	result := mgr.Execute(ctx, req)
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
+	})
+	ginkgo.It("manager execute_mcp without registry returns error", func() {
+		mgr := NewManager(config.Workspace{})
+		req := ToolRequest{Tool: "mcp:fake/echo", Args: []byte(`{}`)}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
-	if result.Tool != "mcp:fake/echo" {
-		t.Fatalf("Tool = %q", result.Tool)
-	}
+		defer cancel()
 
-	if result.Output != "hello back" {
-		t.Fatalf("Output = %q, want %q", result.Output, "hello back")
-	}
+		result := mgr.Execute(ctx, req)
+		gomega.Expect(result.Error).NotTo(gomega.Equal(""), fmt.Sprintf("expected error, got none"))
+		gomega.Expect(result.Error).To(gomega.ContainSubstring("registry not configured"), fmt.Sprintf("Error = %q, want mention of registry", result.Error))
 
-	if result.Summary != "MCP mcp:fake/echo" {
-		t.Fatalf("Summary = %q", result.Summary)
-	}
-}
+	})
+	ginkgo.It("manager execute_mcp unregistered tool returns error", func() {
+		reg, _ := registerMockMCP("fake", mcpProtocolScript{
+			Tool:          mcp.Tool{Name: "echo", Description: "x", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			CallReplyText: "hi",
+		})
+		mgr := NewManager(config.Workspace{})
+		mgr.toolSurface.SetMCPRegistry(reg)
 
-func TestManagerExecute_MCPWithoutRegistryReturnsError(t *testing.T) {
-	mgr := NewManager(config.Workspace{})
-	req := ToolRequest{Tool: "mcp:fake/echo", Args: []byte(`{}`)}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		req := ToolRequest{Tool: "mcp:other/unknown", Args: []byte(`{}`)}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
-	defer cancel()
+		defer cancel()
 
-	result := mgr.Execute(ctx, req)
-	if result.Error == "" {
-		t.Fatalf("expected error, got none")
-	}
+		result := mgr.Execute(ctx, req)
+		gomega.Expect(result.Error).NotTo(gomega.Equal(""), fmt.Sprintf("expected error for unregistered tool"))
+		gomega.Expect(result.Error).To(gomega.ContainSubstring("not registered"), fmt.Sprintf("Error = %q, want 'not registered'", result.Error))
 
-	if !strings.Contains(result.Error, "registry not configured") {
-		t.Fatalf("Error = %q, want mention of registry", result.Error)
-	}
-}
+	})
+})
+var _ = ginkgo.Describe("tool policy input mcp pulls query then url", func() {
 
-func TestManagerExecute_MCPUnregisteredToolReturnsError(t *testing.T) {
-	srv := fakeMCPCallServer(t, "echo", "hi")
-	defer srv.Close()
-
-	reg := registerFakeMCP(t, "fake", srv)
-	mgr := NewManager(config.Workspace{})
-	mgr.toolSurface.SetMCPRegistry(reg)
-
-	req := ToolRequest{Tool: "mcp:other/unknown", Args: []byte(`{}`)}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-	defer cancel()
-
-	result := mgr.Execute(ctx, req)
-	if result.Error == "" {
-		t.Fatalf("expected error for unregistered tool")
-	}
-
-	if !strings.Contains(result.Error, "not registered") {
-		t.Fatalf("Error = %q, want 'not registered'", result.Error)
-	}
-}
-
-func TestExtractToolRuleTarget_MCPPullsQueryThenURL(t *testing.T) {
 	cases := []struct {
 		name string
 		args string
@@ -301,90 +293,75 @@ func TestExtractToolRuleTarget_MCPPullsQueryThenURL(t *testing.T) {
 		{"falls through to url", `{"url":"https://example.com/p"}`, "https://example.com/p"},
 		{"empty when neither present", `{"foo":"bar"}`, ""},
 		{"non-string query ignored", `{"query":42,"url":"https://example.com/"}`, "https://example.com/"},
+		{"malformed arguments ignored", `{"query":`, ""},
 		{"empty args returns empty", "", ""},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		ginkgo.It(tc.name, func() {
 			req := ToolRequest{Tool: "mcp:exa/web_search_exa"}
 			if tc.args != "" {
 				req.Args = []byte(tc.args)
 			}
 
-			got := extractToolRuleTarget(req.Tool, req)
-			if got != tc.want {
-				t.Fatalf("got %q, want %q", got, tc.want)
-			}
+			got := ToolPolicyInput(req).PatternTarget
+			gomega.Expect(got).To(gomega.Equal(tc.want), fmt.Sprintf("got %q, want %q", got, tc.want))
+
 		})
 	}
-}
-
-func TestToolPolicyMatch_MCPGlobFallback(t *testing.T) {
-	rules := map[string][]toolpolicy.Rule{
-		"mcp:*": {{Pattern: "*", Decision: toolpolicy.Ask}},
-	}
-	req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"go 1.24"}`)}
-	got := toolpolicy.Match(req.Tool, ToolPolicyRequest(req), rules)
-
-	if got != toolpolicy.Ask {
-		t.Fatalf("got %q, want %q", got, toolpolicy.Ask)
-	}
-}
-
-func TestToolPolicyMatch_MCPSpecificBeatsGlob(t *testing.T) {
-	rules := map[string][]toolpolicy.Rule{
-		"mcp:exa/web_search_exa": {{Pattern: "*", Decision: toolpolicy.Allow}},
-		"mcp:*":                  {{Pattern: "*", Decision: toolpolicy.Ask}},
-	}
-	req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"x"}`)}
-	got := toolpolicy.Match(req.Tool, ToolPolicyRequest(req), rules)
-
-	if got != toolpolicy.Allow {
-		t.Fatalf("got %q, want %q (specific rule should win)", got, toolpolicy.Allow)
-	}
-}
-
-func TestToolPolicyMatch_MCPPatternAgainstURL(t *testing.T) {
-	rules := map[string][]toolpolicy.Rule{
-		"mcp:fetch/fetch": {
-			{Pattern: "https://github.com/**", Decision: toolpolicy.Allow},
-			{Pattern: "*", Decision: toolpolicy.Ask},
-		},
-	}
-	allowed := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://github.com/sst/opencode"}`)}
-
-	if got := toolpolicy.Match(allowed.Tool, ToolPolicyRequest(allowed), rules); got != toolpolicy.Allow {
-		t.Fatalf("github URL: got %q, want allow", got)
-	}
-
-	other := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://random.example/"}`)}
-	if got := toolpolicy.Match(other.Tool, ToolPolicyRequest(other), rules); got != toolpolicy.Ask {
-		t.Fatalf("non-github URL: got %q, want ask", got)
-	}
-}
-
-func TestManagerBuildToolDefinitions_EmptyDescriptionFallsBack(t *testing.T) {
-	srv := fakeMCPServer(t, "tool_no_desc", "", "")
-	defer srv.Close()
-
-	reg := registerFakeMCP(t, "x", srv)
-
-	mgr := NewManager(config.Workspace{})
-	mgr.toolSurface.SetMCPRegistry(reg)
-
-	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
-	for _, def := range defs {
-		if def.Name == "mcp:x/tool_no_desc" {
-			if !strings.Contains(def.Description, "MCP tool from x") {
-				t.Fatalf("expected fallback description, got %q", def.Description)
-			}
-
-			if def.ParametersJSON != `{"type":"object","properties":{}}` {
-				t.Fatalf("expected default params, got %q", def.ParametersJSON)
-			}
-
-			return
+})
+var _ = ginkgo.Describe("mcp dispatch", func() {
+	ginkgo.It("tool policy match_mcp glob fallback", func() {
+		rules := map[string][]toolpolicy.Rule{
+			"mcp:*": {{Pattern: "*", Decision: toolpolicy.Ask}},
 		}
-	}
+		req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"go 1.24"}`)}
+		got := toolpolicy.Match(ToolPolicyInput(req), rules)
+		gomega.Expect(got).To(gomega.Equal(toolpolicy.Ask), fmt.Sprintf("got %q, want %q", got, toolpolicy.Ask))
 
-	t.Fatalf("did not find mcp:x/tool_no_desc")
-}
+	})
+	ginkgo.It("tool policy match_mcp specific beats glob", func() {
+		rules := map[string][]toolpolicy.Rule{
+			"mcp:exa/web_search_exa": {{Pattern: "*", Decision: toolpolicy.Allow}},
+			"mcp:*":                  {{Pattern: "*", Decision: toolpolicy.Ask}},
+		}
+		req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"x"}`)}
+		got := toolpolicy.Match(ToolPolicyInput(req), rules)
+		gomega.Expect(got).To(gomega.Equal(toolpolicy.Allow), fmt.Sprintf("got %q, want %q (specific rule should win)", got, toolpolicy.Allow))
+
+	})
+	ginkgo.It("tool policy match_mcp pattern against url", func() {
+		rules := map[string][]toolpolicy.Rule{
+			"mcp:fetch/fetch": {
+				{Pattern: "https://github.com/**", Decision: toolpolicy.Allow},
+				{Pattern: "*", Decision: toolpolicy.Ask},
+			},
+		}
+		allowed := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://github.com/sst/opencode"}`)}
+
+		if got := toolpolicy.Match(ToolPolicyInput(allowed), rules); got != toolpolicy.Allow {
+			ginkgo.Fail(fmt.Sprintf("github URL: got %q, want allow", got))
+		}
+
+		other := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://random.example/"}`)}
+		if got := toolpolicy.Match(ToolPolicyInput(other), rules); got != toolpolicy.Ask {
+			ginkgo.Fail(fmt.Sprintf("non-github URL: got %q, want ask", got))
+		}
+	})
+	ginkgo.It("manager build tool definitions_empty description falls back", func() {
+		reg, _ := registerMockMCP("x", mcpProtocolScript{Tool: mcp.Tool{Name: "tool_no_desc"}})
+
+		mgr := NewManager(config.Workspace{})
+		mgr.toolSurface.SetMCPRegistry(reg)
+
+		defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
+		for _, def := range defs {
+			if def.Name == "mcp:x/tool_no_desc" {
+				gomega.Expect(def.Description).To(gomega.ContainSubstring("MCP tool from x"), fmt.Sprintf("expected fallback description, got %q", def.Description))
+				gomega.Expect(def.ParametersJSON).To(gomega.Equal(`{"type":"object","properties":{}}`), fmt.Sprintf("expected default params, got %q", def.ParametersJSON))
+
+				return
+			}
+		}
+		ginkgo.Fail(fmt.Sprintf("did not find mcp:x/tool_no_desc"))
+	})
+})

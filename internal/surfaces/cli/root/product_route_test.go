@@ -2,19 +2,19 @@ package root
 
 import (
 	"bytes"
-	"testing"
 
 	productcmd "idiom/internal/surfaces/cli/product"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestProductWorkflowCommandDelegatesToInternalPackage(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+var _ = ginkgo.Describe("Product command routing", func() {
+	ginkgo.It("delegates workflow help to the product CLI owner", func() {
+		var stdout, stderr bytes.Buffer
+		code := productcmd.RunMainWithTelemetry([]string{"help"}, &stdout, &stderr, nil)
 
-	if code := productcmd.RunMainWithTelemetry([]string{"help"}, &stdout, &stderr, nil); code != 0 {
-		t.Fatalf("product help failed with code %d: %s", code, stderr.String())
-	}
-
-	if stdout.Len() == 0 {
-		t.Fatal("expected product help text on stdout")
-	}
-}
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(stdout.String()).NotTo(gomega.BeEmpty())
+	})
+})

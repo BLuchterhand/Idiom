@@ -11,6 +11,7 @@ import (
 	featureplannercontract "idiom/internal/contracts/featureplanner"
 	plancontract "idiom/internal/contracts/plan"
 	planartifactcontract "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 )
 
@@ -38,6 +39,17 @@ func Analyze(records []Record) Metrics {
 	countedToolEventKeys := make(map[string]struct{})
 	countedErrorEventKeys := make(map[string]struct{})
 	uncountedRecoverableToolEventKeys := make(map[string]struct{})
+	pendingInputSubmission := ""
+	hasPendingInputSubmission := false
+	recordUserPrompt := func(content, contentHash string) {
+		metrics.LastUser = content
+		metrics.LastUserSHA256 = contentHash
+		metrics.UserPrompts = append(metrics.UserPrompts, content)
+		if contentHash != "" {
+			metrics.UserPromptSHA256s = append(metrics.UserPromptSHA256s, contentHash)
+		}
+		metrics.UserTurns++
+	}
 
 	var (
 		firstTS time.Time
@@ -67,9 +79,15 @@ func Analyze(records []Record) Metrics {
 			if root := strings.TrimSpace(stringField(record.Data, "workspace_root")); root != "" {
 				metrics.WorkspaceRoot = root
 			}
+		case "input_submission":
+			content := stringField(record.Data, "content")
+			recordUserPrompt(content, "")
+			pendingInputSubmission = content
+			hasPendingInputSubmission = true
 		case "message":
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
+			contentHash := strings.ToLower(strings.TrimSpace(stringField(record.Data, "content_hash")))
 
 			countMetricsRole(&metrics, role)
 
@@ -86,9 +104,16 @@ func Analyze(records []Record) Metrics {
 
 			switch role {
 			case "user":
-				metrics.LastUser = content
-				metrics.UserPrompts = append(metrics.UserPrompts, content)
-				metrics.UserTurns++
+				if hasPendingInputSubmission && content == pendingInputSubmission {
+					metrics.LastUserSHA256 = contentHash
+					if contentHash != "" {
+						metrics.UserPromptSHA256s = append(metrics.UserPromptSHA256s, contentHash)
+					}
+				} else {
+					recordUserPrompt(content, contentHash)
+				}
+				pendingInputSubmission = ""
+				hasPendingInputSubmission = false
 			case "assistant":
 				metrics.FinalAssistant = content
 				metrics.AssistantTurns++
@@ -195,6 +220,11 @@ func Analyze(records []Record) Metrics {
 			}
 
 			switch role {
+			case featureplannercontract.EventName(featureplannercontract.EventAtomCompleted):
+				var event map[string]any
+				if json.Unmarshal([]byte(content), &event) == nil {
+					recordFeaturePlannerVerification(&metrics, event)
+				}
 			case "verification_plan":
 				if plan := parseVerificationPlan(content); plan.Raw != "" {
 					metrics.VerificationPlans = append(metrics.VerificationPlans, plan)
@@ -295,7 +325,8 @@ func Analyze(records []Record) Metrics {
 				}
 			}
 
-			if tool != "" && errText == "" {
+			rejected := toolResultCountsAsRejectedAttempt(record.Data)
+			if tool != "" && errText == "" && !rejected {
 				metrics.SuccessfulTools[tool]++
 			}
 
@@ -309,7 +340,7 @@ func Analyze(records []Record) Metrics {
 				}
 			}
 
-			if toolResultCountsAsRejectedAttempt(record.Data) {
+			if rejected {
 				if tool != "" {
 					metrics.RejectedTools[tool]++
 				}
@@ -428,6 +459,8 @@ func Analyze(records []Record) Metrics {
 			if metrics.VerificationChecks > 0 {
 				recordVerificationStatus(&metrics, stringField(record.Data, "verification_status"))
 			}
+		case featureplannercontract.EventName(featureplannercontract.EventAtomCompleted):
+			recordFeaturePlannerVerification(&metrics, record.Data)
 		case "error":
 			if message := strings.TrimSpace(stringField(record.Data, "message")); message != "" {
 				metrics.ErrorCount++
@@ -754,6 +787,12 @@ func decrementMetricMap(values map[string]int, key string) {
 }
 
 func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
+	if typedToolRejectionDisposition(stringField(data, "rejection_disposition")) {
+		return true
+	}
+
+	// Compatibility for event logs written before rejection dispositions were
+	// projected. New records use the typed field above as their authority.
 	errText := strings.ToLower(strings.TrimSpace(stringField(data, "error")))
 	if errText == "" {
 		return false
@@ -770,6 +809,19 @@ func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
 		strings.Contains(summary, "preempted") ||
 		strings.Contains(summary, "not available in current runtime contract") ||
 		strings.Contains(errText, "not in the current allowed tool surface")
+}
+
+func typedToolRejectionDisposition(value string) bool {
+	switch toolfacts.ToolRejectionDisposition(strings.ToLower(strings.TrimSpace(value))) {
+	case toolfacts.ToolRejectionNotRetained,
+		toolfacts.ToolRejectionDeferredByPhase,
+		toolfacts.ToolRejectionDeferredByPrerequisite,
+		toolfacts.ToolRejectionInvalidRequest,
+		toolfacts.ToolRejectionPolicyDenied:
+		return true
+	default:
+		return false
+	}
 }
 
 func recoverablePostReadinessGapToolResult(data map[string]any) bool {
@@ -1017,6 +1069,25 @@ func recordTerminalOutcomeSignals(metrics *Metrics, content string) {
 	}
 }
 
+func recordFeaturePlannerVerification(metrics *Metrics, event map[string]any) {
+	if metrics == nil {
+		return
+	}
+
+	status := strings.TrimSpace(stringField(event, "verification_status"))
+	if fields, ok := event["fields"].(map[string]any); ok {
+		if nested := strings.TrimSpace(stringField(fields, "verification_status")); nested != "" {
+			status = nested
+		}
+	}
+	if status == "" {
+		return
+	}
+
+	metrics.VerificationChecks++
+	recordVerificationStatus(metrics, status)
+}
+
 func recordVerificationStatus(metrics *Metrics, status string) {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "ok", "pass", "passed", "success", "succeeded":
@@ -1166,6 +1237,10 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			addFinding("last user prompt does not contain %q", required)
 		}
 	}
+	if expected := strings.ToLower(strings.TrimSpace(scenario.PromptSHA256)); expected != "" &&
+		metrics.LastUserSHA256 != expected && !slices.Contains(metrics.UserPromptSHA256s, expected) {
+		addFinding("last user prompt SHA-256 is %q, want %q", metrics.LastUserSHA256, expected)
+	}
 
 	promptHistoryCorpus := strings.Join(metrics.UserPrompts, "\n")
 	if strings.TrimSpace(promptHistoryCorpus) == "" {
@@ -1263,6 +1338,16 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 		if !runEventObserved(metrics, trimmed) {
 			addFinding("required run event %q was not observed in log", trimmed)
 		}
+	}
+
+	if finding := requiredOrderedEventsFinding(records, scenario.RequireOrderedEvents); finding != "" {
+		addFinding("%s", finding)
+	}
+	for _, finding := range requiredModelRequestFindings(records, scenario.RequireModelRequests) {
+		addFinding("%s", finding)
+	}
+	for _, finding := range requiredTypedFactsFindings(records, scenario.RequireTypedFacts) {
+		addFinding("%s", finding)
 	}
 
 	if scenario.RequireReplan != nil {

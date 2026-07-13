@@ -2,367 +2,318 @@ package autonomy
 
 import (
 	"encoding/json"
-	"strings"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestReplayEventsValidTrajectory(t *testing.T) {
-	contract := newEventTestPhaseContract(t)
-	start := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
-	events := []Event{
-		mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:            GateWrite,
-			Decision:        PolicyAllow,
-			PackID:          ContractPackWriteRequiredPaths,
-			EnforcementMode: EnforcementModeEnforce,
-			InvariantID:     "write.required_edit_paths",
-			ReasonCode:      "required_path_changed",
-			ToolName:        "apply_patch",
-			ChangedPaths:    []string{"internal/contracts/autonomy/replay.go"},
-			ObservedFacts: []ContractObservedFact{
-				"path_ref:internal/contracts/autonomy/replay.go",
-				"tool_name:apply_patch",
-			},
-			Source: "replay_test",
-		}, start, 1)),
-		mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:               GateVerification,
-			Decision:           PolicyAllow,
-			PackID:             ContractPackVerificationPostWrite,
-			EnforcementMode:    EnforcementModeEnforce,
-			InvariantID:        "verification.post_write",
-			ReasonCode:         "verification_passed",
-			ToolName:           "go test",
-			VerificationStatus: "passed",
-			ObservedFacts: []ContractObservedFact{
-				"status:verification_status=passed",
-			},
-			Source: "replay_test",
-		}, start.Add(time.Second), 2)),
-		mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:               GateCompletion,
-			Decision:           PolicyAllow,
-			PackID:             ContractPackCompletionReadiness,
-			EnforcementMode:    EnforcementModeEnforce,
-			InvariantID:        "completion.readiness",
-			ReasonCode:         "ready",
-			VerificationStatus: "passed",
-			ObservedFacts: []ContractObservedFact{
-				"status:verification_status=passed",
-			},
-			Source: "replay_test",
-		}, start.Add(2*time.Second), 3)),
-	}
-
-	report := ReplayEvents(events, ReplayOptions{})
-
-	if report.SchemaVersion != ReplayReportSchemaVersion || report.TotalEvents != 3 {
-		t.Fatalf("unexpected report identity: %#v", report)
-	}
-
-	if len(report.Violations) != 0 {
-		t.Fatalf("valid trajectory should not violate replay checks: %#v", report.Violations)
-	}
-
-	if report.AtomCounts[string(ReplayAtomGateDecision)] != 3 ||
-		report.AtomCounts[string(ReplayAtomPackSeen)] != 3 ||
-		report.AtomCounts[string(ReplayAtomObservedFact)] != 4 ||
-		report.AtomCounts[string(ReplayAtomPathWritten)] != 1 ||
-		report.AtomCounts[string(ReplayAtomChangedPath)] != 1 ||
-		report.AtomCounts[string(ReplayAtomVerificationStatus)] != 2 {
-
-		t.Fatalf("unexpected atom counts: %#v", report.AtomCounts)
-	}
-
-	if report.PackCounts[string(ContractPackWriteRequiredPaths)] != 1 ||
-		report.PackCounts[string(ContractPackVerificationPostWrite)] != 1 ||
-		report.PackCounts[string(ContractPackCompletionReadiness)] != 1 {
-
-		t.Fatalf("unexpected pack counts: %#v", report.PackCounts)
-	}
-
-	if report.EnforcementModeCounts[string(EnforcementModeEnforce)] != 3 {
-		t.Fatalf("unexpected enforcement mode counts: %#v", report.EnforcementModeCounts)
-	}
-
-	encoded, err := json.Marshal(report)
-	if err != nil {
-		t.Fatalf("marshal report: %v", err)
-	}
-
-	for _, forbidden := range []string{"raw_prompt", "raw_transcript", "file_body", "old_text", "new_text"} {
-		if strings.Contains(string(encoded), forbidden) {
-			t.Fatalf("replay report leaked raw content marker %q: %s", forbidden, encoded)
+var _ = Describe("Autonomy event replay", func() {
+	It("accepts a valid write, verification, and completion trajectory", func() {
+		contract := newEventTestPhaseContract()
+		start := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+		events := []Event{
+			mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:            GateWrite,
+				Decision:        PolicyAllow,
+				PackID:          ContractPackWriteRequiredPaths,
+				EnforcementMode: EnforcementModeEnforce,
+				InvariantID:     "write.required_edit_paths",
+				ReasonCode:      "required_path_changed",
+				ToolName:        "apply_patch",
+				ChangedPaths:    []string{"internal/contracts/autonomy/replay.go"},
+				ObservedFacts: []ContractObservedFact{
+					"path_ref:internal/contracts/autonomy/replay.go",
+					"tool_name:apply_patch",
+				},
+				Source: "replay_test",
+			}, start, 1)),
+			mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:               GateVerification,
+				Decision:           PolicyAllow,
+				PackID:             ContractPackVerificationPostWrite,
+				EnforcementMode:    EnforcementModeEnforce,
+				InvariantID:        "verification.post_write",
+				ReasonCode:         "verification_passed",
+				ToolName:           "go test",
+				VerificationStatus: "passed",
+				ObservedFacts: []ContractObservedFact{
+					"status:verification_status=passed",
+				},
+				Source: "replay_test",
+			}, start.Add(time.Second), 2)),
+			mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:               GateCompletion,
+				Decision:           PolicyAllow,
+				PackID:             ContractPackCompletionReadiness,
+				EnforcementMode:    EnforcementModeEnforce,
+				InvariantID:        "completion.readiness",
+				ReasonCode:         "ready",
+				VerificationStatus: "passed",
+				ObservedFacts: []ContractObservedFact{
+					"status:verification_status=passed",
+				},
+				Source: "replay_test",
+			}, start.Add(2*time.Second), 3)),
 		}
-	}
-}
 
-func TestReplayEventsTreatsNotRequiredVerificationAsResolved(t *testing.T) {
-	contract := newEventTestPhaseContract(t)
-	start := time.Date(2026, 5, 24, 12, 3, 0, 0, time.UTC)
-	events := []Event{
-		mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
-			Decision:           PolicyAllow,
-			InvariantID:        "completion.readiness",
-			ProtocolHash:       "sha256:phase",
-			VerificationStatus: "not_required",
-			ChangedPaths:       []string{"temp.md"},
-		}, start, 1)),
-	}
+		report := ReplayEvents(events, ReplayOptions{})
 
-	report := ReplayEvents(events, ReplayOptions{})
+		Expect(report.SchemaVersion).To(Equal(ReplayReportSchemaVersion))
+		Expect(report.TotalEvents).To(Equal(3))
+		Expect(report.Violations).To(BeEmpty())
+		Expect(report.AtomCounts).To(HaveKeyWithValue(string(ReplayAtomGateDecision), 3))
+		Expect(report.AtomCounts).To(HaveKeyWithValue(string(ReplayAtomPackSeen), 3))
+		Expect(report.AtomCounts).To(HaveKeyWithValue(string(ReplayAtomObservedFact), 4))
+		Expect(report.AtomCounts).To(HaveKeyWithValue(string(ReplayAtomPathWritten), 1))
+		Expect(report.AtomCounts).To(HaveKeyWithValue(string(ReplayAtomChangedPath), 1))
+		Expect(report.AtomCounts).To(HaveKeyWithValue(string(ReplayAtomVerificationStatus), 2))
+		Expect(report.PackCounts).To(HaveKeyWithValue(string(ContractPackWriteRequiredPaths), 1))
+		Expect(report.PackCounts).To(HaveKeyWithValue(string(ContractPackVerificationPostWrite), 1))
+		Expect(report.PackCounts).To(HaveKeyWithValue(string(ContractPackCompletionReadiness), 1))
+		Expect(report.EnforcementModeCounts).To(HaveKeyWithValue(string(EnforcementModeEnforce), 3))
 
-	if len(report.Violations) != 0 {
-		t.Fatalf("not_required verification should not violate replay checks: %#v", report.Violations)
-	}
-}
+		encoded, err := json.Marshal(report)
+		Expect(err).NotTo(HaveOccurred())
 
-func TestReplayEventsFlagsMissingGateFields(t *testing.T) {
-	contract := newEventTestPhaseContract(t)
-	start := time.Date(2026, 5, 24, 12, 5, 0, 0, time.UTC)
-	events := []Event{
-		mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:        GateCompletion,
-			Decision:    PolicyReject,
-			InvariantID: "completion.readiness",
-			ReasonCode:  "verification_required",
-			Source:      "replay_test",
-		}, start, 1)),
-		mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:            GateCompletion,
-			Decision:        PolicyReject,
-			PackID:          ContractPackCompletionReadiness,
-			EnforcementMode: EnforcementModeEnforce,
-			InvariantID:     "completion.readiness",
-			ReasonCode:      "verification_required",
-			ObservedFacts: []ContractObservedFact{
-				"status:verification_status=pending",
-			},
-			Source: "replay_test",
-		}, start.Add(time.Second), 2)),
-	}
-
-	report := ReplayEvents(events, ReplayOptions{})
-
-	for _, want := range []string{
-		"replay_gate_missing_pack_id",
-		"replay_gate_missing_enforcement_mode",
-		"replay_gate_missing_observed_facts",
-		"replay_gate_missing_safe_alternatives",
-	} {
-		if !hasReplayViolation(report, want) {
-			t.Fatalf("expected violation %q, got %#v", want, report.Violations)
+		for _, forbidden := range []string{"raw_prompt", "raw_transcript", "file_body", "old_text", "new_text"} {
+			Expect(string(encoded)).NotTo(ContainSubstring(forbidden))
 		}
-	}
-}
+	})
 
-func TestReplayEventsFlagsRepeatedGateDecision(t *testing.T) {
-	contract := newEventTestPhaseContract(t)
-	start := time.Date(2026, 5, 24, 12, 10, 0, 0, time.UTC)
+	It("treats not-required verification as resolved", func() {
+		contract := newEventTestPhaseContract()
+		start := time.Date(2026, 5, 24, 12, 3, 0, 0, time.UTC)
+		events := []Event{
+			mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
+				Decision:           PolicyAllow,
+				InvariantID:        "completion.readiness",
+				ProtocolHash:       "sha256:phase",
+				VerificationStatus: "not_required",
+				ChangedPaths:       []string{"temp.md"},
+			}, start, 1)),
+		}
 
-	var events []Event
+		report := ReplayEvents(events, ReplayOptions{})
 
-	for i := 0; i < 3; i++ {
-		events = append(events, mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:             GateCompletion,
-			Decision:         PolicyReject,
-			PackID:           ContractPackCompletionReadiness,
-			EnforcementMode:  EnforcementModeEnforce,
-			InvariantID:      "completion.readiness",
-			ReasonCode:       "verification_required",
-			ObservedFacts:    []ContractObservedFact{"status:verification_status=pending"},
-			SafeAlternatives: []string{"run focused verification"},
-			Source:           "replay_test",
-		}, start.Add(time.Duration(i)*time.Second), int64(i+1))))
-	}
+		Expect(report.Violations).To(BeEmpty())
+	})
 
-	report := ReplayEvents(events, ReplayOptions{MaxRepeatedGateDecisions: 2})
+	It("flags missing structured gate fields", func() {
+		contract := newEventTestPhaseContract()
+		start := time.Date(2026, 5, 24, 12, 5, 0, 0, time.UTC)
+		events := []Event{
+			mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:        GateCompletion,
+				Decision:    PolicyReject,
+				InvariantID: "completion.readiness",
+				ReasonCode:  "verification_required",
+				Source:      "replay_test",
+			}, start, 1)),
+			mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:            GateCompletion,
+				Decision:        PolicyReject,
+				PackID:          ContractPackCompletionReadiness,
+				EnforcementMode: EnforcementModeEnforce,
+				InvariantID:     "completion.readiness",
+				ReasonCode:      "verification_required",
+				ObservedFacts: []ContractObservedFact{
+					"status:verification_status=pending",
+				},
+				Source: "replay_test",
+			}, start.Add(time.Second), 2)),
+		}
 
-	if !hasReplayViolation(report, "replay_gate_repeated_decision") {
-		t.Fatalf("expected repeated gate violation, got %#v", report.Violations)
-	}
+		report := ReplayEvents(events, ReplayOptions{})
 
-	if got := countReplayViolations(report, "replay_gate_repeated_decision"); got != 1 {
-		t.Fatalf("expected one repeated gate violation, got %d: %#v", got, report.Violations)
-	}
-}
+		for _, want := range []string{
+			"replay_gate_missing_pack_id",
+			"replay_gate_missing_enforcement_mode",
+			"replay_gate_missing_observed_facts",
+			"replay_gate_missing_safe_alternatives",
+		} {
+			Expect(hasReplayViolation(report, want)).To(BeTrue(), "violation %q", want)
+		}
+	})
 
-func TestReplayEventsFlagsCompletionAllowWithUnresolvedPostWriteVerification(t *testing.T) {
-	contract := newEventTestPhaseContract(t)
-	start := time.Date(2026, 5, 24, 12, 15, 0, 0, time.UTC)
-	events := []Event{
-		mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:            GateWrite,
-			Decision:        PolicyAllow,
-			PackID:          ContractPackWriteRequiredPaths,
-			EnforcementMode: EnforcementModeEnforce,
-			InvariantID:     "write.required_edit_paths",
-			ReasonCode:      "required_path_changed",
-			ToolName:        "apply_patch",
-			ChangedPaths:    []string{"internal/contracts/autonomy/replay.go"},
-			ObservedFacts: []ContractObservedFact{
-				"path_ref:internal/contracts/autonomy/replay.go",
-			},
-			Source: "replay_test",
-		}, start, 1)),
-		mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:               GateCompletion,
-			Decision:           PolicyAllow,
-			PackID:             ContractPackCompletionReadiness,
-			EnforcementMode:    EnforcementModeEnforce,
-			InvariantID:        "completion.readiness",
-			ReasonCode:         "ready",
-			OpenObligations:    []string{"obl-verify"},
-			VerificationStatus: "pending",
-			ObservedFacts: []ContractObservedFact{
-				"status:verification_status=pending",
-				"obligation_ref:obl-verify",
-			},
-			Source: "replay_test",
-		}, start.Add(time.Second), 2)),
-	}
+	It("flags repeated identical gate decisions", func() {
+		contract := newEventTestPhaseContract()
+		start := time.Date(2026, 5, 24, 12, 10, 0, 0, time.UTC)
 
-	report := ReplayEvents(events, ReplayOptions{})
+		var events []Event
 
-	if !hasReplayViolation(report, "replay_completion_unresolved_post_write_verification") {
-		t.Fatalf("expected post-write verification violation, got %#v", report.Violations)
-	}
-}
+		for i := 0; i < 3; i++ {
+			events = append(events, mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:             GateCompletion,
+				Decision:         PolicyReject,
+				PackID:           ContractPackCompletionReadiness,
+				EnforcementMode:  EnforcementModeEnforce,
+				InvariantID:      "completion.readiness",
+				ReasonCode:       "verification_required",
+				ObservedFacts:    []ContractObservedFact{"status:verification_status=pending"},
+				SafeAlternatives: []string{"run focused verification"},
+				Source:           "replay_test",
+			}, start.Add(time.Duration(i)*time.Second), int64(i+1))))
+		}
 
-func TestReplayEventsClassifiesFullRedactedPartialAndNonReplayable(t *testing.T) {
-	full := ReplayEvents(replayClassificationEvents(t, ""), ReplayOptions{})
-	if full.ReplayClassification.Classification != ReplayClassificationFull {
-		t.Fatalf("expected full replay classification, got %#v", full.ReplayClassification)
-	}
+		report := ReplayEvents(events, ReplayOptions{MaxRepeatedGateDecisions: 2})
 
-	redacted := ReplayEvents(replayClassificationEvents(t, "redacted"), ReplayOptions{})
-	if redacted.ReplayClassification.Classification != ReplayClassificationRedacted ||
-		redacted.ReplayClassification.RedactedEvents == 0 {
+		Expect(hasReplayViolation(report, "replay_gate_repeated_decision")).To(BeTrue())
+		Expect(countReplayViolations(report, "replay_gate_repeated_decision")).To(Equal(1))
+	})
 
-		t.Fatalf("expected redacted replay classification, got %#v", redacted.ReplayClassification)
-	}
+	It("flags completion allowed with unresolved post-write verification", func() {
+		contract := newEventTestPhaseContract()
+		start := time.Date(2026, 5, 24, 12, 15, 0, 0, time.UTC)
+		events := []Event{
+			mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:            GateWrite,
+				Decision:        PolicyAllow,
+				PackID:          ContractPackWriteRequiredPaths,
+				EnforcementMode: EnforcementModeEnforce,
+				InvariantID:     "write.required_edit_paths",
+				ReasonCode:      "required_path_changed",
+				ToolName:        "apply_patch",
+				ChangedPaths:    []string{"internal/contracts/autonomy/replay.go"},
+				ObservedFacts: []ContractObservedFact{
+					"path_ref:internal/contracts/autonomy/replay.go",
+				},
+				Source: "replay_test",
+			}, start, 1)),
+			mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:               GateCompletion,
+				Decision:           PolicyAllow,
+				PackID:             ContractPackCompletionReadiness,
+				EnforcementMode:    EnforcementModeEnforce,
+				InvariantID:        "completion.readiness",
+				ReasonCode:         "ready",
+				OpenObligations:    []string{"obl-verify"},
+				VerificationStatus: "pending",
+				ObservedFacts: []ContractObservedFact{
+					"status:verification_status=pending",
+					"obligation_ref:obl-verify",
+				},
+				Source: "replay_test",
+			}, start.Add(time.Second), 2)),
+		}
 
-	partialGate := replayClassificationEvents(t, "")[2]
+		report := ReplayEvents(events, ReplayOptions{})
 
-	partialGate.Gate.VerificationStatus = ""
-	partialGate.Gate.ObligationRefs = nil
+		Expect(hasReplayViolation(report, "replay_completion_unresolved_post_write_verification")).To(BeTrue())
+	})
 
-	partial := ReplayEvents([]Event{partialGate}, ReplayOptions{})
+	It("classifies full, redacted, partial, and non-replayable histories", func() {
+		full := ReplayEvents(replayClassificationEvents(""), ReplayOptions{})
+		Expect(full.ReplayClassification.Classification).To(Equal(ReplayClassificationFull))
 
-	if partial.ReplayClassification.Classification != ReplayClassificationPartial ||
-		partial.ReplayClassification.MissingSignalCounts["verification_status"] == 0 {
+		redacted := ReplayEvents(replayClassificationEvents("redacted"), ReplayOptions{})
+		Expect(redacted.ReplayClassification.Classification).To(Equal(ReplayClassificationRedacted))
+		Expect(redacted.ReplayClassification.RedactedEvents).To(BeNumerically(">", 0))
 
-		t.Fatalf("expected partial replay classification from missing structured signals, got %#v", partial.ReplayClassification)
-	}
+		partialGate := replayClassificationEvents("")[2]
 
-	nonReplayable := ReplayEvents([]Event{{
-		SchemaVersion: EventSchemaVersion,
-		EventID:       "event-missing-gate-payload",
-		Type:          EventGateDecision,
-		Effect:        EventEffectObserveOnly,
-		OccurredAt:    time.Date(2026, 5, 24, 13, 0, 0, 0, time.UTC),
-		Sequence:      1,
-		ContractID:    "contract-missing-gate-payload",
-	}}, ReplayOptions{})
-	if nonReplayable.ReplayClassification.Classification != ReplayClassificationNonReplayable ||
-		nonReplayable.ReplayMetrics.MissingRequiredPayloadCounts["gate"] != 1 {
+		partialGate.Gate.VerificationStatus = ""
+		partialGate.Gate.ObligationRefs = nil
 
-		t.Fatalf("expected non-replayable missing payload classification, got class=%#v metrics=%#v", nonReplayable.ReplayClassification, nonReplayable.ReplayMetrics)
-	}
-}
+		partial := ReplayEvents([]Event{partialGate}, ReplayOptions{})
 
-func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
-	contract := newEventTestPhaseContract(t)
-	start := time.Date(2026, 5, 24, 13, 5, 0, 0, time.UTC)
-	ready := mustAutonomyEvent(NewReadinessStateEvent(contract, ContractReadinessEvent{
-		ReadyToAnswer: true,
-		EvidenceRefs:  []string{"evidence:ready"},
-	}, start, 1))
+		Expect(partial.ReplayClassification.Classification).To(Equal(ReplayClassificationPartial))
+		Expect(partial.ReplayClassification.MissingSignalCounts["verification_status"]).To(BeNumerically(">", 0))
 
-	var events []Event
+		nonReplayable := ReplayEvents([]Event{{
+			SchemaVersion: EventSchemaVersion,
+			EventID:       "event-missing-gate-payload",
+			Type:          EventGateDecision,
+			Effect:        EventEffectObserveOnly,
+			OccurredAt:    time.Date(2026, 5, 24, 13, 0, 0, 0, time.UTC),
+			Sequence:      1,
+			ContractID:    "contract-missing-gate-payload",
+		}}, ReplayOptions{})
+		Expect(nonReplayable.ReplayClassification.Classification).To(Equal(ReplayClassificationNonReplayable))
+		Expect(nonReplayable.ReplayMetrics.MissingRequiredPayloadCounts).To(HaveKeyWithValue("gate", 1))
+	})
 
-	events = append(events, ready)
+	It("reports churn and autonomy metrics", func() {
+		contract := newEventTestPhaseContract()
+		start := time.Date(2026, 5, 24, 13, 5, 0, 0, time.UTC)
+		ready := mustAutonomyEvent(NewReadinessStateEvent(contract, ContractReadinessEvent{
+			ReadyToAnswer: true,
+			EvidenceRefs:  []string{"evidence:ready"},
+		}, start, 1))
 
-	for i := 0; i < 2; i++ {
-		events = append(events, mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
-			ToolCallID:       "tool-search-" + string(rune('a'+i)),
-			ToolName:         "search_content",
-			Capability:       CapabilityLiteralSearch,
-			Decision:         PolicyAllow,
-			ReasonCode:       "zero_hits",
-			Result:           "0 hits",
-			ArgumentsSummary: "candidate_path_waste",
-			PathRoles:        []PathRoleMatch{{Path: "tmp/nope.go", Role: PathRolePublicWorld}},
-		}, start.Add(time.Duration(i+1)*time.Second), int64(i+2))))
-	}
+		var events []Event
 
-	for i := 0; i < 3; i++ {
-		events = append(events, mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
-			Gate:               GateCompletion,
-			Decision:           PolicyReject,
-			PackID:             ContractPackCompletionReadiness,
-			EnforcementMode:    EnforcementModeEnforce,
-			InvariantID:        "completion.readiness",
-			ReasonCode:         "verification_required",
-			ProtocolHash:       "sha256:metric",
-			ObligationRefs:     []string{"obl-verify"},
-			VerificationStatus: "pending",
-			ObservedFacts:      []ContractObservedFact{"status:verification_status=pending"},
-			SafeAlternatives:   []string{"run verification"},
-			Source:             "replay_test",
-		}, start.Add(time.Duration(i+3)*time.Second), int64(i+4))))
-	}
+		events = append(events, ready)
 
-	report := ReplayEvents(events, ReplayOptions{})
-	metrics := report.ReplayMetrics
+		for i := 0; i < 2; i++ {
+			events = append(events, mustAutonomyEvent(NewPolicyEvent(EventToolPolicyDecision, contract, ContractPolicyEvent{
+				ToolCallID:       "tool-search-" + string(rune('a'+i)),
+				ToolName:         "search_content",
+				Capability:       CapabilityLiteralSearch,
+				Decision:         PolicyAllow,
+				ReasonCode:       "zero_hits",
+				Result:           "0 hits",
+				ArgumentsSummary: "candidate_path_waste",
+				PathRoles:        []PathRoleMatch{{Path: "tmp/nope.go", Role: PathRolePublicWorld}},
+			}, start.Add(time.Duration(i+1)*time.Second), int64(i+2))))
+		}
 
-	if metrics.RepeatedSameToolDecisions != 1 ||
-		metrics.RepeatedSameGateDecisions != 2 ||
-		metrics.RedirectStorms != 1 ||
-		metrics.BroadRediscoveryAfterReadiness != 2 ||
-		metrics.ZeroHitSearchStreaks != 1 ||
-		metrics.MaxZeroHitSearchStreak != 2 ||
-		metrics.CandidatePathWaste != 2 {
+		for i := 0; i < 3; i++ {
+			events = append(events, mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+				Gate:               GateCompletion,
+				Decision:           PolicyReject,
+				PackID:             ContractPackCompletionReadiness,
+				EnforcementMode:    EnforcementModeEnforce,
+				InvariantID:        "completion.readiness",
+				ReasonCode:         "verification_required",
+				ProtocolHash:       "sha256:metric",
+				ObligationRefs:     []string{"obl-verify"},
+				VerificationStatus: "pending",
+				ObservedFacts:      []ContractObservedFact{"status:verification_status=pending"},
+				SafeAlternatives:   []string{"run verification"},
+				Source:             "replay_test",
+			}, start.Add(time.Duration(i+3)*time.Second), int64(i+4))))
+		}
 
-		t.Fatalf("unexpected replay metrics: %#v", metrics)
-	}
+		report := ReplayEvents(events, ReplayOptions{})
+		metrics := report.ReplayMetrics
 
-	if metrics.PhaseGateFailCounts["execute/completion_gate"] != 3 {
-		t.Fatalf("expected phase gate fail counts, got %#v", metrics.PhaseGateFailCounts)
-	}
-}
+		Expect(metrics.RepeatedSameToolDecisions).To(Equal(1))
+		Expect(metrics.RepeatedSameGateDecisions).To(Equal(2))
+		Expect(metrics.RedirectStorms).To(Equal(1))
+		Expect(metrics.BroadRediscoveryAfterReadiness).To(Equal(2))
+		Expect(metrics.ZeroHitSearchStreaks).To(Equal(1))
+		Expect(metrics.MaxZeroHitSearchStreak).To(Equal(2))
+		Expect(metrics.CandidatePathWaste).To(Equal(2))
+		Expect(metrics.PhaseGateFailCounts).To(HaveKeyWithValue("execute/completion_gate", 3))
+	})
 
-func TestReplayEventsTreatsResolvedPassivePathRolesAsScoped(t *testing.T) {
-	contract := newEventTestPhaseContract(t)
-	start := time.Date(2026, 5, 24, 13, 10, 0, 0, time.UTC)
+	It("treats resolved passive path roles as scoped", func() {
+		contract := newEventTestPhaseContract()
+		start := time.Date(2026, 5, 24, 13, 10, 0, 0, time.UTC)
 
-	report := ReplayEvents([]Event{
-		mustAutonomyEvent(NewPolicyEvent(EventPathRolesResolved, contract, ContractPolicyEvent{
-			ToolCallID: "path-role-resolution",
-			ToolName:   "path_role_resolver",
-			Capability: CapabilitySourceEdit,
-			Decision:   PolicyObserve,
-			PathRoles: []PathRoleMatch{
-				{Path: "dist/protocol-card.json", Role: PathRoleGeneratedArtifact, MatchedPattern: "dist/**"},
-				{Path: "logs/verification/go-test.json", Role: PathRoleVerificationOut, MatchedPattern: "logs/verification/**"},
-			},
-			Source: "replay_test",
-		}, start, 1)),
-	}, ReplayOptions{})
+		report := ReplayEvents([]Event{
+			mustAutonomyEvent(NewPolicyEvent(EventPathRolesResolved, contract, ContractPolicyEvent{
+				ToolCallID: "path-role-resolution",
+				ToolName:   "path_role_resolver",
+				Capability: CapabilitySourceEdit,
+				Decision:   PolicyObserve,
+				PathRoles: []PathRoleMatch{
+					{Path: "dist/protocol-card.json", Role: PathRoleGeneratedArtifact, MatchedPattern: "dist/**"},
+					{Path: "logs/verification/go-test.json", Role: PathRoleVerificationOut, MatchedPattern: "logs/verification/**"},
+				},
+				Source: "replay_test",
+			}, start, 1)),
+		}, ReplayOptions{})
 
-	if report.ReplayClassification.EventsWithRequiredPayload != 1 {
-		t.Fatalf("expected path-role resolution to carry required policy payload, got %#v", report.ReplayClassification)
-	}
-	if report.ReplayMetrics.CandidatePathWaste != 0 {
-		t.Fatalf("passive resolver-owned path roles must not count as candidate waste: %#v", report.ReplayMetrics)
-	}
-}
+		Expect(report.ReplayClassification.EventsWithRequiredPayload).To(Equal(1))
+		Expect(report.ReplayMetrics.CandidatePathWaste).To(BeZero())
+	})
+})
 
-func replayClassificationEvents(t *testing.T, redactedValue string) []Event {
-	t.Helper()
-
-	contract := newEventTestPhaseContract(t)
+func replayClassificationEvents(redactedValue string) []Event {
+	GinkgoHelper()
+	contract := newEventTestPhaseContract()
 	start := time.Date(2026, 5, 24, 12, 55, 0, 0, time.UTC)
 	observedFacts := []ContractObservedFact{
 		"path_ref:internal/contracts/autonomy/replay.go",

@@ -20,11 +20,27 @@ type PlanExecutePlannerBlockedRetryInput struct {
 	RetrySignals   []PlanExecuteRetrySignal
 }
 
+type PlanExecuteRecoveryDecisionKind string
+
+const (
+	PlanExecuteRecoveryDecisionRetry   PlanExecuteRecoveryDecisionKind = "retry"
+	PlanExecuteRecoveryDecisionSurface PlanExecuteRecoveryDecisionKind = "surface"
+)
+
+func (kind PlanExecuteRecoveryDecisionKind) Valid() bool {
+	switch kind {
+	case PlanExecuteRecoveryDecisionRetry, PlanExecuteRecoveryDecisionSurface:
+		return true
+	default:
+		return false
+	}
+}
+
 type PlanExecuteRecoveryDecision struct {
-	Decision      string `json:"decision"`
-	Reason        string `json:"reason"`
-	Message       string `json:"message"`
-	RetryAddendum string `json:"retry_addendum"`
+	Decision      PlanExecuteRecoveryDecisionKind `json:"decision"`
+	Reason        string                          `json:"reason"`
+	Message       string                          `json:"message"`
+	RetryAddendum string                          `json:"retry_addendum"`
 }
 
 func ParsePlanExecuteRecoveryDecision(raw string) (PlanExecuteRecoveryDecision, bool) {
@@ -47,6 +63,10 @@ func ParsePlanExecuteRecoveryDecision(raw string) (PlanExecuteRecoveryDecision, 
 
 	var decision PlanExecuteRecoveryDecision
 	if err := json.Unmarshal([]byte(raw[start:end+1]), &decision); err != nil {
+		return PlanExecuteRecoveryDecision{}, false
+	}
+	decision.Decision = PlanExecuteRecoveryDecisionKind(strings.ToLower(strings.TrimSpace(string(decision.Decision))))
+	if !decision.Decision.Valid() {
 		return PlanExecuteRecoveryDecision{}, false
 	}
 

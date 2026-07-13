@@ -20,25 +20,6 @@ import (
 
 const compactionSystemPromptPreamble = "You are producing a compact session digest. Preserve only the facts that the next turn needs to act correctly: the user's original goals, any hard constraints or boundaries, files and paths that have been read or edited, outcomes of tool calls, open questions, and the last known blocker. Write plain prose in 12 lines or fewer. Do not invent facts. Do not request tools."
 
-// compactionContextSize returns the context window size in tokens used for
-// deriving compaction thresholds. It reads from the main model's LlamaServer
-// config and falls back through available sources.
-func (m *Model) compactionContextSize() int {
-	if m == nil {
-		return 65536
-	}
-
-	if sz := m.cfg.LlamaServer.CtxSize; sz > 0 {
-		return sz
-	}
-
-	if sz := m.cfg.RouteClassifier.CtxSize; sz > 0 {
-		return sz
-	}
-
-	return 65536
-}
-
 type historyCompactionResult struct {
 	Messages  []llama.ChatMessage
 	Folded    int
@@ -48,7 +29,31 @@ type historyCompactionResult struct {
 }
 
 type compactHistoryDoneMsg struct {
-	result historyCompactionResult
+	revision uint64
+	result   historyCompactionResult
+}
+
+// compactionExecution is the immutable dependency/configuration snapshot used
+// by one compaction. Background work must not read the live Bubble Tea Model.
+type compactionExecution struct {
+	summaryClient  llama.LLMClient
+	fallbackClient llama.LLMClient
+	contextSize    int
+	maxHistory     int
+	chatOptions    llama.ChatOptions
+}
+
+func snapshotCompactionExecution(model *Model) compactionExecution {
+	options := chatOptions(model.cfg.Chat, model.modelID, model.modelThinkingFloor, model.disableThinkingOverride)
+	options.Tools = append([]llama.Tool(nil), options.Tools...)
+
+	return compactionExecution{
+		summaryClient:  model.summaryClient,
+		fallbackClient: model.client,
+		contextSize:    compactionContextSize(model.cfg.LlamaServer.CtxSize, model.cfg.RouteClassifier.CtxSize),
+		maxHistory:     model.cfg.Chat.MaxHistory,
+		chatOptions:    options,
+	}
 }
 
 // MaybeCompactHistory applies Fix 5 when the history length exceeds the
@@ -60,7 +65,7 @@ type compactHistoryDoneMsg struct {
 // deterministic fallback digest (regex-shape extraction) is used so the
 // compaction never silently loses the user's original intent.
 func (m *Model) MaybeCompactHistory(ctx context.Context, history []llama.ChatMessage) []llama.ChatMessage {
-	result := m.compactHistory(ctx, history, false)
+	result := compactHistory(ctx, history, false, snapshotCompactionExecution(m))
 	if !result.Compacted {
 		return history
 	}
@@ -71,27 +76,33 @@ func (m *Model) MaybeCompactHistory(ctx context.Context, history []llama.ChatMes
 }
 
 func (m *Model) compactHistoryAsync() {
-	history := append([]llama.ChatMessage(nil), m.messages...)
+	history := cloneChatMessages(m.messages)
+	execution := snapshotCompactionExecution(m)
+	revision := m.messagesRevision
 
 	m.status = "Compacting conversation."
 
 	if m.events == nil {
-		result := m.compactHistory(context.Background(), modelPayloadHistory(history), true)
+		result := compactHistory(context.Background(), modelPayloadHistory(history), true, execution)
 
-		_, _ = m.handleCompactHistoryDone(compactHistoryDoneMsg{result: result})
+		_, _ = m.handleCompactHistoryDone(compactHistoryDoneMsg{revision: revision, result: result})
 
 		return
 	}
 
-	go func() {
-		result := m.compactHistory(context.Background(), modelPayloadHistory(history), true)
-		m.events <- compactHistoryDoneMsg{result: result}
-	}()
+	events := m.events
+	_ = m.ensureBackgroundOperations().start(func(ctx context.Context) {
+		result := compactHistory(ctx, modelPayloadHistory(history), true, execution)
+		select {
+		case events <- compactHistoryDoneMsg{revision: revision, result: result}:
+		case <-ctx.Done():
+		}
+	})
 }
 
-func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage, force bool) historyCompactionResult {
+func compactHistory(ctx context.Context, history []llama.ChatMessage, force bool, execution compactionExecution) historyCompactionResult {
 	result := historyCompactionResult{
-		Messages: append([]llama.ChatMessage(nil), history...),
+		Messages: cloneChatMessages(history),
 		Kept:     len(history),
 	}
 	if len(history) == 0 {
@@ -99,18 +110,18 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 		return result
 	}
 
-	if !force && len(history) <= m.compactionThreshold() {
+	if !force && len(history) <= compactionThreshold(execution) {
 		result.Reason = "below_threshold"
 		return result
 	}
 
-	budget := NewContextBudget(m.compactionContextSize())
+	budget := NewContextBudget(execution.contextSize)
 	threshold, recentToKeep := budget.CompactionThreshold, budget.CompactionRecentKeep
 	// When MaxHistory is the binding constraint (more restrictive than the
 	// context-derived threshold), recentToKeep must scale down accordingly
 	// so keepFrom stays positive and compaction actually folds messages
 	// instead of silently falling through to hard truncation.
-	if limit := m.cfg.Chat.MaxHistory; limit > 0 && limit < threshold {
+	if limit := execution.maxHistory; limit > 0 && limit < threshold {
 		if recentToKeep > limit/2 {
 			recentToKeep = limit / 2
 		}
@@ -132,7 +143,7 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 		return result
 	}
 
-	digest := m.buildSessionDigest(ctx, oldest)
+	digest := buildSessionDigest(ctx, oldest, execution)
 	if strings.TrimSpace(digest) == "" {
 		result.Reason = "empty_digest"
 		return result
@@ -152,6 +163,10 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 }
 
 func (m *Model) handleCompactHistoryDone(msg compactHistoryDoneMsg) (tea.Cmd, bool) {
+	if msg.revision != m.messagesRevision {
+		return nil, false
+	}
+
 	result := msg.result
 	if !result.Compacted {
 		switch result.Reason {
@@ -169,6 +184,7 @@ func (m *Model) handleCompactHistoryDone(msg compactHistoryDoneMsg) (tea.Cmd, bo
 	}
 
 	m.messages = result.Messages
+	m.messagesRevision++
 	m.logMessage("session_digest", fmt.Sprintf("manual compact folded %d messages; kept %d verbatim", result.Folded, result.Kept))
 
 	m.status = fmt.Sprintf("Compacted conversation: folded %d message(s), kept %d.", result.Folded, result.Kept)
@@ -177,34 +193,25 @@ func (m *Model) handleCompactHistoryDone(msg compactHistoryDoneMsg) (tea.Cmd, bo
 	return nil, false
 }
 
-func (m *Model) compactionThreshold() int {
-	if m == nil {
-		budget := NewContextBudget(65536)
-		return budget.CompactionThreshold
-	}
-
-	budget := NewContextBudget(m.compactionContextSize())
+func compactionThreshold(execution compactionExecution) int {
+	budget := NewContextBudget(execution.contextSize)
 	ctxThreshold := budget.CompactionThreshold
 	// If MaxHistory is set and is more restrictive than the context-derived
 	// threshold, use it so compaction fires before hard truncation.
-	if limit := m.cfg.Chat.MaxHistory; limit > 0 && limit < ctxThreshold {
+	if limit := execution.maxHistory; limit > 0 && limit < ctxThreshold {
 		return limit
 	}
 
 	return ctxThreshold
 }
 
-func (m *Model) buildSessionDigest(ctx context.Context, oldest []llama.ChatMessage) string {
-	if m == nil {
-		return fallbackSessionDigest(oldest)
-	}
-
+func buildSessionDigest(ctx context.Context, oldest []llama.ChatMessage, execution compactionExecution) string {
 	prompt := renderCompactionPrompt(oldest)
 
-	reply, err := m.completeChatWithFallback(ctx, []llama.ChatMessage{
+	reply, err := completeCompactionChat(ctx, execution, []llama.ChatMessage{
 		{Role: "system", Content: compactionSystemPromptPreamble},
 		{Role: "user", Content: prompt},
-	}, m.chatOptions())
+	}, execution.chatOptions)
 	if err != nil {
 		return fallbackSessionDigest(oldest)
 	}
@@ -215,6 +222,20 @@ func (m *Model) buildSessionDigest(ctx context.Context, oldest []llama.ChatMessa
 	}
 
 	return "Session digest (prior history compacted):\n" + reply
+}
+
+func completeCompactionChat(ctx context.Context, execution compactionExecution, messages []llama.ChatMessage, options llama.ChatOptions) (string, error) {
+	if execution.summaryClient != nil {
+		if text, err := execution.summaryClient.CompleteChat(ctx, messages, options); err == nil {
+			return text, nil
+		}
+	}
+
+	if execution.fallbackClient == nil {
+		return "", fmt.Errorf("compact history: no model client available")
+	}
+
+	return execution.fallbackClient.CompleteChat(ctx, messages, options)
 }
 
 func renderCompactionPrompt(oldest []llama.ChatMessage) string {
@@ -241,24 +262,6 @@ func renderCompactionPrompt(oldest []llama.ChatMessage) string {
 	}
 
 	return b.String()
-}
-
-// completeChatWithFallback sends messages to m.summaryClient first; on nil or
-// error it falls back to m.client. Server auto-start is not triggered here —
-// callers that want lazy startup should call ensureSummaryServer first.
-// Returns an error only when both clients fail or neither is configured.
-func (m *Model) completeChatWithFallback(ctx context.Context, messages []llama.ChatMessage, opts llama.ChatOptions) (string, error) {
-	if m.summaryClient != nil {
-		if text, err := m.summaryClient.CompleteChat(ctx, messages, opts); err == nil {
-			return text, nil
-		}
-	}
-
-	if m.client == nil {
-		return "", fmt.Errorf("completeChatWithFallback: no model client available")
-	}
-
-	return m.client.CompleteChat(ctx, messages, opts)
 }
 
 // fallbackSessionDigest produces a deterministic digest when the model call

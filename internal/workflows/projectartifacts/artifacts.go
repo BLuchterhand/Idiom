@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/repository/discovery"
@@ -318,8 +317,7 @@ func discoverPromptFiles(root string) []string {
 }
 
 func detectLanguages(root string) []string {
-	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
-	langs := manager.ActiveLanguages()
+	langs := semanticlanguage.ActiveLanguages(config.CanonicalizeExistingPath(root))
 	names := make([]string, 0, len(langs))
 
 	for _, lang := range langs {

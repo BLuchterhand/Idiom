@@ -1,80 +1,79 @@
 package root
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	rulescontract "idiom/internal/contracts/codingrules"
 )
 
-func TestCodingRulesBinaryE2ECoversPublicBehaviors(t *testing.T) {
-	bin := buildIdiomBinaryForCodingRulesE2E(t)
+var _ = ginkgo.Describe("Coding-rules binary", ginkgo.Ordered, ginkgo.Label("e2e", "smoke"), func() {
+	var bin string
 
-	t.Run("coding rules advisory JSON passes", func(t *testing.T) {
+	ginkgo.BeforeAll(func() {
+		bin = buildIdiomBinary(ginkgo.GinkgoT())
+	})
+
+	ginkgo.It("passes advisory findings and returns structured JSON", func() {
+		t := ginkgo.GinkgoT()
 		projectRoot := newCodingRulesE2EProject(t, "")
 
-		result := runIdiomBinaryForCodingRulesE2E(t, bin,
+		result := runIdiomBinary(t, bin,
 			"coding-rules", "check",
 			"--project-root", projectRoot,
 			"--json",
 		)
 
-		if result.code != 0 {
-			t.Fatalf("exit = %d, want 0\nstdout=%s\nstderr=%s", result.code, result.stdout, result.stderr)
-		}
+		gomega.Expect(result.code).To(gomega.BeZero(), "stdout=%s\nstderr=%s", result.stdout, result.stderr)
 
 		var report rulescontract.Report
-		if err := json.Unmarshal([]byte(result.stdout), &report); err != nil {
-			t.Fatalf("decode report: %v\n%s", err, result.stdout)
-		}
-		if report.Status != rulescontract.StatusWarn || len(report.Findings) != 1 {
-			t.Fatalf("unexpected report: %#v", report)
-		}
-		if strings.Contains(result.stdout, "return target") {
-			t.Fatalf("report leaked raw source body: %s", result.stdout)
-		}
+		gomega.Expect(json.Unmarshal([]byte(result.stdout), &report)).To(gomega.Succeed(), result.stdout)
+		gomega.Expect(report.Status).To(gomega.Equal(rulescontract.StatusWarn))
+		gomega.Expect(report.Findings).To(gomega.HaveLen(1))
+		gomega.Expect(result.stdout).NotTo(gomega.ContainSubstring("return target"))
 	})
 
-	t.Run("coding rules blocking exits three", func(t *testing.T) {
+	ginkgo.It("exits three for blocking findings", func() {
+		t := ginkgo.GinkgoT()
 		projectRoot := newCodingRulesE2EProject(t, blockingCodingRulesPolicyE2E())
 
-		result := runIdiomBinaryForCodingRulesE2E(t, bin,
+		result := runIdiomBinary(t, bin,
 			"coding-rules", "check",
 			"--project-root", projectRoot,
 			"--fail-on", "blocking",
 		)
 
-		if result.code != 3 {
-			t.Fatalf("exit = %d, want 3\nstdout=%s\nstderr=%s", result.code, result.stdout, result.stderr)
-		}
-		if !strings.Contains(result.stdout, "go.no_pass_through_wrapper") || !strings.Contains(result.stdout, "coding-rules: FAIL") {
-			t.Fatalf("blocking output should name rule and fail summary:\n%s", result.stdout)
-		}
+		gomega.Expect(result.code).To(gomega.Equal(3), "stdout=%s\nstderr=%s", result.stdout, result.stderr)
+		gomega.Expect(result.stdout).To(gomega.And(
+			gomega.ContainSubstring("go.no_pass_through_wrapper"),
+			gomega.ContainSubstring("coding-rules: FAIL"),
+		))
 	})
 
-	t.Run("coding rules explicit missing config fails", func(t *testing.T) {
+	ginkgo.It("fails when an explicit config is missing", func() {
+		t := ginkgo.GinkgoT()
 		projectRoot := newCodingRulesE2EProject(t, "")
 
-		result := runIdiomBinaryForCodingRulesE2E(t, bin,
+		result := runIdiomBinary(t, bin,
 			"coding-rules", "check",
 			"--project-root", projectRoot,
 			"--config", filepath.Join(projectRoot, "missing.json"),
 			"--json",
 		)
 
-		if result.code != 1 {
-			t.Fatalf("exit = %d, want 1\nstdout=%s\nstderr=%s", result.code, result.stdout, result.stderr)
-		}
-		if !strings.Contains(result.stderr, "does not exist") {
-			t.Fatalf("stderr should explain missing config: %s", result.stderr)
-		}
+		gomega.Expect(result.code).To(gomega.Equal(1), "stdout=%s\nstderr=%s", result.stdout, result.stderr)
+		gomega.Expect(result.stderr).To(gomega.ContainSubstring("does not exist"))
 	})
 
-	t.Run("coding rules path outside project root fails closed", func(t *testing.T) {
+	ginkgo.It("fails closed for a path outside the project root", func() {
+		t := ginkgo.GinkgoT()
 		projectRoot := newCodingRulesE2EProject(t, "")
 		outsideRoot := t.TempDir()
 		outsidePath := filepath.Join(outsideRoot, "outside.go")
@@ -87,96 +86,85 @@ func Wrapper(v string) string {
 }
 `)
 
-		result := runIdiomBinaryForCodingRulesE2E(t, bin,
+		result := runIdiomBinary(t, bin,
 			"coding-rules", "check",
 			"--project-root", projectRoot,
 			"--path", outsidePath,
 			"--json",
 		)
 
-		if result.code != 1 {
-			t.Fatalf("exit = %d, want 1\nstdout=%s\nstderr=%s", result.code, result.stdout, result.stderr)
-		}
-		if !strings.Contains(result.stderr, "escapes project root") {
-			t.Fatalf("stderr should explain project-root escape: %s", result.stderr)
-		}
-		if strings.Contains(result.stdout+result.stderr, "return target") {
-			t.Fatalf("outside source body leaked in output:\nstdout=%s\nstderr=%s", result.stdout, result.stderr)
-		}
+		gomega.Expect(result.code).To(gomega.Equal(1), "stdout=%s\nstderr=%s", result.stdout, result.stderr)
+		gomega.Expect(result.stderr).To(gomega.ContainSubstring("escapes project root"))
+		gomega.Expect(result.stdout + result.stderr).NotTo(gomega.ContainSubstring("return target"))
 	})
 
-	t.Run("workspace tool returns coding rules payload", func(t *testing.T) {
+	ginkgo.It("returns a coding-rules payload through the workspace tool", func() {
+		t := ginkgo.GinkgoT()
 		projectRoot := newCodingRulesE2EProject(t, blockingCodingRulesPolicyE2E())
 		configPath := writeCodingRulesE2EConfig(t, projectRoot)
 
-		result := runIdiomBinaryForCodingRulesE2E(t, bin,
+		result := runIdiomBinary(t, bin,
 			"tool", "coding_rules_check",
 			"--config", configPath,
 			"--input", `{"path":"."}`,
 		)
 
-		if result.code != 0 {
-			t.Fatalf("exit = %d, want 0\nstdout=%s\nstderr=%s", result.code, result.stdout, result.stderr)
-		}
+		gomega.Expect(result.code).To(gomega.BeZero(), "stdout=%s\nstderr=%s", result.stdout, result.stderr)
 		for _, want := range []string{
 			`"Tool": "coding_rules_check"`,
 			`"payload_type": "application/vnd.idiom.coding_rules.report+json"`,
 			`"rule_id": "go.no_pass_through_wrapper"`,
 			`"status": "fail"`,
 		} {
-			if !strings.Contains(result.stdout, want) {
-				t.Fatalf("workspace tool output missing %q:\n%s", want, result.stdout)
-			}
+			gomega.Expect(result.stdout).To(gomega.ContainSubstring(want))
 		}
-		if strings.Contains(result.stdout, "return target") {
-			t.Fatalf("workspace tool report leaked raw source body: %s", result.stdout)
-		}
+		gomega.Expect(result.stdout).NotTo(gomega.ContainSubstring("return target"))
 	})
 
-	t.Run("lane postflight blocking coding rules fails", func(t *testing.T) {
+	ginkgo.It("fails lane postflight for blocking coding rules", func() {
+		t := ginkgo.GinkgoT()
 		projectRoot := newCodingRulesE2EProject(t, blockingCodingRulesPolicyE2E())
 		diffPath := writeCodingRulesE2EDiff(t, projectRoot)
 
-		result := runIdiomBinaryForCodingRulesE2E(t, bin,
+		result := runIdiomBinary(t, bin,
 			"lane", "postflight",
 			"--project-root", projectRoot,
 			"--diff", diffPath,
 		)
 
-		if result.code != 3 {
-			t.Fatalf("exit = %d, want 3\nstdout=%s\nstderr=%s", result.code, result.stdout, result.stderr)
-		}
-		if !strings.Contains(result.stdout, "coding_rules") || !strings.Contains(result.stdout, "go.no_pass_through_wrapper") {
-			t.Fatalf("postflight output should include coding rules failure:\n%s", result.stdout)
-		}
+		gomega.Expect(result.code).To(gomega.Equal(3), "stdout=%s\nstderr=%s", result.stdout, result.stderr)
+		gomega.Expect(result.stdout).To(gomega.And(
+			gomega.ContainSubstring("coding_rules"),
+			gomega.ContainSubstring("go.no_pass_through_wrapper"),
+		))
 	})
 
-	t.Run("lane postflight advisory error does not fail", func(t *testing.T) {
+	ginkgo.It("keeps lane postflight successful for advisory findings", func() {
+		t := ginkgo.GinkgoT()
 		projectRoot := newCodingRulesE2EProject(t, advisoryErrorCodingRulesPolicyE2E())
 		diffPath := writeCodingRulesE2EDiff(t, projectRoot)
 
-		result := runIdiomBinaryForCodingRulesE2E(t, bin,
+		result := runIdiomBinary(t, bin,
 			"lane", "postflight",
 			"--project-root", projectRoot,
 			"--diff", diffPath,
 		)
 
-		if result.code != 0 {
-			t.Fatalf("exit = %d, want 0\nstdout=%s\nstderr=%s", result.code, result.stdout, result.stderr)
-		}
-		if !strings.Contains(result.stdout, "coding_rules") || !strings.Contains(result.stdout, "[warning]") {
-			t.Fatalf("postflight output should include advisory coding rules warning:\n%s", result.stdout)
-		}
+		gomega.Expect(result.code).To(gomega.BeZero(), "stdout=%s\nstderr=%s", result.stdout, result.stderr)
+		gomega.Expect(result.stdout).To(gomega.And(
+			gomega.ContainSubstring("coding_rules"),
+			gomega.ContainSubstring("[warning]"),
+		))
 	})
-}
+})
 
-type codingRulesE2EResult struct {
+type binaryE2EResult struct {
 	code   int
 	stdout string
 	stderr string
 }
 
-func buildIdiomBinaryForCodingRulesE2E(t *testing.T) string {
+func buildIdiomBinary(t rootTestContext) string {
 	t.Helper()
 
 	repoRoot := rootTestRepoRoot(t)
@@ -186,36 +174,46 @@ func buildIdiomBinaryForCodingRulesE2E(t *testing.T) string {
 	cmd.Dir = repoRoot
 
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build idiom binary: %v\n%s", err, string(output))
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "build idiom binary output:\n%s", string(output))
 
 	return bin
 }
 
-func runIdiomBinaryForCodingRulesE2E(t *testing.T, bin string, args ...string) codingRulesE2EResult {
+func runIdiomBinary(t rootTestContext, bin string, args ...string) binaryE2EResult {
 	t.Helper()
 
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = rootTestRepoRoot(t)
-	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+	home := t.TempDir()
+	cmd.Env = rootTestEnvironmentWithOverrides(os.Environ(), map[string]string{
+		"HOME":                                 home,
+		"IDIOM_DISABLE_GLOBAL_CONFIG_FALLBACK": "1",
+		"IDIOM_TELEMETRY":                      "0",
+	})
+	gomega.Expect(cmd.Environ()).To(gomega.ContainElement("HOME="+home), "compiled child must see the isolated test home")
 
-	output, err := cmd.Output()
-	result := codingRulesE2EResult{stdout: string(output)}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	result := binaryE2EResult{
+		stdout: stdout.String(),
+		stderr: stderr.String(),
+	}
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result.code = exitErr.ExitCode()
-			result.stderr = string(exitErr.Stderr)
 			return result
 		}
 
-		t.Fatalf("run idiom %s: %v", strings.Join(args, " "), err)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "run idiom %s", strings.Join(args, " "))
 	}
 
 	return result
 }
 
-func newCodingRulesE2EProject(t *testing.T, policy string) string {
+func newCodingRulesE2EProject(t rootTestContext, policy string) string {
 	t.Helper()
 
 	root := t.TempDir()
@@ -235,19 +233,17 @@ func Wrapper(v string) string {
 	return root
 }
 
-func writeCodingRulesE2EConfig(t *testing.T, projectRoot string) string {
+func writeCodingRulesE2EConfig(t rootTestContext, projectRoot string) string {
 	t.Helper()
 
 	configPath := filepath.Join(projectRoot, "config.json")
 	body := `{"workspace":{"root":` + quoteJSONForCodingRulesE2E(t, projectRoot) + `,"cwd":` + quoteJSONForCodingRulesE2E(t, projectRoot) + `}}`
-	if err := os.WriteFile(configPath, []byte(body+"\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(os.WriteFile(configPath, []byte(body+"\n"), 0o644)).To(gomega.Succeed())
 
 	return configPath
 }
 
-func writeCodingRulesE2EDiff(t *testing.T, projectRoot string) string {
+func writeCodingRulesE2EDiff(t rootTestContext, projectRoot string) string {
 	t.Helper()
 
 	diff := `diff --git a/wrapper.go b/wrapper.go
@@ -264,32 +260,24 @@ func writeCodingRulesE2EDiff(t *testing.T, projectRoot string) string {
  }
 `
 	diffPath := filepath.Join(projectRoot, "change.diff")
-	if err := os.WriteFile(diffPath, []byte(diff), 0o644); err != nil {
-		t.Fatalf("write diff: %v", err)
-	}
+	gomega.Expect(os.WriteFile(diffPath, []byte(diff), 0o644)).To(gomega.Succeed())
 
 	return diffPath
 }
 
-func writeCodingRulesE2EFile(t *testing.T, root string, rel string, body string) {
+func writeCodingRulesE2EFile(t rootTestContext, root string, rel string, body string) {
 	t.Helper()
 
 	path := filepath.Join(root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", rel, err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", rel, err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(gomega.Succeed(), "mkdir %s", rel)
+	gomega.Expect(os.WriteFile(path, []byte(body), 0o644)).To(gomega.Succeed(), "write %s", rel)
 }
 
-func quoteJSONForCodingRulesE2E(t *testing.T, value string) string {
+func quoteJSONForCodingRulesE2E(t rootTestContext, value string) string {
 	t.Helper()
 
 	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("quote JSON: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	return string(data)
 }

@@ -1,19 +1,22 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 )
 
-func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
+var _ = ginkgo.It("render messages wraps long content inside viewport", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(32, 12),
@@ -25,42 +28,41 @@ func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
 
 	m.renderMessages(true)
 
-	if got := m.viewport.TotalLineCount(); got <= 2 {
-		t.Fatalf("expected long content to wrap across multiple viewport lines, got %d line(s)", got)
+	{
+		got := m.viewport.TotalLineCount()
+		gomega.Expect(got).To(gomega.BeNumerically(">", 2), fmt.Sprintf("expected long content to wrap across multiple viewport lines, got %d line(s)", got))
 	}
 
-	if view := m.viewport.View(); !strings.Contains(view, "edge.") {
-		t.Fatalf("expected wrapped viewport to preserve text near the right edge, got:\n%s", view)
+	{
+		view := m.viewport.View()
+		gomega.Expect(strings.Contains(view, "edge.")).To(gomega.BeTrue(), fmt.Sprintf("expected wrapped viewport to preserve text near the right edge, got:\n%s", view))
 	}
-}
+})
 
-func TestRequestHistoryOverrideDoesNotHideVisibleTranscript(t *testing.T) {
+var _ = ginkgo.It("request history override does not hide visible transcript", func() {
 	override := []llama.ChatMessage{{Role: "user", Content: "nested plan-execute prompt"}}
 	m := &Model{
-		ready:                  true,
-		viewport:               viewport.New(80, 12),
-		requestHistoryOverride: &override,
+		ready:    true,
+		viewport: viewport.New(80, 12),
+		promptRuntimeState: promptRuntimeState{promptRuntimeSnapshotState: promptRuntimeSnapshotState{
+			requestHistoryOverride: &override,
+		}},
 		messages: []llama.ChatMessage{
 			{Role: "user", Content: "prior visible question"},
 			{Role: "assistant", Content: "prior visible answer"},
 		},
 	}
 
-	payload := m.requestMessages()
-	if !messagesContain(payload, "nested plan-execute prompt") {
-		t.Fatalf("nested payload should use isolated request history: %#v", payload)
-	}
-	if messagesContain(payload, "prior visible answer") {
-		t.Fatalf("visible transcript should not leak into isolated nested payload: %#v", payload)
-	}
+	payload := newDetachedPromptExecutionSession(context.Background(), m).requestMessages(context.Background())
+	gomega.Expect(messagesContain(payload, "nested plan-execute prompt")).To(gomega.BeTrue(), fmt.Sprintf("nested payload should use isolated request history: %#v", payload))
+	gomega.Expect(messagesContain(payload, "prior visible answer")).To(gomega.BeFalse(), fmt.Sprintf("visible transcript should not leak into isolated nested payload: %#v", payload))
 
 	m.renderMessages(true)
 
 	view := m.viewport.View()
-	if !strings.Contains(view, "prior visible question") || !strings.Contains(view, "prior visible answer") {
-		t.Fatalf("visible transcript should remain rendered while nested history is isolated:\n%s", view)
-	}
-}
+	gomega.Expect(view).To(gomega.ContainSubstring("prior visible question"), fmt.Sprintf("visible transcript should remain rendered while nested history is isolated:\n%s", view))
+	gomega.Expect(view).To(gomega.ContainSubstring("prior visible answer"), fmt.Sprintf("visible transcript should remain rendered while nested history is isolated:\n%s", view))
+})
 
 func messagesContain(messages []llama.ChatMessage, needle string) bool {
 	for _, msg := range messages {
@@ -72,14 +74,12 @@ func messagesContain(messages []llama.ChatMessage, needle string) bool {
 	return false
 }
 
-func TestProtectControlMarkersForMarkdownPreservesQuestionMarker(t *testing.T) {
+var _ = ginkgo.It("protect control markers for markdown preserves question marker", func() {
 	got := protectControlMarkersForMarkdown("<<QUESTION>>: missing exact anchor")
-	if !strings.Contains(got, "`<<QUESTION>>`:") {
-		t.Fatalf("question marker should be protected from markdown HTML parsing, got %q", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "`<<QUESTION>>`:")).To(gomega.BeTrue(), fmt.Sprintf("question marker should be protected from markdown HTML parsing, got %q", got))
+})
 
-func TestViewOmitsCompactContextFooterBelowInput(t *testing.T) {
+var _ = ginkgo.It("view omits compact context footer below input", func() {
 	cfg := config.Default()
 
 	cfg.Chat.DebugLogDir = ""
@@ -100,18 +100,15 @@ func TestViewOmitsCompactContextFooterBelowInput(t *testing.T) {
 	view := m.View()
 
 	for _, removed := range []string{"mode:", "trace:", "ctx:"} {
-		if strings.Contains(view, removed) {
-			t.Fatalf("view should not render compact context footer containing %q:\n%s", removed, view)
-		}
+		gomega.Expect(strings.Contains(view, removed)).To(gomega.BeFalse(), fmt.Sprintf("view should not render compact context footer containing %q:\n%s", removed, view))
 	}
 
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
-	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "hello") {
-		t.Fatalf("input should be the last normal-state row, got:\n%s", view)
-	}
-}
+	gomega.Expect(len(lines)).To(gomega.Not(gomega.Equal(0)), fmt.Sprintf("input should be the last normal-state row, got:\n%s", view))
+	gomega.Expect(lines[len(lines)-1]).To(gomega.ContainSubstring("hello"), fmt.Sprintf("input should be the last normal-state row, got:\n%s", view))
+})
 
-func TestViewRendersStatusAboveInput(t *testing.T) {
+var _ = ginkgo.It("view renders status above input", func() {
 	cfg := config.Default()
 
 	cfg.Chat.DebugLogDir = ""
@@ -131,25 +128,17 @@ func TestViewRendersStatusAboveInput(t *testing.T) {
 	m.input.SetValue("next prompt")
 
 	view := m.View()
-	if !strings.Contains(view, "Plan updated: ./.idiom/plans/last.plan.json") {
-		t.Fatalf("view should render operator status, got:\n%s", view)
-	}
+	gomega.Expect(strings.Contains(view, "Plan updated: ./.idiom/plans/last.plan.json")).To(gomega.BeTrue(), fmt.Sprintf("view should render operator status, got:\n%s", view))
 
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected status and input rows, got:\n%s", view)
-	}
+	gomega.Expect(len(lines) < 2).To(gomega.BeFalse(), fmt.Sprintf("expected status and input rows, got:\n%s", view))
 
-	if !strings.Contains(lines[len(lines)-2], "Plan updated:") {
-		t.Fatalf("status should render immediately above input, got:\n%s", view)
-	}
+	gomega.Expect(strings.Contains(lines[len(lines)-2], "Plan updated:")).To(gomega.BeTrue(), fmt.Sprintf("status should render immediately above input, got:\n%s", view))
 
-	if !strings.Contains(lines[len(lines)-1], "next prompt") {
-		t.Fatalf("input should remain the bottom normal-state row, got:\n%s", view)
-	}
-}
+	gomega.Expect(strings.Contains(lines[len(lines)-1], "next prompt")).To(gomega.BeTrue(), fmt.Sprintf("input should remain the bottom normal-state row, got:\n%s", view))
+})
 
-func TestResizeAccountsForStatusLine(t *testing.T) {
+var _ = ginkgo.It("resize accounts for status line", func() {
 	cfg := config.Default()
 
 	cfg.Chat.DebugLogDir = ""
@@ -169,16 +158,15 @@ func TestResizeAccountsForStatusLine(t *testing.T) {
 	view := m.View()
 
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
-	if got := len(lines); got != m.height {
-		t.Fatalf("view height = %d, want terminal height %d:\n%s", got, m.height, view)
+	{
+		got := len(lines)
+		gomega.Expect(got).To(gomega.Equal(m.height), fmt.Sprintf("view height = %d, want terminal height %d:\n%s", got, m.height, view))
 	}
 
-	if !strings.Contains(lines[len(lines)-2], "Server up.") {
-		t.Fatalf("status should consume one accounted row above input, got:\n%s", view)
-	}
-}
+	gomega.Expect(strings.Contains(lines[len(lines)-2], "Server up.")).To(gomega.BeTrue(), fmt.Sprintf("status should consume one accounted row above input, got:\n%s", view))
+})
 
-func TestResizeUsesFullTerminalHeightWithoutFooter(t *testing.T) {
+var _ = ginkgo.It("resize uses full terminal height without footer", func() {
 	cfg := config.Default()
 
 	cfg.Chat.DebugLogDir = ""
@@ -197,16 +185,15 @@ func TestResizeUsesFullTerminalHeightWithoutFooter(t *testing.T) {
 	view := m.View()
 
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
-	if got := len(lines); got != m.height {
-		t.Fatalf("view height = %d, want terminal height %d:\n%s", got, m.height, view)
+	{
+		got := len(lines)
+		gomega.Expect(got).To(gomega.Equal(m.height), fmt.Sprintf("view height = %d, want terminal height %d:\n%s", got, m.height, view))
 	}
 
-	if !strings.Contains(lines[len(lines)-1], "Type a prompt") {
-		t.Fatalf("input should be flush with bottom, got:\n%s", view)
-	}
-}
+	gomega.Expect(strings.Contains(lines[len(lines)-1], "Type a prompt")).To(gomega.BeTrue(), fmt.Sprintf("input should be flush with bottom, got:\n%s", view))
+})
 
-func TestInputHeightGrowsForWrappedPrompt(t *testing.T) {
+var _ = ginkgo.It("input height grows for wrapped prompt", func() {
 	cfg := config.Default()
 
 	cfg.Chat.DebugLogDir = ""
@@ -223,17 +210,19 @@ func TestInputHeightGrowsForWrappedPrompt(t *testing.T) {
 
 	m.resize()
 
-	if got := m.input.Height(); got <= 1 {
-		t.Fatalf("input height = %d, want growth for wrapped text", got)
+	{
+		got := m.input.Height()
+		gomega.Expect(got).To(gomega.BeNumerically(">", 1), fmt.Sprintf("input height = %d, want growth for wrapped text", got))
 	}
 
 	lines := strings.Split(strings.TrimRight(m.View(), "\n"), "\n")
-	if got := len(lines); got != m.height {
-		t.Fatalf("view height = %d, want terminal height %d", got, m.height)
+	{
+		got := len(lines)
+		gomega.Expect(got).To(gomega.Equal(m.height), fmt.Sprintf("view height = %d, want terminal height %d", got, m.height))
 	}
-}
+})
 
-func TestInputHeightUsesTextareaWrappedLineCount(t *testing.T) {
+var _ = ginkgo.It("input height uses textarea wrapped line count", func() {
 	cfg := config.Default()
 
 	cfg.Chat.DebugLogDir = ""
@@ -255,21 +244,21 @@ func TestInputHeightUsesTextareaWrappedLineCount(t *testing.T) {
 		wrappedRows += max(1, len(wrapLines(line, m.input.Width()-len(m.input.Prompt))))
 	}
 
-	if got, want := m.input.Height(), min(wrappedRows, m.height/3); got != want {
-		t.Fatalf("input height = %d, want prompt-aware wrapped row cap %d", got, want)
+	{
+		got, want := m.input.Height(), min(wrappedRows, m.height/3)
+		gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("input height = %d, want prompt-aware wrapped row cap %d", got, want))
 	}
 
 	view := m.View()
-	if !strings.Contains(view, "first visible") {
-		t.Fatalf("input view should retain the top wrapped line, got:\n%s", view)
-	}
-}
+	gomega.Expect(strings.Contains(view, "first visible")).To(gomega.BeTrue(), fmt.Sprintf("input view should retain the top wrapped line, got:\n%s", view))
+})
 
 // OpenCode-aligned: requestMessages no longer injects a static workspace
 // overview. The model discovers the workspace on demand through tool
 // calls (list_files, search_*, glob). We assert the absence so a future
 // regression that re-introduces the static dump gets caught.
-func TestRequestMessagesOmitsStaticWorkspaceOverview(t *testing.T) {
+var _ = ginkgo.It("request messages omits static workspace overview", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir})
 	m := &Model{
@@ -278,14 +267,12 @@ func TestRequestMessagesOmitsStaticWorkspaceOverview(t *testing.T) {
 			{Role: "user", Content: "first prompt"},
 		},
 	}
-	msgs := m.requestMessages()
+	msgs := newDetachedPromptExecutionSession(context.Background(), m).requestMessages(context.Background())
 
-	if containsSystemContent(msgs, "Workspace overview") {
-		t.Fatalf("static workspace overview must not be injected; got:\n%#v", msgs)
-	}
-}
+	gomega.Expect(containsSystemContent(msgs, "Workspace overview")).To(gomega.BeFalse(), fmt.Sprintf("static workspace overview must not be injected; got:\n%#v", msgs))
+})
 
-func TestRequestMessagesDoesNotCompactOperatorMessages(t *testing.T) {
+var _ = ginkgo.It("request messages does not compact operator messages", func() {
 	m := &Model{
 		messages: []llama.ChatMessage{
 			{Role: "user", Content: "original implementation goal"},
@@ -295,27 +282,23 @@ func TestRequestMessagesDoesNotCompactOperatorMessages(t *testing.T) {
 			LlamaServer: config.LlamaServer{CtxSize: 8000},
 		},
 	}
-	threshold := m.compactionThreshold()
+	threshold := compactionThreshold(snapshotCompactionExecution(m))
 
 	for i := 0; i < threshold+1; i++ {
 		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: "assistant turn"})
 	}
 
-	msgs := m.requestMessages()
+	msgs := newDetachedPromptExecutionSession(context.Background(), m).requestMessages(context.Background())
 	for _, msg := range msgs {
-		if strings.Contains(msg.Content, "recover status:") ||
-			strings.Contains(msg.Content, ".idiom/recovery/secret/packet.json") {
-
-			t.Fatalf("operator status content must not be compacted or replayed: %#v", msgs)
-		}
+		gomega.Expect(msg.Content).To(gomega.Not(gomega.ContainSubstring("recover status:")), fmt.Sprintf("operator status content must not be compacted or replayed: %#v", msgs))
+		gomega.Expect(msg.Content).To(gomega.Not(gomega.ContainSubstring(".idiom/recovery/secret/packet.json")), fmt.Sprintf("operator status content must not be compacted or replayed: %#v", msgs))
 	}
 
-	if len(m.messages) < 2 || m.messages[1].Role != "operator" {
-		t.Fatalf("request payload filtering must not mutate transcript messages: %#v", m.messages)
-	}
-}
+	gomega.Expect(len(m.messages)).To(gomega.BeNumerically(">=", 2), fmt.Sprintf("request payload filtering must not mutate transcript messages: %#v", m.messages))
+	gomega.Expect(m.messages[1].Role).To(gomega.Equal("operator"), fmt.Sprintf("request payload filtering must not mutate transcript messages: %#v", m.messages))
+})
 
-func TestRequestMessagesDropsAssistantReasoningFromCrossTurnHistory(t *testing.T) {
+var _ = ginkgo.It("request messages drops assistant reasoning from cross turn history", func() {
 	m := &Model{
 		messages: []llama.ChatMessage{
 			{Role: "user", Content: "first prompt"},
@@ -324,22 +307,20 @@ func TestRequestMessagesDropsAssistantReasoningFromCrossTurnHistory(t *testing.T
 		},
 	}
 
-	msgs := m.requestMessages()
+	msgs := newDetachedPromptExecutionSession(context.Background(), m).requestMessages(context.Background())
 	for _, msg := range msgs {
-		if msg.ReasoningContent != "" {
-			t.Fatalf("request payload must not replay cross-turn hidden reasoning: %#v", msgs)
-		}
+		gomega.Expect(msg.ReasoningContent).To(gomega.Equal(""), fmt.Sprintf("request payload must not replay cross-turn hidden reasoning: %#v", msgs))
 	}
 
-	if m.messages[1].ReasoningContent == "" {
-		t.Fatalf("request payload filtering must not mutate transcript history")
-	}
-}
+	gomega.Expect(m.messages[1].ReasoningContent).NotTo(gomega.Equal(""), fmt.Sprintf("request payload filtering must not mutate transcript history"))
+})
 
-func TestSlashClearDropsInvisibleCrossTurnContext(t *testing.T) {
+var _ = ginkgo.It("slash clear drops invisible cross turn context", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "stale.go"), []byte("package stale\nconst Sentinel = \"STALE_PINNED_CONTEXT\"\n"), 0o644); err != nil {
-		t.Fatalf("write stale fixture: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(dir, "stale.go"), []byte("package stale\nconst Sentinel = \"STALE_PINNED_CONTEXT\"\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write stale fixture: %v", err))
 	}
 
 	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir})
@@ -350,7 +331,8 @@ func TestSlashClearDropsInvisibleCrossTurnContext(t *testing.T) {
 			{Role: "assistant", Content: "prior answer mentioning canonicalMutationBlockerFinalAnswer"},
 		},
 	}
-	m.pinnedFilesRegistry().Pin("stale.go")
+	m.pinnedFiles = newPinnedFileRegistry()
+	m.pinnedFiles.Pin("stale.go")
 	priorObjective := "should canonicalMutationBlockerFinalAnswer be replaced"
 	m.SetLastTurnSourceResults(priorObjective, []workspace.ToolResult{{
 		Tool:    workspace.ToolNameReadFile,
@@ -361,21 +343,20 @@ func TestSlashClearDropsInvisibleCrossTurnContext(t *testing.T) {
 	m.slashClear("/new", []string{"/new"})
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "fresh unrelated naming question"})
 
-	payload := m.requestMessages()
+	payload := newDetachedPromptExecutionSession(context.Background(), m).requestMessages(context.Background())
 	for _, msg := range payload {
-		if strings.Contains(msg.Content, "canonicalMutationBlockerFinalAnswer") ||
-			strings.Contains(msg.Content, "STALE_PINNED_CONTEXT") ||
-			strings.Contains(msg.Content, pinnedFileSnapshotHeaderTag) {
-			t.Fatalf("fresh session payload leaked cleared context in %#v", payload)
-		}
+		gomega.Expect(msg.Content).To(gomega.Not(gomega.ContainSubstring("canonicalMutationBlockerFinalAnswer")), fmt.Sprintf("fresh session payload leaked cleared context in %#v", payload))
+		gomega.Expect(msg.Content).To(gomega.Not(gomega.ContainSubstring("STALE_PINNED_CONTEXT")), fmt.Sprintf("fresh session payload leaked cleared context in %#v", payload))
+		gomega.Expect(msg.Content).To(gomega.Not(gomega.ContainSubstring(pinnedFileSnapshotHeaderTag)), fmt.Sprintf("fresh session payload leaked cleared context in %#v", payload))
 	}
 
-	if seeds := m.LastTurnSourceResultsForObjective(priorObjective); len(seeds) != 0 {
-		t.Fatalf("clear should drop cross-turn seed results, got %#v", seeds)
+	{
+		seeds := m.LastTurnSourceResultsForObjective(priorObjective)
+		gomega.Expect(len(seeds)).To(gomega.Equal(0), fmt.Sprintf("clear should drop cross-turn seed results, got %#v", seeds))
 	}
-}
+})
 
-func TestRenderedMessageBodyCacheInvalidatesWhenMessagesChange(t *testing.T) {
+var _ = ginkgo.It("rendered message body cache invalidates when messages change", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -383,33 +364,28 @@ func TestRenderedMessageBodyCacheInvalidatesWhenMessagesChange(t *testing.T) {
 	}
 
 	first := m.renderedMessageBody()
-	if !strings.Contains(first, "first body") {
-		t.Fatalf("expected initial render to include first body, got:\n%s", first)
-	}
+	gomega.Expect(strings.Contains(first, "first body")).To(gomega.BeTrue(), fmt.Sprintf("expected initial render to include first body, got:\n%s", first))
 
 	m.messageRenderCache = "cached sentinel"
 	m.messageRenderWidth = m.viewport.Width
 	m.messageRenderHash = messageRenderFingerprint(m.messages)
 	m.messageRenderMD = false
 
-	if got := m.renderedMessageBody(); got != "cached sentinel" {
-		t.Fatalf("expected unchanged transcript to reuse cache, got:\n%s", got)
+	{
+		got := m.renderedMessageBody()
+		gomega.Expect(got).To(gomega.Equal("cached sentinel"), fmt.Sprintf("expected unchanged transcript to reuse cache, got:\n%s", got))
 	}
 
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "second body"})
 
 	updated := m.renderedMessageBody()
 
-	if strings.Contains(updated, "cached sentinel") {
-		t.Fatalf("expected cache to be invalidated after message change, got:\n%s", updated)
-	}
+	gomega.Expect(strings.Contains(updated, "cached sentinel")).To(gomega.BeFalse(), fmt.Sprintf("expected cache to be invalidated after message change, got:\n%s", updated))
 
-	if !strings.Contains(updated, "second body") {
-		t.Fatalf("expected updated render to include new message, got:\n%s", updated)
-	}
-}
+	gomega.Expect(strings.Contains(updated, "second body")).To(gomega.BeTrue(), fmt.Sprintf("expected updated render to include new message, got:\n%s", updated))
+})
 
-func TestEnsureMarkdownRendererAlwaysUpdatesWidthAndInvalidatesCache(t *testing.T) {
+var _ = ginkgo.It("ensure markdown renderer always updates width and invalidates cache", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(80, 12),
@@ -418,32 +394,22 @@ func TestEnsureMarkdownRendererAlwaysUpdatesWidthAndInvalidatesCache(t *testing.
 
 	// First call at width 80.
 	m.ensureMarkdownRenderer(80)
-	if m.mdRendererWrapWidth != 80 {
-		t.Fatalf("expected wrap width 80, got %d", m.mdRendererWrapWidth)
-	}
+	gomega.Expect(m.mdRendererWrapWidth).To(gomega.Equal(80), fmt.Sprintf("expected wrap width 80, got %d", m.mdRendererWrapWidth))
 
 	// Prime the render cache.
 	_ = m.renderedMessageBody()
 
 	// Call at a different width — should update wrap width and invalidate cache.
 	m.ensureMarkdownRenderer(40)
-	if m.mdRendererWrapWidth != 40 {
-		t.Fatalf("expected wrap width 40 after resize, got %d", m.mdRendererWrapWidth)
-	}
-	if m.messageRenderCache != "" {
-		t.Fatal("expected render cache to be invalidated after width change")
-	}
+	gomega.Expect(m.mdRendererWrapWidth).To(gomega.Equal(40), fmt.Sprintf("expected wrap width 40 after resize, got %d", m.mdRendererWrapWidth))
+	gomega.Expect(m.messageRenderCache).To(gomega.Equal(""), fmt.Sprint("expected render cache to be invalidated after width change"))
 
 	// Call again at the same width — must still recreate the renderer and
 	// invalidate the cache.  The old code had a guard that skipped this,
 	// leaving a stale glamour word-wrap cache that produced short lines.
 	m.ensureMarkdownRenderer(40)
-	if m.mdRendererWrapWidth != 40 {
-		t.Fatalf("expected wrap width 40 after second call at same width, got %d", m.mdRendererWrapWidth)
-	}
-	if m.messageRenderCache != "" {
-		t.Fatal("expected render cache to be invalidated even when same width is set again")
-	}
+	gomega.Expect(m.mdRendererWrapWidth).To(gomega.Equal(40), fmt.Sprintf("expected wrap width 40 after second call at same width, got %d", m.mdRendererWrapWidth))
+	gomega.Expect(m.messageRenderCache).To(gomega.Equal(""), fmt.Sprint("expected render cache to be invalidated even when same width is set again"))
 
 	// Render a long line at a known width to verify no abnormally short lines.
 	m.ensureMarkdownRenderer(40)
@@ -456,11 +422,11 @@ func TestEnsureMarkdownRendererAlwaysUpdatesWidthAndInvalidatesCache(t *testing.
 			continue // reasonably long line, no issue
 		}
 		// Short lines are fine if they're blank or just contain a trailing part.
-		if len([]rune(trimmed)) < 10 && trimmed != "" && !strings.HasPrefix(trimmed, " ") {
-			t.Fatalf("line %d is suspiciously short (%d chars): %q — possible stale glamour word-wrap cache", i, len([]rune(trimmed)), trimmed)
+		if trimmed != "" && len([]rune(trimmed)) < 10 {
+			gomega.Expect(trimmed).To(gomega.HavePrefix(" "), fmt.Sprintf("line %d is suspiciously short (%d chars): %q — possible stale glamour word-wrap cache", i, len([]rune(trimmed)), trimmed))
 		}
 	}
-}
+})
 
 func containsSystemContent(messages []llama.ChatMessage, needle string) bool {
 	for _, msg := range messages {

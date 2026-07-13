@@ -72,13 +72,11 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 
 	if exactAnchorWriteFailure(input.Constraints, tool, combined) {
 		plan.FailureClass = recoverycontract.FailureClassExactAnchorWriteFailure
-		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search after an exact-anchor write failed")
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "retry one corrected write shape from the target packet, or answer with <<QUESTION>> naming the missing anchor")
 	}
 
 	if exactAnchorHiddenPrewriteTool(input.Constraints, tool, combined) {
 		plan.FailureClass = recoverycontract.FailureClassExactAnchorPrewriteHiddenTool
-		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search/shell before first exact-anchor write")
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "exact-anchor write capability with the supplied anchor, or answer with <<QUESTION>> naming the missing anchor")
 	}
 

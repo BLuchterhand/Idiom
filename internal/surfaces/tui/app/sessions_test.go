@@ -5,10 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
@@ -16,11 +17,12 @@ import (
 	"idiom/internal/workflows/featureplanner"
 )
 
-func writeSessionLog(t *testing.T, dir string, name string, lines []string) string {
-	t.Helper()
+func writeSessionLog(t ginkgo.FullGinkgoTInterface, dir string, name string, lines []string) string {
+	ginkgo.GinkgoHelper()
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	{
+		err := os.MkdirAll(dir, 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir: %v", err))
 	}
 
 	path := filepath.Join(dir, name)
@@ -30,35 +32,37 @@ func writeSessionLog(t *testing.T, dir string, name string, lines []string) stri
 		body += "\n"
 	}
 
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write session log: %v", err)
+	{
+		err := os.WriteFile(path, []byte(body), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write session log: %v", err))
 	}
 
 	return path
 }
 
-func TestResolveSessionLogPathFromID(t *testing.T) {
+var _ = ginkgo.It("resolve session log path from id", func() {
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: "/tmp/conv"}}
 	got := sessionlog.ResolveSessionLogPath(cfg, "20260418-055543.504")
 	want := filepath.Join("/tmp/conv", "20260418-055543.504.jsonl")
 
-	if got != want {
-		t.Errorf("ResolveSessionLogPath id-form = %q, want %q", got, want)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("ResolveSessionLogPath id-form = %q, want %q", got, want))
+})
 
-func TestResolveSessionLogPathFromPath(t *testing.T) {
+var _ = ginkgo.It("resolve session log path from path", func() {
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: "/tmp/conv"}}
-	if got := sessionlog.ResolveSessionLogPath(cfg, "logs/conversations/foo.jsonl"); got != "logs/conversations/foo.jsonl" {
-		t.Errorf("path-form unchanged but got %q", got)
+	{
+		got := sessionlog.ResolveSessionLogPath(cfg, "logs/conversations/foo.jsonl")
+		gomega.Expect(got).To(gomega.Equal("logs/conversations/foo.jsonl"), fmt.Sprintf("path-form unchanged but got %q", got))
 	}
 
-	if got := sessionlog.ResolveSessionLogPath(cfg, "/abs/foo"); got != "/abs/foo.jsonl" {
-		t.Errorf("abs-form should append .jsonl: %q", got)
+	{
+		got := sessionlog.ResolveSessionLogPath(cfg, "/abs/foo")
+		gomega.Expect(got).To(gomega.Equal("/abs/foo.jsonl"), fmt.Sprintf("abs-form should append .jsonl: %q", got))
 	}
-}
+})
 
-func TestListRecordedSessionsSummarizesNewestFirst(t *testing.T) {
+var _ = ginkgo.It("list recorded sessions summarizes newest first", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
 	writeSessionLog(t, dir, "20260418-055543.504.jsonl", []string{
@@ -77,29 +81,21 @@ func TestListRecordedSessionsSummarizesNewestFirst(t *testing.T) {
 	writeSessionLog(t, dir, "skipme.txt", []string{"not a session"})
 
 	got, err := sessionlog.ListRecordedSessions(cfg)
-	if err != nil {
-		t.Fatalf("ListRecordedSessions: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ListRecordedSessions: %v", err))
 
-	if len(got) != 2 {
-		t.Fatalf("expected 2 sessions, got %d (%v)", len(got), got)
-	}
+	gomega.Expect(len(got)).To(gomega.Equal(2), fmt.Sprintf("expected 2 sessions, got %d (%v)", len(got), got))
 
-	if got[0].ID != "20260419-100000.000" {
-		t.Errorf("expected newest first, got %q", got[0].ID)
-	}
+	gomega.Expect(got[0].ID).To(gomega.Equal("20260419-100000.000"), fmt.Sprintf("expected newest first, got %q", got[0].ID))
 
 	older := got[1]
-	if older.UserMessages != 1 || older.AssistMessage != 1 {
-		t.Errorf("older session counts = %d/%d, want 1/1", older.UserMessages, older.AssistMessage)
-	}
+	gomega.Expect(older.UserMessages).To(gomega.Equal(1), fmt.Sprintf("older session counts = %d/%d, want 1/1", older.UserMessages, older.AssistMessage))
+	gomega.Expect(older.AssistMessage).To(gomega.Equal(1), fmt.Sprintf("older session counts = %d/%d, want 1/1", older.UserMessages, older.AssistMessage))
 
-	if older.FirstPrompt != "hello world" {
-		t.Errorf("older first prompt = %q, want %q", older.FirstPrompt, "hello world")
-	}
-}
+	gomega.Expect(older.FirstPrompt).To(gomega.Equal("hello world"), fmt.Sprintf("older first prompt = %q, want %q", older.FirstPrompt, "hello world"))
+})
 
-func TestListRecordedSessionsCapsSummarizedHistory(t *testing.T) {
+var _ = ginkgo.It("list recorded sessions caps summarized history", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
 
@@ -110,29 +106,23 @@ func TestListRecordedSessionsCapsSummarizedHistory(t *testing.T) {
 	}
 
 	got, err := sessionlog.ListRecordedSessions(cfg)
-	if err != nil {
-		t.Fatalf("ListRecordedSessions: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ListRecordedSessions: %v", err))
 
-	if len(got) != sessionlog.MaxRecordedSessionsScanned {
-		t.Fatalf("expected capped session count %d, got %d", sessionlog.MaxRecordedSessionsScanned, len(got))
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(sessionlog.MaxRecordedSessionsScanned), fmt.Sprintf("expected capped session count %d, got %d", sessionlog.MaxRecordedSessionsScanned, len(got)))
+})
 
-func TestListRecordedSessionsMissingDir(t *testing.T) {
+var _ = ginkgo.It("list recorded sessions missing dir", func() {
+	t := ginkgo.GinkgoT()
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: filepath.Join(t.TempDir(), "does-not-exist")}}
 
 	got, err := sessionlog.ListRecordedSessions(cfg)
-	if err != nil {
-		t.Fatalf("missing dir should not error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("missing dir should not error: %v", err))
 
-	if len(got) != 0 {
-		t.Fatalf("expected zero sessions for missing dir, got %d", len(got))
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("expected zero sessions for missing dir, got %d", len(got)))
+})
 
-func TestLoadHistoryFromSessionReplaysUserAssistant(t *testing.T) {
+var _ = ginkgo.It("load history from session replays user assistant", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := writeSessionLog(t, dir, "session.jsonl", []string{
 		`{"type":"message","role":"user","content":"first prompt"}`,
@@ -143,13 +133,12 @@ func TestLoadHistoryFromSessionReplaysUserAssistant(t *testing.T) {
 	})
 
 	model := &Model{}
-	if err := model.LoadHistoryFromSession(path); err != nil {
-		t.Fatalf("LoadHistoryFromSession: %v", err)
+	{
+		err := model.LoadHistoryFromSession(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadHistoryFromSession: %v", err))
 	}
 
-	if len(model.messages) != 3 {
-		t.Fatalf("expected 3 messages, got %d (%v)", len(model.messages), model.messages)
-	}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(3), fmt.Sprintf("expected 3 messages, got %d (%v)", len(model.messages), model.messages))
 
 	want := []llama.ChatMessage{
 		{Role: "user", Content: "first prompt"},
@@ -158,13 +147,13 @@ func TestLoadHistoryFromSessionReplaysUserAssistant(t *testing.T) {
 	}
 	for i, w := range want {
 		got := model.messages[i]
-		if got.Role != w.Role || got.Content != w.Content {
-			t.Errorf("messages[%d] = %#v, want %#v", i, got, w)
-		}
+		gomega.Expect(got.Role).To(gomega.Equal(w.Role), fmt.Sprintf("messages[%d] = %#v, want %#v", i, got, w))
+		gomega.Expect(got.Content).To(gomega.Equal(w.Content), fmt.Sprintf("messages[%d] = %#v, want %#v", i, got, w))
 	}
-}
+})
 
-func TestLoadHistoryFromSessionRestoresGovernanceHistory(t *testing.T) {
+var _ = ginkgo.It("load history from session restores governance history", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := writeSessionLog(t, dir, "governed.jsonl", []string{
 		`{"type":"session_start","app_name":"idiom"}`,
@@ -181,30 +170,21 @@ func TestLoadHistoryFromSessionRestoresGovernanceHistory(t *testing.T) {
 	model.history.viewport = viewport.New(96, 24)
 	model.history.expanded = true
 
-	if err := model.LoadHistoryFromSession(path); err != nil {
-		t.Fatalf("LoadHistoryFromSession: %v", err)
+	{
+		err := model.LoadHistoryFromSession(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadHistoryFromSession: %v", err))
 	}
 
-	if len(model.messages) != 2 {
-		t.Fatalf("expected 2 model messages, got %d (%#v)", len(model.messages), model.messages)
-	}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(2), fmt.Sprintf("expected 2 model messages, got %d (%#v)", len(model.messages), model.messages))
 
-	if len(model.history.entries) != 2 {
-		t.Fatalf("expected user and agent history entries, got %d: %#v", len(model.history.entries), model.history.entries)
-	}
+	gomega.Expect(len(model.history.entries)).To(gomega.Equal(2), fmt.Sprintf("expected user and agent history entries, got %d: %#v", len(model.history.entries), model.history.entries))
 
 	agentEntry := model.history.entries[1]
-	if agentEntry.inProgress {
-		t.Fatal("replayed agent history should be finalized")
-	}
+	gomega.Expect(agentEntry.inProgress).To(gomega.BeFalse(), fmt.Sprint("replayed agent history should be finalized"))
 
-	if len(agentEntry.toolCalls) != 1 {
-		t.Fatalf("expected replayed tool call, got %#v", agentEntry.toolCalls)
-	}
+	gomega.Expect(len(agentEntry.toolCalls)).To(gomega.Equal(1), fmt.Sprintf("expected replayed tool call, got %#v", agentEntry.toolCalls))
 
-	if len(agentEntry.auditEvents) < 3 {
-		t.Fatalf("expected route/cache/contract audit events, got %#v", agentEntry.auditEvents)
-	}
+	gomega.Expect(len(agentEntry.auditEvents) < 3).To(gomega.BeFalse(), fmt.Sprintf("expected route/cache/contract audit events, got %#v", agentEntry.auditEvents))
 
 	view := collapseWhitespace(model.history.viewport.View())
 	for _, want := range []string{
@@ -214,13 +194,12 @@ func TestLoadHistoryFromSessionRestoresGovernanceHistory(t *testing.T) {
 		"Contracts: contract compiled",
 		"Signals: cache miss_recompute, cache refreshed",
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("history viewport missing %q:\n%s", want, view)
-		}
+		gomega.Expect(strings.Contains(view, want)).To(gomega.BeTrue(), fmt.Sprintf("history viewport missing %q:\n%s", want, view))
 	}
-}
+})
 
-func TestLoadHistoryFromSessionDoesNotOverwriteActiveFeaturePlannerSession(t *testing.T) {
+var _ = ginkgo.It("load history from session does not overwrite active feature planner session", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	logDir := filepath.Join(root, "logs", "conversations")
 
@@ -238,8 +217,9 @@ func TestLoadHistoryFromSessionDoesNotOverwriteActiveFeaturePlannerSession(t *te
 		AffectedPaths:     []string{"src/current.py"},
 		AffectedFields:    []string{"new_file_authorization"},
 	}}
-	if _, err := featureplanner.SaveState(root, &active); err != nil {
-		t.Fatalf("SaveState active: %v", err)
+	{
+		_, err := featureplanner.SaveState(root, &active)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("SaveState active: %v", err))
 	}
 
 	old := featureplanner.NewState("old-session", "Old plan.", "", 3, time.Unix(2, 0).UTC())
@@ -256,8 +236,9 @@ func TestLoadHistoryFromSessionDoesNotOverwriteActiveFeaturePlannerSession(t *te
 		AffectedPaths:     []string{"src/old.py"},
 		AffectedFields:    []string{"new_file_authorization"},
 	}}
-	if _, err := featureplanner.SaveState(root, &old); err != nil {
-		t.Fatalf("SaveState old: %v", err)
+	{
+		_, err := featureplanner.SaveState(root, &old)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("SaveState old: %v", err))
 	}
 
 	path := writeSessionLog(t, logDir, "old.jsonl", []string{
@@ -272,16 +253,16 @@ func TestLoadHistoryFromSessionDoesNotOverwriteActiveFeaturePlannerSession(t *te
 	}
 	model.directFeaturePlannerSessionID = active.SessionID
 
-	if err := model.LoadHistoryFromSession(path); err != nil {
-		t.Fatalf("LoadHistoryFromSession: %v", err)
+	{
+		err := model.LoadHistoryFromSession(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadHistoryFromSession: %v", err))
 	}
 
-	if model.directFeaturePlannerSessionID != active.SessionID {
-		t.Fatalf("LoadHistoryFromSession overwrote active planner with %q", model.directFeaturePlannerSessionID)
-	}
-}
+	gomega.Expect(model.directFeaturePlannerSessionID).To(gomega.Equal(active.SessionID), fmt.Sprintf("LoadHistoryFromSession overwrote active planner with %q", model.directFeaturePlannerSessionID))
+})
 
-func TestLoadHistoryFromSessionRestoresDirectFeaturePlannerWhenNoneActive(t *testing.T) {
+var _ = ginkgo.It("load history from session restores direct feature planner when none active", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	logDir := filepath.Join(root, "logs", "conversations")
 
@@ -299,8 +280,9 @@ func TestLoadHistoryFromSessionRestoresDirectFeaturePlannerWhenNoneActive(t *tes
 		AffectedPaths:     []string{"src/history.py"},
 		AffectedFields:    []string{"new_file_authorization"},
 	}}
-	if _, err := featureplanner.SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
+	{
+		_, err := featureplanner.SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("SaveState: %v", err))
 	}
 
 	path := writeSessionLog(t, logDir, "history.jsonl", []string{
@@ -314,23 +296,24 @@ func TestLoadHistoryFromSessionRestoresDirectFeaturePlannerWhenNoneActive(t *tes
 		Workspace: config.Workspace{Root: root, CWD: root},
 	}
 
-	if err := model.LoadHistoryFromSession(path); err != nil {
-		t.Fatalf("LoadHistoryFromSession: %v", err)
+	{
+		err := model.LoadHistoryFromSession(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadHistoryFromSession: %v", err))
 	}
 
-	if model.directFeaturePlannerSessionID != state.SessionID {
-		t.Fatalf("direct feature-planner session = %q, want %q", model.directFeaturePlannerSessionID, state.SessionID)
-	}
-}
+	gomega.Expect(model.directFeaturePlannerSessionID).To(gomega.Equal(state.SessionID), fmt.Sprintf("direct feature-planner session = %q, want %q", model.directFeaturePlannerSessionID, state.SessionID))
+})
 
-func TestLoadHistoryFromSessionRejectsEmptyLog(t *testing.T) {
+var _ = ginkgo.It("load history from session rejects empty log", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := writeSessionLog(t, dir, "empty.jsonl", []string{
 		`{"type":"tool_request","tool":"read_file"}`,
 	})
 	model := &Model{}
 
-	if err := model.LoadHistoryFromSession(path); err == nil {
-		t.Fatal("expected error for log with no user/assistant messages")
+	{
+		err := model.LoadHistoryFromSession(path)
+		gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected error for log with no user/assistant messages"))
 	}
-}
+})

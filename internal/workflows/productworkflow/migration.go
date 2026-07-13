@@ -32,6 +32,7 @@ type ProductStatusMigrationPlan struct {
 	UpdatedIndexEntry    EffortIndexEntry                `json:"updated_index_entry"`
 	Event                ProductStatusMigrationEvent     `json:"event"`
 	Blockers             []ProductStatusMigrationBlocker `json:"blockers"`
+	CommitWarning        string                          `json:"commit_warning,omitempty"`
 	NextValidAction      string                          `json:"next_valid_action"`
 }
 

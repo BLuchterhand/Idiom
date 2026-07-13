@@ -1,9 +1,13 @@
 package intentloop
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestExtractContractPreservesThresholdAndFreezesCLIScope(t *testing.T) {
-	prompt := `Implement coverage.
+var _ = ginkgo.Describe("Contract extraction", func() {
+	ginkgo.It("preserves thresholds and freezes typed contract plus CLI scope", func() {
+		prompt := `Implement coverage.
 
 Typed plan execution contract:
 {
@@ -30,46 +34,22 @@ Typed plan execution contract:
 
 History says internal/not-authority/not.go failed.`
 
-	contract, err := ExtractContract(ContractExtractionInput{
-		OriginalPrompt:        prompt,
-		RequiredCoveragePaths: []string{"internal/foo/cli.go"},
-		AllowedCandidatePaths: []string{"internal/foo/cli_test.go"},
-		WriteAllowedPaths:     []string{"internal/foo"},
+		contract, err := ExtractContract(ContractExtractionInput{
+			OriginalPrompt:        prompt,
+			RequiredCoveragePaths: []string{"internal/foo/cli.go"},
+			AllowedCandidatePaths: []string{"internal/foo/cli_test.go"},
+			WriteAllowedPaths:     []string{"internal/foo"},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(contract.AtomID).To(gomega.Equal("impl"))
+		gomega.Expect(contract.RequireSourceSanity).To(gomega.BeTrue())
+		gomega.Expect(contract.RequireVerification).To(gomega.BeTrue())
+		gomega.Expect(contract.RequireRequiredTests).To(gomega.BeTrue())
+		gomega.Expect(contract.RequiredTestCommandStrings()).To(gomega.Equal([]string{"go test ./internal/foo/..."}))
+		gomega.Expect(contract.AcceptanceObligations).To(gomega.HaveExactElements(gomega.HaveField("Threshold", ">=80%")))
+		gomega.Expect(contract.ScopeContract.RequiredCoveragePaths).To(gomega.ContainElements("internal/foo/foo.go", "internal/foo/cli.go"))
+		gomega.Expect(contract.ScopeContract.AllowedCandidatePaths).NotTo(gomega.ContainElement("internal/not-authority/not.go"))
+		gomega.Expect(contract.ScopeContract.RequiredCoveragePaths).NotTo(gomega.ContainElement("internal/not-authority/not.go"))
+		gomega.Expect(contract.ContractHash).NotTo(gomega.BeEmpty())
 	})
-	if err != nil {
-		t.Fatalf("ExtractContract() error = %v", err)
-	}
-
-	if contract.AtomID != "impl" {
-		t.Fatalf("AtomID = %q, want impl", contract.AtomID)
-	}
-	if !contract.RequireSourceSanity || !contract.RequireVerification || !contract.RequireRequiredTests {
-		t.Fatalf("terminal requirements not preserved: %+v", contract)
-	}
-	if got := contract.RequiredTestCommandStrings(); len(got) != 1 || got[0] != "go test ./internal/foo/..." {
-		t.Fatalf("RequiredTestCommandStrings() = %#v", got)
-	}
-	if len(contract.AcceptanceObligations) != 1 || contract.AcceptanceObligations[0].Threshold != ">=80%" {
-		t.Fatalf("AcceptanceObligations = %#v", contract.AcceptanceObligations)
-	}
-	if !contains(contract.ScopeContract.RequiredCoveragePaths, "internal/foo/foo.go") ||
-		!contains(contract.ScopeContract.RequiredCoveragePaths, "internal/foo/cli.go") {
-		t.Fatalf("required scope not frozen from contract+CLI: %#v", contract.ScopeContract.RequiredCoveragePaths)
-	}
-	if contains(contract.ScopeContract.AllowedCandidatePaths, "internal/not-authority/not.go") ||
-		contains(contract.ScopeContract.RequiredCoveragePaths, "internal/not-authority/not.go") {
-		t.Fatalf("history path leaked into scope: %+v", contract.ScopeContract)
-	}
-	if contract.ContractHash == "" {
-		t.Fatal("ContractHash is empty")
-	}
-}
-
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
+})

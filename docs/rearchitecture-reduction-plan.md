@@ -4,6 +4,107 @@ This plan defines the consolidation target for reducing code count while
 preserving Idiom's north-star behavior: the model owns strategy; the harness
 owns contracts, evidence, permissions, audit, and verification.
 
+## Closeout: Targeted Rearchitecture Was Justified
+
+Closeout snapshot: 2026-07-12. The right conclusion is not that Idiom needed a
+rewrite. It did have several high-risk shape problems: one runtime function had
+grown into a 20k-line coordination surface, invocation state was aliased through
+shared owners, the TUI mixed worker execution with live UI state, tool and
+evidence meaning had parallel authorities, and product-workflow persistence did
+not consistently make one durable state owner authoritative. Targeted
+rearchitecture materially improved those areas.
+
+The result is architecture-positive but not a production-LOC reduction overall.
+Physical Go line counts, including untracked files and excluding `testdata` and
+`vendor`, are:
+
+| Scope | Current | Change from `origin/main` (`b6591bf`) | Change from the initial plan baseline |
+| --- | ---: | ---: | ---: |
+| Production Go | 333,199 | +6,103 | +1,670 |
+| Test Go | 265,693 | -16,638 | -12,152 |
+| Total Go | 598,892 | -10,535 | -10,482 |
+
+The distribution matters more than the aggregate. `runner_core.go` fell from
+24,039 to 3,775 lines, a reduction of 20,264. The full `runtime/agent`
+production package fell by 6,425 lines and the TUI app fell by 2,231. In
+contrast, product-workflow production grew by 7,212 lines because the completed
+work added durable leases, compare-and-swap checks, journals, recovery,
+tombstones, event-authority validation, and adversarial filesystem handling.
+Those additions are not consolidation wins, but they close real correctness and
+crash-consistency gaps and should not be presented as accidental bloat.
+
+Earlier tracked-diff claims such as a 9,517-line production reduction are
+superseded. This checkout contains 57,726 lines of untracked Go source and tests;
+Git numstat alone omits them and materially overstates the production deletion.
+
+### What Changed
+
+- A run is now an explicit unit of work. `runExecution` owns one invocation's
+  value state and snapshots mutable inputs while retaining an explicit
+  `*Runner` dependency. It does not embed `Runner` or inherit shared methods.
+- Turn coordination uses one value-owned `runnerTurnState` rather than scalar
+  pointers kept in sync across the execution, recorder, and controller.
+- TUI prompt execution uses a detached `promptExecutionSession`. Workers operate
+  on a snapshot and send owned events back to the UI instead of capturing and
+  mutating the live Bubble Tea model.
+- Execution identity, approval routing, grants, handles, and accepted-grant
+  commit are invocation-scoped. Explicit-empty identity is distinct from an
+  absent binding, handle reads are reauthorized, and canceled timeout work
+  cannot grant access after its result loses the outer selection.
+- Tool names, capabilities, action classes, manifests, language-tool metadata,
+  and producer facts moved toward catalog- and producer-owned contracts.
+  Consumers project those facts instead of reconstructing meaning from result
+  text or maintaining parallel lists.
+- Completion recovery is a typed state machine. Progress contracts the active
+  violation, cleared violations are not heuristically re-armed, and the exact
+  pre-change context-specific retry thresholds remain on
+  `ActiveViolation.AttemptsSinceProgress`; `TotalAttempts` is audit-only.
+- Product workflows use lease-held state, descriptor-rooted access, durable
+  transaction records, recovery, and a single authoritative event-ledger path.
+  State, artifact, lock, and transaction paths cannot silently collide.
+- Alias-only types, compatibility wrappers, pass-through helpers, duplicate TUI
+  receiver methods, and test surfaces that preserved removed owners were deleted
+  rather than retained as migration scaffolding.
+
+### Why `runExecution` Exists
+
+The old `runnerRun` was legitimately confusing. It embedded `*Runner`, kept a
+pointer to separately allocated run state, and added an effective lane-policy
+field. Embedding made shared dependencies look like invocation-owned fields and
+promoted every `Runner` method into the temporary object. The constructor also
+looked too small to justify the extra type.
+
+Deleting the invocation object entirely would be the wrong correction. Hundreds
+of runtime helpers operate on the same run-scoped state, options, messages,
+policy, evidence, and collaborators; flattening that object would replace one
+owner with large parameter bundles and more aliasing. The corrected
+`runExecution` is a method-object/unit-of-work pattern: explicit dependency,
+value-owned state, cloned mutable inputs, and an immutable policy snapshot. The
+problem was implicit embedding and unclear ownership, not the existence of a
+run object.
+
+### Remaining Debt
+
+No further broad cleanup is justified without a new behavior-driven reason.
+The remaining structural debt is bounded:
+
+- Nested TUI plan execution still temporarily projects a group of prompt fields
+  into a child invocation. A first-class nested execution value may eventually
+  replace that dynamic scope, but only after its concurrency and cancellation
+  semantics are characterized.
+- The runtime session loop remains large. Extract another boundary only when a
+  stable typed turn outcome is proved; splitting it by line count would scatter
+  state-machine authority.
+- Product workflow is large but now cohesive around a difficult durable domain.
+  Further file moves should follow aggregate boundaries, not a target file size.
+- Package-global fault-injection hooks remain test debt. They are lower priority
+  than the completed authority, durability, and isolation fixes.
+
+The stopping rule is therefore met: there is no known P0-P2 architecture defect
+in the frozen production slices, remaining opportunities are P3 or require new
+behavioral characterization, and another generic cleanup pass would have a
+higher regression risk than expected consolidation value.
+
 ## Safety Definition
 
 Behavior preservation means preserving enforceable harness contracts, not every
@@ -163,7 +264,12 @@ their direct tool schemas/classification, while unsupported requests through
 the read-only resolver now use the normal unmapped fallback path. The read-only
 capability and tool-schema exports moved to `v2` for the removed fields/error
 class, and private non-runtime-routed resolver states now report `unsupported`
-instead of preserving a deferred route vocabulary.
+instead of preserving a deferred route vocabulary. Harness coverage separately
+projects exact capability adapters, documented direct-only tools, and genuinely
+unexplained adapters, so a deliberate direct contract is visible without being
+reported as a routing gap. Optional precision backends and opt-in ranker state
+likewise retain explicit availability/status rows without producing an action
+finding when their absence is expected.
 Runtime discovery-result meaning now has a single local outcome projection over
 `toolfacts.DiscoveryStrength`, candidate paths, search hit count, and broad
 search status. Pending-discovery state and read-only answerability consume that
@@ -782,7 +888,7 @@ Primary files:
 
 Focused tests:
 
-- `go test ./internal/capabilities/workspace -run 'TestParseToolRequest|TestDecodeToolRequestJSON|TestLooksLikeXMLToolCallMarkup|TestFormatToolResultForModel'`
+- `go test ./internal/capabilities/workspace -ginkgo.focus 'parse tool request|decode tool request json|looks like xml tool call markup|format tool result for model' -ginkgo.fail-on-empty`
 - `go test ./internal/capabilities/workspace`
 
 Current-state note: `tool_request_parse.go` is now a thin public entrypoint.
@@ -812,7 +918,7 @@ Primary files:
 
 Focused tests:
 
-- `go test ./internal/capabilities/workspace -run 'Test(SystemSearchAccess|ResolveReadPath|ReadFile|ListFiles|SearchFiles|FileStats|FindPathSuggestions|SearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol|PrefetchReadFiles)'`
+- `go test ./internal/capabilities/workspace -ginkgo.focus 'system search access|resolve read path|read file|list files|search files|file stats|find path suggestions|search content zero hit suggests paths|prefetch read files' -ginkgo.fail-on-empty`
 - `go test ./internal/capabilities/workspace`
 
 Current-state note: read-oriented tool behavior now lives in `read_tools.go`,
@@ -848,7 +954,7 @@ Primary files:
 
 Focused tests:
 
-- `go test ./internal/capabilities/workspace -run 'TestToolTimeout|TestExecuteWithTimeoutFn|TestManagerBuildToolDefinitions|TestManagerAllowedTools|TestManagerExecute_|TestManagerDoesNotAdvertiseUnavailableExternalTools|TestManagerBoundsExternalToolOutput|TestGit|TestExploreShellClassificationAndValidation|TestShouldClearBroadInspectionLock|TestStructuredNarrowingUsesSharedRegistryPredicate|TestExecuteReadWriteAndExploreWriteRejection|TestEnvWithCanonicalPWDOverridesLogicalPWD|TestUnsupportedToolErrorSuggestsClosestNames'`
+- `go test ./internal/capabilities/workspace -ginkgo.focus 'tool timeout|execute with timeout fn|manager build tool definitions|manager allowed tools|manager does not advertise unavailable external tools|manager bounds external tool output|git tools|explore shell classification and validation|should clear broad inspection lock|structured narrowing uses shared registry predicate|execute read write and explore write rejection|manager external tool uses canonical pwd overlay|unsupported tool error suggests closest names' -ginkgo.fail-on-empty`
 - `go test ./internal/capabilities/workspace`
 
 Current-state note: `manager.go` is now the workspace session facade at roughly

@@ -1,27 +1,32 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/runtime/agent"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestLogRunEventPromotesChildToolTelemetryToTypedRecords(t *testing.T) {
+var _ = ginkgo.It("log run event promotes child tool telemetry to typed records", func() {
+	t := ginkgo.GinkgoT()
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:  t.TempDir(),
-		Mode: transcript.DebugLogModeFull,
+		Mode: runprofile.DebugLogModeFull,
 	})
-	if err != nil {
-		t.Fatalf("NewDebugLogger: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("NewDebugLogger: %v", err))
 
 	model := &Model{debugLogger: logger}
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 
 	requestPayload := mustMarshalJSON(t, agent.ToolRequestEvent{
 		Step:  1,
@@ -37,7 +42,7 @@ func TestLogRunEventPromotesChildToolTelemetryToTypedRecords(t *testing.T) {
 		Narrowing: true,
 		Action:    "structural_search:internal:if $x { $y }:go",
 	})
-	model.logRunEvent(agent.RunEvent{Role: "child_tool_request", Content: requestPayload})
+	session.logRunEvent(agent.RunEvent{Role: "child_tool_request", Content: requestPayload})
 
 	resultPayload := mustMarshalJSON(t, agent.ToolResultEvent{
 		Step:  1,
@@ -54,55 +59,49 @@ func TestLogRunEventPromotesChildToolTelemetryToTypedRecords(t *testing.T) {
 			Output:  "[]",
 		},
 	})
-	model.logRunEvent(agent.RunEvent{Role: "child_tool_result", Content: resultPayload})
+	session.logRunEvent(agent.RunEvent{Role: "child_tool_result", Content: resultPayload})
 
-	if err := logger.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	{
+		err := logger.Close()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Close: %v", err))
 	}
 
 	records := readAppDebugLogRecords(t, logger.Path())
-	if len(records) != 2 {
-		t.Fatalf("expected typed child request/result records, got %#v", records)
-	}
+	gomega.Expect(len(records)).To(gomega.Equal(2), fmt.Sprintf("expected typed child request/result records, got %#v", records))
 
-	if records[0]["type"] != "tool_request" || records[0]["agent"] != "child:explorer" || records[0]["discovery_class"] != "ast_search" {
-		t.Fatalf("unexpected child tool_request record: %#v", records[0])
-	}
+	gomega.Expect(records[0]["type"]).To(gomega.Equal("tool_request"), fmt.Sprintf("unexpected child tool_request record: %#v", records[0]))
+	gomega.Expect(records[0]["agent"]).To(gomega.Equal("child:explorer"), fmt.Sprintf("unexpected child tool_request record: %#v", records[0]))
+	gomega.Expect(records[0]["discovery_class"]).To(gomega.Equal("ast_search"), fmt.Sprintf("unexpected child tool_request record: %#v", records[0]))
 
-	if records[1]["type"] != "tool_result" || records[1]["agent"] != "child:explorer" || records[1]["discovery_class"] != "ast_search" {
-		t.Fatalf("unexpected child tool_result record: %#v", records[1])
-	}
+	gomega.Expect(records[1]["type"]).To(gomega.Equal("tool_result"), fmt.Sprintf("unexpected child tool_result record: %#v", records[1]))
+	gomega.Expect(records[1]["agent"]).To(gomega.Equal("child:explorer"), fmt.Sprintf("unexpected child tool_result record: %#v", records[1]))
+	gomega.Expect(records[1]["discovery_class"]).To(gomega.Equal("ast_search"), fmt.Sprintf("unexpected child tool_result record: %#v", records[1]))
 
-	if model.sessionAgg.discoveryClasses["ast_search"] != 1 {
-		t.Fatalf("expected session aggregate to count child discovery class, got %#v", model.sessionAgg.discoveryClasses)
-	}
-}
+	gomega.Expect(session.sessionAgg.discoveryClasses["ast_search"]).To(gomega.Equal(1), fmt.Sprintf("expected session aggregate to count child discovery class, got %#v", session.sessionAgg.discoveryClasses))
+})
 
-func mustMarshalJSON(t *testing.T, value any) string {
-	t.Helper()
+func mustMarshalJSON(t ginkgo.FullGinkgoTInterface, value any) string {
+	ginkgo.GinkgoHelper()
 
 	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Marshal: %v", err))
 
 	return string(data)
 }
 
-func readAppDebugLogRecords(t *testing.T, path string) []map[string]any {
-	t.Helper()
+func readAppDebugLogRecords(t ginkgo.FullGinkgoTInterface, path string) []map[string]any {
+	ginkgo.GinkgoHelper()
 
 	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		t.Fatalf("read log: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read log: %v", err))
 
 	var records []map[string]any
 
 	for _, line := range splitNonEmptyLines(string(data)) {
 		record := make(map[string]any)
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("unmarshal %q: %v", line, err)
+		{
+			err := json.Unmarshal([]byte(line), &record)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("unmarshal %q: %v", line, err))
 		}
 
 		records = append(records, record)

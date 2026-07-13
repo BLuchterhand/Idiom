@@ -19,13 +19,14 @@ import (
 const loadingModelRetryDelay = 500 * time.Millisecond
 
 type Client struct {
-	baseURL         string
-	backend         string
-	modelName       string
-	apiKeyEnv       string
-	reasoningEffort string
-	verbosity       string
-	http            *http.Client
+	baseURL                 string
+	backend                 string
+	modelName               string
+	apiKeyEnv               string
+	reasoningEffort         string
+	verbosity               string
+	emitRequestSurfaceFacts bool
+	http                    *http.Client
 }
 
 type ChatMessage struct {
@@ -310,6 +311,15 @@ func (c *Client) WithReasoningEffort(effort string) *Client {
 
 func (c *Client) WithVerbosity(verbosity string) *Client {
 	c.verbosity = strings.TrimSpace(verbosity)
+	return c
+}
+
+// WithRequestSurfaceFacts enables a privacy-safe request header used by the
+// hermetic scripted-model harness. The header contains only the effective
+// pre-adaptation tool names/count and transport; it never contains messages or
+// tool arguments.
+func (c *Client) WithRequestSurfaceFacts(enabled bool) *Client {
+	c.emitRequestSurfaceFacts = enabled
 	return c
 }
 
@@ -991,6 +1001,7 @@ func remapToolCalls(calls []ToolCall, reverse map[string]string) []ToolCall {
 }
 
 func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage, opts ChatOptions) (ChatMessage, error) {
+	requestSurfaceFact := c.requestSurfaceFact(opts)
 	adapter := c.adapter()
 	messages = repairMessageToolPairing(messages)
 	if opts.Model == "" {
@@ -1031,6 +1042,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		}
 
 		req.Header.Set("Content-Type", "application/json")
+		c.applyRequestSurfaceFactHeader(req, requestSurfaceFact)
 
 		if err := c.applyAuth(req); err != nil {
 			return ChatMessage{}, err

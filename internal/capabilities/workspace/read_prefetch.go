@@ -1,11 +1,9 @@
 package workspace
 
 import (
-	"bufio"
 	"bytes"
+	"context"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"idiom/internal/contracts/toolfacts"
@@ -45,7 +43,7 @@ type PrefetchSkippedPath struct {
 	Reason string
 }
 
-func (m *Manager) PrefetchReadFiles(paths []string, opts PrefetchReadOptions) PrefetchReadReport {
+func (m *Manager) PrefetchReadFiles(ctx context.Context, paths []string, opts PrefetchReadOptions) PrefetchReadReport {
 	report := PrefetchReadReport{RequestedPaths: len(paths)}
 	if m == nil || !m.Enabled() {
 		for _, path := range paths {
@@ -56,6 +54,7 @@ func (m *Manager) PrefetchReadFiles(paths []string, opts PrefetchReadOptions) Pr
 	}
 
 	opts = m.normalizePrefetchReadOptions(opts)
+	ctx = m.snapshotExecutionSession(ctx)
 
 	seen := map[string]struct{}{}
 
@@ -75,7 +74,7 @@ func (m *Manager) PrefetchReadFiles(paths []string, opts PrefetchReadOptions) Pr
 			continue
 		}
 
-		result, selectedPath, bytesRead, linesRead, truncated, skip := m.prefetchReadFile(requested, opts, opts.MaxBytes-report.Bytes)
+		result, selectedPath, bytesRead, linesRead, truncated, skip := m.prefetchReadFile(ctx, requested, opts, opts.MaxBytes-report.Bytes)
 		if skip.Reason != "" {
 			report.SkippedPaths = append(report.SkippedPaths, skip)
 			continue
@@ -146,13 +145,18 @@ func (m *Manager) normalizePrefetchReadOptions(opts PrefetchReadOptions) Prefetc
 	return opts
 }
 
-func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, remainingBytes int) (ToolResult, string, int, int, bool, PrefetchSkippedPath) {
-	path, description, err := m.resolveReadTarget(ToolRequest{Path: requested})
-	if err != nil {
+func (m *Manager) prefetchReadFile(ctx context.Context, requested string, opts PrefetchReadOptions, remainingBytes int) (ToolResult, string, int, int, bool, PrefetchSkippedPath) {
+	mutationEpoch := m.MutationEpoch()
+	snapshot, err := m.SnapshotWorkspace(ctx, WorkspaceSnapshotRequest{
+		Purpose: WorkspaceSnapshotSourceWindow,
+		Paths:   []string{requested},
+	})
+	if err != nil || len(snapshot.Entries) != 1 {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: requested, Reason: "resolve_failed"}
 	}
-
-	displayPath := m.pathAccess.DisplayPath(path)
+	entry := snapshot.Entries[0]
+	displayPath := entry.Identity.CanonicalID
+	description := m.handleDisplay(entry.Identity.AbsolutePath)
 	kind := classifySearchFilePath(displayPath)
 
 	switch kind {
@@ -160,13 +164,8 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "excluded_" + string(kind)}
 	}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "stat_failed"}
-	}
-
-	if info.IsDir() {
-		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "directory"}
+	if entry.Kind != WorkspaceSnapshotFile {
+		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
 	}
 
 	if opts.MaxBytesPerFile <= 0 || opts.MaxExcerptBytes <= 0 || remainingBytes <= 0 {
@@ -178,27 +177,19 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 		sampleLimit = remainingBytes
 	}
 
-	file, err := os.Open(path)
-	if err != nil {
-		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(io.LimitReader(file, int64(sampleLimit)))
-	if err != nil {
-		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
+	fullBody := entry.Body()
+	data := fullBody
+	if len(data) > sampleLimit {
+		data = data[:sampleLimit]
 	}
 
 	if bytes.IndexByte(data, 0) >= 0 {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "binary"}
 	}
 
-	originalLines, err := countWorkspaceFileLines(path)
-	if err != nil {
-		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
-	}
+	originalLines := len(textutil.SplitWorkspaceFileLines(fullBody))
 
-	excerptLimit := prefetchExcerptLimit(info.Size(), opts, remainingBytes, len(data))
+	excerptLimit := prefetchExcerptLimit(int64(len(fullBody)), opts, remainingBytes, len(data))
 
 	excerpt := data
 	if len(excerpt) > excerptLimit {
@@ -206,27 +197,36 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 	}
 
 	outputBytes := len(excerpt)
-	truncated := int64(outputBytes) < info.Size()
+	truncated := outputBytes < len(fullBody)
 	lines := textutil.SplitWorkspaceFileLines(excerpt)
 
-	if len(lines) == 0 {
-		lines = []string{""}
-	}
-
 	var b strings.Builder
+	lineContentTruncated := false
+	hasCarriageReturn := false
+	exposedLines := make([]string, 0, len(lines))
 
 	for i, line := range lines {
-		line = strings.TrimRight(line, "\r\n")
+		trimmed := strings.TrimRight(line, "\r\n")
+		hasCarriageReturn = hasCarriageReturn || strings.HasSuffix(line, "\r")
 		if truncated {
-			line = textutil.TruncateBytes(line, defaultLogLineCharCap, lineTruncationMarker)
+			line = textutil.TruncateBytes(trimmed, defaultLogLineCharCap, lineTruncationMarker)
+			lineContentTruncated = lineContentTruncated || line != trimmed
+		} else {
+			line = trimmed
 		}
+		exposedLines = append(exposedLines, line)
 
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
 	}
 
-	summary := fmt.Sprintf("Read %s lines 1-%d (total lines: %d; source: prefetch)", description, len(lines), len(lines))
+	startLine := 1
+	endLine := len(lines)
+	if originalLines == 0 {
+		startLine = 0
+	}
+	summary := fmt.Sprintf("Read %s lines %d-%d (total lines: %d; source: prefetch)", description, startLine, endLine, originalLines)
 	if truncated {
-		summary = fmt.Sprintf("Read %s lines 1-%d (excerpt lines: %d; total lines: %d; bytes: %d/%d; source: prefetch; truncated=true)", description, len(lines), len(lines), originalLines, outputBytes, info.Size())
+		summary = fmt.Sprintf("Read %s lines %d-%d (excerpt lines: %d; total lines: %d; bytes: %d/%d; source: prefetch; truncated=true)", description, startLine, endLine, len(lines), originalLines, outputBytes, len(fullBody))
 		if originalLines > len(lines) {
 			fmt.Fprintf(&b, "\n[prefetch excerpt truncated: omitted lines %d-%d; full file not included in prefetch]", len(lines)+1, originalLines)
 		} else {
@@ -236,19 +236,33 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 
 	m.MarkPathObserved(displayPath)
 
-	return ToolResult{
+	if mutationEpoch != m.MutationEpoch() {
+		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "stale_generation"}
+	}
+	result := ToolResult{
 		Tool:    ToolNamePrefetch,
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:       displayPath,
-			StartLine:  1,
-			EndLine:    len(lines),
-			TotalLines: originalLines,
-			Truncated:  truncated,
-		}),
-	}, displayPath, outputBytes, len(lines), truncated, PrefetchSkippedPath{}
+	}
+	evidence := toolfacts.SourceWindowEvidence{
+		CanonicalID: entry.Identity.CanonicalID, StartLine: startLine, EndLine: endLine, TotalLines: originalLines,
+		Truncated: truncated, RevisionSHA256: entry.Evidence.DigestSHA256,
+		WindowSHA256: toolfacts.SourceWindowSHA256([]byte(strings.Join(exposedLines, "\n"))), MutationEpoch: mutationEpoch,
+	}
+	evidence.Authority = toolfacts.SourceWindowAuthorityEvidence{
+		PolicySubject:  entry.Metadata.PolicySubject,
+		PolicyDecision: entry.Metadata.PolicyDecision,
+	}
+	cutInsideLine := truncated && len(excerpt) > 0 && excerpt[len(excerpt)-1] != '\n'
+	if !lineContentTruncated && !hasCarriageReturn && !cutInsideLine {
+		window, windowErr := NewWorkspaceSourceWindow(evidence, strings.Join(exposedLines, "\n"))
+		if windowErr != nil {
+			return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "invalid_source_window"}
+		}
+		attachWorkspaceSourceWindows(&result, window)
+	}
+	return result, displayPath, outputBytes, len(lines), truncated, PrefetchSkippedPath{}
 }
 
 func prefetchExcerptLimit(fileSize int64, opts PrefetchReadOptions, remainingBytes int, bytesRead int) int {
@@ -266,32 +280,4 @@ func prefetchExcerptLimit(fileSize int64, opts PrefetchReadOptions, remainingByt
 	}
 
 	return limit
-}
-
-func countWorkspaceFileLines(path string) (int, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return 0, err
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	lines := 0
-
-	for {
-		_, err := reader.ReadString('\n')
-		lines++
-
-		if err == nil {
-			continue
-		}
-
-		if err == io.EOF {
-			break
-		}
-
-		return 0, err
-	}
-
-	return lines, nil
 }

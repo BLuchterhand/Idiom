@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"idiom/internal/evidence/transcript"
 	"idiom/internal/runtime/agent"
 )
 
@@ -53,6 +54,28 @@ func (s *jsonEventStream) emit(record map[string]any) {
 	_, _ = s.w.Write(append(data, '\n'))
 }
 
+func (s *jsonEventStream) emitMessage(role, content string) {
+	switch role {
+	case "user", "assistant", "route_plan":
+	default:
+		return
+	}
+
+	s.emit(map[string]any{
+		"type":    "message",
+		"role":    role,
+		"content": content,
+	})
+}
+
+func (s *jsonEventStream) emitError(kind, message string) {
+	s.emit(map[string]any{
+		"type":    "error",
+		"kind":    kind,
+		"message": message,
+	})
+}
+
 // SetJSONEventStream wires a JSONL event sink onto the Model. Callers (typically
 // headless `idiom run --prompt --json`) should pass os.Stdout. Pass nil to
 // disable. The sessionID is included in every emitted record so consumers can
@@ -68,6 +91,10 @@ func (m *Model) SetJSONEventStream(w io.Writer, sessionID string) {
 	}
 
 	m.eventStream = newJSONEventStream(w, sessionID)
+	if m.pendingMutationStateResumeAudit != nil {
+		emitMutationStateResumeAudit(m.eventStream, nil, *m.pendingMutationStateResumeAudit)
+		m.pendingMutationStateResumeAudit = nil
+	}
 }
 
 // DebugLogPath returns the JSONL debug-log path for the current session, or ""
@@ -80,29 +107,7 @@ func (m *Model) DebugLogPath() string {
 	return m.debugLogPath
 }
 
-func (m *Model) emitJSONEvent(record map[string]any) {
-	if m == nil || m.eventStream == nil {
-		return
-	}
-
-	m.eventStream.emit(record)
-}
-
-func (m *Model) emitJSONMessage(role, content string) {
-	switch role {
-	case "user", "assistant", "route_plan":
-	default:
-		return
-	}
-
-	m.emitJSONEvent(map[string]any{
-		"type":    "message",
-		"role":    role,
-		"content": content,
-	})
-}
-
-func (m *Model) emitJSONToolRequest(event agent.ToolRequestEvent) {
+func (m *promptExecutionSession) emitJSONToolRequest(event agent.ToolRequestEvent) {
 	record := map[string]any{
 		"type":      "tool_request",
 		"step":      event.Step,
@@ -117,19 +122,16 @@ func (m *Model) emitJSONToolRequest(event agent.ToolRequestEvent) {
 	if event.DiscoveryClass != "" {
 		record["discovery_class"] = event.DiscoveryClass
 	}
-
 	if event.DiscoveryScope != "" {
 		record["discovery_scope"] = event.DiscoveryScope
 	}
-
 	if event.DiscoveryCost != "" {
 		record["discovery_cost"] = event.DiscoveryCost
 	}
-
-	m.emitJSONEvent(record)
+	m.eventStream.emit(record)
 }
 
-func (m *Model) emitJSONToolResult(event agent.ToolResultEvent) {
+func (m *promptExecutionSession) emitJSONToolResult(event agent.ToolResultEvent) {
 	record := map[string]any{
 		"type":    "tool_result",
 		"step":    event.Step,
@@ -140,26 +142,20 @@ func (m *Model) emitJSONToolResult(event agent.ToolResultEvent) {
 	if event.Result.Error != "" {
 		record["error"] = event.Result.Error
 	}
-
-	m.emitJSONEvent(record)
+	for key, value := range transcript.PrivacySafeToolResultFactFields(event.Result.Facts) {
+		record[key] = value
+	}
+	m.eventStream.emit(record)
 }
 
-func (m *Model) emitJSONError(kind, message string) {
-	m.emitJSONEvent(map[string]any{
-		"type":    "error",
-		"kind":    kind,
-		"message": message,
-	})
-}
-
-func (m *Model) emitJSONFinal(reply string) {
-	m.emitJSONEvent(map[string]any{
+func (m *promptExecutionSession) emitJSONFinal(reply string) {
+	m.eventStream.emit(map[string]any{
 		"type":    "final",
 		"content": reply,
 	})
 }
 
-func (m *Model) emitJSONStart(prompt string) {
+func (m *promptExecutionSession) emitJSONStart(prompt string) {
 	record := map[string]any{
 		"type":   "start",
 		"prompt": prompt,
@@ -169,6 +165,6 @@ func (m *Model) emitJSONStart(prompt string) {
 		record["workspace_mode"] = string(m.workspace.Mode())
 	}
 
-	record["agent_mode"] = m.currentMode().Name
-	m.emitJSONEvent(record)
+	record["agent_mode"] = currentMode(m.agentModeName, m.cfg.Chat.AgentMode).Name
+	m.eventStream.emit(record)
 }

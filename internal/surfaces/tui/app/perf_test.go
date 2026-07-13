@@ -1,16 +1,18 @@
 package app
 
 import (
+	"fmt"
 	"strings"
-	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/runtime/llama"
 )
 
-func TestRenderedMessageBody_PerMessageCache_AppendOnly(t *testing.T) {
+var _ = ginkgo.It("rendered message body per message cache append only", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -20,17 +22,11 @@ func TestRenderedMessageBody_PerMessageCache_AppendOnly(t *testing.T) {
 	}
 
 	first := m.renderedMessageBody()
-	if !strings.Contains(first, "first body") {
-		t.Fatalf("initial render missing first body:\n%s", first)
-	}
+	gomega.Expect(strings.Contains(first, "first body")).To(gomega.BeTrue(), fmt.Sprintf("initial render missing first body:\n%s", first))
 
-	if len(m.perMsgRenderCache) != 1 {
-		t.Fatalf("expected 1 cached entry after first render, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(1), fmt.Sprintf("expected 1 cached entry after first render, got %d", len(m.perMsgRenderCache)))
 
-	if m.perMsgRenderLen != 1 {
-		t.Fatalf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen)
-	}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(1), fmt.Sprintf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen))
 
 	cachedFirst := m.perMsgRenderCache[0]
 
@@ -38,24 +34,16 @@ func TestRenderedMessageBody_PerMessageCache_AppendOnly(t *testing.T) {
 
 	updated := m.renderedMessageBody()
 
-	if !strings.Contains(updated, "first body") {
-		t.Fatalf("updated render missing first body:\n%s", updated)
-	}
+	gomega.Expect(strings.Contains(updated, "first body")).To(gomega.BeTrue(), fmt.Sprintf("updated render missing first body:\n%s", updated))
 
-	if !strings.Contains(updated, "second body") {
-		t.Fatalf("updated render missing second body:\n%s", updated)
-	}
+	gomega.Expect(strings.Contains(updated, "second body")).To(gomega.BeTrue(), fmt.Sprintf("updated render missing second body:\n%s", updated))
 
-	if len(m.perMsgRenderCache) != 2 {
-		t.Fatalf("expected 2 cached entries after append, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(2), fmt.Sprintf("expected 2 cached entries after append, got %d", len(m.perMsgRenderCache)))
 
-	if m.perMsgRenderCache[0] != cachedFirst {
-		t.Fatalf("first message cache entry changed after append — should have been reused")
-	}
-}
+	gomega.Expect(m.perMsgRenderCache[0]).To(gomega.Equal(cachedFirst), fmt.Sprintf("first message cache entry changed after append — should have been reused"))
+})
 
-func TestRenderedMessageBody_PerMessageCache_ClearsOnInsert(t *testing.T) {
+var _ = ginkgo.It("rendered message body per message cache clears on insert", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -67,31 +55,21 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnInsert(t *testing.T) {
 
 	m.renderedMessageBody()
 
-	if len(m.perMsgRenderCache) != 2 {
-		t.Fatalf("expected 2 cached entries, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(2), fmt.Sprintf("expected 2 cached entries, got %d", len(m.perMsgRenderCache)))
 
 	m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: "tool_output | result"})
 
-	if len(m.messages) != 3 {
-		t.Fatalf("expected 3 messages after insert, got %d", len(m.messages))
-	}
+	gomega.Expect(len(m.messages)).To(gomega.Equal(3), fmt.Sprintf("expected 3 messages after insert, got %d", len(m.messages)))
 
 	result := m.renderedMessageBody()
-	if !strings.Contains(result, "tool_output") {
-		t.Fatalf("render after insert missing tool name:\n%s", result)
-	}
+	gomega.Expect(strings.Contains(result, "tool_output")).To(gomega.BeTrue(), fmt.Sprintf("render after insert missing tool name:\n%s", result))
 
-	if !strings.Contains(result, "user msg") {
-		t.Fatalf("render after insert missing user msg:\n%s", result)
-	}
+	gomega.Expect(strings.Contains(result, "user msg")).To(gomega.BeTrue(), fmt.Sprintf("render after insert missing user msg:\n%s", result))
 
-	if len(m.perMsgRenderCache) != 3 {
-		t.Fatalf("expected 3 cached entries after insert rebuild, got %d", len(m.perMsgRenderCache))
-	}
-}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(3), fmt.Sprintf("expected 3 cached entries after insert rebuild, got %d", len(m.perMsgRenderCache)))
+})
 
-func TestRenderedMessageBody_PerMessageCache_ClearsOnWidthChange(t *testing.T) {
+var _ = ginkgo.It("rendered message body per message cache clears on width change", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -102,25 +80,19 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnWidthChange(t *testing.T) {
 
 	m.renderedMessageBody()
 
-	if len(m.perMsgRenderCache) != 1 {
-		t.Fatalf("expected 1 cached entry, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(1), fmt.Sprintf("expected 1 cached entry, got %d", len(m.perMsgRenderCache)))
 
 	cached := m.perMsgRenderCache[0]
 
 	m.viewport.Width = 60
 	m.renderedMessageBody()
 
-	if len(m.perMsgRenderCache) != 1 {
-		t.Fatalf("expected 1 cached entry after resize, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(1), fmt.Sprintf("expected 1 cached entry after resize, got %d", len(m.perMsgRenderCache)))
 
-	if m.perMsgRenderCache[0] == cached {
-		t.Fatalf("cache entry should have been re-rendered after width change")
-	}
-}
+	gomega.Expect(m.perMsgRenderCache[0]).NotTo(gomega.Equal(cached), fmt.Sprintf("cache entry should have been re-rendered after width change"))
+})
 
-func TestRenderedMessageBody_PerMessageCache_MultipleAppends(t *testing.T) {
+var _ = ginkgo.It("rendered message body per message cache multiple appends", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -135,23 +107,17 @@ func TestRenderedMessageBody_PerMessageCache_MultipleAppends(t *testing.T) {
 		m.renderedMessageBody()
 	}
 
-	if len(m.perMsgRenderCache) != 5 {
-		t.Fatalf("expected 5 cached entries after 5 appends, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(5), fmt.Sprintf("expected 5 cached entries after 5 appends, got %d", len(m.perMsgRenderCache)))
 
-	if m.perMsgRenderLen != 5 {
-		t.Fatalf("expected perMsgRenderLen=5, got %d", m.perMsgRenderLen)
-	}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(5), fmt.Sprintf("expected perMsgRenderLen=5, got %d", m.perMsgRenderLen))
 
 	for i := 0; i < 5; i++ {
 		expected := "msg " + string(rune('A'+i))
-		if !strings.Contains(m.perMsgRenderCache[i], expected) {
-			t.Errorf("cache entry %d missing %q", i, expected)
-		}
+		gomega.Expect(strings.Contains(m.perMsgRenderCache[i], expected)).To(gomega.BeTrue(), fmt.Sprintf("cache entry %d missing %q", i, expected))
 	}
-}
+})
 
-func TestRenderedMessageBody_PerMessageCache_ClearsOnContentMutation(t *testing.T) {
+var _ = ginkgo.It("rendered message body per message cache clears on content mutation", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -163,20 +129,16 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnContentMutation(t *testing.
 
 	m.renderedMessageBody()
 
-	if m.perMsgRenderLen != 2 {
-		t.Fatalf("expected perMsgRenderLen=2, got %d", m.perMsgRenderLen)
-	}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(2), fmt.Sprintf("expected perMsgRenderLen=2, got %d", m.perMsgRenderLen))
 
 	m.messages[1].Content = "updated reply"
 
 	result := m.renderedMessageBody()
 
-	if !strings.Contains(result, "updated reply") {
-		t.Fatalf("expected updated content in render:\n%s", result)
-	}
-}
+	gomega.Expect(strings.Contains(result, "updated reply")).To(gomega.BeTrue(), fmt.Sprintf("expected updated content in render:\n%s", result))
+})
 
-func TestInvalidateMessageRenderCache_ClearsPerMessageCache(t *testing.T) {
+var _ = ginkgo.It("invalidate message render cache clears per message cache", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -187,26 +149,18 @@ func TestInvalidateMessageRenderCache_ClearsPerMessageCache(t *testing.T) {
 
 	m.renderedMessageBody()
 
-	if len(m.perMsgRenderCache) != 1 {
-		t.Fatalf("expected 1 cached entry, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(1), fmt.Sprintf("expected 1 cached entry, got %d", len(m.perMsgRenderCache)))
 
-	if m.perMsgRenderLen != 1 {
-		t.Fatalf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen)
-	}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(1), fmt.Sprintf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen))
 
 	m.invalidateMessageRenderCache()
 
-	if m.perMsgRenderCache != nil {
-		t.Fatalf("expected perMsgRenderCache to be nil after invalidation")
-	}
+	gomega.Expect(m.perMsgRenderCache).To(gomega.BeNil(), fmt.Sprintf("expected perMsgRenderCache to be nil after invalidation"))
 
-	if m.perMsgRenderLen != 0 {
-		t.Fatalf("expected perMsgRenderLen=0 after invalidation, got %d", m.perMsgRenderLen)
-	}
-}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(0), fmt.Sprintf("expected perMsgRenderLen=0 after invalidation, got %d", m.perMsgRenderLen))
+})
 
-func TestHandleToolTrace_CompactMode_SkipsMainRender(t *testing.T) {
+var _ = ginkgo.It("handle tool trace compact mode skips main render", func() {
 	m := &Model{
 		ready:                    true,
 		viewport:                 viewport.New(48, 12),
@@ -237,9 +191,7 @@ func TestHandleToolTrace_CompactMode_SkipsMainRender(t *testing.T) {
 	})
 
 	contentAfter := m.viewport.View()
-	if contentBefore != contentAfter {
-		t.Fatalf("compact trace mode should not change main viewport content")
-	}
+	gomega.Expect(contentBefore).To(gomega.Equal(contentAfter), fmt.Sprintf("compact trace mode should not change main viewport content"))
 
 	entry := &m.history.entries[1]
 	found := false
@@ -251,12 +203,10 @@ func TestHandleToolTrace_CompactMode_SkipsMainRender(t *testing.T) {
 		}
 	}
 
-	if !found {
-		t.Fatalf("expected tool trace to be recorded in history entry in compact mode, calls: %+v", entry.toolCalls)
-	}
-}
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("expected tool trace to be recorded in history entry in compact mode, calls: %+v", entry.toolCalls))
+})
 
-func TestHandleToolTrace_DetailMode_Renders(t *testing.T) {
+var _ = ginkgo.It("handle tool trace detail mode renders", func() {
 	m := &Model{
 		ready:     true,
 		viewport:  viewport.New(48, 12),
@@ -274,12 +224,10 @@ func TestHandleToolTrace_DetailMode_Renders(t *testing.T) {
 	})
 
 	view := m.viewport.View()
-	if !strings.Contains(view, "read_file") {
-		t.Fatalf("detail trace mode should render tool in main viewport:\n%s", view)
-	}
-}
+	gomega.Expect(strings.Contains(view, "read_file")).To(gomega.BeTrue(), fmt.Sprintf("detail trace mode should render tool in main viewport:\n%s", view))
+})
 
-func TestRenderPlanLine_UsesPrecompiledStyles(t *testing.T) {
+var _ = ginkgo.It("render plan line uses precompiled styles", func() {
 	cases := []struct {
 		name     string
 		input    string
@@ -295,20 +243,16 @@ func TestRenderPlanLine_UsesPrecompiledStyles(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		ginkgo.By(fmt.Sprint(tc.name), func() {
 			result := (&Model{}).renderPlanLine(tc.input, -1, 40)
-			if !strings.Contains(result, tc.contains) {
-				t.Errorf("renderPlanLine(%q) missing %q in:\n%s", tc.input, tc.contains, result)
-			}
+			gomega.Expect(strings.Contains(result, tc.contains)).To(gomega.BeTrue(), fmt.Sprintf("renderPlanLine(%q) missing %q in:\n%s", tc.input, tc.contains, result))
 
-			if strings.Contains(result, "<!--") {
-				t.Errorf("renderPlanLine should strip HTML comments, got:\n%s", result)
-			}
+			gomega.Expect(strings.Contains(result, "<!--")).To(gomega.BeFalse(), fmt.Sprintf("renderPlanLine should strip HTML comments, got:\n%s", result))
 		})
 	}
-}
+})
 
-func TestParsePlanItems(t *testing.T) {
+var _ = ginkgo.It("parse plan items", func() {
 	content := "# Plan\n- [ ] step one\n- [x] step two\n"
 	rows := (&Model{}).currentPlanSelectableRowsForContent(content)
 
@@ -319,16 +263,13 @@ func TestParsePlanItems(t *testing.T) {
 		}
 	}
 
-	if len(items) != 2 {
-		t.Fatalf("expected 2 plan items, got %d", len(items))
-	}
+	gomega.Expect(len(items)).To(gomega.Equal(2), fmt.Sprintf("expected 2 plan items, got %d", len(items)))
 
-	if items[0].Checked || !items[1].Checked {
-		t.Errorf("first should be unchecked, second checked")
-	}
-}
+	gomega.Expect(items[0].Checked).To(gomega.BeFalse(), fmt.Sprintf("first should be unchecked, second checked"))
+	gomega.Expect(items[1].Checked).To(gomega.BeTrue(), fmt.Sprintf("first should be unchecked, second checked"))
+})
 
-func TestRenderHistoryPanelContent_PrecompiledStyles(t *testing.T) {
+var _ = ginkgo.It("render history panel content precompiled styles", func() {
 	m := &Model{
 		history: historyState{
 			panelOpen: true,
@@ -352,20 +293,14 @@ func TestRenderHistoryPanelContent_PrecompiledStyles(t *testing.T) {
 	m.renderHistoryPanelContent()
 
 	view := m.history.viewport.View()
-	if !strings.Contains(view, "test summary") {
-		t.Fatalf("history panel should contain summary:\n%s", view)
-	}
+	gomega.Expect(strings.Contains(view, "test summary")).To(gomega.BeTrue(), fmt.Sprintf("history panel should contain summary:\n%s", view))
 
-	if !strings.Contains(view, "agent response text") {
-		t.Fatalf("history panel should contain expanded content:\n%s", view)
-	}
+	gomega.Expect(strings.Contains(view, "agent response text")).To(gomega.BeTrue(), fmt.Sprintf("history panel should contain expanded content:\n%s", view))
 
-	if !strings.Contains(view, "read_file") {
-		t.Fatalf("history panel should contain tool call:\n%s", view)
-	}
-}
+	gomega.Expect(strings.Contains(view, "read_file")).To(gomega.BeTrue(), fmt.Sprintf("history panel should contain tool call:\n%s", view))
+})
 
-func TestRenderMessages_SpinnerStillUpdatesDuringStreaming(t *testing.T) {
+var _ = ginkgo.It("render messages spinner still updates during streaming", func() {
 	m := &Model{
 		ready:     true,
 		viewport:  viewport.New(48, 12),
@@ -379,24 +314,18 @@ func TestRenderMessages_SpinnerStillUpdatesDuringStreaming(t *testing.T) {
 	m.renderMessages(false)
 
 	view1 := m.viewport.View()
-	if !strings.Contains(view1, "Qwen is preparing a response") {
-		t.Fatalf("streaming view should show working indicator:\n%s", view1)
-	}
+	gomega.Expect(strings.Contains(view1, "Qwen is preparing a response")).To(gomega.BeTrue(), fmt.Sprintf("streaming view should show working indicator:\n%s", view1))
 
 	m.workingFrame = 3
 	m.renderMessages(false)
 
 	view2 := m.viewport.View()
-	if !strings.Contains(view2, "Qwen is preparing a response") {
-		t.Fatalf("streaming view should still show working indicator:\n%s", view2)
-	}
+	gomega.Expect(strings.Contains(view2, "Qwen is preparing a response")).To(gomega.BeTrue(), fmt.Sprintf("streaming view should still show working indicator:\n%s", view2))
 
-	if view1 == view2 {
-		t.Fatalf("spinner animation should update between frames")
-	}
-}
+	gomega.Expect(view1).NotTo(gomega.Equal(view2), fmt.Sprintf("spinner animation should update between frames"))
+})
 
-func TestRenderMessages_CacheHitOnSpinnerTick(t *testing.T) {
+var _ = ginkgo.It("render messages cache hit on spinner tick", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -412,20 +341,14 @@ func TestRenderMessages_CacheHitOnSpinnerTick(t *testing.T) {
 	second := m.renderedMessageBody()
 	hash2 := m.messageRenderHash
 
-	if first != second {
-		t.Fatalf("same messages should produce identical cached output")
-	}
+	gomega.Expect(first).To(gomega.Equal(second), fmt.Sprintf("same messages should produce identical cached output"))
 
-	if hash1 != hash2 {
-		t.Fatalf("hash should be stable for identical input")
-	}
+	gomega.Expect(hash1).To(gomega.Equal(hash2), fmt.Sprintf("hash should be stable for identical input"))
 
-	if m.messageRenderCache != first {
-		t.Fatalf("cache should be reused on second call")
-	}
-}
+	gomega.Expect(m.messageRenderCache).To(gomega.Equal(first), fmt.Sprintf("cache should be reused on second call"))
+})
 
-func TestMessageRenderFingerprint_DetectsChanges(t *testing.T) {
+var _ = ginkgo.It("message render fingerprint detects changes", func() {
 	msgs1 := []llama.ChatMessage{{Role: "user", Content: "hello"}}
 	msgs2 := []llama.ChatMessage{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "world"}}
 	msgs3 := []llama.ChatMessage{{Role: "user", Content: "different"}}
@@ -434,21 +357,15 @@ func TestMessageRenderFingerprint_DetectsChanges(t *testing.T) {
 	h2 := messageRenderFingerprint(msgs2)
 	h3 := messageRenderFingerprint(msgs3)
 
-	if h1 == h2 {
-		t.Fatalf("fingerprints should differ when message count changes")
-	}
+	gomega.Expect(h1).NotTo(gomega.Equal(h2), fmt.Sprintf("fingerprints should differ when message count changes"))
 
-	if h1 == h3 {
-		t.Fatalf("fingerprints should differ when content changes")
-	}
+	gomega.Expect(h1).NotTo(gomega.Equal(h3), fmt.Sprintf("fingerprints should differ when content changes"))
 
 	h1again := messageRenderFingerprint(msgs1)
-	if h1 != h1again {
-		t.Fatalf("fingerprint should be deterministic for same input")
-	}
-}
+	gomega.Expect(h1).To(gomega.Equal(h1again), fmt.Sprintf("fingerprint should be deterministic for same input"))
+})
 
-func TestRenderMessages_EmptyMessagesShowsPlaceholder(t *testing.T) {
+var _ = ginkgo.It("render messages empty messages shows placeholder", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -458,12 +375,10 @@ func TestRenderMessages_EmptyMessagesShowsPlaceholder(t *testing.T) {
 	m.renderMessages(false)
 
 	view := m.viewport.View()
-	if !strings.Contains(view, "No messages yet") {
-		t.Fatalf("empty state should show placeholder:\n%s", view)
-	}
-}
+	gomega.Expect(strings.Contains(view, "No messages yet")).To(gomega.BeTrue(), fmt.Sprintf("empty state should show placeholder:\n%s", view))
+})
 
-func TestRenderMessages_ClearMessagesShowsPlaceholder(t *testing.T) {
+var _ = ginkgo.It("render messages clear messages shows placeholder", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -472,24 +387,18 @@ func TestRenderMessages_ClearMessagesShowsPlaceholder(t *testing.T) {
 
 	m.renderMessages(true)
 
-	if m.perMsgRenderLen != 1 {
-		t.Fatalf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen)
-	}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(1), fmt.Sprintf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen))
 
 	m.messages = nil
 	m.renderMessages(true)
 
 	view := m.viewport.View()
-	if !strings.Contains(view, "No messages yet") {
-		t.Fatalf("cleared messages should show placeholder:\n%s", view)
-	}
+	gomega.Expect(strings.Contains(view, "No messages yet")).To(gomega.BeTrue(), fmt.Sprintf("cleared messages should show placeholder:\n%s", view))
 
-	if m.perMsgRenderLen != 0 {
-		t.Fatalf("expected perMsgRenderLen=0 after clear, got %d", m.perMsgRenderLen)
-	}
-}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(0), fmt.Sprintf("expected perMsgRenderLen=0 after clear, got %d", m.perMsgRenderLen))
+})
 
-func TestRenderedMessageBody_AppendOnlyPreservesExistingCache(t *testing.T) {
+var _ = ginkgo.It("rendered message body append only preserves existing cache", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -507,20 +416,14 @@ func TestRenderedMessageBody_AppendOnlyPreservesExistingCache(t *testing.T) {
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "next question"})
 	m.renderedMessageBody()
 
-	if m.perMsgRenderCache[0] != cached0 {
-		t.Fatalf("cache[0] should be preserved after append")
-	}
+	gomega.Expect(m.perMsgRenderCache[0]).To(gomega.Equal(cached0), fmt.Sprintf("cache[0] should be preserved after append"))
 
-	if m.perMsgRenderCache[1] != cached1 {
-		t.Fatalf("cache[1] should be preserved after append")
-	}
+	gomega.Expect(m.perMsgRenderCache[1]).To(gomega.Equal(cached1), fmt.Sprintf("cache[1] should be preserved after append"))
 
-	if len(m.perMsgRenderCache) != 3 {
-		t.Fatalf("expected 3 cache entries, got %d", len(m.perMsgRenderCache))
-	}
-}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(3), fmt.Sprintf("expected 3 cache entries, got %d", len(m.perMsgRenderCache)))
+})
 
-func TestRenderedMessageBody_InsertClearsCache(t *testing.T) {
+var _ = ginkgo.It("rendered message body insert clears cache", func() {
 	m := &Model{
 		ready:    true,
 		viewport: viewport.New(48, 12),
@@ -532,19 +435,13 @@ func TestRenderedMessageBody_InsertClearsCache(t *testing.T) {
 
 	m.renderedMessageBody()
 
-	if len(m.perMsgRenderCache) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(m.perMsgRenderCache))
-	}
+	gomega.Expect(len(m.perMsgRenderCache)).To(gomega.Equal(2), fmt.Sprintf("expected 2 entries, got %d", len(m.perMsgRenderCache)))
 
 	m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: "tool_result"})
 
 	_ = m.renderedMessageBody()
 
-	if m.perMsgRenderLen != 3 {
-		t.Fatalf("expected perMsgRenderLen=3 after insert, got %d", m.perMsgRenderLen)
-	}
+	gomega.Expect(m.perMsgRenderLen).To(gomega.Equal(3), fmt.Sprintf("expected perMsgRenderLen=3 after insert, got %d", m.perMsgRenderLen))
 
-	if !strings.Contains(m.perMsgRenderCache[1], "tool_result") {
-		t.Fatalf("inserted tool message should be at index 1, got:\n%s", m.perMsgRenderCache[1])
-	}
-}
+	gomega.Expect(strings.Contains(m.perMsgRenderCache[1], "tool_result")).To(gomega.BeTrue(), fmt.Sprintf("inserted tool message should be at index 1, got:\n%s", m.perMsgRenderCache[1]))
+})

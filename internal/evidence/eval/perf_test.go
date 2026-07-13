@@ -2,8 +2,10 @@ package eval
 
 import (
 	"encoding/json"
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"strings"
-	"testing"
 )
 
 // Helper: build a synthetic record slice from a simple step script so
@@ -57,7 +59,7 @@ func buildSynth(userPrompt string, ledger map[string]any, steps []synthStep) []R
 	return records
 }
 
-func TestAnalyzeBudgetLedgerFields(t *testing.T) {
+var _ = ginkgo.It("analyze budget ledger fields", func() {
 	records := buildSynth(
 		"how does auth work",
 		map[string]any{
@@ -75,20 +77,16 @@ func TestAnalyzeBudgetLedgerFields(t *testing.T) {
 	)
 	rep := analyzeRecords("test", records)
 
-	if rep.ModelCalls != 7 || rep.ToolResults != 6 || rep.PromptTokens != 12345 || rep.DurationMillis != 9000 {
-		t.Fatalf("budget ledger not parsed: %+v", rep)
-	}
+	gomega.Expect(rep.ModelCalls).To(gomega.BeEquivalentTo(7), fmt.Sprintf("budget ledger not parsed: %+v", rep))
+	gomega.Expect(rep.ToolResults).To(gomega.BeEquivalentTo(6), fmt.Sprintf("budget ledger not parsed: %+v", rep))
+	gomega.Expect(rep.PromptTokens).To(gomega.BeEquivalentTo(12345), fmt.Sprintf("budget ledger not parsed: %+v", rep))
+	gomega.Expect(rep.DurationMillis).To(gomega.BeEquivalentTo(9000), fmt.Sprintf("budget ledger not parsed: %+v", rep))
 
-	if rep.StopReason != "model_final" {
-		t.Fatalf("stop reason: want model_final, got %q", rep.StopReason)
-	}
+	gomega.Expect(rep.StopReason).To(gomega.BeEquivalentTo("model_final"), fmt.Sprintf("stop reason: want model_final, got %q", rep.StopReason))
 
-	if rep.UserPrompt != "how does auth work" {
-		t.Fatalf("user prompt: want 'how does auth work', got %q", rep.UserPrompt)
-	}
-}
-
-func TestPathStemOfNormalizesWorkspacePath(t *testing.T) {
+	gomega.Expect(rep.UserPrompt).To(gomega.BeEquivalentTo("how does auth work"), fmt.Sprintf("user prompt: want 'how does auth work', got %q", rep.UserPrompt))
+})
+var _ = ginkgo.Describe("path stem normalization", func() {
 	cases := []struct {
 		path string
 		want string
@@ -98,15 +96,16 @@ func TestPathStemOfNormalizesWorkspacePath(t *testing.T) {
 		{path: "  ", want: ""},
 	}
 	for _, tt := range cases {
-		t.Run(tt.path, func(t *testing.T) {
-			if got := pathStemOf(tt.path); got != tt.want {
-				t.Fatalf("pathStemOf(%q) = %q, want %q", tt.path, got, tt.want)
+		tt := tt
+		ginkgo.It(tt.path, func() {
+			{
+				got := pathStemOf(tt.path)
+				gomega.Expect(got).To(gomega.BeEquivalentTo(tt.want), fmt.Sprintf("pathStemOf(%q) = %q, want %q", tt.path, got, tt.want))
 			}
 		})
 	}
-}
-
-func TestDetectDirWalkStreak(t *testing.T) {
+})
+var _ = ginkgo.It("detect dir walk streak", func() {
 	records := buildSynth("", nil, []synthStep{
 		{tool: "list_files", action: "list_files:.", raw: `{"path":"."}`, summary: "Listed 10 path(s)."},
 		{tool: "list_files", action: "list_files:a", raw: `{"path":"a"}`, summary: "Listed 5 path(s)."},
@@ -115,12 +114,9 @@ func TestDetectDirWalkStreak(t *testing.T) {
 	})
 	rep := analyzeRecords("test", records)
 
-	if !hasPattern(rep, "dir_walk_streak") {
-		t.Fatalf("expected dir_walk_streak, got: %+v", rep.AntiPatterns)
-	}
-}
-
-func TestAnalyzeLogIngestsContextTelemetryFields(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "dir_walk_streak")).To(gomega.BeTrue(), fmt.Sprintf("expected dir_walk_streak, got: %+v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("analyze log ingests context telemetry fields", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"tool": "context_status", "action": "context_status"}},
 		{Type: "tool_result", Data: map[string]any{
@@ -180,49 +176,64 @@ func TestAnalyzeLogIngestsContextTelemetryFields(t *testing.T) {
 	}
 	rep := analyzeRecords("test", records)
 
-	if rep.Context == nil {
-		t.Fatalf("expected context telemetry summary")
-	}
+	gomega.Expect(rep.Context).NotTo(gomega.BeNil(), fmt.Sprintf("expected context telemetry summary"))
 
-	if rep.Context.ToolResults != 2 || rep.Context.FreshResults != 1 || rep.Context.StaleResults != 1 {
-		t.Fatalf("unexpected context freshness summary: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.ToolResults).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected context freshness summary: %#v", rep.Context))
+	gomega.Expect(rep.Context.FreshResults).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context freshness summary: %#v", rep.Context))
+	gomega.Expect(rep.Context.StaleResults).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context freshness summary: %#v", rep.Context))
 
-	if rep.Context.MaxFilesIndexed != 3 || rep.Context.MaxSymbolsIndexed != 7 || rep.Context.MaxEdgesIndexed != 11 {
-		t.Fatalf("unexpected context graph maxima: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.MaxFilesIndexed).To(gomega.BeEquivalentTo(3), fmt.Sprintf("unexpected context graph maxima: %#v", rep.Context))
+	gomega.Expect(rep.Context.MaxSymbolsIndexed).To(gomega.BeEquivalentTo(7), fmt.Sprintf("unexpected context graph maxima: %#v", rep.Context))
+	gomega.Expect(rep.Context.MaxEdgesIndexed).To(gomega.BeEquivalentTo(11), fmt.Sprintf("unexpected context graph maxima: %#v", rep.Context))
 
-	if rep.Context.NodesReturned != 2 || rep.Context.EdgesReturned != 4 {
-		t.Fatalf("unexpected context query counts: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.NodesReturned).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected context query counts: %#v", rep.Context))
+	gomega.Expect(rep.Context.EdgesReturned).To(gomega.BeEquivalentTo(4), fmt.Sprintf("unexpected context query counts: %#v", rep.Context))
 
-	if rep.Context.StoreKindCounts["sqlite-graph-v1"] != 2 || rep.Context.ActiveBackendCounts["sqlite-graph-v1"] != 1 {
-		t.Fatalf("unexpected context backend counts: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.StoreKindCounts["sqlite-graph-v1"]).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected context backend counts: %#v", rep.Context))
+	gomega.Expect(rep.Context.ActiveBackendCounts["sqlite-graph-v1"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context backend counts: %#v", rep.Context))
 
-	if rep.Context.CollectorReports != 2 || rep.Context.CollectorCoverage != 3 || rep.Context.CollectorUnavailable != 1 || rep.Context.CollectorVersionMismatches != 1 || rep.Context.EnrichmentDiagnostics != 3 || rep.Context.CollectorReportNameCounts["python_lsp"] != 1 || rep.Context.CollectorCoverageNameCounts["python_index"] != 1 {
-		t.Fatalf("unexpected context collector telemetry: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.CollectorReports).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected context collector telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.CollectorCoverage).To(gomega.BeEquivalentTo(3), fmt.Sprintf("unexpected context collector telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.CollectorUnavailable).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context collector telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.CollectorVersionMismatches).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context collector telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.EnrichmentDiagnostics).To(gomega.BeEquivalentTo(3), fmt.Sprintf("unexpected context collector telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.CollectorReportNameCounts["python_lsp"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context collector telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.CollectorCoverageNameCounts["python_index"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context collector telemetry: %#v", rep.Context))
 
-	if rep.Context.MaxStaleSymbols != 2 || rep.Context.StaleSymbolSamples != 1 || rep.Context.RefreshedStaleSymbols != 1 || rep.Context.NormalizedRelationshipEdges != 4 {
-		t.Fatalf("unexpected context stale/relationship telemetry: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.MaxStaleSymbols).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected context stale/relationship telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.StaleSymbolSamples).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context stale/relationship telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.RefreshedStaleSymbols).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context stale/relationship telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.NormalizedRelationshipEdges).To(gomega.BeEquivalentTo(4), fmt.Sprintf("unexpected context stale/relationship telemetry: %#v", rep.Context))
 
-	if rep.Context.IncrementalRefreshes != 1 || rep.Context.ReusedIndexedFiles != 2 || rep.Context.DependencyRefreshFiles != 1 || rep.Context.SummaryNodesReturned != 1 || rep.Context.ModelSummaryNodesReturned != 1 {
-		t.Fatalf("unexpected context incremental/summary telemetry: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.IncrementalRefreshes).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context incremental/summary telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.ReusedIndexedFiles).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected context incremental/summary telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.DependencyRefreshFiles).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context incremental/summary telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.SummaryNodesReturned).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context incremental/summary telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.ModelSummaryNodesReturned).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context incremental/summary telemetry: %#v", rep.Context))
 
-	if rep.Context.AutoRefreshAttempts != 1 || rep.Context.AutoRefreshFilesIndexed != 1 || rep.Context.AutoRefreshRefreshedFiles != 1 || rep.Context.AutoRefreshFreshAfter != 1 || rep.Context.AutoRefreshReasonCounts["small_stale_file_set"] != 1 {
-		t.Fatalf("unexpected context auto-refresh telemetry: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.AutoRefreshAttempts).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context auto-refresh telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.AutoRefreshFilesIndexed).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context auto-refresh telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.AutoRefreshRefreshedFiles).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context auto-refresh telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.AutoRefreshFreshAfter).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context auto-refresh telemetry: %#v", rep.Context))
+	gomega.Expect(rep.Context.AutoRefreshReasonCounts["small_stale_file_set"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected context auto-refresh telemetry: %#v", rep.Context))
 
 	agg := Aggregate([]PerfReport{rep})
-	if agg.Context == nil || agg.Context.ToolResults != 2 || agg.Context.StorageBackendStatusCounts["sqlite-graph-v1:active"] != 1 || agg.Context.CollectorReportNameCounts["workspace_tool_enrichment"] != 1 || agg.Context.CollectorCoverageNameCounts["language_environment"] != 1 || agg.Context.CollectorVersionMismatches != 1 || agg.Context.NormalizedRelationshipEdges != 4 || agg.Context.IncrementalRefreshes != 1 || agg.Context.ReusedIndexedFiles != 2 || agg.Context.DependencyRefreshFiles != 1 || agg.Context.SummaryNodesReturned != 1 || agg.Context.ModelSummaryNodesReturned != 1 || agg.Context.AutoRefreshAttempts != 1 || agg.Context.AutoRefreshReasonCounts["small_stale_file_set"] != 1 {
-		t.Fatalf("aggregate did not preserve context telemetry: %#v", agg.Context)
-	}
-}
-
-func TestAnalyzeLogDistinguishesStaleEvidenceStates(t *testing.T) {
+	gomega.Expect(agg.Context).NotTo(gomega.BeNil(), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.ToolResults).To(gomega.BeEquivalentTo(2), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.StorageBackendStatusCounts["sqlite-graph-v1:active"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.CollectorReportNameCounts["workspace_tool_enrichment"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.CollectorCoverageNameCounts["language_environment"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.CollectorVersionMismatches).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.NormalizedRelationshipEdges).To(gomega.BeEquivalentTo(4), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.IncrementalRefreshes).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.ReusedIndexedFiles).To(gomega.BeEquivalentTo(2), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.DependencyRefreshFiles).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.SummaryNodesReturned).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.ModelSummaryNodesReturned).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.AutoRefreshAttempts).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+	gomega.Expect(agg.Context.AutoRefreshReasonCounts["small_stale_file_set"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve context telemetry: %#v", agg.Context))
+})
+var _ = ginkgo.It("analyze log distinguishes stale evidence states", func() {
 	records := []Record{
 		{Type: "tool_result", Data: map[string]any{
 			"tool":                              "context_query",
@@ -253,24 +264,22 @@ func TestAnalyzeLogDistinguishesStaleEvidenceStates(t *testing.T) {
 	}
 	rep := analyzeRecords("test", records)
 
-	if rep.Context == nil {
-		t.Fatalf("expected context telemetry summary")
-	}
+	gomega.Expect(rep.Context).NotTo(gomega.BeNil(), fmt.Sprintf("expected context telemetry summary"))
 
-	if rep.Context.FreshnessBlockers != 1 || rep.Context.FreshnessBudgetExceeded != 1 {
-		t.Fatalf("expected only blocked stale evidence to count as freshness blocker, got %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.FreshnessBlockers).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected only blocked stale evidence to count as freshness blocker, got %#v", rep.Context))
+	gomega.Expect(rep.Context.FreshnessBudgetExceeded).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected only blocked stale evidence to count as freshness blocker, got %#v", rep.Context))
 
-	if rep.Context.StaleUseBlocked != 1 || rep.Context.StaleUseReported != 1 || rep.Context.StaleUseAllowed != 1 || rep.Context.StaleUseFresh != 1 {
-		t.Fatalf("unexpected stale-evidence state counters: %#v", rep.Context)
-	}
+	gomega.Expect(rep.Context.StaleUseBlocked).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counters: %#v", rep.Context))
+	gomega.Expect(rep.Context.StaleUseReported).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counters: %#v", rep.Context))
+	gomega.Expect(rep.Context.StaleUseAllowed).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counters: %#v", rep.Context))
+	gomega.Expect(rep.Context.StaleUseFresh).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counters: %#v", rep.Context))
 
-	if rep.Context.StaleUseStateCounts["blocked"] != 1 || rep.Context.StaleUseStateCounts["reported"] != 1 || rep.Context.StaleUseStateCounts["allowed_stale"] != 1 || rep.Context.StaleUseStateCounts["fresh"] != 1 {
-		t.Fatalf("unexpected stale-evidence state counts: %#v", rep.Context.StaleUseStateCounts)
-	}
-}
-
-func TestAnalyzeLogIngestsHarnessFeedbackTelemetryFields(t *testing.T) {
+	gomega.Expect(rep.Context.StaleUseStateCounts["blocked"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counts: %#v", rep.Context.StaleUseStateCounts))
+	gomega.Expect(rep.Context.StaleUseStateCounts["reported"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counts: %#v", rep.Context.StaleUseStateCounts))
+	gomega.Expect(rep.Context.StaleUseStateCounts["allowed_stale"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counts: %#v", rep.Context.StaleUseStateCounts))
+	gomega.Expect(rep.Context.StaleUseStateCounts["fresh"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected stale-evidence state counts: %#v", rep.Context.StaleUseStateCounts))
+})
+var _ = ginkgo.It("analyze log ingests harness feedback telemetry fields", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"tool": "harness_feedback", "action": "harness_feedback"}},
 		{Type: "tool_result", Data: map[string]any{
@@ -297,25 +306,32 @@ func TestAnalyzeLogIngestsHarnessFeedbackTelemetryFields(t *testing.T) {
 	}
 	rep := analyzeRecords("test", records)
 
-	if rep.Feedback == nil {
-		t.Fatalf("expected feedback telemetry summary")
-	}
+	gomega.Expect(rep.Feedback).NotTo(gomega.BeNil(), fmt.Sprintf("expected feedback telemetry summary"))
 
-	if rep.Feedback.Total != 2 || rep.Feedback.Verified != 1 || rep.Feedback.Inferred != 1 || rep.Feedback.MediumSeverity != 1 || rep.Feedback.HighSeverity != 1 || rep.Feedback.EvidenceItems != 3 {
-		t.Fatalf("unexpected feedback summary: %#v", rep.Feedback)
-	}
+	gomega.Expect(rep.Feedback.Total).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected feedback summary: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.Verified).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback summary: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.Inferred).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback summary: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.MediumSeverity).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback summary: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.HighSeverity).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback summary: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.EvidenceItems).To(gomega.BeEquivalentTo(3), fmt.Sprintf("unexpected feedback summary: %#v", rep.Feedback))
 
-	if rep.Feedback.ByCategory["tool_gap"] != 1 || rep.Feedback.ByCategory["impact_ranking"] != 1 || rep.Feedback.ByPlanningCategory["impact_ranking"] != 1 || rep.Feedback.PlanningQualityTotal != 1 || rep.Feedback.ByComponent["context_pack"] != 1 || rep.Feedback.ByConfidence["verified"] != 1 || rep.Feedback.BySeverity["high"] != 1 {
-		t.Fatalf("unexpected feedback buckets: %#v", rep.Feedback)
-	}
+	gomega.Expect(rep.Feedback.ByCategory["tool_gap"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback buckets: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.ByCategory["impact_ranking"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback buckets: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.ByPlanningCategory["impact_ranking"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback buckets: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.PlanningQualityTotal).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback buckets: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.ByComponent["context_pack"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback buckets: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.ByConfidence["verified"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback buckets: %#v", rep.Feedback))
+	gomega.Expect(rep.Feedback.BySeverity["high"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected feedback buckets: %#v", rep.Feedback))
 
 	agg := Aggregate([]PerfReport{rep})
-	if agg.Feedback == nil || agg.Feedback.Total != 2 || agg.Feedback.HighSeverity != 1 || agg.Feedback.PlanningQualityTotal != 1 || agg.Feedback.ByCategory["impact_ranking"] != 1 || agg.Feedback.ByComponent["prompt/base"] != 1 {
-		t.Fatalf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback)
-	}
-}
-
-func TestAnalyzeLogIngestsLocalOpsTelemetryFields(t *testing.T) {
+	gomega.Expect(agg.Feedback).NotTo(gomega.BeNil(), fmt.Sprintf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback))
+	gomega.Expect(agg.Feedback.Total).To(gomega.BeEquivalentTo(2), fmt.Sprintf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback))
+	gomega.Expect(agg.Feedback.HighSeverity).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback))
+	gomega.Expect(agg.Feedback.PlanningQualityTotal).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback))
+	gomega.Expect(agg.Feedback.ByCategory["impact_ranking"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback))
+	gomega.Expect(agg.Feedback.ByComponent["prompt/base"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback))
+})
+var _ = ginkgo.It("analyze log ingests local ops telemetry fields", func() {
 	records := []Record{
 		{Type: "implement_start", Data: map[string]any{
 			"local_ops": map[string]any{
@@ -334,34 +350,32 @@ func TestAnalyzeLogIngestsLocalOpsTelemetryFields(t *testing.T) {
 	}
 
 	rep := analyzeRecords("test", records)
-	if rep.LocalOps == nil {
-		t.Fatal("expected local ops telemetry summary")
-	}
+	gomega.Expect(rep.LocalOps).NotTo(gomega.BeNil(), fmt.Sprint("expected local ops telemetry summary"))
 
-	if rep.LocalOps.BackendConfigured != 1 || rep.LocalOps.ContextBudgetDegraded != 1 || rep.LocalOps.ClassifierDegraded != 1 || rep.LocalOps.QueueDegraded != 1 || rep.LocalOps.QueueMaxWaitMillis != 42 || rep.LocalOps.ImplementCloseouts != 1 || rep.LocalOps.DoctorDegradedProfiles != 1 {
-		t.Fatalf("unexpected local ops telemetry: %#v", rep.LocalOps)
-	}
+	gomega.Expect(rep.LocalOps.BackendConfigured).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected local ops telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.ContextBudgetDegraded).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected local ops telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.ClassifierDegraded).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected local ops telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.QueueDegraded).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected local ops telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.QueueMaxWaitMillis).To(gomega.BeEquivalentTo(42), fmt.Sprintf("unexpected local ops telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.ImplementCloseouts).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected local ops telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.DoctorDegradedProfiles).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected local ops telemetry: %#v", rep.LocalOps))
 
 	agg := Aggregate([]PerfReport{rep})
-	if agg.LocalOps == nil || agg.LocalOps.QueueDegraded != 1 || agg.LocalOps.ImplementCloseouts != 1 {
-		t.Fatalf("aggregate did not preserve local ops telemetry: %#v", agg.LocalOps)
-	}
-}
-
-func TestAnalyzeLogCountsPlanExecuteQueueEvents(t *testing.T) {
+	gomega.Expect(agg.LocalOps).NotTo(gomega.BeNil(), fmt.Sprintf("aggregate did not preserve local ops telemetry: %#v", agg.LocalOps))
+	gomega.Expect(agg.LocalOps.QueueDegraded).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve local ops telemetry: %#v", agg.LocalOps))
+	gomega.Expect(agg.LocalOps.ImplementCloseouts).To(gomega.BeEquivalentTo(1), fmt.Sprintf("aggregate did not preserve local ops telemetry: %#v", agg.LocalOps))
+})
+var _ = ginkgo.It("analyze log counts plan execute queue events", func() {
 	rep := analyzeRecords("test", []Record{{
 		Type: "idiom.plan_execute.queue_unavailable",
 		Data: map[string]any{"state": "unavailable", "pool": "qwen-coder", "wait_ms": 17, "degraded": true},
 	}})
-	if rep.LocalOps == nil {
-		t.Fatal("expected local ops telemetry summary")
-	}
-	if rep.LocalOps.QueueEvents != 1 || rep.LocalOps.QueueDegraded != 1 || rep.LocalOps.QueueMaxWaitMillis != 17 {
-		t.Fatalf("unexpected queue telemetry: %#v", rep.LocalOps)
-	}
-}
-
-func TestDetectPromptSurfaceOverlap(t *testing.T) {
+	gomega.Expect(rep.LocalOps).NotTo(gomega.BeNil(), fmt.Sprint("expected local ops telemetry summary"))
+	gomega.Expect(rep.LocalOps.QueueEvents).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected queue telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.QueueDegraded).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected queue telemetry: %#v", rep.LocalOps))
+	gomega.Expect(rep.LocalOps.QueueMaxWaitMillis).To(gomega.BeEquivalentTo(17), fmt.Sprintf("unexpected queue telemetry: %#v", rep.LocalOps))
+})
+var _ = ginkgo.It("detect prompt surface overlap", func() {
 	records := []Record{
 		{Type: "session_start", Data: map[string]any{
 			"context_sources": []any{
@@ -383,16 +397,11 @@ func TestDetectPromptSurfaceOverlap(t *testing.T) {
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "prompt_surface_overlap")
 
-	if ap == nil {
-		t.Fatalf("expected prompt_surface_overlap")
-	}
+	gomega.Expect(ap).NotTo(gomega.BeNil(), fmt.Sprintf("expected prompt_surface_overlap"))
 
-	if ap.Count != 2 {
-		t.Fatalf("prompt_surface_overlap count: want 2, got %d", ap.Count)
-	}
-}
-
-func TestDetectCompletionGateReopenedDiscovery(t *testing.T) {
+	gomega.Expect(ap.Count).To(gomega.BeEquivalentTo(2), fmt.Sprintf("prompt_surface_overlap count: want 2, got %d", ap.Count))
+})
+var _ = ginkgo.It("detect completion gate reopened discovery", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "write a refined brief"}},
 		{Type: "model_call", Data: map[string]any{"prompt_tokens": 100, "completion_tokens": 20}},
@@ -416,16 +425,12 @@ func TestDetectCompletionGateReopenedDiscovery(t *testing.T) {
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "completion_gate_reopened_discovery")
 
-	if ap == nil {
-		t.Fatalf("expected completion_gate_reopened_discovery, got %#v", rep.AntiPatterns)
-	}
+	gomega.Expect(ap).NotTo(gomega.BeNil(), fmt.Sprintf("expected completion_gate_reopened_discovery, got %#v", rep.AntiPatterns))
 
-	if ap.Count != 1 || !strings.Contains(strings.Join(ap.Examples, "\n"), "read_file native/src/example.cpp") {
-		t.Fatalf("unexpected completion gate discovery pattern: %#v", ap)
-	}
-}
-
-func TestDetectCompletionGateReopenedDiscoveryIgnoresImmediateWrite(t *testing.T) {
+	gomega.Expect(ap.Count).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected completion gate discovery pattern: %#v", ap))
+	gomega.Expect(strings.Join(ap.Examples, "\n")).To(gomega.ContainSubstring("read_file native/src/example.cpp"), fmt.Sprintf("unexpected completion gate discovery pattern: %#v", ap))
+})
+var _ = ginkgo.It("detect completion gate reopened discovery ignores immediate write", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "write a refined brief"}},
 		{Type: "tool_result", Data: map[string]any{
@@ -446,12 +451,9 @@ func TestDetectCompletionGateReopenedDiscoveryIgnoresImmediateWrite(t *testing.T
 	}
 	rep := analyzeRecords("test", records)
 
-	if hasPattern(rep, "completion_gate_reopened_discovery") {
-		t.Fatalf("immediate write should not count as reopened discovery: %#v", rep.AntiPatterns)
-	}
-}
-
-func TestDetectCompletionGateReopenedDiscoveryIgnoresRequiredPathSourceRead(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "completion_gate_reopened_discovery")).To(gomega.BeFalse(), fmt.Sprintf("immediate write should not count as reopened discovery: %#v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("detect completion gate reopened discovery ignores required path source read", func() {
 	records := []Record{
 		{Type: "tool_result", Data: map[string]any{
 			"tool":    "completion_gate",
@@ -471,29 +473,21 @@ func TestDetectCompletionGateReopenedDiscoveryIgnoresRequiredPathSourceRead(t *t
 	}
 	rep := analyzeRecords("test", records)
 
-	if hasPattern(rep, "completion_gate_reopened_discovery") {
-		t.Fatalf("required-path source read should not count as reopened discovery: %#v", rep.AntiPatterns)
-	}
-}
-
-func TestDetectRedirectStormDistinguishesSoftGuidanceFromHardReject(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "completion_gate_reopened_discovery")).To(gomega.BeFalse(), fmt.Sprintf("required-path source read should not count as reopened discovery: %#v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("detect redirect storm distinguishes soft guidance from hard reject", func() {
 	softOnly := analyzeRecords("test", []Record{
 		{Type: "run_event", Data: map[string]any{"role": "discovery_redirect", "content": "read_file -> go (go_file_outline)"}},
 		{Type: "run_event", Data: map[string]any{"role": "discovery_redirect", "content": "read_file -> go (go_file_outline)"}},
 	})
-	if hasPattern(softOnly, "redirect_storm") {
-		t.Fatalf("two soft redirects should not be a storm: %#v", softOnly.AntiPatterns)
-	}
+	gomega.Expect(hasPattern(softOnly, "redirect_storm")).To(gomega.BeFalse(), fmt.Sprintf("two soft redirects should not be a storm: %#v", softOnly.AntiPatterns))
 
 	hardReject := analyzeRecords("test", []Record{
 		{Type: "run_event", Data: map[string]any{"role": "discovery_redirect", "content": "read_file -> go (go_file_outline) HARD_REJECT"}},
 	})
-	if !hasPattern(hardReject, "redirect_storm") {
-		t.Fatalf("hard redirect should be reported: %#v", hardReject.AntiPatterns)
-	}
-}
-
-func TestDetectRequiredPathsBlockedWithoutWrite(t *testing.T) {
+	gomega.Expect(hasPattern(hardReject, "redirect_storm")).To(gomega.BeTrue(), fmt.Sprintf("hard redirect should be reported: %#v", hardReject.AntiPatterns))
+})
+var _ = ginkgo.It("detect required paths blocked without write", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "implement the brief"}},
 		{Type: "completion_status", Data: map[string]any{
@@ -509,12 +503,9 @@ func TestDetectRequiredPathsBlockedWithoutWrite(t *testing.T) {
 	}
 	rep := analyzeRecords("test", records)
 
-	if !hasPattern(rep, "required_paths_blocked_without_write") {
-		t.Fatalf("expected required_paths_blocked_without_write, got %#v", rep.AntiPatterns)
-	}
-}
-
-func TestDirWalkStreakDoesNotFireOnTwoListings(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "required_paths_blocked_without_write")).To(gomega.BeTrue(), fmt.Sprintf("expected required_paths_blocked_without_write, got %#v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("dir walk streak does not fire on two listings", func() {
 	records := buildSynth("", nil, []synthStep{
 		{tool: "list_files", action: "list_files:.", summary: "Listed 10 path(s)."},
 		{tool: "list_files", action: "list_files:a", summary: "Listed 5 path(s)."},
@@ -522,12 +513,9 @@ func TestDirWalkStreakDoesNotFireOnTwoListings(t *testing.T) {
 	})
 	rep := analyzeRecords("test", records)
 
-	if hasPattern(rep, "dir_walk_streak") {
-		t.Fatalf("dir_walk_streak should not fire on just 2 list_files")
-	}
-}
-
-func TestDetectZeroHitSearch(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "dir_walk_streak")).To(gomega.BeFalse(), fmt.Sprintf("dir_walk_streak should not fire on just 2 list_files"))
+})
+var _ = ginkgo.It("detect zero hit search", func() {
 	records := buildSynth("", nil, []synthStep{
 		{tool: "search_files", action: "search_files:_:foo*:_", raw: `{"pattern":"foo*"}`, summary: `No file matches for "foo*"`},
 		{tool: "go_find_symbol", action: "go_find_symbol:bar", raw: `{"pattern":"bar"}`, summary: `No Go symbols matched "bar"`},
@@ -535,16 +523,11 @@ func TestDetectZeroHitSearch(t *testing.T) {
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "zero_hit_search")
 
-	if ap == nil {
-		t.Fatalf("expected zero_hit_search pattern")
-	}
+	gomega.Expect(ap).NotTo(gomega.BeNil(), fmt.Sprintf("expected zero_hit_search pattern"))
 
-	if ap.Count != 2 {
-		t.Fatalf("zero_hit_search count: want 2, got %d", ap.Count)
-	}
-}
-
-func TestDirectToolTelemetryDoesNotCreateBehaviorAntiPatterns(t *testing.T) {
+	gomega.Expect(ap.Count).To(gomega.BeEquivalentTo(2), fmt.Sprintf("zero_hit_search count: want 2, got %d", ap.Count))
+})
+var _ = ginkgo.It("direct tool telemetry does not create behavior anti patterns", func() {
 	records := []Record{
 		{Type: "session_start", Data: map[string]any{"command": "tool:go_read_symbol"}},
 		{Type: "process_start", Data: map[string]any{"command": "tool:go_read_symbol"}},
@@ -554,16 +537,13 @@ func TestDirectToolTelemetryDoesNotCreateBehaviorAntiPatterns(t *testing.T) {
 	}
 
 	rep := analyzeRecords("direct-tool", records)
-	if rep.ToolResults != 1 || rep.Tools.ByName["go_read_symbol"] != 1 {
-		t.Fatalf("expected direct tool stats to remain available, got %+v", rep)
-	}
+	gomega.Expect(rep.ToolResults).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected direct tool stats to remain available, got %+v", rep))
+	gomega.Expect(rep.Tools.ByName["go_read_symbol"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected direct tool stats to remain available, got %+v", rep))
 
-	if len(rep.AntiPatterns) != 0 || rep.AntiPatternScore != 0 {
-		t.Fatalf("expected direct tool telemetry to skip model behavior patterns, got %+v", rep.AntiPatterns)
-	}
-}
-
-func TestAnalyzeModernSummaryRecords(t *testing.T) {
+	gomega.Expect(rep.AntiPatterns).To(gomega.HaveLen(0), fmt.Sprintf("expected direct tool telemetry to skip model behavior patterns, got %+v", rep.AntiPatterns))
+	gomega.Expect(rep.AntiPatternScore).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected direct tool telemetry to skip model behavior patterns, got %+v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("analyze modern summary records", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "implement feature"}},
 		{Type: "model_call", Data: map[string]any{"prompt_tokens": 100, "completion_tokens": 10}},
@@ -574,16 +554,15 @@ func TestAnalyzeModernSummaryRecords(t *testing.T) {
 	}
 
 	rep := analyzeRecords("modern-session", records)
-	if rep.ModelCalls != 2 || rep.ToolResults != 1 || rep.PromptTokens != 200 || rep.CompletionTokens != 20 || rep.DurationMillis != 3001 {
-		t.Fatalf("modern summary records not parsed: %+v", rep)
-	}
+	gomega.Expect(rep.ModelCalls).To(gomega.BeEquivalentTo(2), fmt.Sprintf("modern summary records not parsed: %+v", rep))
+	gomega.Expect(rep.ToolResults).To(gomega.BeEquivalentTo(1), fmt.Sprintf("modern summary records not parsed: %+v", rep))
+	gomega.Expect(rep.PromptTokens).To(gomega.BeEquivalentTo(200), fmt.Sprintf("modern summary records not parsed: %+v", rep))
+	gomega.Expect(rep.CompletionTokens).To(gomega.BeEquivalentTo(20), fmt.Sprintf("modern summary records not parsed: %+v", rep))
+	gomega.Expect(rep.DurationMillis).To(gomega.BeEquivalentTo(3001), fmt.Sprintf("modern summary records not parsed: %+v", rep))
 
-	if rep.StopReason != "model_final" {
-		t.Fatalf("stop reason: want model_final, got %q", rep.StopReason)
-	}
-}
-
-func TestDetectRejectionRetry(t *testing.T) {
+	gomega.Expect(rep.StopReason).To(gomega.BeEquivalentTo("model_final"), fmt.Sprintf("stop reason: want model_final, got %q", rep.StopReason))
+})
+var _ = ginkgo.It("detect rejection retry", func() {
 	raw := `{"tool":"list_files","path":"docs"}`
 	records := buildSynth("", nil, []synthStep{
 		{tool: "list_files", action: "list_files:docs", raw: raw, summary: "Chained list_files rejected", err: "gate fired"},
@@ -591,12 +570,9 @@ func TestDetectRejectionRetry(t *testing.T) {
 	})
 	rep := analyzeRecords("test", records)
 
-	if !hasPattern(rep, "rejection_retry") {
-		t.Fatalf("expected rejection_retry, got: %+v", rep.AntiPatterns)
-	}
-}
-
-func TestDetectRejectionRetryFromUnpairedRejectedResults(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "rejection_retry")).To(gomega.BeTrue(), fmt.Sprintf("expected rejection_retry, got: %+v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("detect rejection retry from unpaired rejected results", func() {
 	raw := `{"tool":"code_navigate","path":"a.go","capability":"file_outline"}`
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "edit a.go"}},
@@ -605,16 +581,11 @@ func TestDetectRejectionRetryFromUnpairedRejectedResults(t *testing.T) {
 	}
 
 	rep := analyzeRecords("test", records)
-	if !hasPattern(rep, "rejection_retry") {
-		t.Fatalf("expected unpaired rejected tool_result records to feed rejection_retry, got: %+v", rep.AntiPatterns)
-	}
+	gomega.Expect(hasPattern(rep, "rejection_retry")).To(gomega.BeTrue(), fmt.Sprintf("expected unpaired rejected tool_result records to feed rejection_retry, got: %+v", rep.AntiPatterns))
 
-	if rep.RejectedActions != 2 {
-		t.Fatalf("expected two logical rejected actions, got %d", rep.RejectedActions)
-	}
-}
-
-func TestDetectSameToolRepeatOnlyAtThreeOrMore(t *testing.T) {
+	gomega.Expect(rep.RejectedActions).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected two logical rejected actions, got %d", rep.RejectedActions))
+})
+var _ = ginkgo.It("detect same tool repeat only at three or more", func() {
 	raw := `{"tool":"read_file","path":"x.go"}`
 	records := buildSynth("", nil, []synthStep{
 		{tool: "read_file", action: "read_file:x.go", raw: raw, summary: "Read 1"},
@@ -622,9 +593,7 @@ func TestDetectSameToolRepeatOnlyAtThreeOrMore(t *testing.T) {
 	})
 	rep := analyzeRecords("test", records)
 
-	if hasPattern(rep, "same_tool_repeat") {
-		t.Fatalf("same_tool_repeat should not fire at 2 identical calls")
-	}
+	gomega.Expect(hasPattern(rep, "same_tool_repeat")).To(gomega.BeFalse(), fmt.Sprintf("same_tool_repeat should not fire at 2 identical calls"))
 
 	// Now three.
 	records = append(records,
@@ -633,12 +602,9 @@ func TestDetectSameToolRepeatOnlyAtThreeOrMore(t *testing.T) {
 	)
 	rep = analyzeRecords("test", records)
 
-	if !hasPattern(rep, "same_tool_repeat") {
-		t.Fatalf("same_tool_repeat should fire at 3 identical calls")
-	}
-}
-
-func TestDetectSameToolRepeatIgnoresRecoveredMutationNoWriteLoop(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "same_tool_repeat")).To(gomega.BeTrue(), fmt.Sprintf("same_tool_repeat should fire at 3 identical calls"))
+})
+var _ = ginkgo.It("detect same tool repeat ignores recovered mutation no write loop", func() {
 	raw := `{"tool":"read_file","path":"missing.html","named_gap":"source before write"}`
 	records := buildSynth("", nil, []synthStep{
 		{tool: "read_file", action: "read_file:missing.html", raw: raw, summary: "Failed to resolve file target", err: "missing"},
@@ -651,12 +617,9 @@ func TestDetectSameToolRepeatIgnoresRecoveredMutationNoWriteLoop(t *testing.T) {
 	}})
 
 	rep := analyzeRecords("test", records)
-	if hasPattern(rep, "same_tool_repeat") {
-		t.Fatalf("recovered mutation loop should not remain a current same_tool_repeat finding: %+v", rep.AntiPatterns)
-	}
-}
-
-func TestDetectNamedGapReadWalk(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "same_tool_repeat")).To(gomega.BeFalse(), fmt.Sprintf("recovered mutation loop should not remain a current same_tool_repeat finding: %+v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("detect named gap read walk", func() {
 	records := buildSynth("", nil, []synthStep{
 		{tool: "read_file", action: "read_file:src/item.cpp", raw: `{"path":"src/item.cpp","named_gap":"find_insert_anchor","start_line":1,"end_line":50}`, summary: "Read src/item.cpp lines 1-50"},
 		{tool: "read_file", action: "read_file:src/item.cpp", raw: `{"path":"src/item.cpp","named_gap":"find_insert_anchor","start_line":50,"end_line":100}`, summary: "Read src/item.cpp lines 50-100"},
@@ -665,16 +628,11 @@ func TestDetectNamedGapReadWalk(t *testing.T) {
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "named_gap_read_walk")
 
-	if ap == nil {
-		t.Fatalf("expected named_gap_read_walk, got %#v", rep.AntiPatterns)
-	}
+	gomega.Expect(ap).NotTo(gomega.BeNil(), fmt.Sprintf("expected named_gap_read_walk, got %#v", rep.AntiPatterns))
 
-	if ap.Count != 3 {
-		t.Fatalf("count=%d, want 3", ap.Count)
-	}
-}
-
-func TestDetectNamedGapReadWalkIgnoresRecoveredMutationNoWriteLoop(t *testing.T) {
+	gomega.Expect(ap.Count).To(gomega.BeEquivalentTo(3), fmt.Sprintf("count=%d, want 3", ap.Count))
+})
+var _ = ginkgo.It("detect named gap read walk ignores recovered mutation no write loop", func() {
 	records := buildSynth("", nil, []synthStep{
 		{tool: "read_file", action: "read_file:missing.html", raw: `{"path":"missing.html","named_gap":"source before write","start_line":1,"end_line":50}`, summary: "Failed to resolve file target", err: "missing"},
 		{tool: "read_file", action: "read_file:missing.html", raw: `{"path":"missing.html","named_gap":"source before write","start_line":1,"end_line":50}`, summary: "Failed to resolve file target (replayed same blocker)", err: "missing"},
@@ -686,12 +644,9 @@ func TestDetectNamedGapReadWalkIgnoresRecoveredMutationNoWriteLoop(t *testing.T)
 	}})
 
 	rep := analyzeRecords("test", records)
-	if hasPattern(rep, "named_gap_read_walk") {
-		t.Fatalf("recovered mutation loop should not remain a current named_gap_read_walk finding: %+v", rep.AntiPatterns)
-	}
-}
-
-func TestAggregateRanksByLogHits(t *testing.T) {
+	gomega.Expect(hasPattern(rep, "named_gap_read_walk")).To(gomega.BeFalse(), fmt.Sprintf("recovered mutation loop should not remain a current named_gap_read_walk finding: %+v", rep.AntiPatterns))
+})
+var _ = ginkgo.It("aggregate ranks by log hits", func() {
 	mkRep := func(patterns ...string) PerfReport {
 		r := PerfReport{Tools: ToolCounts{ByName: map[string]int{}}}
 		for _, p := range patterns {
@@ -708,20 +663,14 @@ func TestAggregateRanksByLogHits(t *testing.T) {
 	}
 	agg := Aggregate(reports)
 
-	if agg.LogCount != 4 {
-		t.Fatalf("log count: want 4, got %d", agg.LogCount)
-	}
+	gomega.Expect(agg.LogCount).To(gomega.BeEquivalentTo(4), fmt.Sprintf("log count: want 4, got %d", agg.LogCount))
 
-	if len(agg.PatternHitRate) == 0 {
-		t.Fatalf("expected pattern rows")
-	}
+	gomega.Expect(agg.PatternHitRate).NotTo(gomega.BeEmpty(), fmt.Sprintf("expected pattern rows"))
 
-	if agg.PatternHitRate[0].Name != "zero_hit_search" || agg.PatternHitRate[0].LogsHit != 3 {
-		t.Fatalf("expected zero_hit_search leading with 3 logs hit, got %+v", agg.PatternHitRate[0])
-	}
-}
-
-func TestAggregateRedactsWorstOffenderPrompt(t *testing.T) {
+	gomega.Expect(agg.PatternHitRate[0].Name).To(gomega.BeEquivalentTo("zero_hit_search"), fmt.Sprintf("expected zero_hit_search leading with 3 logs hit, got %+v", agg.PatternHitRate[0]))
+	gomega.Expect(agg.PatternHitRate[0].LogsHit).To(gomega.BeEquivalentTo(3), fmt.Sprintf("expected zero_hit_search leading with 3 logs hit, got %+v", agg.PatternHitRate[0]))
+})
+var _ = ginkgo.It("aggregate redacts worst offender prompt", func() {
 	agg := Aggregate([]PerfReport{{
 		LogPath:          "logs/conversations/session.jsonl",
 		SessionID:        "session",
@@ -730,23 +679,17 @@ func TestAggregateRedactsWorstOffenderPrompt(t *testing.T) {
 		AntiPatternScore: 5,
 		Tools:            ToolCounts{ByName: map[string]int{}},
 	}})
-	if len(agg.WorstOffenders) != 1 {
-		t.Fatalf("expected one worst offender, got %#v", agg.WorstOffenders)
-	}
+	gomega.Expect(agg.WorstOffenders).To(gomega.HaveLen(1), fmt.Sprintf("expected one worst offender, got %#v", agg.WorstOffenders))
 
-	if !agg.WorstOffenders[0].LogExcerptRedacted {
-		t.Fatalf("expected redaction marker, got %#v", agg.WorstOffenders[0])
-	}
+	gomega.Expect(agg.WorstOffenders[0].LogExcerptRedacted).To(gomega.BeTrue(), fmt.Sprintf("expected redaction marker, got %#v", agg.WorstOffenders[0]))
 
 	encoded, err := json.Marshal(agg)
-	if err != nil {
-		t.Fatalf("marshal aggregate: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal aggregate: %v", err))
 
-	if strings.Contains(string(encoded), "user_prompt") || strings.Contains(string(encoded), "private customer prompt") || strings.Contains(string(encoded), "secret") {
-		t.Fatalf("aggregate leaked prompt data: %s", string(encoded))
-	}
-}
+	gomega.Expect(string(encoded)).NotTo(gomega.ContainSubstring("user_prompt"), fmt.Sprintf("aggregate leaked prompt data: %s", string(encoded)))
+	gomega.Expect(string(encoded)).NotTo(gomega.ContainSubstring("private customer prompt"), fmt.Sprintf("aggregate leaked prompt data: %s", string(encoded)))
+	gomega.Expect(string(encoded)).NotTo(gomega.ContainSubstring("secret"), fmt.Sprintf("aggregate leaked prompt data: %s", string(encoded)))
+})
 
 func hasPattern(rep PerfReport, name string) bool {
 	return findPattern(rep, name) != nil

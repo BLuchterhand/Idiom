@@ -1,12 +1,15 @@
 package workspace
 
 import (
-	"testing"
+	"fmt"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	planartifact "idiom/internal/contracts/planartifact"
 )
 
-func TestSanitizePlanArtifactPathValueUsesPlanArtifactPathContract(t *testing.T) {
+var _ = ginkgo.Describe("sanitize plan artifact path value uses plan artifact path contract", func() {
+
 	tests := []struct {
 		name string
 		path string
@@ -21,18 +24,16 @@ func TestSanitizePlanArtifactPathValueUsesPlanArtifactPathContract(t *testing.T)
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			got := sanitizePlanArtifactPathValue(tt.path)
-			if got != tt.want {
-				t.Fatalf("sanitizePlanArtifactPathValue(%q) = %q, want %q", tt.path, got, tt.want)
+			gomega.Expect(got).To(gomega.Equal(tt.want), fmt.Sprintf("sanitizePlanArtifactPathValue(%q) = %q, want %q", tt.path, got, tt.want))
+			if tt.want != "" {
+				gomega.Expect(planartifact.PathIsSafe(tt.path)).To(gomega.BeTrue(), fmt.Sprintf("test expectation drift: accepted path %q must be safe under planartifact.PathIsSafe", tt.path))
+			}
+			if tt.want == "" && tt.path != "" {
+				gomega.Expect(planartifact.PathIsSafe(tt.path)).To(gomega.BeFalse(), fmt.Sprintf("test expectation drift: rejected path %q is now safe under planartifact.PathIsSafe", tt.path))
 			}
 
-			if tt.want != "" && !planartifact.PathIsSafe(tt.path) {
-				t.Fatalf("test expectation drift: accepted path %q must be safe under planartifact.PathIsSafe", tt.path)
-			}
-			if tt.want == "" && tt.path != "" && planartifact.PathIsSafe(tt.path) {
-				t.Fatalf("test expectation drift: rejected path %q is now safe under planartifact.PathIsSafe", tt.path)
-			}
 		})
 	}
-}
+})

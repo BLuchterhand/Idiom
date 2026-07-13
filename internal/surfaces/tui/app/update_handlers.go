@@ -11,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 )
 
@@ -171,6 +170,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return m.enableMouseSelectionMode(), true
 	case tea.KeyCtrlL:
 		m.messages = nil
+		m.messagesRevision++
 		m.status = "Cleared chat."
 		m.renderMessages(true)
 	case tea.KeyCtrlR:
@@ -243,10 +243,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.input.SetValue("")
 
 		if strings.HasPrefix(text, "/") {
-			if !m.handleFeaturePlannerCommand(text) && !m.handlePlanExecuteCommand(text) && !m.handleImplementCommand(text) {
-				if quit := m.handleSlashCommand(text); quit {
-					return tea.Quit, true
-				}
+			if quit := m.handleSlashCommand(text); quit {
+				return tea.Quit, true
 			}
 
 			if m.pendingExec != nil {
@@ -271,7 +269,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			if m.featurePlannerPhase != "" {
 				m.appendHistoryMessage("user", text, nil)
 				m.sendProductFeaturePlannerTurnAsync(text)
-			} else if m.directFeaturePlannerShouldConsumeOperatorInput(text) {
+			} else if directFeaturePlannerShouldConsumeOperatorInput(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), m.directFeaturePlannerSessionID, text) {
 				m.sendDirectFeaturePlannerAnswerAsync(text)
 				m.status = "Dispatching to feature-planner..."
 			} else {
@@ -381,21 +379,16 @@ func inputKeyResetsHistoryNavigation(msg tea.KeyMsg) bool {
 	}
 }
 
-func (m *Model) handlePlanExecuteCommand(raw string) bool {
-	fields := strings.Fields(raw)
-	if len(fields) == 0 || fields[0] != "/plan-execute" {
-		return false
-	}
-
-	objective := strings.TrimSpace(strings.TrimPrefix(raw, "/plan-execute"))
+func (m *Model) slashPlanExecute(raw string, fields []string) bool {
+	objective := strings.TrimSpace(strings.TrimPrefix(raw, fields[0]))
 	if objective == "" {
 		m.status = "Usage: /plan-execute <objective>"
-		return true
+		return false
 	}
 
 	if m.streaming {
 		m.status = "A response is already in progress."
-		return true
+		return false
 	}
 
 	m.appendHistoryMessage("user", objective, nil)
@@ -403,24 +396,19 @@ func (m *Model) handlePlanExecuteCommand(raw string) bool {
 
 	m.status = "Dispatching to plan-execute..."
 
-	return true
+	return false
 }
 
-func (m *Model) handleFeaturePlannerCommand(raw string) bool {
-	fields := strings.Fields(raw)
-	if len(fields) == 0 || fields[0] != "/feature-planner" {
-		return false
-	}
-
-	objective := strings.TrimSpace(strings.TrimPrefix(raw, "/feature-planner"))
+func (m *Model) slashFeaturePlanner(raw string, fields []string) bool {
+	objective := strings.TrimSpace(strings.TrimPrefix(raw, fields[0]))
 	if objective == "" {
 		m.status = "Usage: /feature-planner <objective>"
-		return true
+		return false
 	}
 
 	if m.streaming {
 		m.status = "A response is already in progress."
-		return true
+		return false
 	}
 
 	m.appendHistoryMessage("user", raw, nil)
@@ -428,24 +416,19 @@ func (m *Model) handleFeaturePlannerCommand(raw string) bool {
 
 	m.status = "Dispatching to feature-planner..."
 
-	return true
+	return false
 }
 
-func (m *Model) handleImplementCommand(raw string) bool {
-	fields := strings.Fields(raw)
-	if len(fields) == 0 || fields[0] != "/implement" {
-		return false
-	}
-
-	objective := strings.TrimSpace(strings.TrimPrefix(raw, "/implement"))
+func (m *Model) slashImplement(raw string, fields []string) bool {
+	objective := strings.TrimSpace(strings.TrimPrefix(raw, fields[0]))
 	if objective == "" {
 		m.status = "Usage: /implement <objective>"
-		return true
+		return false
 	}
 
 	if m.streaming {
 		m.status = "A response is already in progress."
-		return true
+		return false
 	}
 
 	m.appendHistoryMessage("user", objective, nil)
@@ -453,7 +436,7 @@ func (m *Model) handleImplementCommand(raw string) bool {
 
 	m.status = "Dispatching to implement..."
 
-	return true
+	return false
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
@@ -747,14 +730,18 @@ func (m *Model) handleMainViewportThoughtPanelMouse(msg tea.MouseMsg) bool {
 		return false
 	}
 
-	switch msg.Type {
-	case tea.MouseWheelUp:
+	if msg.Action != tea.MouseActionPress {
+		return false
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
 		if m.thoughts.scroll(-3) {
 			m.renderMessages(false)
 		}
 
 		return true
-	case tea.MouseWheelDown:
+	case tea.MouseButtonWheelDown:
 		if m.thoughts.scroll(3) {
 			m.renderMessages(false)
 		}
@@ -766,11 +753,7 @@ func (m *Model) handleMainViewportThoughtPanelMouse(msg tea.MouseMsg) bool {
 }
 
 func isPrimaryMousePress(msg tea.MouseMsg) bool {
-	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
-		return true
-	}
-
-	return msg.Type == tea.MouseLeft
+	return msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress
 }
 
 func thoughtPanelViewportRows(view string) (headerRow, bodyStart, bodyEnd int, ok bool) {
@@ -909,7 +892,7 @@ func (m *Model) handleHistoryPanelClick(row int) bool {
 }
 
 func (m *Model) handlePlanPanelClick(row int) bool {
-	if m.plan.overlayID != "" {
+	if m.planUI.overlayID != "" {
 		return false
 	}
 
@@ -932,7 +915,7 @@ func (m *Model) handlePlanPanelClick(row int) bool {
 		return false
 	}
 
-	m.plan.cursor = idx
+	m.planUI.cursor = idx
 	m.activateSelectedPlanRow()
 
 	return true
@@ -943,8 +926,8 @@ func (m *Model) planSourceLineForRenderedRow(viewportRow int) (int, bool) {
 		return 0, false
 	}
 
-	if viewportRow < len(m.plan.renderedRows) {
-		sourceLine := m.plan.renderedRows[viewportRow].SourceLineIdx
+	if viewportRow < len(m.planUI.renderedRows) {
+		sourceLine := m.planUI.renderedRows[viewportRow].SourceLineIdx
 		if sourceLine < 0 {
 			return 0, false
 		}
@@ -1059,8 +1042,28 @@ func (m *Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleServerStatus(msg serverStatusMsg) (tea.Cmd, bool) {
+	if msg.source != nil && !msg.source.matches(m) {
+		// The controller registry is shared with workers, so an owned stale
+		// controller remains Close-owned without allowing its status to replace
+		// a newer /model or backend selection.
+		if msg.owned {
+			m.managedServers.add(msg.source.controller)
+		}
+
+		return nil, false
+	}
+
 	m.bootingServer = false
 	m.logServerEvent(msg)
+	m.backendRevision++
+	if msg.owned {
+		controller := m.controller
+		if msg.source != nil {
+			controller = msg.source.controller
+		}
+		m.managedServers.add(controller)
+		m.managedServer = true
+	}
 
 	if msg.err != nil {
 		m.serverUp = false
@@ -1073,12 +1076,11 @@ func (m *Model) handleServerStatus(msg serverStatusMsg) (tea.Cmd, bool) {
 		}
 
 		m.modelID = msg.modelID
-		m.modelDisplayID = textutil.Fallback(strings.TrimSpace(msg.displayID), strings.TrimSpace(msg.modelID))
-		m.managedServer = m.managedServer || msg.owned
+		m.modelDisplayID = activeModelDisplayID(msg.displayID, msg.modelID)
 		m.clearRuntimeErrorIfServerRelated()
 
 		if msg.running {
-			m.status = fmt.Sprintf("Server ready on %s. Model: %s", m.plannerSpec.EndpointBaseURL(), m.activeModelDisplayID())
+			m.status = fmt.Sprintf("Server ready on %s. Model: %s", m.plannerSpec.EndpointBaseURL(), activeModelDisplayID(m.modelDisplayID, m.modelID))
 		} else {
 			m.status = "Server stopped."
 		}
@@ -1253,7 +1255,9 @@ func (m *Model) handleHistoryAudit(msg historyAuditMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleHistorySummary(msg historySummaryMsg) (tea.Cmd, bool) {
-	if msg.index >= 0 && msg.index < len(m.history.entries) {
+	if msg.historyRevision == m.history.revision &&
+		msg.index >= 0 && msg.index < len(m.history.entries) &&
+		msg.entryRevision == m.history.entries[msg.index].revision {
 		m.history.entries[msg.index].summary = msg.summary
 		m.requestHistoryPanelRender(false, false)
 	}
@@ -1282,12 +1286,12 @@ func (m *Model) handlePlanEditorDone(msg planEditorDoneMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handlePlanRefresh(msg planRefreshMsg) (tea.Cmd, bool) {
-	if !m.history.panelOpen && !m.plan.autoShown {
+	if !m.history.panelOpen && !m.planUI.autoShown {
 		if m.planPanelAutoShowNeeded() {
 			m.panelTab = panelTabPlan
 			m.setHistoryPanelOpen(true)
 
-			m.plan.autoShown = true
+			m.planUI.autoShown = true
 		}
 	}
 

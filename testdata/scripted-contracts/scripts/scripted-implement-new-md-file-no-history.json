@@ -1,4 +1,6 @@
 [
-  "{\"tool\":\"write_file\",\"path\":\"temp.md\",\"content\":\"temp\",\"description\":\"create the requested markdown file\"}",
-  "Created `temp.md` with the requested contents.\n\nChanged paths:\n- temp.md\n\nVerification: not run; content-only markdown file."
+  "{\"tool\":\"write_file\",\"path\":\"created.md\",\"content\":\"temp\",\"description\":\"create the requested markdown file\"}",
+  "{\"tool\":\"shell\",\"command\":\"go test ./...\"}",
+  "{\"tool\":\"read_file\",\"path\":\"created.md\",\"named_gap\":\"confirm the newly written markdown body before final completion\"}",
+  "Created created.md with the requested contents.\n\nChanged paths:\n- created.md\n\nVerification: go test ./... passed."
 ]

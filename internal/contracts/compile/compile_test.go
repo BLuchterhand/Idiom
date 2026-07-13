@@ -1,279 +1,195 @@
 package contractcompile
 
 import (
-	"go/parser"
-	"go/token"
-	"path/filepath"
-	"slices"
-	"strings"
-	"testing"
-
 	"idiom/internal/contracts/autonomy"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T) {
-	result := compilePlannerFixture(t)
+var _ = It("binds planner authority, runtime, and protocol contracts", func() {
+	result := compilePlannerFixture()
 
-	if result.SchemaVersion != CompilerSchemaVersion {
-		t.Fatalf("SchemaVersion = %q, want %q", result.SchemaVersion, CompilerSchemaVersion)
-	}
+	Expect(result.SchemaVersion).To(Equal(CompilerSchemaVersion))
+	Expect(result.Contract.Scope.InvocationKind).To(Equal(autonomy.InvocationPhase))
+	Expect(result.Contract.Scope.Lane).To(Equal(DefaultPlanExecuteLane))
+	Expect(result.Contract.Scope.Phase).To(Equal(DefaultPlannerPhase))
+	Expect(result.Contract.Scope.RuntimeContract).To(Equal(result.Runtime.RuntimeContractID))
+	Expect(result.Runtime.ActiveInvariantID).To(Equal(InvariantActiveAuthority))
+	Expect(result.Runtime.BackendKind).To(Equal("mlx"))
+	Expect(result.Runtime.ModelAlias).To(Equal("qwen3-coder-30b-a3b-instruct"))
+	Expect(result.Runtime.ParserTransportMode).To(Equal("textual_json_terminal"))
+	Expect(result.Runtime.ToolTransportMode).To(Equal("textual"))
+	Expect(result.Runtime.ParserContract).To(Equal("submit_plan_json"))
+	Expect(result.Runtime.NativeToolPolicy).To(Equal("textual_unless_forced"))
+	Expect(result.Runtime.ToolChoice).To(Equal("none"))
+	Expect(result.Runtime.ResponseFormat).To(Equal("json"))
+	Expect(result.Runtime.ThinkingPolicy).To(Equal("disabled_visible_action"))
+	Expect(result.Runtime.ThinkingBudget).To(Equal(128))
+	Expect(result.Runtime.EffectiveMaxTokens).To(Equal(4096))
 
-	if result.Contract.Scope.InvocationKind != autonomy.InvocationPhase {
-		t.Fatalf("InvocationKind = %q, want %q", result.Contract.Scope.InvocationKind, autonomy.InvocationPhase)
-	}
+	Expect(result.Protocol.ContractID).To(Equal(result.Contract.ContractID))
+	Expect(result.ActiveAuthority.ContractID).To(Equal(result.Contract.ContractID))
+	Expect(result.ActiveAuthority.RuntimeContractID).To(Equal(result.Runtime.RuntimeContractID))
+	Expect(result.ActiveAuthority.ProtocolHash).To(Equal(result.Protocol.ProtocolHash))
+	Expect(result.ActiveAuthority.ActiveInvariantID).To(Equal(InvariantActiveAuthority))
+	Expect(result.Protocol.ProtocolHash).NotTo(BeEmpty())
+	Expect(result.Protocol.SchemaNames).To(ContainElements(
+		autonomy.ContractEnvelopeSchemaVersion,
+		autonomy.ContextPacketSchemaVersion,
+		autonomy.ModelResponseSchemaVersion,
+		"submit_plan",
+	))
+	Expect(result.Protocol.PhaseID).To(Equal(string(TurnPhaseRequiredSource)))
+	Expect(result.Protocol.ActiveInvariantID).To(Equal(InvariantActiveAuthority))
+	Expect(result.Contract.Budget.MaxOperationalModelCalls).To(Equal(5))
+	Expect(result.Protocol.ParserMode).To(Equal("submit_plan_json"))
+	Expect(result.Protocol.ToolTransportMode).To(Equal("textual"))
+	Expect(result.Protocol.ParserTransportMode).To(Equal("textual_json_terminal"))
+	Expect(result.Protocol.ParserContract).To(Equal("submit_plan_json"))
+	Expect(result.Protocol.CallableTools).To(ContainElement("read_file"))
+	Expect(result.Protocol.HiddenTools).To(ContainElements("apply_patch", "shell"))
+	Expect(result.Protocol.NativeToolPolicy).To(Equal("textual_unless_forced"))
+	Expect(result.Protocol.ToolChoice).To(Equal("none"))
+	Expect(result.Protocol.ResponseFormat).To(Equal("json"))
+	Expect(result.Protocol.RequiredEditCoverage).To(ContainElement("internal/runtime/agent/runner.go"))
+	Expect(result.Protocol.PathRoleSummary).To(ContainElement("required_edit:internal/runtime/agent/runner.go"))
+	Expect(result.Protocol.VerificationObligations).To(ContainElement("command:go test ./internal/contracts/compile"))
+	Expect(result.Protocol.RequiredTools).To(ContainElement("submit_plan"))
+	Expect(result.Protocol.ReadinessGate).To(ContainElement("source_body_before_submit_plan"))
+	Expect(result.Protocol.Constraints).To(ContainElement("phase1_passive"))
+	Expect(result.Protocol.InvalidActions).To(ContainElement("planner_shell"))
+	Expect(result.Protocol.CallableActionClasses).To(ContainElement(string(autonomy.ActionClassSubmitPlan)))
+	Expect(result.Protocol.InvalidActionClasses).To(ContainElement(string(autonomy.ActionClassPerEditWrite)))
+	Expect(result.Protocol.TerminalResponseShapes).To(ContainElement("Decision: source-satisfied"))
+	Expect(result.Protocol.SourceBodyObligations).To(ContainElement("internal/runtime/agent/runner.go"))
 
-	if result.Contract.Scope.Lane != DefaultPlanExecuteLane || result.Contract.Scope.Phase != DefaultPlannerPhase {
-		t.Fatalf("scope lane/phase = %q/%q", result.Contract.Scope.Lane, result.Contract.Scope.Phase)
-	}
+	Expect(result.Protocol.CompactPacket.SchemaVersion).To(Equal(autonomy.ContextPacketSchemaVersion))
+	Expect(result.Protocol.CompactPacket.PacketID).NotTo(BeEmpty())
+	Expect(result.Protocol.CompactPacket.ContractID).To(Equal(result.Protocol.ContractID))
+	Expect(result.Protocol.CompactPacket.ProtocolHash).To(Equal(result.Protocol.ProtocolHash))
+	Expect(result.Protocol.CompactPacket.TargetRefs).To(ContainElement("pack:e7818bd1b0006176"))
+	Expect(hasAuthoritySource(result.Contract.Authority, "target_packet", "pack:e7818bd1b0006176", autonomy.FreshnessUnknown)).To(BeTrue(),
+		"target packet authority should remain freshness-unknown until typed freshness is supplied")
+	Expect(result.Protocol.CompactPacket.PathRefs).To(ContainElement("internal/runtime/agent/runner.go"))
+	Expect(result.Protocol.CompactPacket.RedactionMarkers).To(ContainElements("metadata_only", "file_content_omitted"))
 
-	if result.Contract.Scope.RuntimeContract != result.Runtime.RuntimeContractID {
-		t.Fatalf("scope runtime contract = %q, runtime id = %q", result.Contract.Scope.RuntimeContract, result.Runtime.RuntimeContractID)
-	}
+	decision := findActiveAuthorityDecision(result)
+	Expect(decision.Decision).To(Equal(autonomy.PolicyObserve))
+	Expect(decision.ObligationRefs).NotTo(BeEmpty())
+	Expect(countObligationKind(result.Contract.Obligations, autonomy.ObligationWrite)).To(BeZero())
+	Expect(result.Contract.Capabilities.AllowedEffects).To(ContainElement(autonomy.SideEffectAdditive))
+	Expect(result.Contract.Capabilities.AllowedEffects).NotTo(ContainElement(autonomy.SideEffectDestructive))
+	Expect(result.Contract.Capabilities.AllowedEffects).NotTo(ContainElement(autonomy.SideEffectOpenWorld))
+	Expect(hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/runtime/agent/runner.go", "submit_plan_required_edit_coverage")).To(BeTrue(),
+		"required edit path should be represented as submit-plan coverage")
+})
 
-	if result.Runtime.ActiveInvariantID != InvariantActiveAuthority {
-		t.Fatalf("runtime active invariant = %q", result.Runtime.ActiveInvariantID)
-	}
+var _ = It("compiles a direct-answer protocol without planner authority", func() {
+	protocol, err := CompileModelProtocol(ModelProtocolInput{
+		ContractID:      "contract-direct",
+		ContractVersion: autonomy.SchemaVersion,
+		Runtime: RuntimeEnvelopeInput{
+			BackendKind:         "openai_compatible",
+			ModelAlias:          "direct-answer-model",
+			ModelRole:           "direct_answer",
+			ParserTransportMode: "native_or_prose",
+			ToolTransportMode:   "native",
+			ParserContract:      "tool_or_final_answer",
+			SupportsNativeTools: true,
+		},
+		Protocol: ProtocolInput{
+			PhaseID:                 "read_only_evidence_pending",
+			VisibleTools:            []string{"read_file", "code_navigate"},
+			CallableTools:           []string{"read_file", "code_navigate"},
+			CallableToolsSpecified:  true,
+			CallableActionClasses:   []string{string(autonomy.ActionClassRead), string(autonomy.ActionClassFinalAnswer), string(autonomy.ActionClassBlocker)},
+			InvalidActionClasses:    []string{string(autonomy.ActionClassPerEditWrite), string(autonomy.ActionClassVerify)},
+			TerminalResponseShapes:  []string{"final answer", "<<QUESTION>>:"},
+			SourceBodyObligations:   []string{"internal/runtime/agent/evidence_readonly.go"},
+			GroundedSourceBodyPaths: []string{"docs/architecture.md"},
+			CandidateOnlyPaths:      []string{"internal/repository/comprehension"},
+		},
+		ContextPacket: ModelProtocolContextPacketInput{
+			PathRefs: []string{"docs/architecture.md", "internal/runtime/agent/evidence_readonly.go"},
+		},
+	})
 
-	if result.Runtime.BackendKind != "mlx" ||
-		result.Runtime.ModelAlias != "qwen3-coder-30b-a3b-instruct" ||
-		result.Runtime.ParserTransportMode != "textual_json_terminal" ||
-		result.Runtime.ToolTransportMode != "textual" ||
-		result.Runtime.ParserContract != "submit_plan_json" ||
-		result.Runtime.NativeToolPolicy != "textual_unless_forced" ||
-		result.Runtime.ToolChoice != "none" ||
-		result.Runtime.ResponseFormat != "json" ||
-		result.Runtime.ThinkingPolicy != "disabled_visible_action" ||
-		result.Runtime.ThinkingBudget != 128 ||
-		result.Runtime.EffectiveMaxTokens != 4096 {
+	Expect(err).NotTo(HaveOccurred())
+	Expect(protocol.ProtocolHash).NotTo(BeEmpty())
+	Expect(protocol.CompactPacket.ProtocolHash).To(Equal(protocol.ProtocolHash))
+	Expect(protocol.ContractID).To(Equal("contract-direct"))
+	Expect(protocol.VisibleTools).To(ConsistOf("read_file", "code_navigate"))
+	Expect(protocol.CallableActionClasses).To(ConsistOf(
+		string(autonomy.ActionClassRead),
+		string(autonomy.ActionClassFinalAnswer),
+		string(autonomy.ActionClassBlocker),
+	))
+	Expect(protocol.TerminalResponseShapes).To(ConsistOf("final answer", "<<QUESTION>>:"))
+	Expect(protocol.GroundedSourceBodyPaths).To(Equal([]string{"docs/architecture.md"}))
+	Expect(protocol.GroundedSourceBodyPathTotal).To(Equal(1))
+	Expect(protocol.GroundedSourceBodyPathOmitted).To(BeZero())
+	Expect(protocol.SourceBodyObligations).To(Equal([]string{"internal/runtime/agent/evidence_readonly.go"}))
+	Expect(protocol.SourceBodyObligationTotal).To(Equal(1))
+	Expect(protocol.SourceBodyObligationOmitted).To(BeZero())
+	Expect(protocol.CandidateOnlyPaths).To(Equal([]string{"internal/repository/comprehension"}))
+	Expect(protocol.CandidateOnlyPathTotal).To(Equal(1))
+	Expect(protocol.CandidateOnlyPathOmitted).To(BeZero())
+	Expect(protocol.SchemaNames).NotTo(ContainElement("submit_plan"))
+	Expect(protocol.CallableTools).NotTo(ContainElement("submit_plan"))
+	Expect(protocol.CallableActionClasses).NotTo(ContainElement(string(autonomy.ActionClassSubmitPlan)))
+	Expect(protocol.TerminalResponseShapes).NotTo(ContainElement("submit_plan"))
+})
 
-		t.Fatalf("runtime envelope not preserved: %#v", result.Runtime)
-	}
+var _ = It("rejects contradictory grounded and pending source authority", func() {
+	_, err := CompileModelProtocol(ModelProtocolInput{
+		ContractID:      "contract-direct",
+		ContractVersion: autonomy.SchemaVersion,
+		Protocol: ProtocolInput{
+			GroundedSourceBodyPaths: []string{"README.md"},
+			SourceBodyObligations:   []string{"./README.md"},
+		},
+	})
 
-	if result.Protocol.ContractID != result.Contract.ContractID {
-		t.Fatalf("protocol contract id = %q, want %q", result.Protocol.ContractID, result.Contract.ContractID)
-	}
+	Expect(err).To(MatchError(ContainSubstring("cannot be both grounded source-body evidence and a pending source-body obligation")))
+})
 
-	if result.ActiveAuthority.ContractID != result.Contract.ContractID ||
-		result.ActiveAuthority.RuntimeContractID != result.Runtime.RuntimeContractID ||
-		result.ActiveAuthority.ProtocolHash != result.Protocol.ProtocolHash ||
-		result.ActiveAuthority.ActiveInvariantID != InvariantActiveAuthority {
-
-		t.Fatalf("active authority binding did not mirror compiled ids: %#v", result.ActiveAuthority)
-	}
-
-	if result.Protocol.ProtocolHash == "" {
-		t.Fatal("protocol hash is empty")
-	}
-
-	for _, want := range []string{autonomy.ContractEnvelopeSchemaVersion, autonomy.ContextPacketSchemaVersion, autonomy.ModelResponseSchemaVersion, "submit_plan"} {
-		if !slices.Contains(result.Protocol.SchemaNames, want) {
-			t.Fatalf("protocol schema names missing %q: %#v", want, result.Protocol.SchemaNames)
-		}
-	}
-
-	if result.Protocol.PhaseID != string(TurnPhaseRequiredSource) {
-		t.Fatalf("protocol phase id = %q", result.Protocol.PhaseID)
-	}
-
-	if result.Protocol.ActiveInvariantID != InvariantActiveAuthority {
-		t.Fatalf("protocol active invariant = %q", result.Protocol.ActiveInvariantID)
-	}
-
-	if result.Contract.Budget.MaxOperationalModelCalls != 5 {
-		t.Fatalf("operational model-call budget not preserved: %#v", result.Contract.Budget)
-	}
-
-	if result.Protocol.ParserMode != "submit_plan_json" {
-		t.Fatalf("protocol parser mode = %q", result.Protocol.ParserMode)
-	}
-
-	if result.Protocol.ToolTransportMode != "textual" ||
-		result.Protocol.ParserTransportMode != "textual_json_terminal" ||
-		result.Protocol.ParserContract != "submit_plan_json" {
-
-		t.Fatalf("protocol transport fields not preserved: %#v", result.Protocol)
-	}
-
-	if !slices.Contains(result.Protocol.CallableTools, "read_file") {
-		t.Fatalf("callable tools missing read_file: %#v", result.Protocol.CallableTools)
-	}
-
-	if !slices.Contains(result.Protocol.HiddenTools, "apply_patch") || !slices.Contains(result.Protocol.HiddenTools, "shell") {
-		t.Fatalf("hidden tools missing forbidden tool projection: %#v", result.Protocol.HiddenTools)
-	}
-
-	if result.Protocol.NativeToolPolicy != "textual_unless_forced" ||
-		result.Protocol.ToolChoice != "none" ||
-		result.Protocol.ResponseFormat != "json" {
-
-		t.Fatalf("protocol runtime policy fields not preserved: %#v", result.Protocol)
-	}
-
-	if !slices.Contains(result.Protocol.RequiredEditCoverage, "internal/runtime/agent/runner.go") {
-		t.Fatalf("required edit coverage missing required path: %#v", result.Protocol.RequiredEditCoverage)
-	}
-
-	if !slices.Contains(result.Protocol.PathRoleSummary, "required_edit:internal/runtime/agent/runner.go") {
-		t.Fatalf("path role summary missing required path: %#v", result.Protocol.PathRoleSummary)
-	}
-
-	if !slices.Contains(result.Protocol.VerificationObligations, "command:go test ./internal/contracts/compile") {
-		t.Fatalf("verification obligations missing command: %#v", result.Protocol.VerificationObligations)
-	}
-
-	if !slices.Contains(result.Protocol.RequiredTools, "submit_plan") {
-		t.Fatalf("required tools missing submit_plan: %#v", result.Protocol.RequiredTools)
-	}
-
-	if !slices.Contains(result.Protocol.ReadinessGate, "source_body_before_submit_plan") {
-		t.Fatalf("readiness gate missing source_body_before_submit_plan: %#v", result.Protocol.ReadinessGate)
-	}
-
-	if !slices.Contains(result.Protocol.Constraints, "phase1_passive") ||
-		!slices.Contains(result.Protocol.InvalidActions, "planner_shell") {
-
-		t.Fatalf("protocol constraints/invalid actions not preserved: %#v", result.Protocol)
-	}
-
-	if !slices.Contains(result.Protocol.CallableActionClasses, string(autonomy.ActionClassSubmitPlan)) {
-		t.Fatalf("callable action classes missing submit_plan: %#v", result.Protocol.CallableActionClasses)
-	}
-
-	if !slices.Contains(result.Protocol.InvalidActionClasses, string(autonomy.ActionClassPerEditWrite)) {
-		t.Fatalf("invalid action classes missing per_edit_write: %#v", result.Protocol.InvalidActionClasses)
-	}
-
-	if !slices.Contains(result.Protocol.TerminalResponseShapes, "Decision: source-satisfied") {
-		t.Fatalf("terminal shapes missing source-satisfied: %#v", result.Protocol.TerminalResponseShapes)
-	}
-
-	if !slices.Contains(result.Protocol.SourceBodyObligations, "internal/runtime/agent/runner.go") {
-		t.Fatalf("source-body obligations missing required path: %#v", result.Protocol.SourceBodyObligations)
-	}
-
-	if result.Protocol.CompactPacket.SchemaVersion != autonomy.ContextPacketSchemaVersion {
-		t.Fatalf("compact packet schema = %q", result.Protocol.CompactPacket.SchemaVersion)
-	}
-
-	if result.Protocol.CompactPacket.PacketID == "" {
-		t.Fatal("compact packet id is empty")
-	}
-
-	if result.Protocol.CompactPacket.ContractID != result.Protocol.ContractID ||
-		result.Protocol.CompactPacket.ProtocolHash != result.Protocol.ProtocolHash {
-
-		t.Fatalf("compact packet refs not bound to protocol: %#v", result.Protocol.CompactPacket)
-	}
-
-	if !slices.Contains(result.Protocol.CompactPacket.TargetRefs, "pack:e7818bd1b0006176") {
-		t.Fatalf("compact packet missing target packet ref: %#v", result.Protocol.CompactPacket.TargetRefs)
-	}
-	if !hasAuthoritySource(result.Contract.Authority, "target_packet", "pack:e7818bd1b0006176", autonomy.FreshnessUnknown) {
-		t.Fatalf("target packet authority should remain freshness-unknown until typed freshness is supplied: %#v", result.Contract.Authority)
-	}
-
-	if !slices.Contains(result.Protocol.CompactPacket.PathRefs, "internal/runtime/agent/runner.go") {
-		t.Fatalf("compact packet missing path ref: %#v", result.Protocol.CompactPacket.PathRefs)
-	}
-
-	if !slices.Contains(result.Protocol.CompactPacket.RedactionMarkers, "metadata_only") ||
-		!slices.Contains(result.Protocol.CompactPacket.RedactionMarkers, "file_content_omitted") {
-
-		t.Fatalf("compact packet missing redaction markers: %#v", result.Protocol.CompactPacket.RedactionMarkers)
-	}
-
-	decision := findActiveAuthorityDecision(t, result)
-	if decision.Decision != autonomy.PolicyObserve {
-		t.Fatalf("active authority decision = %q", decision.Decision)
-	}
-
-	if len(decision.ObligationRefs) == 0 {
-		t.Fatalf("active authority decision did not cite obligations")
-	}
-
-	if countObligationKind(result.Contract.Obligations, autonomy.ObligationWrite) != 0 {
-		t.Fatalf("planner compiler emitted write obligations: %#v", result.Contract.Obligations)
-	}
-
-	if !slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
-		t.Fatalf("planner compiler should allow additive submit_plan/reporting effects: %#v", result.Contract.Capabilities.AllowedEffects)
-	}
-
-	for _, forbidden := range []autonomy.SideEffectClass{autonomy.SideEffectDestructive, autonomy.SideEffectOpenWorld} {
-		if slices.Contains(result.Contract.Capabilities.AllowedEffects, forbidden) {
-			t.Fatalf("planner compiler allowed forbidden effect %q: %#v", forbidden, result.Contract.Capabilities.AllowedEffects)
-		}
-	}
-
-	if !hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/runtime/agent/runner.go", "submit_plan_required_edit_coverage") {
-		t.Fatalf("planner required edit path was not represented as submit-plan coverage: %#v", result.Contract.Obligations)
-	}
-}
-
-func TestCompilePlanExecutePlannerParentIDIsCorrelationOnly(t *testing.T) {
+var _ = It("uses the parent contract ID only for correlation", func() {
 	input := plannerFixtureInput()
 
 	input.ParentID = "contract_parent_runner"
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(result.Contract.ParentID).To(Equal(input.ParentID))
+	Expect(result.Protocol.ContractID).To(Equal(result.Contract.ContractID))
+	Expect(result.ActiveAuthority.ContractID).To(Equal(result.Contract.ContractID))
+	Expect(result.ActiveAuthority.RuntimeContractID).To(Equal(result.Runtime.RuntimeContractID))
+	Expect(result.ActiveAuthority.ProtocolHash).To(Equal(result.Protocol.ProtocolHash))
+	Expect(result.ActiveAuthority.ActiveInvariantID).To(Equal(InvariantActiveAuthority))
+	Expect(result.Protocol.ProtocolHash).NotTo(BeEmpty())
+})
 
-	if result.Contract.ParentID != input.ParentID {
-		t.Fatalf("compiled contract parent id = %q, want %q", result.Contract.ParentID, input.ParentID)
-	}
-
-	if result.Protocol.ContractID != result.Contract.ContractID {
-		t.Fatalf("protocol contract id = %q, want compiled contract %q", result.Protocol.ContractID, result.Contract.ContractID)
-	}
-
-	if result.ActiveAuthority.ContractID != result.Contract.ContractID {
-		t.Fatalf("active authority contract id = %q, want compiled contract %q", result.ActiveAuthority.ContractID, result.Contract.ContractID)
-	}
-
-	if result.ActiveAuthority.RuntimeContractID != result.Runtime.RuntimeContractID ||
-		result.ActiveAuthority.ProtocolHash != result.Protocol.ProtocolHash ||
-		result.ActiveAuthority.ActiveInvariantID != InvariantActiveAuthority {
-
-		t.Fatalf("active authority binding did not carry runtime/protocol invariant ids: %#v", result.ActiveAuthority)
-	}
-
-	if result.Protocol.ProtocolHash == "" {
-		t.Fatal("protocol hash is empty")
-	}
-}
-
-func TestCompilePlanExecutePlannerPreservesExplicitEmptyCallableTools(t *testing.T) {
+var _ = It("preserves an explicitly empty callable-tool set", func() {
 	input := plannerFixtureInput()
 
 	input.Protocol.CallableTools = []string{}
 	input.Protocol.CallableToolsSpecified = true
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(result.Protocol.VisibleTools).NotTo(BeEmpty(), "fixture should retain visible tools")
+	Expect(result.Protocol.CallableTools).To(BeEmpty(), "explicit empty callable-tool authority must survive compilation")
+})
 
-	if len(result.Protocol.VisibleTools) == 0 {
-		t.Fatal("fixture should retain visible tools")
-	}
-
-	if len(result.Protocol.CallableTools) != 0 {
-		t.Fatalf("callable tools = %#v, want explicit empty list", result.Protocol.CallableTools)
-	}
-}
-
-func TestCompilePlanExecutePlannerDefaultActionClassesUseAutonomyVocabulary(t *testing.T) {
+var _ = It("defaults action classes from the autonomy vocabulary", func() {
 	input := plannerFixtureInput()
 
 	input.Protocol.CallableActionClasses = nil
 	input.Protocol.InvalidActionClasses = nil
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
 
 	wantCallable := sortedStrings([]string{
 		string(autonomy.ActionClassRead),
@@ -282,22 +198,18 @@ func TestCompilePlanExecutePlannerDefaultActionClassesUseAutonomyVocabulary(t *t
 		string(autonomy.ActionClassSourceSatisfied),
 		string(autonomy.ActionClassBlocker),
 	})
-	if !slices.Equal(result.Protocol.CallableActionClasses, wantCallable) {
-		t.Fatalf("callable action classes = %#v, want autonomy vocabulary %#v", result.Protocol.CallableActionClasses, wantCallable)
-	}
+	Expect(result.Protocol.CallableActionClasses).To(Equal(wantCallable))
 
 	wantInvalid := sortedStrings([]string{
 		string(autonomy.ActionClassPerEditWrite),
 		string(autonomy.ActionClassVerify),
 		string(autonomy.ActionClassProseFinal),
 	})
-	if !slices.Equal(result.Protocol.InvalidActionClasses, wantInvalid) {
-		t.Fatalf("invalid action classes = %#v, want autonomy vocabulary %#v", result.Protocol.InvalidActionClasses, wantInvalid)
-	}
-}
+	Expect(result.Protocol.InvalidActionClasses).To(Equal(wantInvalid))
+})
 
-func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
-	first := compilePlannerFixture(t)
+var _ = It("produces stable IDs for equivalent normalized input", func() {
+	first := compilePlannerFixture()
 
 	second, err := CompilePlanExecutePlanner(PlanExecutePlannerInput{
 		Lane:                 " plan-execute ",
@@ -368,56 +280,31 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 			MalformedOutputPolicy:  "retry_same_protocol_hash",
 			StaleAnchorPolicy:      "bounded_source_refresh_before_submit_plan",
 			SourceBodyObligations:  []string{"internal/runtime/agent/runner.go", "internal/contracts/autonomy/contract.go"},
-			RecoveryBudget:         2,
 		},
 		ToolMetadata: plannerFixtureToolMetadata(),
 		MetadataTags: []string{"unit1"},
 	})
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner equivalent input failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred(), "compile equivalent normalized planner input")
+	Expect(second.Contract.ContractID).To(Equal(first.Contract.ContractID))
+	Expect(second.Runtime.RuntimeContractID).To(Equal(first.Runtime.RuntimeContractID))
+	Expect(second.Protocol.ProtocolHash).To(Equal(first.Protocol.ProtocolHash))
+})
 
-	if second.Contract.ContractID != first.Contract.ContractID {
-		t.Fatalf("contract id changed for equivalent input: %q != %q", second.Contract.ContractID, first.Contract.ContractID)
-	}
-
-	if second.Runtime.RuntimeContractID != first.Runtime.RuntimeContractID {
-		t.Fatalf("runtime id changed for equivalent input: %q != %q", second.Runtime.RuntimeContractID, first.Runtime.RuntimeContractID)
-	}
-
-	if second.Protocol.ProtocolHash != first.Protocol.ProtocolHash {
-		t.Fatalf("protocol hash changed for equivalent input: %q != %q", second.Protocol.ProtocolHash, first.Protocol.ProtocolHash)
-	}
-}
-
-func TestCompilePlanExecutePlannerDefaultsKeepRequiredEditsDistinctFromSourceBody(t *testing.T) {
+var _ = It("keeps required edits distinct from source-body evidence by default", func() {
 	input := plannerFixtureInput()
 
 	input.Protocol.SourceBodyObligations = nil
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(result.Protocol.SourceBodyObligations).To(BeEmpty(), "source-body obligations must not default from required edit paths")
+	Expect(result.Protocol.RequiredEditCoverage).To(ContainElement("internal/runtime/agent/runner.go"))
+	Expect(hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/runtime/agent/runner.go", "source_body_obligations")).To(BeFalse(),
+		"required edits must not be conflated with source-body evidence")
+	Expect(result.Protocol.CallableActionClasses).To(ContainElement(string(autonomy.ActionClassSearch)))
+})
 
-	if len(result.Protocol.SourceBodyObligations) != 0 {
-		t.Fatalf("source-body obligations defaulted from required edit paths: %#v", result.Protocol.SourceBodyObligations)
-	}
-
-	if !slices.Contains(result.Protocol.RequiredEditCoverage, "internal/runtime/agent/runner.go") {
-		t.Fatalf("required edit coverage missing required path: %#v", result.Protocol.RequiredEditCoverage)
-	}
-
-	if hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/runtime/agent/runner.go", "source_body_obligations") {
-		t.Fatalf("required edit path was conflated with source-body evidence obligations: %#v", result.Contract.Obligations)
-	}
-
-	if !slices.Contains(result.Protocol.CallableActionClasses, string(autonomy.ActionClassSearch)) {
-		t.Fatalf("default callable classes missing search: %#v", result.Protocol.CallableActionClasses)
-	}
-}
-
-func TestCompilePlanExecutePlannerAcceptsPlannerToolVocabulary(t *testing.T) {
+var _ = It("accepts the complete planner tool vocabulary", func() {
 	input := plannerFixtureInput()
 	plannerTools := plannerFixtureAllowedToolNames()
 
@@ -428,30 +315,24 @@ func TestCompilePlanExecutePlannerAcceptsPlannerToolVocabulary(t *testing.T) {
 	input.Protocol.CallableToolsSpecified = true
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed for planner vocabulary: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred(), "compile the complete planner vocabulary")
 
 	for _, tool := range []string{"blame_range", "context_impact", "harness_feedback", "history_range", "history_symbol"} {
-		if !slices.Contains(result.Protocol.VisibleTools, tool) {
-			t.Fatalf("visible tools missing %s: %#v", tool, result.Protocol.VisibleTools)
-		}
-
-		if !slices.Contains(result.Protocol.CallableTools, tool) {
-			t.Fatalf("callable tools missing %s: %#v", tool, result.Protocol.CallableTools)
-		}
+		Expect(result.Protocol.VisibleTools).To(ContainElement(tool), "visible planner tool vocabulary")
+		Expect(result.Protocol.CallableTools).To(ContainElement(tool), "callable planner tool vocabulary")
 	}
 
-	if !slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
-		t.Fatalf("planner vocabulary should allow additive terminal/reporting effects: %#v", result.Contract.Capabilities.AllowedEffects)
-	}
+	Expect(result.Contract.Capabilities.AllowedEffects).To(ContainElement(autonomy.SideEffectAdditive),
+		"planner vocabulary should allow additive terminal/reporting effects")
+})
+
+type invalidProtocolVocabularyCase struct {
+	name   string
+	mutate func(*PlanExecutePlannerInput)
 }
 
-func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		mutate func(*PlanExecutePlannerInput)
-	}{
+func invalidProtocolVocabularyCases() []invalidProtocolVocabularyCase {
+	return []invalidProtocolVocabularyCase{
 		{
 			name: "unmapped allowed tool",
 			mutate: func(input *PlanExecutePlannerInput) {
@@ -543,12 +424,6 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 			name: "workspace-write delegation forbidden for planner",
 			mutate: func(input *PlanExecutePlannerInput) {
 				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "task")
-			},
-		},
-		{
-			name: "delegate edit forbidden for planner",
-			mutate: func(input *PlanExecutePlannerInput) {
-				input.Protocol.CallableTools = append(input.Protocol.CallableTools, "delegate_edit")
 			},
 		},
 		{
@@ -654,19 +529,28 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 				input.TargetPacket = append(input.TargetPacket, "transcript: full text")
 			},
 		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			input := plannerFixtureInput()
-			tc.mutate(&input)
-
-			if _, err := CompilePlanExecutePlanner(input); err == nil {
-				t.Fatalf("CompilePlanExecutePlanner succeeded, want validation error")
-			}
-		})
 	}
 }
 
-func TestCompilePlanExecutePlannerClampsNegativeRuntimeBudgetsAndDefaultsReportOnly(t *testing.T) {
+var _ = DescribeTable("rejects invalid planner protocol vocabulary", invalidProtocolVocabularyTableArgs()...)
+
+func invalidProtocolVocabularyTableArgs() []any {
+	cases := invalidProtocolVocabularyCases()
+	args := []any{func(tc invalidProtocolVocabularyCase) {
+		input := plannerFixtureInput()
+		tc.mutate(&input)
+
+		_, err := CompilePlanExecutePlanner(input)
+		Expect(err).To(HaveOccurred(), "invalid planner protocol input should be rejected")
+	}}
+	for _, tc := range cases {
+		args = append(args, Entry(tc.name, tc))
+	}
+
+	return args
+}
+
+var _ = It("clamps negative runtime budgets and defaults report-only enforcement", func() {
 	input := plannerFixtureInput()
 
 	input.Runtime.EnforcementMode = ""
@@ -674,26 +558,18 @@ func TestCompilePlanExecutePlannerClampsNegativeRuntimeBudgetsAndDefaultsReportO
 	input.Runtime.EffectiveMaxTokens = -100
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
-
-	if result.Runtime.EnforcementMode != "report_only" {
-		t.Fatalf("EnforcementMode = %q, want report_only", result.Runtime.EnforcementMode)
-	}
-
-	if result.Runtime.ThinkingBudget != 0 || result.Runtime.EffectiveMaxTokens != 0 {
-		t.Fatalf("negative runtime budgets were not clamped: %#v", result.Runtime)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(result.Runtime.EnforcementMode).To(Equal("report_only"))
+	Expect(result.Runtime.ThinkingBudget).To(BeZero())
+	Expect(result.Runtime.EffectiveMaxTokens).To(BeZero())
 
 	for _, rule := range result.Contract.ToolPolicy {
-		if !strings.Contains(rule.Source, "report_only") || !strings.Contains(rule.ReasonCode, "report_only") {
-			t.Fatalf("tool policy rule missing report-only provenance: %#v", rule)
-		}
+		Expect(rule.Source).To(ContainSubstring("report_only"), "tool policy source should retain report-only provenance")
+		Expect(rule.ReasonCode).To(ContainSubstring("report_only"), "tool policy reason should retain report-only provenance")
 	}
-}
+})
 
-func TestCompilePlanExecutePlannerKeepsExplicitDegradationFallbackAssociations(t *testing.T) {
+var _ = It("keeps explicit degradation fallback associations", func() {
 	input := plannerFixtureInput()
 
 	input.Runtime.DegradedInvariants = []string{"runtime.queue_unavailable", "runtime.native_tools_unavailable"}
@@ -720,31 +596,17 @@ func TestCompilePlanExecutePlannerKeepsExplicitDegradationFallbackAssociations(t
 	}
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
-
-	if len(result.Runtime.DegradationDecisions) != 2 {
-		t.Fatalf("degradation decisions = %#v, want one per explicit invariant decision", result.Runtime.DegradationDecisions)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(result.Runtime.DegradationDecisions).To(HaveLen(2), "one normalized decision should remain per explicit invariant")
 
 	decisions := degradationDecisionsByInvariant(result.Runtime.DegradationDecisions)
-	if got := decisions["runtime.queue_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"direct_model_call"}) {
-		t.Fatalf("queue fallback association = %#v, want direct_model_call only", got)
-	}
+	Expect(decisions["runtime.queue_unavailable"].AuthorizedFallbacks).To(Equal([]string{"direct_model_call"}))
+	Expect(decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks).To(Equal([]string{"textual_tool_contract"}))
+	Expect(decisions["runtime.queue_unavailable"].AuthorizedFallbacks).NotTo(ContainElement("legacy_global_fallback"))
+	Expect(decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks).NotTo(ContainElement("legacy_global_fallback"))
+})
 
-	if got := decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"textual_tool_contract"}) {
-		t.Fatalf("native-tools fallback association = %#v, want textual_tool_contract only", got)
-	}
-
-	if slices.Contains(decisions["runtime.queue_unavailable"].AuthorizedFallbacks, "legacy_global_fallback") ||
-		slices.Contains(decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks, "legacy_global_fallback") {
-
-		t.Fatalf("explicit degradation decisions were polluted by legacy fallback fields: %#v", result.Runtime.DegradationDecisions)
-	}
-}
-
-func TestCompilePlanExecutePlannerPairsLegacyDegradedInvariantsByPosition(t *testing.T) {
+var _ = It("pairs legacy degraded invariants with fallbacks by position", func() {
 	input := plannerFixtureInput()
 
 	input.Runtime.DegradedInvariants = []string{"runtime.queue_unavailable", "runtime.native_tools_unavailable"}
@@ -752,21 +614,14 @@ func TestCompilePlanExecutePlannerPairsLegacyDegradedInvariantsByPosition(t *tes
 	input.Runtime.DegradationDecisions = nil
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
 
 	decisions := degradationDecisionsByInvariant(result.Runtime.DegradationDecisions)
-	if got := decisions["runtime.queue_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"direct_model_call"}) {
-		t.Fatalf("legacy queue fallback association = %#v, want direct_model_call", got)
-	}
+	Expect(decisions["runtime.queue_unavailable"].AuthorizedFallbacks).To(Equal([]string{"direct_model_call"}))
+	Expect(decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks).To(Equal([]string{"textual_tool_contract"}))
+})
 
-	if got := decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"textual_tool_contract"}) {
-		t.Fatalf("legacy native-tools fallback association = %#v, want textual_tool_contract", got)
-	}
-}
-
-func TestCompilePlanExecutePlannerLegacyDegradationWithoutFallbackIsNotAuthorizedFallback(t *testing.T) {
+var _ = It("does not authorize a legacy degradation without a fallback", func() {
 	input := plannerFixtureInput()
 
 	input.Runtime.DegradedInvariants = []string{"runtime.queue_unavailable"}
@@ -774,97 +629,43 @@ func TestCompilePlanExecutePlannerLegacyDegradationWithoutFallbackIsNotAuthorize
 	input.Runtime.DegradationDecisions = nil
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
 
 	decisions := degradationDecisionsByInvariant(result.Runtime.DegradationDecisions)
-	if got := decisions["runtime.queue_unavailable"].Decision; got != "degraded_no_fallback" {
-		t.Fatalf("legacy degradation decision = %q, want degraded_no_fallback", got)
-	}
+	Expect(decisions["runtime.queue_unavailable"].Decision).To(Equal("degraded_no_fallback"))
+	Expect(decisions["runtime.queue_unavailable"].AuthorizedFallbacks).To(BeEmpty())
+})
 
-	if got := decisions["runtime.queue_unavailable"].AuthorizedFallbacks; len(got) != 0 {
-		t.Fatalf("legacy degradation fallbacks = %#v, want none", got)
-	}
-}
-
-func TestCompilePlanExecutePlannerSafeAlternativesFollowTerminalShapes(t *testing.T) {
+var _ = It("derives safe alternatives from terminal response shapes", func() {
 	input := plannerFixtureInput()
 
 	input.Protocol.TerminalResponseShapes = []string{"submit_plan"}
 	input.Protocol.CallableActionClasses = []string{"submit_plan"}
 
 	result, err := CompilePlanExecutePlanner(input)
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(result.Protocol.SafeAlternatives).To(Equal([]string{"submit_plan"}))
+})
 
-	if !slices.Equal(result.Protocol.SafeAlternatives, []string{"submit_plan"}) {
-		t.Fatalf("safe alternatives = %#v, want only submit_plan", result.Protocol.SafeAlternatives)
-	}
-}
-
-func TestCompilePlanExecutePlannerPathRolesRemainDistinct(t *testing.T) {
-	result := compilePlannerFixture(t)
+var _ = It("keeps distinct path-role authorities for the same path", func() {
+	result := compilePlannerFixture()
 	roleByPath := make(map[string][]autonomy.PathRoleKind)
 
 	for _, role := range result.Contract.PathRoles {
 		roleByPath[role.PathPattern] = append(roleByPath[role.PathPattern], role.Role)
 	}
 
-	assertRole(t, roleByPath, "internal/runtime/agent/runner.go", autonomy.PathRoleRequiredEdit)
-	assertRole(t, roleByPath, "internal/runtime/agent/runner.go", autonomy.PathRoleAllowedEdit)
-	assertRole(t, roleByPath, "internal/contracts/autonomy/contract.go", autonomy.PathRoleRequiredEdit)
-	assertRole(t, roleByPath, "internal/contracts/autonomy/contract.go", autonomy.PathRoleGeneratedArtifact)
-	assertRole(t, roleByPath, "internal/runtime/agent/phase_contract.go", autonomy.PathRoleEvidenceReadonly)
-	assertRole(t, roleByPath, ".git/**", autonomy.PathRoleProtected)
-}
+	assertRole(roleByPath, "internal/runtime/agent/runner.go", autonomy.PathRoleRequiredEdit)
+	assertRole(roleByPath, "internal/runtime/agent/runner.go", autonomy.PathRoleAllowedEdit)
+	assertRole(roleByPath, "internal/contracts/autonomy/contract.go", autonomy.PathRoleRequiredEdit)
+	assertRole(roleByPath, "internal/contracts/autonomy/contract.go", autonomy.PathRoleGeneratedArtifact)
+	assertRole(roleByPath, "internal/runtime/agent/phase_contract.go", autonomy.PathRoleEvidenceReadonly)
+	assertRole(roleByPath, ".git/**", autonomy.PathRoleProtected)
+})
 
-func TestPackageImportBoundaries(t *testing.T) {
-	for _, tc := range []struct {
-		dir       string
-		forbidden []string
-	}{
-		{
-			dir: "internal/contracts/compile",
-			forbidden: []string{
-				"idiom/cmd/idiom",
-				"idiom/internal/runtime/agent",
-				"idiom/internal/surfaces/tui/app",
-				"idiom/internal/runtime/backends",
-				"idiom/internal/runtime/workerruntime",
-				"idiom/internal/capabilities/mcp",
-				"idiom/internal/repository/semantic",
-				"idiom/internal/capabilities/workspace",
-			},
-		},
-		{
-			dir: "internal/contracts/autonomy",
-			forbidden: []string{
-				"idiom/cmd/idiom",
-				"idiom/internal/runtime/agent",
-				"idiom/internal/surfaces/tui/app",
-				"idiom/internal/runtime/backends",
-				"idiom/internal/runtime/workerruntime",
-				"idiom/internal/capabilities/mcp",
-				"idiom/internal/repository/semantic",
-				"idiom/internal/capabilities/workspace",
-			},
-		},
-	} {
-		t.Run(tc.dir, func(t *testing.T) {
-			assertNoForbiddenImports(t, tc.dir, tc.forbidden)
-		})
-	}
-}
-
-func compilePlannerFixture(t *testing.T) CompileResult {
-	t.Helper()
-
+func compilePlannerFixture() CompileResult {
 	result, err := CompilePlanExecutePlanner(plannerFixtureInput())
-	if err != nil {
-		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred(), "compile the canonical planner fixture")
 
 	return result
 }
@@ -936,7 +737,6 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 			MalformedOutputPolicy:  "retry_same_protocol_hash",
 			StaleAnchorPolicy:      "bounded_source_refresh_before_submit_plan",
 			SourceBodyObligations:  []string{"internal/runtime/agent/runner.go", "internal/contracts/autonomy/contract.go"},
-			RecoveryBudget:         2,
 		},
 		ToolMetadata: plannerFixtureToolMetadata(),
 		MetadataTags: []string{"unit1"},
@@ -951,7 +751,6 @@ func plannerFixtureToolMetadata() []PlanExecutePlannerToolMetadata {
 		{Tool: "context_impact", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
 		{Tool: "context_pack", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
 		{Tool: "context_query", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
-		{Tool: "delegate_edit", Capabilities: []autonomy.Capability{autonomy.CapabilityDelegation}, SideEffect: autonomy.SideEffectAdditive},
 		{Tool: "harness_feedback", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectAdditive, PlannerAllowed: true},
 		{Tool: "history_range", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
 		{Tool: "history_symbol", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
@@ -976,16 +775,14 @@ func plannerFixtureAllowedToolNames() []string {
 	return sortedStrings(tools)
 }
 
-func findActiveAuthorityDecision(t *testing.T, result CompileResult) autonomy.PolicyDecision {
-	t.Helper()
-
+func findActiveAuthorityDecision(result CompileResult) autonomy.PolicyDecision {
 	for _, decision := range result.Contract.PolicyDecisions {
 		if decision.InvariantID == InvariantActiveAuthority {
 			return decision
 		}
 	}
 
-	t.Fatalf("missing %s policy decision in %#v", InvariantActiveAuthority, result.Contract.PolicyDecisions)
+	Fail("missing active-authority policy decision in compiled contract")
 
 	return autonomy.PolicyDecision{}
 }
@@ -1000,41 +797,9 @@ func hasAuthoritySource(sources []autonomy.AuthoritySource, kind string, ref str
 	return false
 }
 
-func assertRole(t *testing.T, roleByPath map[string][]autonomy.PathRoleKind, path string, role autonomy.PathRoleKind) {
-	t.Helper()
-
-	if !slices.Contains(roleByPath[path], role) {
-		t.Fatalf("path %q roles = %#v, want %q", path, roleByPath[path], role)
-	}
-}
-
-func assertNoForbiddenImports(t *testing.T, dir string, forbidden []string) {
-	t.Helper()
-
-	files, err := filepath.Glob(filepath.Join("..", "..", dir, "*.go"))
-	if err != nil {
-		t.Fatalf("glob %s: %v", dir, err)
-	}
-
-	fset := token.NewFileSet()
-
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
-			continue
-		}
-
-		parsed, err := parser.ParseFile(fset, file, nil, parser.ImportsOnly)
-		if err != nil {
-			t.Fatalf("parse imports for %s: %v", file, err)
-		}
-
-		for _, imported := range parsed.Imports {
-			path := strings.Trim(imported.Path.Value, `"`)
-			if isForbiddenImport(path, forbidden) {
-				t.Fatalf("%s imports forbidden package %q", file, path)
-			}
-		}
-	}
+func assertRole(roleByPath map[string][]autonomy.PathRoleKind, path string, role autonomy.PathRoleKind) {
+	Expect(roleByPath).To(HaveKey(path), "compiled path roles should include %q", path)
+	Expect(roleByPath[path]).To(ContainElement(role), "compiled roles for %q", path)
 }
 
 func countObligationKind(obligations []autonomy.Obligation, kind autonomy.ObligationKind) int {
@@ -1070,14 +835,4 @@ func degradationDecisionsByInvariant(decisions []DegradationDecision) map[string
 	}
 
 	return out
-}
-
-func isForbiddenImport(path string, forbidden []string) bool {
-	for _, prefix := range forbidden {
-		if path == prefix || strings.HasPrefix(path, prefix+"/") {
-			return true
-		}
-	}
-
-	return false
 }

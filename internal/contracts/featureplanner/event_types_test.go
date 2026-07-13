@@ -5,175 +5,131 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestFeaturePlannerEventTypesAllRoundTrip(t *testing.T) {
-	seen := map[FeaturePlannerEventType]struct{}{}
-	for _, eventType := range EventTypes() {
-		if _, ok := seen[eventType]; ok {
-			t.Fatalf("duplicate EventTypes entry %q", eventType)
+var _ = Describe("Feature planner vocabulary", func() {
+	It("round-trips every declared event type without duplicates", func() {
+		seen := map[FeaturePlannerEventType]struct{}{}
+		for _, eventType := range EventTypes() {
+			_, duplicate := seen[eventType]
+			Expect(duplicate).To(BeFalse(), "duplicate EventTypes entry %q", eventType)
+			seen[eventType] = struct{}{}
+
+			Expect(KnownEventType(eventType)).To(BeTrue())
+			parsed, ok := ParseEventName(EventName(eventType))
+			Expect(ok).To(BeTrue())
+			Expect(parsed).To(Equal(eventType))
 		}
-		seen[eventType] = struct{}{}
+	})
 
-		if !KnownEventType(eventType) {
-			t.Fatalf("KnownEventType(%q) = false", eventType)
+	It("keeps the event registry synchronized with typed constants", func() {
+		_, filename, _, ok := runtime.Caller(0)
+		Expect(ok).To(BeTrue(), "runtime.Caller should locate this test")
+
+		sourcePath := filepath.Join(filepath.Dir(filename), "event_types.go")
+		body, err := os.ReadFile(sourcePath)
+		Expect(err).NotTo(HaveOccurred())
+
+		declared := map[FeaturePlannerEventType]string{}
+		declRE := regexp.MustCompile(`(?m)(Event[A-Za-z0-9]+)\s+FeaturePlannerEventType\s*=\s*"([^"]+)"`)
+		for _, match := range declRE.FindAllStringSubmatch(string(body), -1) {
+			declared[FeaturePlannerEventType(match[2])] = match[1]
 		}
-		name := EventName(eventType)
-		parsed, ok := ParseEventName(name)
-		if !ok || parsed != eventType {
-			t.Fatalf("ParseEventName(%q) = %q %v", name, parsed, ok)
+		Expect(declared).NotTo(BeEmpty(), "no FeaturePlannerEventType constants found")
+
+		known := map[FeaturePlannerEventType]struct{}{}
+		for _, eventType := range EventTypes() {
+			known[eventType] = struct{}{}
 		}
-	}
-}
-
-func TestFeaturePlannerEventTypesCoverDeclaredConstants(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	sourcePath := filepath.Join(filepath.Dir(filename), "event_types.go")
-	body, err := os.ReadFile(sourcePath)
-	if err != nil {
-		t.Fatalf("read %s: %v", sourcePath, err)
-	}
-
-	declared := map[FeaturePlannerEventType]string{}
-	declRE := regexp.MustCompile(`(?m)(Event[A-Za-z0-9]+)\s+FeaturePlannerEventType\s*=\s*"([^"]+)"`)
-	for _, match := range declRE.FindAllStringSubmatch(string(body), -1) {
-		declared[FeaturePlannerEventType(match[2])] = match[1]
-	}
-	if len(declared) == 0 {
-		t.Fatal("no FeaturePlannerEventType constants found")
-	}
-
-	known := map[FeaturePlannerEventType]struct{}{}
-	for _, eventType := range EventTypes() {
-		known[eventType] = struct{}{}
-	}
-
-	var missing []string
-	for eventType, name := range declared {
-		if _, ok := known[eventType]; !ok {
-			missing = append(missing, name+"="+string(eventType))
+		for eventType, name := range declared {
+			Expect(known).To(HaveKey(eventType), "EventTypes missing %s=%s", name, eventType)
 		}
-	}
-	if len(missing) > 0 {
-		t.Fatalf("EventTypes missing declared constants:\n%s", strings.Join(missing, "\n"))
-	}
-}
+	})
 
-func TestParseFeaturePlannerEventNameRejectsMalformedNames(t *testing.T) {
-	for _, name := range []string{
-		"",
-		string(EventStart),
-		EventPrefix,
-		"idiom.plan_execute.start",
-		"idiom.feature_planner.not_real",
-	} {
-		if eventType, ok := ParseEventName(name); ok {
-			t.Fatalf("ParseEventName(%q) = %q, true", name, eventType)
+	DescribeTable("rejects malformed event names",
+		func(name string) {
+			_, ok := ParseEventName(name)
+			Expect(ok).To(BeFalse())
+		},
+		Entry("empty", ""),
+		Entry("unprefixed", string(EventStart)),
+		Entry("bare prefix", EventPrefix),
+		Entry("another event family", "idiom.plan_execute.start"),
+		Entry("unknown feature planner event", "idiom.feature_planner.not_real"),
+	)
+
+	It("recognizes current and legacy durable event names", func() {
+		for _, name := range EventNames() {
+			Expect(KnownDurableEventName(name)).To(BeTrue(), "current event %q should be durable", name)
 		}
-	}
-}
-
-func TestKnownDurableEventNameAcceptsCurrentAndLegacyNames(t *testing.T) {
-	for _, name := range EventNames() {
-		if !KnownDurableEventName(name) {
-			t.Fatalf("KnownDurableEventName(%q) = false", name)
+		for _, name := range LegacyEventNames() {
+			Expect(KnownDurableEventName(string(name))).To(BeTrue(), "legacy event %q should be durable", name)
+			Expect(KnownLegacyEventName(string(name))).To(BeTrue(), "legacy event %q should be recognized", name)
 		}
-	}
-
-	for _, name := range LegacyEventNames() {
-		if !KnownDurableEventName(string(name)) || !KnownLegacyEventName(string(name)) {
-			t.Fatalf("legacy event %q should be accepted", name)
+		for _, name := range []string{"", "idiom.feature.created", "idiom.feature_planner.not_real"} {
+			Expect(KnownDurableEventName(name)).To(BeFalse(), "unknown event %q should be rejected", name)
 		}
-	}
+	})
 
-	for _, name := range []string{"", "idiom.feature.created", "idiom.feature_planner.not_real"} {
-		if KnownDurableEventName(name) {
-			t.Fatalf("KnownDurableEventName(%q) = true", name)
+	It("parses every nested plan-execute completion event", func() {
+		for _, eventName := range []NestedPlanExecuteCompletionEventName{
+			NestedPlanExecuteCompletionEventCompleted,
+			NestedPlanExecuteCompletionEventBlocked,
+		} {
+			parsed, ok := ParseNestedPlanExecuteCompletionEventName(string(eventName))
+			Expect(ok).To(BeTrue())
+			Expect(parsed).To(Equal(eventName))
+			Expect(KnownNestedPlanExecuteCompletionEventName(string(eventName))).To(BeTrue())
 		}
-	}
-}
 
-func TestNestedPlanExecuteCompletionEventParserAcceptsDeclaredValues(t *testing.T) {
-	for _, eventName := range []NestedPlanExecuteCompletionEventName{
-		NestedPlanExecuteCompletionEventCompleted,
-		NestedPlanExecuteCompletionEventBlocked,
-	} {
-		name := string(eventName)
-		parsed, ok := ParseNestedPlanExecuteCompletionEventName(name)
-		if !ok || parsed != eventName {
-			t.Fatalf("ParseNestedPlanExecuteCompletionEventName(%q) = %q %v", name, parsed, ok)
+		_, ok := ParseNestedPlanExecuteCompletionEventName("internal_idiom.plan_execute.unknown")
+		Expect(ok).To(BeFalse())
+	})
+
+	It("trusts only declared completion sources and distinguishes durable evidence", func() {
+		for _, source := range PlanExecuteCompletionSources() {
+			parsed, ok := ParsePlanExecuteCompletionSource(string(source))
+			Expect(ok).To(BeTrue())
+			Expect(parsed).To(Equal(source))
+			Expect(CompletionSourceTrustsAcceptanceEvidence(string(source))).To(BeTrue())
 		}
-		if !KnownNestedPlanExecuteCompletionEventName(name) {
-			t.Fatalf("KnownNestedPlanExecuteCompletionEventName(%q) = false", name)
+
+		for _, source := range []PlanExecuteCompletionSource{
+			PlanExecuteCompletionSourceDurableTerminal,
+			PlanExecuteCompletionSourceDurableProgress,
+		} {
+			Expect(CompletionSourceCarriesDurableAcceptanceEvidence(string(source))).To(BeTrue())
 		}
-	}
+		Expect(CompletionSourceCarriesDurableAcceptanceEvidence(string(PlanExecuteCompletionSourceHeadlessReturned))).To(BeFalse())
+		Expect(CompletionSourceTrustsAcceptanceEvidence("test_plan_execute_adapter")).To(BeFalse())
+	})
 
-	if got, ok := ParseNestedPlanExecuteCompletionEventName("internal_idiom.plan_execute.unknown"); ok {
-		t.Fatalf("accepted unknown nested event %q", got)
-	}
-}
+	It("trims string inputs before applying feature planner predicates", func() {
+		eventType, ok := ParseEventName(" \t" + EventName(EventStart) + "\n")
+		Expect(ok).To(BeTrue())
+		Expect(eventType).To(Equal(EventStart))
+		Expect(KnownLegacyEventName(" \t" + string(LegacyEventAtomStarted) + "\n")).To(BeTrue())
 
-func TestPlanExecuteCompletionSourceTrustPolicy(t *testing.T) {
-	for _, source := range PlanExecuteCompletionSources() {
-		parsed, ok := ParsePlanExecuteCompletionSource(string(source))
-		if !ok || parsed != source {
-			t.Fatalf("ParsePlanExecuteCompletionSource(%q) = %q %v, want %q true", source, parsed, ok, source)
+		source, ok := ParsePlanExecuteCompletionSource(" \t" + string(PlanExecuteCompletionSourceDurableTerminal) + "\n")
+		Expect(ok).To(BeTrue())
+		Expect(source).To(Equal(PlanExecuteCompletionSourceDurableTerminal))
+		Expect(CompletionSourceCarriesDurableAcceptanceEvidence(" \t" + string(PlanExecuteCompletionSourceDurableProgress) + "\n")).To(BeTrue())
+		Expect(CompletionSourceTrustsAcceptanceEvidence(" \t" + string(PlanExecuteCompletionSourceTUIReturned) + "\n")).To(BeTrue())
+
+		eventName, ok := ParseNestedPlanExecuteCompletionEventName(" \t" + string(NestedPlanExecuteCompletionEventBlocked) + "\n")
+		Expect(ok).To(BeTrue())
+		Expect(eventName).To(Equal(NestedPlanExecuteCompletionEventBlocked))
+
+		for _, value := range []string{
+			"idiom.feature_planner.not_real",
+			"idiom.feature.atom_unknown",
+			"test_plan_execute_adapter",
+			"internal_idiom.plan_execute.unknown",
+		} {
+			Expect(KnownDurableEventName(value)).To(BeFalse(), "unknown value %q should be rejected", value)
 		}
-		if !CompletionSourceTrustsAcceptanceEvidence(string(source)) {
-			t.Fatalf("source %q should be trusted for acceptance evidence", source)
-		}
-	}
-
-	for _, source := range []PlanExecuteCompletionSource{
-		PlanExecuteCompletionSourceDurableTerminal,
-		PlanExecuteCompletionSourceDurableProgress,
-	} {
-		if !CompletionSourceCarriesDurableAcceptanceEvidence(string(source)) {
-			t.Fatalf("source %q should carry durable acceptance evidence", source)
-		}
-	}
-
-	if CompletionSourceCarriesDurableAcceptanceEvidence(string(PlanExecuteCompletionSourceHeadlessReturned)) {
-		t.Fatal("headless return should not carry durable acceptance evidence by itself")
-	}
-	if CompletionSourceTrustsAcceptanceEvidence("test_plan_execute_adapter") {
-		t.Fatal("unknown completion source should not be trusted")
-	}
-}
-
-func TestFeaturePlannerEventStringPredicatesTrimInput(t *testing.T) {
-	if eventType, ok := ParseEventName(" \t" + EventName(EventStart) + "\n"); !ok || eventType != EventStart {
-		t.Fatalf("ParseEventName trimmed start = %q %v, want %q true", eventType, ok, EventStart)
-	}
-	if !KnownLegacyEventName(" \t" + string(LegacyEventAtomStarted) + "\n") {
-		t.Fatalf("KnownLegacyEventName should trim %q", LegacyEventAtomStarted)
-	}
-	if source, ok := ParsePlanExecuteCompletionSource(" \t" + string(PlanExecuteCompletionSourceDurableTerminal) + "\n"); !ok || source != PlanExecuteCompletionSourceDurableTerminal {
-		t.Fatalf("ParsePlanExecuteCompletionSource trimmed durable_terminal = %q %v", source, ok)
-	}
-	if !CompletionSourceCarriesDurableAcceptanceEvidence(" \t" + string(PlanExecuteCompletionSourceDurableProgress) + "\n") {
-		t.Fatalf("CompletionSourceCarriesDurableAcceptanceEvidence should trim %q", PlanExecuteCompletionSourceDurableProgress)
-	}
-	if !CompletionSourceTrustsAcceptanceEvidence(" \t" + string(PlanExecuteCompletionSourceTUIReturned) + "\n") {
-		t.Fatalf("CompletionSourceTrustsAcceptanceEvidence should trim %q", PlanExecuteCompletionSourceTUIReturned)
-	}
-	if eventName, ok := ParseNestedPlanExecuteCompletionEventName(" \t" + string(NestedPlanExecuteCompletionEventBlocked) + "\n"); !ok || eventName != NestedPlanExecuteCompletionEventBlocked {
-		t.Fatalf("ParseNestedPlanExecuteCompletionEventName trimmed blocked = %q %v", eventName, ok)
-	}
-
-	for _, value := range []string{
-		"idiom.feature_planner.not_real",
-		"idiom.feature.atom_unknown",
-		"test_plan_execute_adapter",
-		"internal_idiom.plan_execute.unknown",
-	} {
-		if KnownDurableEventName(value) {
-			t.Fatalf("KnownDurableEventName(%q) = true", value)
-		}
-	}
-}
+	})
+})

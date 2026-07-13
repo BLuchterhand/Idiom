@@ -4,17 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 )
 
-func TestSidecarV1CompatibilityGoldenCases(t *testing.T) {
+var _ = ginkgo.It("sidecar v1 compatibility golden cases", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeSidecarCompatWorkspace(t, root)
+	writeSidecarCompatWorkspace(root)
 
-	configPath := writeMainConfigRoot(t, root)
+	configPath := writeMainConfigRoot(root)
 
 	cases := []struct {
 		name       string
@@ -98,60 +100,47 @@ func TestSidecarV1CompatibilityGoldenCases(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		ginkgo.By(tc.name)
+		func() {
 			var stdout, stderr bytes.Buffer
 
 			code := runMain(tc.args, &stdout, &stderr)
 
-			if code != tc.exitCode {
-				t.Fatalf("exit code = %d, want %d\nstdout=%s\nstderr=%s", code, tc.exitCode, stdout.String(), stderr.String())
-			}
+			gomega.Expect(code).To(gomega.BeEquivalentTo(tc.exitCode), fmt.Sprintf("exit code = %d, want %d\nstdout=%s\nstderr=%s", code, tc.exitCode, stdout.String(), stderr.String()))
 
-			payload := decodeSidecarCompatJSON(t, stdout.Bytes())
-			assertSidecarCompatLegacyFields(t, payload)
+			payload := decodeSidecarCompatJSON(stdout.Bytes())
+			assertSidecarCompatLegacyFields(payload)
 
 			for path, want := range tc.wantStable {
 				got, ok := jsonValueAtDottedPath(payload, path)
-				if !ok {
-					t.Fatalf("missing JSON path %s in %s", path, stdout.String())
-				}
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing JSON path %s in %s", path, stdout.String()))
 
-				if fmt.Sprint(got) != want {
-					t.Fatalf("JSON path %s = %q, want %q", path, fmt.Sprint(got), want)
-				}
+				gomega.Expect(fmt.Sprint(got)).To(gomega.BeEquivalentTo(want), fmt.Sprintf("JSON path %s = %q, want %q", path, fmt.Sprint(got), want))
 			}
 
 			for _, path := range tc.wantNull {
 				got, ok := jsonValueAtDottedPath(payload, path)
-				if !ok {
-					t.Fatalf("missing JSON path %s in %s", path, stdout.String())
-				}
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing JSON path %s in %s", path, stdout.String()))
 
-				if got != nil {
-					t.Fatalf("JSON path %s = %#v, want null", path, got)
-				}
+				gomega.Expect(got).To(gomega.BeNil(), fmt.Sprintf("JSON path %s = %#v, want null", path, got))
 			}
 
 			for _, path := range tc.wantText {
 				got, ok := jsonValueAtDottedPath(payload, path)
-				if !ok || strings.TrimSpace(fmt.Sprint(got)) == "" {
-					t.Fatalf("JSON path %s should be non-empty text, got %#v", path, got)
-				}
+				gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("JSON path %s should be non-empty text, got %#v", path, got))
+				gomega.Expect(strings.TrimSpace(fmt.Sprint(got))).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("JSON path %s should be non-empty text, got %#v", path, got))
 			}
 
 			for _, want := range tc.wantStdout {
-				if !strings.Contains(stdout.String(), want) {
-					t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
-				}
+				gomega.Expect(stdout.String()).To(gomega.ContainSubstring(want), fmt.Sprintf("stdout missing %q:\n%s", want, stdout.String()))
 			}
 
-			assertNoPublicToolPayloadStrategyLeakage(t, payload)
-		})
+			assertNoPublicToolPayloadStrategyLeakage(payload)
+		}()
 	}
-}
-
-func TestSidecarV1UsageErrorsStayOutOfResultEnvelope(t *testing.T) {
-	configPath := writeMainConfig(t)
+})
+var _ = ginkgo.It("sidecar v1 usage errors stay out of result envelope", func() {
+	configPath := writeMainConfig()
 	cases := []struct {
 		name       string
 		args       []string
@@ -185,78 +174,65 @@ func TestSidecarV1UsageErrorsStayOutOfResultEnvelope(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		ginkgo.By(tc.name)
+		func() {
 			var stdout, stderr bytes.Buffer
 
 			code := runMain(tc.args, &stdout, &stderr)
 
-			if code != tc.exitCode {
-				t.Fatalf("exit code = %d, want %d\nstdout=%s\nstderr=%s", code, tc.exitCode, stdout.String(), stderr.String())
-			}
+			gomega.Expect(code).To(gomega.BeEquivalentTo(tc.exitCode), fmt.Sprintf("exit code = %d, want %d\nstdout=%s\nstderr=%s", code, tc.exitCode, stdout.String(), stderr.String()))
 
-			if strings.TrimSpace(stdout.String()) != "" {
-				t.Fatalf("usage/input rejection should not emit a partial sidecar result, got stdout=%s", stdout.String())
-			}
+			gomega.Expect(strings.TrimSpace(stdout.String())).To(gomega.BeEquivalentTo(""), fmt.Sprintf("usage/input rejection should not emit a partial sidecar result, got stdout=%s", stdout.String()))
 
-			if !strings.Contains(stderr.String(), tc.stderrText) {
-				t.Fatalf("stderr missing %q: %s", tc.stderrText, stderr.String())
-			}
-		})
+			gomega.Expect(stderr.String()).To(gomega.ContainSubstring(tc.stderrText), fmt.Sprintf("stderr missing %q: %s", tc.stderrText, stderr.String()))
+		}()
 	}
+})
+
+func writeSidecarCompatWorkspace(root string) {
+	ginkgo.GinkgoHelper()
+
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/sidecarcompat\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed(), "write go.mod")
+
+	gomega.Expect(os.WriteFile(filepath.Join(root, "script.gd"), []byte("func _ready():\n\tprint(\"ok\")\n"), 0o644)).To(gomega.Succeed(), "write script.gd")
 }
 
-func writeSidecarCompatWorkspace(t *testing.T, root string) {
-	t.Helper()
-
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/sidecarcompat\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "script.gd"), []byte("func _ready():\n\tprint(\"ok\")\n"), 0o644); err != nil {
-		t.Fatalf("write script.gd: %v", err)
-	}
-}
-
-func decodeSidecarCompatJSON(t *testing.T, data []byte) map[string]any {
-	t.Helper()
+func decodeSidecarCompatJSON(data []byte) map[string]any {
+	ginkgo.GinkgoHelper()
 
 	var payload map[string]any
 
-	if err := json.Unmarshal(data, &payload); err != nil {
-		t.Fatalf("decode sidecar JSON: %v\n%s", err, string(data))
-	}
+	gomega.Expect(json.Unmarshal(data, &payload)).To(gomega.Succeed(), "decode sidecar JSON:\n%s", string(data))
 
 	return payload
 }
 
-func assertSidecarCompatLegacyFields(t *testing.T, payload map[string]any) {
-	t.Helper()
+func assertSidecarCompatLegacyFields(payload map[string]any) {
+	ginkgo.GinkgoHelper()
 
 	for _, key := range []string{"Tool", "Summary", "Output", "Error", "sidecar"} {
-		if _, ok := payload[key]; !ok {
-			t.Fatalf("missing legacy/sidecar key %q in %#v", key, payload)
+		{
+			_, ok := payload[key]
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing legacy/sidecar key %q in %#v", key, payload))
 		}
 	}
 
 	sidecar, ok := payload["sidecar"].(map[string]any)
-	if !ok {
-		t.Fatalf("sidecar should be a JSON object, got %#v", payload["sidecar"])
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("sidecar should be a JSON object, got %#v", payload["sidecar"]))
 
 	for _, key := range []string{"schema_version", "tool", "profile", "caller", "contract", "freshness", "warnings", "audit_event_ids", "structured_output", "error"} {
-		if _, ok := sidecar[key]; !ok {
-			t.Fatalf("missing stable sidecar key %q in %#v", key, sidecar)
+		{
+			_, ok := sidecar[key]
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing stable sidecar key %q in %#v", key, sidecar))
 		}
 	}
 }
 
-func assertNoPublicToolPayloadStrategyLeakage(t *testing.T, payload map[string]any) {
-	t.Helper()
+func assertNoPublicToolPayloadStrategyLeakage(payload map[string]any) {
+	ginkgo.GinkgoHelper()
 
 	rendered, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal public payload: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal public payload: %v", err))
 
 	lower := strings.ToLower(string(rendered))
 	// Scan the full public JSON object: legacy Tool/Summary/Output/Error fields
@@ -278,8 +254,6 @@ func assertNoPublicToolPayloadStrategyLeakage(t *testing.T, payload map[string]a
 		"file_body",
 		"private_path",
 	} {
-		if strings.Contains(lower, forbidden) {
-			t.Fatalf("public tool payload contains strategy/privacy leakage phrase %q:\n%s", forbidden, string(rendered))
-		}
+		gomega.Expect(lower).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("public tool payload contains strategy/privacy leakage phrase %q:\n%s", forbidden, string(rendered)))
 	}
 }

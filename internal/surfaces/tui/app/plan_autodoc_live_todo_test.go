@@ -1,20 +1,24 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	planartifact "idiom/internal/contracts/planartifact"
 
 	"idiom/internal/capabilities/workspace"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestRecordSubmittedPlanAppendsChecklist(t *testing.T) {
+var _ = ginkgo.It("record submitted plan appends checklist", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
@@ -26,53 +30,34 @@ func TestRecordSubmittedPlanAppendsChecklist(t *testing.T) {
 	m.recordSubmittedPlan(req, workspace.ToolResult{Tool: "submit_plan", Summary: "ok"})
 
 	plan, err := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-	if err != nil {
-		t.Fatalf("read plan: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read plan: %v", err))
 
 	got := string(plan)
-	if !strings.Contains(got, "### Plan") {
-		t.Errorf("missing Plan heading:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Plan")).To(gomega.BeTrue(), fmt.Sprintf("missing Plan heading:\n%s", got))
 
-	if !strings.Contains(got, "- [ ] add the new handler (a.go)") {
-		t.Errorf("missing first edit line:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "- [ ] add the new handler (a.go)")).To(gomega.BeTrue(), fmt.Sprintf("missing first edit line:\n%s", got))
 
-	if !strings.Contains(got, "- [ ] wire the route (b.go)") {
-		t.Errorf("missing second edit line:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "- [ ] wire the route (b.go)")).To(gomega.BeTrue(), fmt.Sprintf("missing second edit line:\n%s", got))
 
-	if !strings.Contains(got, "<!-- pid:pe-0 -->") {
-		t.Errorf("missing pid anchor for pe-0:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "<!-- pid:pe-0 -->")).To(gomega.BeTrue(), fmt.Sprintf("missing pid anchor for pe-0:\n%s", got))
 
-	if !strings.Contains(got, "<!-- pid:pe-1 -->") {
-		t.Errorf("missing pid anchor for pe-1:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "<!-- pid:pe-1 -->")).To(gomega.BeTrue(), fmt.Sprintf("missing pid anchor for pe-1:\n%s", got))
 
-	if !strings.Contains(got, "anchored replacement") {
-		t.Errorf("missing basic edit details:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "anchored replacement")).To(gomega.BeTrue(), fmt.Sprintf("missing basic edit details:\n%s", got))
 
-	if !strings.Contains(got, "### Approval") ||
-		!strings.Contains(got, "<!-- plan-approval:current -->") ||
-		!strings.Contains(got, "<!-- plan-approval:all -->") {
-		t.Errorf("missing approval controls:\n%s", got)
-	}
+	gomega.Expect(got).To(gomega.ContainSubstring("### Approval"), fmt.Sprintf("missing approval controls:\n%s", got))
+	gomega.Expect(got).To(gomega.ContainSubstring("<!-- plan-approval:current -->"), fmt.Sprintf("missing approval controls:\n%s", got))
+	gomega.Expect(got).To(gomega.ContainSubstring("<!-- plan-approval:all -->"), fmt.Sprintf("missing approval controls:\n%s", got))
 
-	if m.plan.submittedEdits == nil {
-		t.Fatal("planSubmittedEdits should be initialized")
-	}
+	gomega.Expect(m.plan.submittedEdits).NotTo(gomega.BeNil(), fmt.Sprint("planSubmittedEdits should be initialized"))
 
-	if len(m.plan.submittedEdits) != 2 {
-		t.Fatalf("want 2 submitted edits, got %d", len(m.plan.submittedEdits))
-	}
-}
+	gomega.Expect(len(m.plan.submittedEdits)).To(gomega.Equal(2), fmt.Sprintf("want 2 submitted edits, got %d", len(m.plan.submittedEdits)))
+})
 
-func TestRecordSubmittedPlanReplacesExistingSection(t *testing.T) {
+var _ = ginkgo.It("record submitted plan replaces existing section", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	first := workspace.ToolRequest{
 		Tool:  "submit_plan",
@@ -92,20 +77,18 @@ func TestRecordSubmittedPlanReplacesExistingSection(t *testing.T) {
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if strings.Contains(got, "old.go") {
-		t.Errorf("old edit should have been replaced:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "old.go")).To(gomega.BeFalse(), fmt.Sprintf("old edit should have been replaced:\n%s", got))
 
-	if strings.Contains(got, "new edit 1") && strings.Contains(got, "new edit 2") {
-		return
-	}
+	gomega.Expect(got).To(gomega.And(
+		gomega.ContainSubstring("new edit 1"),
+		gomega.ContainSubstring("new edit 2"),
+	), fmt.Sprintf("missing new edits after replacement:\n%s", got))
+})
 
-	t.Errorf("missing new edits after replacement:\n%s", got)
-}
-
-func TestRecordSubmittedPlanSkipsErrors(t *testing.T) {
+var _ = ginkgo.It("record submitted plan skips errors", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool:  "submit_plan",
@@ -113,15 +96,14 @@ func TestRecordSubmittedPlanSkipsErrors(t *testing.T) {
 	}
 	m.recordSubmittedPlan(req, workspace.ToolResult{Tool: "submit_plan", Error: "rejected"})
 
-	if _, err := os.Stat(filepath.Join(root, ".planning", "sessA.md")); !os.IsNotExist(err) {
-		plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-		t.Errorf("plan should not exist after error, got:\n%s", string(plan))
-	}
-}
+	_, err := os.Stat(filepath.Join(root, ".planning", "sessA.md"))
+	gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), "plan should not exist after error")
+})
 
-func TestRecordSubmittedPlanSkipsSuppressedReviewNoopPlan(t *testing.T) {
+var _ = ginkgo.It("record submitted plan skips suppressed review noop plan", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool:  "submit_plan",
@@ -132,15 +114,14 @@ func TestRecordSubmittedPlanSkipsSuppressedReviewNoopPlan(t *testing.T) {
 		Summary: "review-repair submit_plan ignored: no new corrective plan",
 	})
 
-	if _, err := os.Stat(filepath.Join(root, ".planning", "sessA.md")); !os.IsNotExist(err) {
-		plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-		t.Errorf("suppressed review noop plan should not create plan UI, got:\n%s", string(plan))
-	}
-}
+	_, err := os.Stat(filepath.Join(root, ".planning", "sessA.md"))
+	gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), "suppressed review noop plan should not create plan UI")
+})
 
-func TestRecordSubmittedPlanUsesPlanArtifact(t *testing.T) {
+var _ = ginkgo.It("record submitted plan uses plan artifact", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
@@ -155,26 +136,27 @@ func TestRecordSubmittedPlanUsesPlanArtifact(t *testing.T) {
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if !strings.Contains(got, "from artifact") {
-		t.Errorf("artifact edits should populate plan:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "from artifact")).To(gomega.BeTrue(), fmt.Sprintf("artifact edits should populate plan:\n%s", got))
+})
 
-func TestRecordSubmittedPlanSkipsNonSubmitPlan(t *testing.T) {
+var _ = ginkgo.It("record submitted plan skips non submit plan", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "a.go"}
 	m.recordSubmittedPlan(req, workspace.ToolResult{Summary: "ok"})
 
-	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
-		t.Fatal("non-submit_plan should not create planning dir")
+	{
+		_, err := os.Stat(filepath.Join(root, ".planning"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprint("non-submit_plan should not create planning dir"))
 	}
-}
+})
 
-func TestAttachWriteToSubmittedEdit(t *testing.T) {
+var _ = ginkgo.It("attach write to submitted edit", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
@@ -186,27 +168,22 @@ func TestAttachWriteToSubmittedEdit(t *testing.T) {
 	m.recordSubmittedPlan(req, workspace.ToolResult{Tool: "submit_plan", Summary: "ok"})
 
 	ok := m.attachWriteToSubmittedEdit("a.go", "diff-abc123")
-	if !ok {
-		t.Fatal("should match a.go")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("should match a.go"))
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if !strings.Contains(got, "- [x] first edit (a.go)") ||
-		!strings.Contains(got, "<!-- pid:pe-0 --> <!-- id:diff-abc123 -->") {
-		t.Errorf("first edit should be checked off with diff anchor:\n%s", got)
-	}
+	gomega.Expect(got).To(gomega.ContainSubstring("- [x] first edit (a.go)"), fmt.Sprintf("first edit should be checked off with diff anchor:\n%s", got))
+	gomega.Expect(got).To(gomega.ContainSubstring("<!-- pid:pe-0 --> <!-- id:diff-abc123 -->"), fmt.Sprintf("first edit should be checked off with diff anchor:\n%s", got))
 
-	if !strings.Contains(got, "- [ ] second edit (b.go)") ||
-		!strings.Contains(got, "<!-- pid:pe-1 -->") {
-		t.Errorf("second edit should remain unchecked:\n%s", got)
-	}
-}
+	gomega.Expect(got).To(gomega.ContainSubstring("- [ ] second edit (b.go)"), fmt.Sprintf("second edit should remain unchecked:\n%s", got))
+	gomega.Expect(got).To(gomega.ContainSubstring("<!-- pid:pe-1 -->"), fmt.Sprintf("second edit should remain unchecked:\n%s", got))
+})
 
-func TestAttachWriteToSubmittedEditNoMatch(t *testing.T) {
+var _ = ginkgo.It("attach write to submitted edit no match", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool:  "submit_plan",
@@ -214,14 +191,13 @@ func TestAttachWriteToSubmittedEditNoMatch(t *testing.T) {
 	}
 	m.recordSubmittedPlan(req, workspace.ToolResult{Tool: "submit_plan", Summary: "ok"})
 
-	if m.attachWriteToSubmittedEdit("z.go", "diff-xyz") {
-		t.Error("should not match z.go")
-	}
-}
+	gomega.Expect(m.attachWriteToSubmittedEdit("z.go", "diff-xyz")).To(gomega.BeFalse(), fmt.Sprint("should not match z.go"))
+})
 
-func TestUpdatePlanItemCheckboxInProgress(t *testing.T) {
+var _ = ginkgo.It("update plan item checkbox in progress", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -232,9 +208,7 @@ func TestUpdatePlanItemCheckboxInProgress(t *testing.T) {
 	m.recordTaskLedger(req, workspace.ToolResult{Tool: "task_ledger", Summary: "ok"})
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-	if !strings.Contains(string(plan), "- [ ] do the thing") {
-		t.Fatalf("initial item should be unchecked:\n%s", string(plan))
-	}
+	gomega.Expect(strings.Contains(string(plan), "- [ ] do the thing")).To(gomega.BeTrue(), fmt.Sprintf("initial item should be unchecked:\n%s", string(plan)))
 
 	update := workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -248,12 +222,10 @@ func TestUpdatePlanItemCheckboxInProgress(t *testing.T) {
 
 	got := string(plan)
 
-	if !strings.Contains(got, "- [~] do the thing") {
-		t.Errorf("item should show in-progress [~]:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "- [~] do the thing")).To(gomega.BeTrue(), fmt.Sprintf("item should show in-progress [~]:\n%s", got))
+})
 
-func TestPlanEditLabelFallbacks(t *testing.T) {
+var _ = ginkgo.It("plan edit label fallbacks", func() {
 	cases := []struct {
 		edit planartifact.PlanEdit
 		want string
@@ -264,110 +236,83 @@ func TestPlanEditLabelFallbacks(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := planEditLabel(tc.edit)
-		if got != tc.want {
-			t.Errorf("planEditLabel(%+v) = %q, want %q", tc.edit, got, tc.want)
-		}
+		gomega.Expect(got).To(gomega.Equal(tc.want), fmt.Sprintf("planEditLabel(%+v) = %q, want %q", tc.edit, got, tc.want))
 	}
-}
+})
 
-func TestCutPlanSection(t *testing.T) {
+var _ = ginkgo.It("cut plan section", func() {
 	content := "## Session X\n\n### Plan\n- [ ] a\n- [ ] b\n\n### Other\nstuff\n"
 	before, found := cutPlanSection(content, "### Plan")
 
-	if !found {
-		t.Fatal("should find section")
-	}
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprint("should find section"))
 
-	if strings.Contains(before, "### Plan") {
-		t.Errorf("before should not contain ### Plan:\n%s", before)
-	}
+	gomega.Expect(strings.Contains(before, "### Plan")).To(gomega.BeFalse(), fmt.Sprintf("before should not contain ### Plan:\n%s", before))
 
-	if !strings.Contains(before, "## Session X") {
-		t.Errorf("before should keep heading:\n%s", before)
-	}
+	gomega.Expect(strings.Contains(before, "## Session X")).To(gomega.BeTrue(), fmt.Sprintf("before should keep heading:\n%s", before))
 
-	if !strings.Contains(before, "### Other") {
-		t.Errorf("before should keep ### Other:\n%s", before)
-	}
-}
+	gomega.Expect(strings.Contains(before, "### Other")).To(gomega.BeTrue(), fmt.Sprintf("before should keep ### Other:\n%s", before))
+})
 
-func TestCutPlanSectionToleratesCRLFAndTrailingHeadingSpace(t *testing.T) {
+var _ = ginkgo.It("cut plan section tolerates crlf and trailing heading space", func() {
 	content := "## Session X\r\n\r\n### Plan  \r\n- [ ] a\r\n\r\n### Approval  \r\n- [ ] old\r\n\r\n### Other\r\nstuff\r\n"
 	withoutPlan, found := cutPlanSection(content, "### Plan")
-	if !found {
-		t.Fatal("should find Plan section")
-	}
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprint("should find Plan section"))
 
 	withoutApproval, found := cutPlanSection(withoutPlan, "### Approval")
-	if !found {
-		t.Fatal("should find Approval section")
-	}
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprint("should find Approval section"))
 
-	if strings.Contains(withoutApproval, "### Plan") || strings.Contains(withoutApproval, "### Approval") || strings.Contains(withoutApproval, "old") {
-		t.Fatalf("old generated sections were not cut:\n%s", withoutApproval)
-	}
+	gomega.Expect(withoutApproval).To(gomega.Not(gomega.ContainSubstring("### Plan")), fmt.Sprintf("old generated sections were not cut:\n%s", withoutApproval))
+	gomega.Expect(withoutApproval).To(gomega.Not(gomega.ContainSubstring("### Approval")), fmt.Sprintf("old generated sections were not cut:\n%s", withoutApproval))
+	gomega.Expect(withoutApproval).To(gomega.Not(gomega.ContainSubstring("old")), fmt.Sprintf("old generated sections were not cut:\n%s", withoutApproval))
 
-	if !strings.Contains(withoutApproval, "### Other") {
-		t.Fatalf("following section was not preserved:\n%s", withoutApproval)
-	}
-}
+	gomega.Expect(strings.Contains(withoutApproval, "### Other")).To(gomega.BeTrue(), fmt.Sprintf("following section was not preserved:\n%s", withoutApproval))
+})
 
-func TestCutPlanSectionNoHeading(t *testing.T) {
+var _ = ginkgo.It("cut plan section no heading", func() {
 	content := "## Session X\n\n### Planned\n- [ ] a\n"
 	before, found := cutPlanSection(content, "### Plan")
 
-	if found {
-		t.Error("should not find section")
-	}
+	gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprint("should not find section"))
 
-	if before != content {
-		t.Errorf("should return content unchanged:\n%s", before)
-	}
-}
+	gomega.Expect(before).To(gomega.Equal(content), fmt.Sprintf("should return content unchanged:\n%s", before))
+})
 
-func TestPlanCheckboxCounts(t *testing.T) {
+var _ = ginkgo.It("plan checkbox counts", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	m := snapshotModel(t, root)
 	writeFile(t, root, ".planning/sessA.md", "## Session\n### Planned\n- [ ] pending\n- [~] active\n- [x] done\n- [x] also done\n")
 
 	checked, total := m.planCheckboxCounts()
-	if total != 4 {
-		t.Errorf("want total=4, got %d", total)
-	}
+	gomega.Expect(total).To(gomega.Equal(4), fmt.Sprintf("want total=4, got %d", total))
 
-	if checked != 2 {
-		t.Errorf("want checked=2, got %d", checked)
-	}
-}
+	gomega.Expect(checked).To(gomega.Equal(2), fmt.Sprintf("want checked=2, got %d", checked))
+})
 
-func TestPlanPanelAutoShowNeeded(t *testing.T) {
+var _ = ginkgo.It("plan panel auto show needed", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	m := snapshotModel(t, root)
 
-	if m.planPanelAutoShowNeeded() {
-		t.Error("should not auto-show when no plan file exists")
-	}
+	gomega.Expect(m.planPanelAutoShowNeeded()).To(gomega.BeFalse(), fmt.Sprint("should not auto-show when no plan file exists"))
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n")
 
 	m.planContent = ""
 	m.planMTime = time.Time{}
 
-	if m.planPanelAutoShowNeeded() {
-		t.Error("should not auto-show with empty content")
-	}
+	gomega.Expect(m.planPanelAutoShowNeeded()).To(gomega.BeFalse(), fmt.Sprint("should not auto-show with empty content"))
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n- [ ] a task\n")
 
 	m.planContent = ""
 	m.planMTime = time.Time{}
 
-	if !m.planPanelAutoShowNeeded() {
-		t.Error("should auto-show with checkbox items")
-	}
-}
+	gomega.Expect(m.planPanelAutoShowNeeded()).To(gomega.BeTrue(), fmt.Sprint("should auto-show with checkbox items"))
+})
 
-func TestPlanPanelAutoShowNeededPlanExecute(t *testing.T) {
+var _ = ginkgo.It("plan panel auto show needed plan execute", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	m := snapshotModel(t, root)
 
@@ -378,17 +323,13 @@ func TestPlanPanelAutoShowNeededPlanExecute(t *testing.T) {
 	m.planContent = ""
 	m.planMTime = time.Time{}
 
-	if !m.planPanelAutoShowNeeded() {
-		t.Error("plan-execute should always auto-show when plan exists")
-	}
+	gomega.Expect(m.planPanelAutoShowNeeded()).To(gomega.BeTrue(), fmt.Sprint("plan-execute should always auto-show when plan exists"))
 
 	m.forcedTaskFamily = ""
-	if !m.planPanelAutoShowNeeded() {
-		t.Error("non-plan-execute should still auto-show with checkbox items")
-	}
-}
+	gomega.Expect(m.planPanelAutoShowNeeded()).To(gomega.BeTrue(), fmt.Sprint("non-plan-execute should still auto-show with checkbox items"))
+})
 
-func TestToolIntent(t *testing.T) {
+var _ = ginkgo.It("tool intent", func() {
 	cases := []struct {
 		tool string
 		path string
@@ -404,8 +345,6 @@ func TestToolIntent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := toolIntent(tc.tool, tc.path)
-		if got != tc.want {
-			t.Errorf("toolIntent(%q, %q) = %q, want %q", tc.tool, tc.path, got, tc.want)
-		}
+		gomega.Expect(got).To(gomega.Equal(tc.want), fmt.Sprintf("toolIntent(%q, %q) = %q, want %q", tc.tool, tc.path, got, tc.want))
 	}
-}
+})

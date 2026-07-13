@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/mcpidentity"
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/textutil"
 )
@@ -279,20 +280,28 @@ func (l LlamaServer) APIKeyEnvName() string {
 	}
 }
 
+type ImplementationDispatch string
+
+const ImplementationDispatchPlanExecute ImplementationDispatch = "plan_execute"
+
+func (dispatch ImplementationDispatch) IsPlanExecute() bool {
+	return ImplementationDispatch(strings.TrimSpace(string(dispatch))) == ImplementationDispatchPlanExecute
+}
+
 type Chat struct {
-	AutoStartServer         bool     `json:"auto_start_server"`
-	SaveDir                 string   `json:"save_dir"`
-	DebugLogDir             string   `json:"debug_log_dir"`
-	DebugLogMode            string   `json:"debug_log_mode"`
-	SystemPrompt            string   `json:"system_prompt"`
-	SystemPromptFiles       []string `json:"system_prompt_files"`
-	AllowMissingPrompts     bool     `json:"allow_missing_prompts,omitempty"`
-	ProfilesDir             string   `json:"profiles_dir"`
-	DefaultProfiles         []string `json:"default_profiles"`
-	ProjectRoot             string   `json:"project_root"`
-	ProjectPromptCandidates []string `json:"project_prompt_candidates,omitempty"`
-	ProjectPromptFiles      []string `json:"project_prompt_files"`
-	AttachInstructionFiles  bool     `json:"attach_instruction_files"`
+	AutoStartServer         bool                    `json:"auto_start_server"`
+	SaveDir                 string                  `json:"save_dir"`
+	DebugLogDir             string                  `json:"debug_log_dir"`
+	DebugLogMode            runprofile.DebugLogMode `json:"debug_log_mode"`
+	SystemPrompt            string                  `json:"system_prompt"`
+	SystemPromptFiles       []string                `json:"system_prompt_files"`
+	AllowMissingPrompts     bool                    `json:"allow_missing_prompts,omitempty"`
+	ProfilesDir             string                  `json:"profiles_dir"`
+	DefaultProfiles         []string                `json:"default_profiles"`
+	ProjectRoot             string                  `json:"project_root"`
+	ProjectPromptCandidates []string                `json:"project_prompt_candidates,omitempty"`
+	ProjectPromptFiles      []string                `json:"project_prompt_files"`
+	AttachInstructionFiles  bool                    `json:"attach_instruction_files"`
 	// ModelFamily controls model-specific prompt compatibility overlays.
 	// Empty/"auto" infers from the active model id. Use "generic" or "none"
 	// to suppress auto overlays when an alias looks misleading.
@@ -316,12 +325,15 @@ type Chat struct {
 	MaxDurationSeconds       int     `json:"max_duration_seconds"`
 	RequestTimeoutSeconds    int     `json:"request_timeout_seconds"`
 	ServerStartTimeoutSecs   int     `json:"server_start_timeout_seconds"`
-	ImplementationDispatch   string  `json:"implementation_dispatch,omitempty"`
+
+	// ImplementationDispatch selects the configured implementation workflow.
+	// Empty disables explicit dispatch; plan_execute selects the plan-execute lane.
+	ImplementationDispatch ImplementationDispatch `json:"implementation_dispatch,omitempty"`
 	// AgentMode selects which built-in agent profile drives the session.
 	// OpenCode-shaped: the user picks build/plan/general; the harness
 	// never classifies a prompt to pick one on their behalf. Empty falls
 	// back to "build" (full capability). See internal/runtime/modepolicy/modes.go.
-	AgentMode string `json:"agent_mode,omitempty"`
+	AgentMode runprofile.AgentMode `json:"agent_mode,omitempty"`
 }
 
 type Workspace struct {
@@ -456,7 +468,7 @@ func Default() Config {
 			AutoStartServer:          true,
 			SaveDir:                  "transcripts",
 			DebugLogDir:              "logs/conversations",
-			DebugLogMode:             "redacted",
+			DebugLogMode:             runprofile.DebugLogModeRedacted,
 			SystemPrompt:             "",
 			SystemPromptFiles:        []string{"prompts/base.md"},
 			ProfilesDir:              "prompts/profiles",
@@ -483,7 +495,7 @@ func Default() Config {
 			MaxDurationSeconds:       0,
 			RequestTimeoutSeconds:    900,
 			ServerStartTimeoutSecs:   240,
-			AgentMode:                "build",
+			AgentMode:                runprofile.AgentModeBuild,
 		},
 		Workspace: Workspace{
 			Root:                  "",
@@ -731,8 +743,14 @@ func (c Config) Validate() error {
 		return fmt.Errorf("chat.max_tokens must be positive")
 	}
 
-	if c.Chat.DebugLogMode != "" && !slices.Contains([]string{"redacted", "full"}, c.Chat.DebugLogMode) {
-		return fmt.Errorf("chat.debug_log_mode must be one of redacted, full")
+	if c.Chat.DebugLogMode != "" {
+		if _, ok := runprofile.ParseDebugLogMode(string(c.Chat.DebugLogMode)); !ok {
+			return fmt.Errorf("chat.debug_log_mode must be one of redacted, full")
+		}
+	}
+
+	if dispatch := ImplementationDispatch(strings.TrimSpace(string(c.Chat.ImplementationDispatch))); dispatch != "" && dispatch != ImplementationDispatchPlanExecute {
+		return fmt.Errorf("chat.implementation_dispatch must be plan_execute or empty (got %q)", dispatch)
 	}
 
 	if c.Chat.Preset != "" && c.Chat.Preset != "custom" {
@@ -777,9 +795,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("chat.server_start_timeout_seconds must be positive")
 	}
 
-	if trimmed := strings.TrimSpace(c.Chat.AgentMode); trimmed != "" {
-		known := map[string]struct{}{"build": {}, "plan": {}, "general": {}}
-		if _, ok := known[strings.ToLower(trimmed)]; !ok {
+	if trimmed := strings.TrimSpace(string(c.Chat.AgentMode)); trimmed != "" {
+		if _, ok := runprofile.ParseAgentMode(trimmed); !ok {
 			return fmt.Errorf("chat.agent_mode must be one of build, plan, general (got %q)", trimmed)
 		}
 	}
@@ -958,7 +975,7 @@ func (c *Config) applyRuntimeDefaults() {
 	}
 
 	if c.Chat.DebugLogMode == "" {
-		c.Chat.DebugLogMode = "redacted"
+		c.Chat.DebugLogMode = runprofile.DebugLogModeRedacted
 	}
 
 	if len(c.Chat.SystemPromptFiles) == 0 {
@@ -1018,8 +1035,8 @@ func (c *Config) applyRuntimeDefaults() {
 		c.Chat.ServerStartTimeoutSecs = 240
 	}
 
-	if strings.TrimSpace(c.Chat.AgentMode) == "" {
-		c.Chat.AgentMode = "build"
+	if strings.TrimSpace(string(c.Chat.AgentMode)) == "" {
+		c.Chat.AgentMode = runprofile.AgentModeBuild
 	}
 
 	if c.Chat.Preset != "custom" {

@@ -48,7 +48,7 @@
         "current_status": "host_check"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "git"
       }
     },
@@ -93,7 +93,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "content_search"
       }
     },
@@ -142,7 +142,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "ast_grep"
       }
     },
@@ -187,7 +187,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "universal_ctags"
       }
     },
@@ -232,7 +232,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "semgrep"
       }
     },
@@ -277,7 +277,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "joern"
       }
     },
@@ -352,7 +352,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "gopls"
       }
     },
@@ -432,7 +432,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "python_lsp"
       }
     },
@@ -509,7 +509,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "typescript_language_server"
       }
     },
@@ -579,7 +579,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "rust_analyzer"
       }
     },
@@ -652,7 +652,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "jdtls"
       }
     },
@@ -701,7 +701,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "clangd"
       }
     },
@@ -768,7 +768,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "madge"
       }
     },
@@ -835,7 +835,7 @@
         "current_status": "not_wired_currently"
       },
       "audit": {
-        "current_owner": "internal/capabilities/workspace/harness_audit.go",
+        "current_owner": "internal/capabilities/workspace/harness_audit_tooling.go",
         "backend_name": "pydeps"
       }
     }

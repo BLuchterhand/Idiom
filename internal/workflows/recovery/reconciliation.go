@@ -328,7 +328,11 @@ func WriteReconciliation(root string, reconciliation recoverycontract.Reconcilia
 		return "", "", fmt.Errorf("recovery reconciliation path rejected: %w", err)
 	}
 
-	if existing, _, found, err := TryLoadReconciliation(fullPath); err == nil && found && strings.TrimSpace(existing.CreatedAt) != "" {
+	existing, _, found, err := TryLoadReconciliation(fullPath)
+	if err != nil {
+		return fullPath, relPath, fmt.Errorf("load existing recovery reconciliation: %w", err)
+	}
+	if found && strings.TrimSpace(existing.CreatedAt) != "" {
 		reconciliation.CreatedAt = existing.CreatedAt
 	}
 

@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
 )
 
 type p75DeniedToolPayload struct {
@@ -23,240 +23,188 @@ type p75DeniedToolPayload struct {
 	} `json:"sidecar"`
 }
 
-func writeMainConfigRoot(t *testing.T, root string) string {
-	t.Helper()
+func writeMainConfigRoot(root string) string {
 
-	path := filepath.Join(t.TempDir(), "config.json")
+	path := filepath.Join(ginkgo.GinkgoT().TempDir(), "config.json")
 	configJSON := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
-
-	if err := os.WriteFile(path, []byte(configJSON+"\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(configJSON+"\n"), 0o644)).To(gomega.Succeed())
 
 	return path
 }
 
-func TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeMainConfigRoot(t, root)
-	privatePath := filepath.Join(root, "private", ".env")
-	secretSentinel := "P75_SECRET_SENTINEL_DO_NOT_LEAK"
+var _ = ginkgo.Describe("p7 5 containment", func() {
+	ginkgo.It("p75 discovery profile denies private path mutation without leaking input", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeMainConfigRoot(root)
+		privatePath := filepath.Join(root, "private", ".env")
+		secretSentinel := "P75_SECRET_SENTINEL_DO_NOT_LEAK"
 
-	var stdout, stderr bytes.Buffer
+		var stdout, stderr bytes.Buffer
 
-	code := RunWithTelemetry([]string{
-		"write_file",
-		"-config", configPath,
-		"--profile", "discovery",
-		"--input", fmt.Sprintf(`{"path":%q,"content":%q}`, privatePath, secretSentinel),
-	}, &stdout, &stderr, nil)
+		code := RunWithTelemetry([]string{
+			"write_file",
+			"-config", configPath,
+			"--profile", "discovery",
+			"--input", fmt.Sprintf(`{"path":%q,"content":%q}`, privatePath, secretSentinel),
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
+		payload := decodeP75DeniedToolPayload(stdout.Bytes())
+		assertP75DiscoveryProfileDenial(payload, "write_file")
+		assertP75NoSensitiveLeak(stdout.String()+stderr.String(), privatePath, root, secretSentinel)
 
-	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
-	assertP75DiscoveryProfileDenial(t, payload, "write_file")
-	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), privatePath, root, secretSentinel)
-
-	if _, err := os.Stat(privatePath); !os.IsNotExist(err) {
-		t.Fatalf("denied private-path mutation should not create %s; stat err=%v", privatePath, err)
-	}
-}
-
-func TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeMainConfigRoot(t, root)
-	markerPath := filepath.Join(root, "shell-side-effect.txt")
-	command := fmt.Sprintf("printf touched > %s", markerPath)
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunWithTelemetry([]string{
-		"shell",
-		"-config", configPath,
-		"--profile", "discovery",
-		"--input", fmt.Sprintf(`{"command":%q}`, command),
-	}, &stdout, &stderr, nil)
-
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
-	assertP75DiscoveryProfileDenial(t, payload, "shell")
-	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), markerPath, command)
-
-	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
-		t.Fatalf("denied shell should not create %s; stat err=%v", markerPath, err)
-	}
-}
-
-func TestP75DiscoveryProfileDeniesArtifactWritingContextRequestBeforeExecution(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeMainConfigRoot(t, root)
-	secretTask := "P75_CONTEXT_TASK_SENTINEL_DO_NOT_LEAK"
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunWithTelemetry([]string{
-		"context_pack",
-		"-config", configPath,
-		"--profile", "discovery",
-		"--input", fmt.Sprintf(`{"task":%q,"mode":"plan","limit":1}`, secretTask),
-	}, &stdout, &stderr, nil)
-
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
-	assertP75DiscoveryProfileDenial(t, payload, "context_pack")
-	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), secretTask)
-
-	for _, path := range []string{
-		filepath.Join(root, ".idiom", "comprehension"),
-		filepath.Join(root, ".idiom", "comprehension", "graph.sqlite"),
-	} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("denied context_pack should not create %s; stat err=%v", path, err)
+		if _, err := os.Stat(privatePath); !os.IsNotExist(err) {
+			ginkgo.Fail(fmt.Sprintf("denied private-path mutation should not create %s; stat err=%v", privatePath, err))
 		}
-	}
-}
-
-func TestP75DiscoveryProfileDeniesExternalSideEffectToolsBeforeExecution(t *testing.T) {
-	root := t.TempDir()
-	markerPath := filepath.Join(root, "external-side-effect.txt")
-	configPath := writeP75ExternalToolConfig(t, root, []map[string]any{
-		{
-			"name":        "publish_release",
-			"description": "mutating external release helper",
-			"command":     "/bin/sh",
-			"args":        []string{"-c", fmt.Sprintf("printf touched > %s", markerPath)},
-			"cwd":         ".",
-		},
 	})
+	ginkgo.It("p75 discovery profile denies shell before external side effect", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeMainConfigRoot(root)
+		markerPath := filepath.Join(root, "shell-side-effect.txt")
+		command := fmt.Sprintf("printf touched > %s", markerPath)
 
-	var stdout, stderr bytes.Buffer
+		var stdout, stderr bytes.Buffer
 
-	code := RunWithTelemetry([]string{
-		"publish_release",
-		"-config", configPath,
-		"--profile", "discovery",
-		"--input", `{"target":"prod"}`,
-	}, &stdout, &stderr, nil)
+		code := RunWithTelemetry([]string{
+			"shell",
+			"-config", configPath,
+			"--profile", "discovery",
+			"--input", fmt.Sprintf(`{"command":%q}`, command),
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
+		payload := decodeP75DeniedToolPayload(stdout.Bytes())
+		assertP75DiscoveryProfileDenial(payload, "shell")
+		assertP75NoSensitiveLeak(stdout.String()+stderr.String(), markerPath, command)
 
-	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
-	assertP75DiscoveryProfileDenial(t, payload, "publish_release")
-	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), markerPath)
+		if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+			ginkgo.Fail(fmt.Sprintf("denied shell should not create %s; stat err=%v", markerPath, err))
+		}
+	})
+	ginkgo.It("p75 discovery profile denies artifact writing context request before execution", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeMainConfigRoot(root)
+		secretTask := "P75_CONTEXT_TASK_SENTINEL_DO_NOT_LEAK"
 
-	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
-		t.Fatalf("denied external tool should not create %s; stat err=%v", markerPath, err)
-	}
-}
+		var stdout, stderr bytes.Buffer
 
-func TestP75DiscoveryProfileRequiresExternalReadOnlyDiscoveryDeclaration(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		readOnly  bool
-		discovery bool
-		wantCode  int
-	}{
-		{name: "read_only_without_discovery", readOnly: true, discovery: false, wantCode: 1},
-		{name: "discovery_without_read_only", readOnly: false, discovery: true, wantCode: 1},
-		{name: "read_only_discovery", readOnly: true, discovery: true, wantCode: 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			configPath := writeP75ExternalToolConfig(t, root, []map[string]any{
-				{
-					"name":        tc.name,
-					"description": "external wrapper with explicit safety metadata",
-					"command":     "/bin/echo",
-					"args":        []string{"external-ok"},
-					"cwd":         ".",
-					"read_only":   tc.readOnly,
-					"discovery":   tc.discovery,
-				},
-			})
+		code := RunWithTelemetry([]string{
+			"context_pack",
+			"-config", configPath,
+			"--profile", "discovery",
+			"--input", fmt.Sprintf(`{"task":%q,"mode":"plan","limit":1}`, secretTask),
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
 
+		payload := decodeP75DeniedToolPayload(stdout.Bytes())
+		assertP75DiscoveryProfileDenial(payload, "context_pack")
+		assertP75NoSensitiveLeak(stdout.String()+stderr.String(), secretTask)
+
+		for _, path := range []string{
+			filepath.Join(root, ".idiom", "comprehension"),
+			filepath.Join(root, ".idiom", "comprehension", "graph.sqlite"),
+		} {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				ginkgo.Fail(fmt.Sprintf("denied context_pack should not create %s; stat err=%v", path, err))
+			}
+		}
+	})
+	ginkgo.It("p75 discovery profile denies external side effect tools before execution", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		markerPath := filepath.Join(root, "external-side-effect.txt")
+		configPath := writeP75ExternalToolConfig(root, []map[string]any{
+			{
+				"name":        "publish_release",
+				"description": "mutating external release helper",
+				"command":     "/bin/sh",
+				"args":        []string{"-c", fmt.Sprintf("printf touched > %s", markerPath)},
+				"cwd":         ".",
+			},
+		})
+
+		var stdout, stderr bytes.Buffer
+
+		code := RunWithTelemetry([]string{
+			"publish_release",
+			"-config", configPath,
+			"--profile", "discovery",
+			"--input", `{"target":"prod"}`,
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
+
+		payload := decodeP75DeniedToolPayload(stdout.Bytes())
+		assertP75DiscoveryProfileDenial(payload, "publish_release")
+		assertP75NoSensitiveLeak(stdout.String()+stderr.String(), markerPath)
+
+		if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+			ginkgo.Fail(fmt.Sprintf("denied external tool should not create %s; stat err=%v", markerPath, err))
+		}
+	})
+	ginkgo.DescribeTable("requires both read-only and discovery declarations for external tools",
+		func(name string, readOnly, discovery bool, wantCode int) {
+			root := ginkgo.GinkgoT().TempDir()
+			configPath := writeP75ExternalToolConfig(root, []map[string]any{{
+				"name":        name,
+				"description": "external wrapper with explicit safety metadata",
+				"command":     "/bin/echo",
+				"args":        []string{"external-ok"},
+				"cwd":         ".",
+				"read_only":   readOnly,
+				"discovery":   discovery,
+			}})
 			var stdout, stderr bytes.Buffer
 
 			code := RunWithTelemetry([]string{
-				tc.name,
+				name,
 				"-config", configPath,
 				"--profile", "discovery",
 				"--input", `{}`,
 			}, &stdout, &stderr, nil)
-
-			if code != tc.wantCode {
-				t.Fatalf("exit code = %d, want %d stdout=%s stderr=%s", code, tc.wantCode, stdout.String(), stderr.String())
-			}
-
-			if tc.wantCode == 1 {
-				payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
-				assertP75DiscoveryProfileDenial(t, payload, tc.name)
-
+			gomega.Expect(code).To(gomega.Equal(wantCode), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+			if wantCode == 1 {
+				assertP75DiscoveryProfileDenial(decodeP75DeniedToolPayload(stdout.Bytes()), name)
 				return
 			}
+			gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"profile": "discovery"`))
+			gomega.Expect(stdout.String()).To(gomega.ContainSubstring("external-ok"))
+		},
+		ginkgo.Entry("rejects read-only without discovery", "read_only_without_discovery", true, false, 1),
+		ginkgo.Entry("rejects discovery without read-only", "discovery_without_read_only", false, true, 1),
+		ginkgo.Entry("allows read-only discovery", "read_only_discovery", true, true, 0),
+	)
+})
 
-			if !strings.Contains(stdout.String(), `"profile": "discovery"`) || !strings.Contains(stdout.String(), "external-ok") {
-				t.Fatalf("allowed read-only discovery external tool should execute with discovery sidecar profile, stdout=%s", stdout.String())
-			}
-		})
-	}
-}
-
-func decodeP75DeniedToolPayload(t *testing.T, data []byte) p75DeniedToolPayload {
-	t.Helper()
+func decodeP75DeniedToolPayload(data []byte) p75DeniedToolPayload {
 
 	var payload p75DeniedToolPayload
-
-	if err := json.Unmarshal(data, &payload); err != nil {
-		t.Fatalf("decode denial output: %v\n%s", err, string(data))
-	}
+	gomega.Expect(json.Unmarshal(data, &payload)).To(gomega.Succeed())
 
 	return payload
 }
 
-func assertP75DiscoveryProfileDenial(t *testing.T, payload p75DeniedToolPayload, tool string) {
-	t.Helper()
+func assertP75DiscoveryProfileDenial(payload p75DeniedToolPayload, tool string) {
+	gomega.Expect(payload.Tool).To(gomega.Equal(tool), fmt.Sprintf("unexpected denial identity: %#v", payload))
+	gomega.Expect(payload.Sidecar.Profile).To(gomega.Equal("discovery"), fmt.Sprintf("unexpected denial identity: %#v", payload))
+	gomega.Expect(payload.Sidecar.Error.Class).To(gomega.Equal("profile_denied"), fmt.Sprintf("unexpected structured denial code: %#v", payload.Sidecar.Error))
+	gomega.Expect(payload.Sidecar.Error.Code).To(gomega.Equal("profile_denied"), fmt.Sprintf("unexpected structured denial code: %#v", payload.Sidecar.Error))
+	gomega.Expect(payload.Sidecar.Error.Message).To(gomega.ContainSubstring("read_only_profile"), fmt.Sprintf("denial message should carry stable read_only_profile invariant: %#v", payload.Sidecar.Error))
 
-	if payload.Tool != tool || payload.Sidecar.Profile != "discovery" {
-		t.Fatalf("unexpected denial identity: %#v", payload)
-	}
-
-	if payload.Sidecar.Error.Class != "profile_denied" || payload.Sidecar.Error.Code != "profile_denied" {
-		t.Fatalf("unexpected structured denial code: %#v", payload.Sidecar.Error)
-	}
-
-	if !strings.Contains(payload.Sidecar.Error.Message, "read_only_profile") {
-		t.Fatalf("denial message should carry stable read_only_profile invariant: %#v", payload.Sidecar.Error)
-	}
 }
 
-func assertP75NoSensitiveLeak(t *testing.T, publicPayload string, forbidden ...string) {
-	t.Helper()
+func assertP75NoSensitiveLeak(publicPayload string, forbidden ...string) {
 
 	for _, value := range forbidden {
 		if value == "" {
 			continue
 		}
+		gomega.Expect(publicPayload).NotTo(gomega.ContainSubstring(value), fmt.Sprintf("public denial payload leaked %q:\n%s", value, publicPayload))
 
-		if strings.Contains(publicPayload, value) {
-			t.Fatalf("public denial payload leaked %q:\n%s", value, publicPayload)
-		}
 	}
 }
 
-func writeP75ExternalToolConfig(t *testing.T, root string, tools []map[string]any) string {
-	t.Helper()
+func writeP75ExternalToolConfig(root string, tools []map[string]any) string {
 
-	path := filepath.Join(t.TempDir(), "config.json")
+	path := filepath.Join(ginkgo.GinkgoT().TempDir(), "config.json")
 	payload := map[string]any{
 		"workspace": map[string]any{
 			"root":           root,
@@ -266,13 +214,8 @@ func writeP75ExternalToolConfig(t *testing.T, root string, tools []map[string]an
 	}
 
 	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal external tool config: %v", err)
-	}
-
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
-		t.Fatalf("write external tool config: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal external tool config: %v", err))
+	gomega.Expect(os.WriteFile(path, append(data, '\n'), 0o644)).To(gomega.Succeed())
 
 	return path
 }

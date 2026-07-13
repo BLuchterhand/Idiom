@@ -6,7 +6,7 @@ classification. The machine-checkable transcript set lives in
 and is validated by:
 
 ```bash
-go test ./internal/evidence/sidecarvalidation -run TestP710ClientDemoTranscripts
+go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p710 client demo transcripts' -ginkgo.fail-on-empty -count=1
 ```
 
 ## Demo Boundary

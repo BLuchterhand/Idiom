@@ -2,19 +2,22 @@ package planexecute
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	plancontract "idiom/internal/contracts/plan"
+	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/workflows/recovery"
 )
 
-func TestPlanExecuteTerminalCompletionRecordClassifiesProgressStateBranches(t *testing.T) {
+var _ = ginkgo.Describe("plan execute terminal completion record classification", func() {
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name         string
@@ -115,57 +118,44 @@ func TestPlanExecuteTerminalCompletionRecordClassifiesProgressStateBranches(t *t
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		tt := tt
+		ginkgo.It(tt.name, func() {
 			record := NewPlanExecuteTerminalCompletionRecord(tt.state, tt.input)
-			if record.TerminalClass != tt.wantClass || record.Outcome != tt.wantOutcome {
-				t.Fatalf("terminal classification = class %q outcome %q, want class %q outcome %q; record=%#v", record.TerminalClass, record.Outcome, tt.wantClass, tt.wantOutcome, record)
-			}
+			gomega.Expect(record.TerminalClass).To(gomega.Equal(tt.wantClass), fmt.Sprintf("terminal classification = class %q outcome %q, want class %q outcome %q; record=%#v", record.TerminalClass, record.Outcome, tt.wantClass, tt.wantOutcome, record))
+			gomega.Expect(record.Outcome).To(gomega.Equal(tt.wantOutcome), fmt.Sprintf("terminal classification = class %q outcome %q, want class %q outcome %q; record=%#v", record.TerminalClass, record.Outcome, tt.wantClass, tt.wantOutcome, record))
+			gomega.Expect(record.WorkflowID).To(gomega.Equal(tt.wantWorkflow), fmt.Sprintf("workflow classification = workflow %q state %q dispatchable=%v, want workflow %q state %q dispatchable=false; record=%#v", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable, tt.wantWorkflow, tt.wantState, record))
+			gomega.Expect(record.WorkflowTerminalState).To(gomega.Equal(tt.wantState), fmt.Sprintf("workflow classification = workflow %q state %q dispatchable=%v, want workflow %q state %q dispatchable=false; record=%#v", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable, tt.wantWorkflow, tt.wantState, record))
+			gomega.Expect(record.Dispatchable).To(gomega.BeFalse(), fmt.Sprintf("workflow classification = workflow %q state %q dispatchable=%v, want workflow %q state %q dispatchable=false; record=%#v", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable, tt.wantWorkflow, tt.wantState, record))
+			gomega.Expect(record.SchemaVersion).To(gomega.Equal(plancontract.PlanExecuteTerminalCompletionSchemaVersion), fmt.Sprintf("record schema/type missing: %#v", record))
+			gomega.Expect(record.Type).To(gomega.Equal(plancontract.PlanExecuteTerminalCompletionRecordType), fmt.Sprintf("record schema/type missing: %#v", record))
 
-			if record.WorkflowID != tt.wantWorkflow || record.WorkflowTerminalState != tt.wantState || record.Dispatchable {
-				t.Fatalf("workflow classification = workflow %q state %q dispatchable=%v, want workflow %q state %q dispatchable=false; record=%#v", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable, tt.wantWorkflow, tt.wantState, record)
-			}
-
-			if record.SchemaVersion != plancontract.PlanExecuteTerminalCompletionSchemaVersion || record.Type != plancontract.PlanExecuteTerminalCompletionRecordType {
-				t.Fatalf("record schema/type missing: %#v", record)
-			}
 		})
 	}
-}
+})
 
-func TestNormalizePlanExecuteTerminalCompletionRecordDefaultsAndTrims(t *testing.T) {
+var _ = ginkgo.It("normalize plan execute terminal completion record defaults and trims", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		SessionID:                    " session-1 ",
 		Status:                       " complete ",
 		SourceSatisfiedEvidencePaths: []string{" a.go ", "", "a.go", "../escape.go"},
 		ChangedPaths:                 []string{` b.go `, `b.go`, `pkg\feature.go`, "pkg/./bad.go"},
 	})
+	gomega.Expect(record.SchemaVersion).To(gomega.Equal(plancontract.PlanExecuteTerminalCompletionSchemaVersion), fmt.Sprintf("normalizer should fill schema/type, got %#v", record))
+	gomega.Expect(record.Type).To(gomega.Equal(plancontract.PlanExecuteTerminalCompletionRecordType), fmt.Sprintf("normalizer should fill schema/type, got %#v", record))
+	gomega.Expect(record.SessionID != "session-1").To(gomega.BeFalse(), fmt.Sprintf("SessionID = %q, want trimmed session-1", record.SessionID))
+	gomega.Expect(record.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassSuccess), fmt.Sprintf("classification = class %q outcome %q, want completed/completed", record.TerminalClass, record.Outcome))
+	gomega.Expect(record.Outcome).To(gomega.Equal(plancontract.PlanExecuteTerminalOutcomeCompleted), fmt.Sprintf("classification = class %q outcome %q, want completed/completed", record.TerminalClass, record.Outcome))
+	gomega.Expect(record.WorkflowID).To(gomega.Equal(workflowstate.WorkflowPlanExecuteExecutor), fmt.Sprintf("workflow classification = workflow %q state %q dispatchable=%v, want executor complete false", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable))
+	gomega.Expect(record.WorkflowTerminalState).To(gomega.Equal(workflowstate.TerminalStateComplete), fmt.Sprintf("workflow classification = workflow %q state %q dispatchable=%v, want executor complete false", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable))
+	gomega.Expect(record.Dispatchable).To(gomega.BeFalse(), fmt.Sprintf("workflow classification = workflow %q state %q dispatchable=%v, want executor complete false", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable))
+	gomega.Expect(record.SourceSatisfiedEvidencePaths).To(gomega.HaveLen(1), fmt.Sprintf("source evidence paths not normalized: %#v", record.SourceSatisfiedEvidencePaths))
+	gomega.Expect(record.SourceSatisfiedEvidencePaths[0]).To(gomega.Equal("a.go"), fmt.Sprintf("source evidence paths not normalized: %#v", record.SourceSatisfiedEvidencePaths))
+	gomega.Expect(record.ChangedPaths).To(gomega.HaveLen(2), fmt.Sprintf("changed paths not normalized: %#v", record.ChangedPaths))
+	gomega.Expect(record.ChangedPaths[0]).To(gomega.Equal("b.go"), fmt.Sprintf("changed paths not normalized: %#v", record.ChangedPaths))
+	gomega.Expect(record.ChangedPaths[1]).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("changed paths not normalized: %#v", record.ChangedPaths))
+})
 
-	if record.SchemaVersion != plancontract.PlanExecuteTerminalCompletionSchemaVersion || record.Type != plancontract.PlanExecuteTerminalCompletionRecordType {
-		t.Fatalf("normalizer should fill schema/type, got %#v", record)
-	}
-
-	if record.SessionID != "session-1" {
-		t.Fatalf("SessionID = %q, want trimmed session-1", record.SessionID)
-	}
-
-	if record.TerminalClass != plancontract.PlanExecuteTerminalClassSuccess || record.Outcome != plancontract.PlanExecuteTerminalOutcomeCompleted {
-		t.Fatalf("classification = class %q outcome %q, want completed/completed", record.TerminalClass, record.Outcome)
-	}
-
-	if record.WorkflowID != workflowstate.WorkflowPlanExecuteExecutor || record.WorkflowTerminalState != workflowstate.TerminalStateComplete || record.Dispatchable {
-		t.Fatalf("workflow classification = workflow %q state %q dispatchable=%v, want executor complete false", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable)
-	}
-
-	if len(record.SourceSatisfiedEvidencePaths) != 1 || record.SourceSatisfiedEvidencePaths[0] != "a.go" {
-		t.Fatalf("source evidence paths not normalized: %#v", record.SourceSatisfiedEvidencePaths)
-	}
-
-	if len(record.ChangedPaths) != 2 || record.ChangedPaths[0] != "b.go" || record.ChangedPaths[1] != "pkg/feature.go" {
-		t.Fatalf("changed paths not normalized: %#v", record.ChangedPaths)
-	}
-}
-
-func TestNormalizePlanExecuteTerminalCompletionRecordReclassifiesContradictions(t *testing.T) {
+var _ = ginkgo.It("normalize plan execute terminal completion record reclassifies contradictions", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		TerminalClass: plancontract.PlanExecuteTerminalClassSuccess,
 		Outcome:       plancontract.PlanExecuteTerminalOutcomeCompleted,
@@ -173,17 +163,12 @@ func TestNormalizePlanExecuteTerminalCompletionRecordReclassifiesContradictions(
 		FailureKind:   "review_model_error",
 		FailureReason: "review model returned invalid JSON",
 	})
+	gomega.Expect(record.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassFailed), fmt.Sprintf("classification = class %q outcome %q, want failed/failed", record.TerminalClass, record.Outcome))
+	gomega.Expect(record.Outcome).To(gomega.Equal(plancontract.PlanExecuteTerminalOutcomeFailed), fmt.Sprintf("classification = class %q outcome %q, want failed/failed", record.TerminalClass, record.Outcome))
+	gomega.Expect(record.WorkflowTerminalState != workflowstate.TerminalStateBlocked).To(gomega.BeFalse(), fmt.Sprintf("workflow terminal state = %q, want blocked", record.WorkflowTerminalState))
+})
 
-	if record.TerminalClass != plancontract.PlanExecuteTerminalClassFailed || record.Outcome != plancontract.PlanExecuteTerminalOutcomeFailed {
-		t.Fatalf("classification = class %q outcome %q, want failed/failed", record.TerminalClass, record.Outcome)
-	}
-
-	if record.WorkflowTerminalState != workflowstate.TerminalStateBlocked {
-		t.Fatalf("workflow terminal state = %q, want blocked", record.WorkflowTerminalState)
-	}
-}
-
-func TestPlanExecuteWorkflowClassificationUsesTypedFailureKindMapping(t *testing.T) {
+var _ = ginkgo.It("plan execute workflow classification uses typed failure kind mapping", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		Phase:         plancontract.PlanExecuteProgressPhaseExecutor,
 		Status:        plancontract.PlanExecuteTerminalStatusFailed,
@@ -191,15 +176,11 @@ func TestPlanExecuteWorkflowClassificationUsesTypedFailureKindMapping(t *testing
 		Outcome:       plancontract.PlanExecuteTerminalOutcomeFailed,
 		FailureKind:   plancontract.PlanExecuteFailureMissingEditPathWithoutNewFileAuth,
 	})
+	gomega.Expect(record.WorkflowID).To(gomega.Equal(workflowstate.WorkflowPlanExecutePlanner), fmt.Sprintf("typed workflow classification = workflow %q state %q, want planner missing-scope: %#v", record.WorkflowID, record.WorkflowTerminalState, record))
+	gomega.Expect(record.WorkflowTerminalState).To(gomega.Equal(workflowstate.TerminalStateMissingScope), fmt.Sprintf("typed workflow classification = workflow %q state %q, want planner missing-scope: %#v", record.WorkflowID, record.WorkflowTerminalState, record))
+})
 
-	if record.WorkflowID != workflowstate.WorkflowPlanExecutePlanner ||
-		record.WorkflowTerminalState != workflowstate.TerminalStateMissingScope {
-
-		t.Fatalf("typed workflow classification = workflow %q state %q, want planner missing-scope: %#v", record.WorkflowID, record.WorkflowTerminalState, record)
-	}
-}
-
-func TestPlanExecuteTerminalCompletionRecordFromFieldsNormalizesStatePath(t *testing.T) {
+var _ = ginkgo.It("plan execute terminal completion record from fields normalizes state path", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecordFromFields(map[string]any{
 		"state_path":            ".idiom/plan-execute/sessions/field-test.json",
 		"status":                "completed",
@@ -207,21 +188,14 @@ func TestPlanExecuteTerminalCompletionRecordFromFieldsNormalizesStatePath(t *tes
 		"review_repair_skipped": true,
 		"changed_paths":         []any{"pkg/feature.go", "pkg/feature.go"},
 	}))
+	gomega.Expect(record.ProgressPath != ".idiom/plan-execute/sessions/field-test.json").To(gomega.BeFalse(), fmt.Sprintf("ProgressPath = %q, want state_path fallback", record.ProgressPath))
+	gomega.Expect(record.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassSuccess), fmt.Sprintf("classification = class %q outcome %q, want skipped-by-design success", record.TerminalClass, record.Outcome))
+	gomega.Expect(record.Outcome).To(gomega.Equal(plancontract.PlanExecuteTerminalOutcomeReviewSkippedByDesign), fmt.Sprintf("classification = class %q outcome %q, want skipped-by-design success", record.TerminalClass, record.Outcome))
+	gomega.Expect(record.ChangedPaths).To(gomega.HaveLen(1), fmt.Sprintf("ChangedPaths = %#v, want deduped path", record.ChangedPaths))
+	gomega.Expect(record.ChangedPaths[0]).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("ChangedPaths = %#v, want deduped path", record.ChangedPaths))
+})
 
-	if record.ProgressPath != ".idiom/plan-execute/sessions/field-test.json" {
-		t.Fatalf("ProgressPath = %q, want state_path fallback", record.ProgressPath)
-	}
-
-	if record.TerminalClass != plancontract.PlanExecuteTerminalClassSuccess || record.Outcome != plancontract.PlanExecuteTerminalOutcomeReviewSkippedByDesign {
-		t.Fatalf("classification = class %q outcome %q, want skipped-by-design success", record.TerminalClass, record.Outcome)
-	}
-
-	if len(record.ChangedPaths) != 1 || record.ChangedPaths[0] != "pkg/feature.go" {
-		t.Fatalf("ChangedPaths = %#v, want deduped path", record.ChangedPaths)
-	}
-}
-
-func TestPlanExecuteTerminalCompletionRecordFromFieldsPreservesParentAuthority(t *testing.T) {
+var _ = ginkgo.It("plan execute terminal completion record from fields preserves parent authority", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecordFromFields(map[string]any{
 		"status":        "completed",
 		"phase":         "complete",
@@ -229,27 +203,18 @@ func TestPlanExecuteTerminalCompletionRecordFromFieldsPreservesParentAuthority(t
 		"snapshot_hash": "parent-snapshot",
 		"contract_hash": "legacy-snapshot",
 	}))
+	gomega.Expect(record.ContractID != "parent-contract").To(gomega.BeFalse(), fmt.Sprintf("ContractID = %q, want parent-contract", record.ContractID))
+	gomega.Expect(record.SnapshotHash != "parent-snapshot").To(gomega.BeFalse(), fmt.Sprintf("SnapshotHash = %q, want parent-snapshot", record.SnapshotHash))
+	gomega.Expect(record.ContractHash != "legacy-snapshot").To(gomega.BeFalse(), fmt.Sprintf("ContractHash = %q, want legacy-snapshot diagnostic preserved", record.ContractHash))
+})
 
-	if record.ContractID != "parent-contract" {
-		t.Fatalf("ContractID = %q, want parent-contract", record.ContractID)
-	}
-
-	if record.SnapshotHash != "parent-snapshot" {
-		t.Fatalf("SnapshotHash = %q, want parent-snapshot", record.SnapshotHash)
-	}
-
-	if record.ContractHash != "legacy-snapshot" {
-		t.Fatalf("ContractHash = %q, want legacy-snapshot diagnostic preserved", record.ContractHash)
-	}
-}
-
-func TestPlanExecuteTerminalCompletionRecordFromProgressStateRequiresTerminalState(t *testing.T) {
+var _ = ginkgo.It("plan execute terminal completion record from progress state requires terminal state", func() {
 	running := progressStateForTerminalCompletionTest(func(state *ProgressState) {
 		state.Status = plancontract.PlanExecuteProgressStatusRunning
 		state.Phase = plancontract.PlanExecuteProgressPhaseExecutor
 	})
 	if _, ok := PlanExecuteTerminalCompletionRecordFromProgressState(running, PlanExecuteTerminalCompletionInput{}); ok {
-		t.Fatalf("running progress must not synthesize terminal completion")
+		ginkgo.Fail(fmt.Sprintf("running progress must not synthesize terminal completion"))
 	}
 
 	completed := progressStateForTerminalCompletionTest(func(state *ProgressState) {
@@ -257,17 +222,12 @@ func TestPlanExecuteTerminalCompletionRecordFromProgressStateRequiresTerminalSta
 		state.Phase = plancontract.PlanExecuteProgressPhaseComplete
 	})
 	record, ok := PlanExecuteTerminalCompletionRecordFromProgressState(completed, PlanExecuteTerminalCompletionInput{ProgressPath: "progress.json"})
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("completed progress should synthesize terminal completion"))
+	gomega.Expect(record.ProgressPath).To(gomega.Equal("progress.json"), fmt.Sprintf("record = %#v, want terminal success with progress path", record))
+	gomega.Expect(record.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassSuccess), fmt.Sprintf("record = %#v, want terminal success with progress path", record))
+})
 
-	if !ok {
-		t.Fatalf("completed progress should synthesize terminal completion")
-	}
-
-	if record.ProgressPath != "progress.json" || record.TerminalClass != plancontract.PlanExecuteTerminalClassSuccess {
-		t.Fatalf("record = %#v, want terminal success with progress path", record)
-	}
-}
-
-func TestTerminalCompletionRecordIncludesMechanicalEvidence(t *testing.T) {
+var _ = ginkgo.It("terminal completion record includes mechanical evidence", func() {
 	state := progressStateForTerminalCompletionTest(func(state *ProgressState) {
 		state.MarkSkippedReview()
 
@@ -294,37 +254,21 @@ func TestTerminalCompletionRecordIncludesMechanicalEvidence(t *testing.T) {
 	})
 
 	record := NewPlanExecuteTerminalCompletionRecord(state, PlanExecuteTerminalCompletionInput{})
+	gomega.Expect(record.ScopeContractID).To(gomega.Equal("scope-123"), fmt.Sprintf("scope contract metadata missing: %#v", record))
+	gomega.Expect(record.ScopeContractHash).To(gomega.Equal("scope-123"), fmt.Sprintf("scope contract metadata missing: %#v", record))
+	gomega.Expect(record.ProtocolHash != "scope-123").To(gomega.BeFalse(), fmt.Sprintf("protocol hash missing: %#v", record))
+	gomega.Expect(record.SourceSanity).To(gomega.HaveLen(1), fmt.Sprintf("mechanical evidence missing: source=%#v commands=%#v verification=%#v", record.SourceSanity, record.VerificationCommands, record.Verification))
+	gomega.Expect(record.Verification).To(gomega.HaveLen(1), fmt.Sprintf("mechanical evidence missing: source=%#v commands=%#v verification=%#v", record.SourceSanity, record.VerificationCommands, record.Verification))
+	gomega.Expect(record.VerificationCommands).To(gomega.HaveLen(1), fmt.Sprintf("mechanical evidence missing: source=%#v commands=%#v verification=%#v", record.SourceSanity, record.VerificationCommands, record.Verification))
+	gomega.Expect(record.VerificationSkips).To(gomega.HaveLen(1), fmt.Sprintf("verification skips/rejects missing: skips=%#v rejects=%#v", record.VerificationSkips, record.VerificationRejects))
+	gomega.Expect(record.VerificationRejects).To(gomega.HaveLen(1), fmt.Sprintf("verification skips/rejects missing: skips=%#v rejects=%#v", record.VerificationSkips, record.VerificationRejects))
+	gomega.Expect(record.RequiredPathCoverage).To(gomega.HaveLen(1), fmt.Sprintf("required path coverage missing: %#v", record.RequiredPathCoverage))
+	gomega.Expect(record.RequiredPathCoverage[0].Status).To(gomega.Equal(plancontract.PlanExecuteRequiredPathCoverageChanged), fmt.Sprintf("required path coverage missing: %#v", record.RequiredPathCoverage))
+	gomega.Expect(len(record.FailureInvariants) == 0).To(gomega.BeFalse(), fmt.Sprintf("failure invariants must be recorded"))
+	gomega.Expect(planExecuteTerminalStringSliceContains(record.ValidationFailures, "verification_rejected:go test ./pkg; rm -rf /")).To(gomega.BeTrue(), fmt.Sprintf("verification reject must prevent success, got %#v", record.ValidationFailures))
+})
 
-	if record.ScopeContractID != "scope-123" || record.ScopeContractHash != "scope-123" {
-		t.Fatalf("scope contract metadata missing: %#v", record)
-	}
-
-	if record.ProtocolHash != "scope-123" {
-		t.Fatalf("protocol hash missing: %#v", record)
-	}
-
-	if len(record.SourceSanity) != 1 || len(record.Verification) != 1 || len(record.VerificationCommands) != 1 {
-		t.Fatalf("mechanical evidence missing: source=%#v commands=%#v verification=%#v", record.SourceSanity, record.VerificationCommands, record.Verification)
-	}
-
-	if len(record.VerificationSkips) != 1 || len(record.VerificationRejects) != 1 {
-		t.Fatalf("verification skips/rejects missing: skips=%#v rejects=%#v", record.VerificationSkips, record.VerificationRejects)
-	}
-
-	if len(record.RequiredPathCoverage) != 1 || record.RequiredPathCoverage[0].Status != plancontract.PlanExecuteRequiredPathCoverageChanged {
-		t.Fatalf("required path coverage missing: %#v", record.RequiredPathCoverage)
-	}
-
-	if len(record.FailureInvariants) == 0 {
-		t.Fatalf("failure invariants must be recorded")
-	}
-
-	if !planExecuteTerminalStringSliceContains(record.ValidationFailures, "verification_rejected:go test ./pkg; rm -rf /") {
-		t.Fatalf("verification reject must prevent success, got %#v", record.ValidationFailures)
-	}
-}
-
-func TestTerminalCompletionUsesChangedPathsAsLegacyEnvelopeOnlyWithoutDeclaredScope(t *testing.T) {
+var _ = ginkgo.It("terminal completion uses changed paths as legacy envelope only without declared scope", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		Status:              plancontract.PlanExecuteTerminalStatusCompleted,
 		Phase:               plancontract.PlanExecuteProgressPhaseComplete,
@@ -334,10 +278,7 @@ func TestTerminalCompletionUsesChangedPathsAsLegacyEnvelopeOnlyWithoutDeclaredSc
 		Verification:        []plancontract.PhaseEvidenceCheck{{Kind: "verification", Command: "go test ./pkg", Status: "ok"}},
 		ReviewRepairSkipped: true,
 	})
-
-	if planExecuteTerminalStringSliceContains(record.ValidationFailures, "changed_path_outside_write_envelope:pkg/feature.go") {
-		t.Fatalf("legacy no-scope completion should use changed paths as runtime envelope, got %#v", record.ValidationFailures)
-	}
+	gomega.Expect(planExecuteTerminalStringSliceContains(record.ValidationFailures, "changed_path_outside_write_envelope:pkg/feature.go")).To(gomega.BeFalse(), fmt.Sprintf("legacy no-scope completion should use changed paths as runtime envelope, got %#v", record.ValidationFailures))
 
 	scoped := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		Status:              plancontract.PlanExecuteTerminalStatusCompleted,
@@ -348,40 +289,26 @@ func TestTerminalCompletionUsesChangedPathsAsLegacyEnvelopeOnlyWithoutDeclaredSc
 		SourceSanity:        []plancontract.PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}},
 		ReviewRepairSkipped: true,
 	})
+	gomega.Expect(planExecuteTerminalStringSliceContains(scoped.ValidationFailures, "changed_path_outside_write_envelope:pkg/feature.go")).To(gomega.BeTrue(), fmt.Sprintf("declared scope should still reject out-of-envelope changed path, got %#v", scoped.ValidationFailures))
+})
 
-	if !planExecuteTerminalStringSliceContains(scoped.ValidationFailures, "changed_path_outside_write_envelope:pkg/feature.go") {
-		t.Fatalf("declared scope should still reject out-of-envelope changed path, got %#v", scoped.ValidationFailures)
-	}
-}
-
-func TestFinalizeTerminalCompletionRejectsStatusOnlySuccess(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion rejects status only success", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewProgressState("status_only_success", "prompt", "", nil, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
 
 	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
 	state.Status = plancontract.PlanExecuteProgressStatusCompleted
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/status_only_success.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+	gomega.Expect(result.ExitCode != 1).To(gomega.BeFalse(), fmt.Sprintf("ExitCode = %d, want terminal contract failure", result.ExitCode))
+	gomega.Expect(result.FailureKind != string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed)).To(gomega.BeFalse(), fmt.Sprintf("FailureKind = %q, want %q", result.FailureKind, string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed)))
+	gomega.Expect(result.Completion).NotTo(gomega.BeNil(), fmt.Sprintf("completion was not downgraded to failed: %#v", result.Completion))
+	gomega.Expect(result.Completion.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassFailed), fmt.Sprintf("completion was not downgraded to failed: %#v", result.Completion))
+	gomega.Expect(planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "changed_paths_missing")).To(gomega.BeTrue(), fmt.Sprintf("validation failures missing changed_paths_missing: %#v", result.Completion.ValidationFailures))
+})
 
-	if result.ExitCode != 1 {
-		t.Fatalf("ExitCode = %d, want terminal contract failure", result.ExitCode)
-	}
-
-	if result.FailureKind != string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed) {
-		t.Fatalf("FailureKind = %q, want %q", result.FailureKind, string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed))
-	}
-
-	if result.Completion == nil || result.Completion.TerminalClass != plancontract.PlanExecuteTerminalClassFailed {
-		t.Fatalf("completion was not downgraded to failed: %#v", result.Completion)
-	}
-
-	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "changed_paths_missing") {
-		t.Fatalf("validation failures missing changed_paths_missing: %#v", result.Completion.ValidationFailures)
-	}
-}
-
-func TestFinalizeTerminalCompletionSuccessDoesNotCarryStaleRecoveryMetadata(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion success does not carry stale recovery metadata", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	sessionID := "stale_recovery_success"
 	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
 		SessionID:         sessionID,
@@ -389,7 +316,7 @@ func TestFinalizeTerminalCompletionSuccessDoesNotCarryStaleRecoveryMetadata(t *t
 		FailureReason:     "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n- pkg/feature.go",
 		RequiredEditPaths: []string{"pkg/feature.go"},
 	}, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("write stale recovery record: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write stale recovery record: %v", err))
 	}
 
 	state := NewProgressState(sessionID, "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
@@ -401,21 +328,16 @@ func TestFinalizeTerminalCompletionSuccessDoesNotCarryStaleRecoveryMetadata(t *t
 	state.Review.Status = plancontract.PlanExecuteReviewStatusSkipped
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/stale_recovery_success.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
-	if result.ExitCode != 0 {
-		t.Fatalf("ExitCode = %d, want success; failure=%s %s", result.ExitCode, result.FailureKind, result.FailureReason)
-	}
+	gomega.Expect(result.ExitCode != 0).To(gomega.BeFalse(), fmt.Sprintf("ExitCode = %d, want success; failure=%s %s", result.ExitCode, result.FailureKind, result.FailureReason))
+	gomega.Expect(result.Completion).NotTo(gomega.BeNil(), fmt.Sprint("expected terminal completion"))
+	gomega.Expect(result.Completion.NextAction).To(gomega.Equal(recoverycontract.NextAction("")), fmt.Sprintf("success completion carried stale recovery metadata: %#v", result.Completion))
+	gomega.Expect(result.Completion.FailureID).To(gomega.Equal(""), fmt.Sprintf("success completion carried stale recovery metadata: %#v", result.Completion))
+	gomega.Expect(result.Completion.RecordPath).To(gomega.Equal(""), fmt.Sprintf("success completion carried stale recovery metadata: %#v", result.Completion))
+	gomega.Expect(result.Completion.PacketPath).To(gomega.Equal(""), fmt.Sprintf("success completion carried stale recovery metadata: %#v", result.Completion))
+})
 
-	if result.Completion == nil {
-		t.Fatal("expected terminal completion")
-	}
-
-	if result.Completion.NextAction != "" || result.Completion.FailureID != "" || result.Completion.RecordPath != "" || result.Completion.PacketPath != "" {
-		t.Fatalf("success completion carried stale recovery metadata: %#v", result.Completion)
-	}
-}
-
-func TestFinalizeTerminalCompletionRejectsMissingSourceSanityForSourceChange(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion rejects missing source sanity for source change", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewProgressState("missing_source_sanity", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
 
 	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
@@ -425,44 +347,26 @@ func TestFinalizeTerminalCompletionRejectsMissingSourceSanityForSourceChange(t *
 	state.Review.Status = plancontract.PlanExecuteReviewStatusSkipped
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/missing_source_sanity.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
-
-	if result.ExitCode != 1 {
-		t.Fatalf("ExitCode = %d, want terminal contract failure", result.ExitCode)
-	}
-
-	if result.FailureKind != string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed) {
-		t.Fatalf("FailureKind = %q, want %q", result.FailureKind, plancontract.PlanExecuteFailureTerminalCompletionContractFailed)
-	}
-
-	if result.Completion == nil || result.Completion.TerminalClass != plancontract.PlanExecuteTerminalClassFailed {
-		t.Fatalf("completion was not downgraded to failed: %#v", result.Completion)
-	}
-
-	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "source_sanity_missing:pkg/feature.go") {
-		t.Fatalf("validation failures missing source_sanity_missing: %#v", result.Completion.ValidationFailures)
-	}
+	gomega.Expect(result.ExitCode != 1).To(gomega.BeFalse(), fmt.Sprintf("ExitCode = %d, want terminal contract failure", result.ExitCode))
+	gomega.Expect(result.FailureKind != string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed)).To(gomega.BeFalse(), fmt.Sprintf("FailureKind = %q, want %q", result.FailureKind, plancontract.PlanExecuteFailureTerminalCompletionContractFailed))
+	gomega.Expect(result.Completion).NotTo(gomega.BeNil(), fmt.Sprintf("completion was not downgraded to failed: %#v", result.Completion))
+	gomega.Expect(result.Completion.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassFailed), fmt.Sprintf("completion was not downgraded to failed: %#v", result.Completion))
+	gomega.Expect(planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "source_sanity_missing:pkg/feature.go")).To(gomega.BeTrue(), fmt.Sprintf("validation failures missing source_sanity_missing: %#v", result.Completion.ValidationFailures))
 
 	loaded, _, found, err := TryLoadPlanExecuteTerminalCompletionRecord(root, "missing_source_sanity")
-	if err != nil || !found {
-		t.Fatalf("TryLoadPlanExecuteTerminalCompletionRecord found=%v err=%v", found, err)
-	}
-	if !planExecuteTerminalStringSliceContains(loaded.ValidationFailures, "source_sanity_missing:pkg/feature.go") {
-		t.Fatalf("saved terminal completion lost validation failure: %#v", loaded.ValidationFailures)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("TryLoadPlanExecuteTerminalCompletionRecord found=%v err=%v", found, err))
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("TryLoadPlanExecuteTerminalCompletionRecord found=%v err=%v", found, err))
+	gomega.Expect(planExecuteTerminalStringSliceContains(loaded.ValidationFailures, "source_sanity_missing:pkg/feature.go")).To(gomega.BeTrue(), fmt.Sprintf("saved terminal completion lost validation failure: %#v", loaded.ValidationFailures))
 
 	fields := plancontract.PlanExecuteTerminalCompletionEventFields(*result.Completion, result.CompletionPath)
 	fieldFailures, ok := fields["validation_failures"].([]any)
-	if !ok || !planExecuteTerminalAnySliceContains(fieldFailures, "source_sanity_missing:pkg/feature.go") {
-		t.Fatalf("terminal completion event lost validation failure: %#v", fields["validation_failures"])
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("terminal completion event lost validation failure: %#v", fields["validation_failures"]))
+	gomega.Expect(planExecuteTerminalAnySliceContains(fieldFailures, "source_sanity_missing:pkg/feature.go")).To(gomega.BeTrue(), fmt.Sprintf("terminal completion event lost validation failure: %#v", fields["validation_failures"]))
+	gomega.Expect(len(result.Completion.AcceptanceEvidenceIDs) > 0).To(gomega.BeFalse(), fmt.Sprintf("downgraded terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs))
+})
 
-	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
-		t.Fatalf("downgraded terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
-	}
-}
-
-func TestFinalizeTerminalCompletionRejectsMissingCppSourceSanity(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion rejects missing cpp source sanity", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewProgressState("missing_cpp_source_sanity", "prompt", "", []string{"native/src/machine.cpp"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
 
 	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
@@ -472,26 +376,15 @@ func TestFinalizeTerminalCompletionRejectsMissingCppSourceSanity(t *testing.T) {
 	state.Review.Status = plancontract.PlanExecuteReviewStatusSkipped
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/missing_cpp_source_sanity.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+	gomega.Expect(result.ExitCode != 1).To(gomega.BeFalse(), fmt.Sprintf("ExitCode = %d, want terminal contract failure", result.ExitCode))
+	gomega.Expect(result.Completion).NotTo(gomega.BeNil(), fmt.Sprintf("completion was not downgraded to failed: %#v", result.Completion))
+	gomega.Expect(result.Completion.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassFailed), fmt.Sprintf("completion was not downgraded to failed: %#v", result.Completion))
+	gomega.Expect(planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "source_sanity_missing:native/src/machine.cpp")).To(gomega.BeTrue(), fmt.Sprintf("validation failures missing source_sanity_missing for C++ path: %#v", result.Completion.ValidationFailures))
+	gomega.Expect(len(result.Completion.AcceptanceEvidenceIDs) > 0).To(gomega.BeFalse(), fmt.Sprintf("downgraded terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs))
+})
 
-	if result.ExitCode != 1 {
-		t.Fatalf("ExitCode = %d, want terminal contract failure", result.ExitCode)
-	}
-
-	if result.Completion == nil || result.Completion.TerminalClass != plancontract.PlanExecuteTerminalClassFailed {
-		t.Fatalf("completion was not downgraded to failed: %#v", result.Completion)
-	}
-
-	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "source_sanity_missing:native/src/machine.cpp") {
-		t.Fatalf("validation failures missing source_sanity_missing for C++ path: %#v", result.Completion.ValidationFailures)
-	}
-
-	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
-		t.Fatalf("downgraded terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
-	}
-}
-
-func TestFinalizeTerminalCompletionCarriesAcceptanceEvidenceIDs(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion carries acceptance evidence i ds", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewProgressState("acceptance_ids", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
 
 	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
@@ -503,26 +396,15 @@ func TestFinalizeTerminalCompletionCarriesAcceptanceEvidenceIDs(t *testing.T) {
 	state.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}}
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/acceptance_ids.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
-
-	if result.ExitCode != 0 {
-		t.Fatalf("ExitCode = %d, want success; completion=%#v", result.ExitCode, result.Completion)
-	}
-
-	if result.Completion == nil {
-		t.Fatalf("completion missing")
-	}
+	gomega.Expect(result.ExitCode != 0).To(gomega.BeFalse(), fmt.Sprintf("ExitCode = %d, want success; completion=%#v", result.ExitCode, result.Completion))
+	gomega.Expect(result.Completion).NotTo(gomega.BeNil(), fmt.Sprintf("completion missing"))
 
 	want := []string{"adr-1", "req-1"}
-	if !planExecuteTerminalStringSlicesEqual(result.Completion.AcceptanceEvidenceIDs, want) {
-		t.Fatalf("AcceptanceEvidenceIDs = %#v, want %#v", result.Completion.AcceptanceEvidenceIDs, want)
-	}
+	gomega.Expect(planExecuteTerminalStringSlicesEqual(result.Completion.AcceptanceEvidenceIDs, want)).To(gomega.BeTrue(), fmt.Sprintf("AcceptanceEvidenceIDs = %#v, want %#v", result.Completion.AcceptanceEvidenceIDs, want))
+	gomega.Expect(planExecuteTerminalStringSlicesEqual(result.Completion.RequiredAcceptanceEvidenceIDs, want)).To(gomega.BeTrue(), fmt.Sprintf("RequiredAcceptanceEvidenceIDs = %#v, want %#v", result.Completion.RequiredAcceptanceEvidenceIDs, want))
+})
 
-	if !planExecuteTerminalStringSlicesEqual(result.Completion.RequiredAcceptanceEvidenceIDs, want) {
-		t.Fatalf("RequiredAcceptanceEvidenceIDs = %#v, want %#v", result.Completion.RequiredAcceptanceEvidenceIDs, want)
-	}
-}
-
-func TestTerminalCompletionCarriesAcceptanceEvidenceClaimsIntoValidation(t *testing.T) {
+var _ = ginkgo.It("terminal completion carries acceptance evidence claims into validation", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		SessionID:         "acceptance_claims",
 		Phase:             plancontract.PlanExecuteProgressPhaseComplete,
@@ -545,28 +427,20 @@ func TestTerminalCompletionCarriesAcceptanceEvidenceClaimsIntoValidation(t *test
 			Met:   true,
 		}},
 	})
-
-	if !planExecuteTerminalStringSliceContains(record.RequiredAcceptanceEvidenceIDs, "coverage-threshold") {
-		t.Fatalf("required threshold obligation ID was not mirrored into required IDs: %#v", record.RequiredAcceptanceEvidenceIDs)
-	}
-
-	if len(record.AcceptanceEvidenceClaims) != 1 || record.AcceptanceEvidenceClaims[0].ID != "coverage-threshold" {
-		t.Fatalf("acceptance evidence claims not normalized on record: %#v", record.AcceptanceEvidenceClaims)
-	}
-
-	if !planExecuteTerminalStringSliceContains(record.ValidationFailures, "acceptance_evidence_claim_met_mismatch") ||
-		!planExecuteTerminalStringSliceContains(record.ValidationFailures, "acceptance_evidence_threshold_not_met") {
-		t.Fatalf("terminal validation did not evaluate threshold claim: %#v", record.ValidationFailures)
-	}
+	gomega.Expect(planExecuteTerminalStringSliceContains(record.RequiredAcceptanceEvidenceIDs, "coverage-threshold")).To(gomega.BeTrue(), fmt.Sprintf("required threshold obligation ID was not mirrored into required IDs: %#v", record.RequiredAcceptanceEvidenceIDs))
+	gomega.Expect(record.AcceptanceEvidenceClaims).To(gomega.HaveLen(1), fmt.Sprintf("acceptance evidence claims not normalized on record: %#v", record.AcceptanceEvidenceClaims))
+	gomega.Expect(record.AcceptanceEvidenceClaims[0].ID).To(gomega.Equal("coverage-threshold"), fmt.Sprintf("acceptance evidence claims not normalized on record: %#v", record.AcceptanceEvidenceClaims))
+	gomega.Expect(planExecuteTerminalStringSliceContains(record.ValidationFailures, "acceptance_evidence_claim_met_mismatch")).To(gomega.BeTrue(), fmt.Sprintf("terminal validation did not evaluate threshold claim: %#v", record.ValidationFailures))
+	gomega.Expect(planExecuteTerminalStringSliceContains(record.ValidationFailures, "acceptance_evidence_threshold_not_met")).To(gomega.BeTrue(), fmt.Sprintf("terminal validation did not evaluate threshold claim: %#v", record.ValidationFailures))
 
 	fields := plancontract.PlanExecuteTerminalCompletionEventFields(record, ".idiom/plan-execute/terminal/acceptance_claims.json")
 	if _, ok := fields["acceptance_evidence_claims"]; !ok {
-		t.Fatalf("terminal event fields omitted acceptance evidence claims: %#v", fields)
+		ginkgo.Fail(fmt.Sprintf("terminal event fields omitted acceptance evidence claims: %#v", fields))
 	}
-}
+})
 
-func TestFinalizeTerminalCompletionRejectsMissingRequiredAcceptanceIDs(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion rejects missing required acceptance i ds", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewProgressState("required_acceptance_ids", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
 
 	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
@@ -577,39 +451,20 @@ func TestFinalizeTerminalCompletionRejectsMissingRequiredAcceptanceIDs(t *testin
 	state.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}}
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/required_acceptance_ids.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
-
-	if result.ExitCode != 1 {
-		t.Fatalf("ExitCode = %d, want terminal contract failure; completion=%#v", result.ExitCode, result.Completion)
-	}
-
-	if result.Completion == nil {
-		t.Fatalf("completion missing")
-	}
-
-	if result.Completion.TerminalClass != plancontract.PlanExecuteTerminalClassFailed {
-		t.Fatalf("TerminalClass = %q, want failed", result.Completion.TerminalClass)
-	}
-
-	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "acceptance_evidence_missing") {
-		t.Fatalf("validation failures missing acceptance_evidence_missing: %#v", result.Completion.ValidationFailures)
-	}
-
-	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
-		t.Fatalf("RequiredAcceptanceEvidenceIDs alone must not populate AcceptanceEvidenceIDs: got %#v", result.Completion.AcceptanceEvidenceIDs)
-	}
+	gomega.Expect(result.ExitCode != 1).To(gomega.BeFalse(), fmt.Sprintf("ExitCode = %d, want terminal contract failure; completion=%#v", result.ExitCode, result.Completion))
+	gomega.Expect(result.Completion).NotTo(gomega.BeNil(), fmt.Sprintf("completion missing"))
+	gomega.Expect(result.Completion.TerminalClass != plancontract.PlanExecuteTerminalClassFailed).To(gomega.BeFalse(), fmt.Sprintf("TerminalClass = %q, want failed", result.Completion.TerminalClass))
+	gomega.Expect(planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "acceptance_evidence_missing")).To(gomega.BeTrue(), fmt.Sprintf("validation failures missing acceptance_evidence_missing: %#v", result.Completion.ValidationFailures))
+	gomega.Expect(len(result.Completion.AcceptanceEvidenceIDs) > 0).To(gomega.BeFalse(), fmt.Sprintf("RequiredAcceptanceEvidenceIDs alone must not populate AcceptanceEvidenceIDs: got %#v", result.Completion.AcceptanceEvidenceIDs))
 
 	loaded, _, found, err := TryLoadProgressState(root, state.SessionID)
-	if err != nil || !found {
-		t.Fatalf("LoadProgressState: %v", err)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("LoadProgressState: %v", err))
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("LoadProgressState: %v", err))
+	gomega.Expect(len(loaded.AcceptanceEvidenceIDs) > 0).To(gomega.BeFalse(), fmt.Sprintf("downgraded progress state should not retain acceptance evidence: %#v", loaded.AcceptanceEvidenceIDs))
+})
 
-	if len(loaded.AcceptanceEvidenceIDs) > 0 {
-		t.Fatalf("downgraded progress state should not retain acceptance evidence: %#v", loaded.AcceptanceEvidenceIDs)
-	}
-}
-
-func TestFinalizeTerminalCompletionDoesNotMapAcceptanceIDsWithoutEvidence(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion does not map acceptance i ds without evidence", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewProgressState("required_acceptance_without_evidence", "prompt", "", nil, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
 
 	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
@@ -617,14 +472,13 @@ func TestFinalizeTerminalCompletionDoesNotMapAcceptanceIDsWithoutEvidence(t *tes
 	state.RequiredAcceptanceEvidenceIDs = []string{"req-1"}
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/required_acceptance_without_evidence.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
-
-	if result.Completion != nil && len(result.Completion.AcceptanceEvidenceIDs) > 0 {
-		t.Fatalf("status-only completion should not map acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
+	if result.Completion != nil {
+		gomega.Expect(result.Completion.AcceptanceEvidenceIDs).To(gomega.BeEmpty(), fmt.Sprintf("status-only completion should not map acceptance IDs: %#v", result.Completion))
 	}
-}
+})
 
-func TestFinalizeTerminalCompletionClearsAcceptanceIDsOnDirectFailure(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("finalize terminal completion clears acceptance i ds on direct failure", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewProgressState("direct_failure_acceptance_ids", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
 
 	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
@@ -636,38 +490,20 @@ func TestFinalizeTerminalCompletionClearsAcceptanceIDsOnDirectFailure(t *testing
 	state.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}}
 
 	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/direct_failure_acceptance_ids.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 2, FailureKind: "executor_failed", FailureReason: "command failed"})
-
-	if result.ExitCode != 2 {
-		t.Fatalf("ExitCode = %d, want direct failure exit", result.ExitCode)
-	}
-
-	if result.Completion == nil || result.Completion.TerminalClass != plancontract.PlanExecuteTerminalClassFailed {
-		t.Fatalf("completion was not failed: %#v", result.Completion)
-	}
-
-	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
-		t.Fatalf("failed terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
-	}
+	gomega.Expect(result.ExitCode != 2).To(gomega.BeFalse(), fmt.Sprintf("ExitCode = %d, want direct failure exit", result.ExitCode))
+	gomega.Expect(result.Completion).NotTo(gomega.BeNil(), fmt.Sprintf("completion was not failed: %#v", result.Completion))
+	gomega.Expect(result.Completion.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassFailed), fmt.Sprintf("completion was not failed: %#v", result.Completion))
+	gomega.Expect(len(result.Completion.AcceptanceEvidenceIDs) > 0).To(gomega.BeFalse(), fmt.Sprintf("failed terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs))
 
 	loaded, _, found, err := TryLoadProgressState(root, state.SessionID)
-	if err != nil || !found {
-		t.Fatalf("LoadProgressState: %v", err)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("LoadProgressState: %v", err))
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("LoadProgressState: %v", err))
+	gomega.Expect(len(loaded.AcceptanceEvidenceIDs) > 0).To(gomega.BeFalse(), fmt.Sprintf("failed progress state should not retain acceptance evidence: %#v", loaded.AcceptanceEvidenceIDs))
+	gomega.Expect(loaded.Status != plancontract.PlanExecuteProgressStatusFailed).To(gomega.BeFalse(), fmt.Sprintf("failed progress state status = %q, want failed", loaded.Status))
+	gomega.Expect(loaded.FailureKind != "executor_failed").To(gomega.BeFalse(), fmt.Sprintf("failed progress state failure kind = %q, want executor_failed", loaded.FailureKind))
+})
 
-	if len(loaded.AcceptanceEvidenceIDs) > 0 {
-		t.Fatalf("failed progress state should not retain acceptance evidence: %#v", loaded.AcceptanceEvidenceIDs)
-	}
-
-	if loaded.Status != plancontract.PlanExecuteProgressStatusFailed {
-		t.Fatalf("failed progress state status = %q, want failed", loaded.Status)
-	}
-
-	if loaded.FailureKind != "executor_failed" {
-		t.Fatalf("failed progress state failure kind = %q, want executor_failed", loaded.FailureKind)
-	}
-}
-
-func TestTerminalCompletionRejectsDegradedCppSourceSanity(t *testing.T) {
+var _ = ginkgo.It("terminal completion rejects degraded cpp source sanity", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		Status:              plancontract.PlanExecuteTerminalStatusCompleted,
 		Phase:               plancontract.PlanExecuteProgressPhaseComplete,
@@ -676,13 +512,10 @@ func TestTerminalCompletionRejectsDegradedCppSourceSanity(t *testing.T) {
 		SourceSanity:        []plancontract.PhaseEvidenceCheck{{Kind: "source_sanity", Path: "native/src/machine.cpp", Status: "ok", Summary: "Source sanity passed for 1 file(s) (1 generic fallback)"}},
 		ReviewRepairSkipped: true,
 	})
+	gomega.Expect(planExecuteTerminalStringSliceContains(record.ValidationFailures, "source_sanity_degraded:native/src/machine.cpp")).To(gomega.BeTrue(), fmt.Sprintf("degraded C++ source_sanity should reject terminal success, got %#v", record.ValidationFailures))
+})
 
-	if !planExecuteTerminalStringSliceContains(record.ValidationFailures, "source_sanity_degraded:native/src/machine.cpp") {
-		t.Fatalf("degraded C++ source_sanity should reject terminal success, got %#v", record.ValidationFailures)
-	}
-}
-
-func TestRecoveryInvariantFailuresIncludeValidationFailurePaths(t *testing.T) {
+var _ = ginkgo.It("recovery invariant failures include validation failure paths", func() {
 	failures := planExecuteRecoveryInvariantFailures(plancontract.PlanExecuteTerminalCompletionRecord{
 		FailureInvariants: []plancontract.PlanExecuteTerminalInvariant{{
 			Code:   "required_path_covered:pkg/feature.go",
@@ -695,19 +528,12 @@ func TestRecoveryInvariantFailuresIncludeValidationFailurePaths(t *testing.T) {
 			"source_sanity_failed:(unknown)",
 		},
 	})
-
-	if len(failures) != 4 {
-		t.Fatalf("failures=%#v", failures)
-	}
-
-	if failures[0].Path != "pkg/feature.go" || failures[1].Path != "pkg/feature.go" {
-		t.Fatalf("expected path-qualified invariant failures, got %#v", failures)
-	}
-
-	if failures[2].Path != "" || failures[3].Path != "" {
-		t.Fatalf("non-path invariant suffixes must not become recovery paths: %#v", failures)
-	}
-}
+	gomega.Expect(len(failures) != 4).To(gomega.BeFalse(), fmt.Sprintf("failures=%#v", failures))
+	gomega.Expect(failures[0].Path).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("expected path-qualified invariant failures, got %#v", failures))
+	gomega.Expect(failures[1].Path).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("expected path-qualified invariant failures, got %#v", failures))
+	gomega.Expect(failures[2].Path).To(gomega.Equal(""), fmt.Sprintf("non-path invariant suffixes must not become recovery paths: %#v", failures))
+	gomega.Expect(failures[3].Path).To(gomega.Equal(""), fmt.Sprintf("non-path invariant suffixes must not become recovery paths: %#v", failures))
+})
 
 func planExecuteTerminalStringSliceContains(values []string, target string) bool {
 	for _, value := range values {
@@ -743,7 +569,7 @@ func planExecuteTerminalStringSlicesEqual(left []string, right []string) bool {
 	return true
 }
 
-func TestNormalizePlanExecuteTerminalCompletionRecordKeepsDegradedOutcomeIdempotent(t *testing.T) {
+var _ = ginkgo.It("normalize plan execute terminal completion record keeps degraded outcome idempotent", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		Status:       plancontract.PlanExecuteTerminalStatusDegraded,
 		ReviewStatus: plancontract.PlanExecuteReviewStatusDegraded,
@@ -751,14 +577,12 @@ func TestNormalizePlanExecuteTerminalCompletionRecordKeepsDegradedOutcomeIdempot
 	})
 
 	record = plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
+	gomega.Expect(record.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassRecoveryRequired), fmt.Sprintf("degraded terminal record was not idempotent: %#v", record))
+	gomega.Expect(record.Outcome).To(gomega.Equal(plancontract.PlanExecuteTerminalOutcomeReviewDegraded), fmt.Sprintf("degraded terminal record was not idempotent: %#v", record))
+})
 
-	if record.TerminalClass != plancontract.PlanExecuteTerminalClassRecoveryRequired || record.Outcome != plancontract.PlanExecuteTerminalOutcomeReviewDegraded {
-		t.Fatalf("degraded terminal record was not idempotent: %#v", record)
-	}
-}
-
-func TestSavePlanExecuteTerminalCompletionRecordRoundTrips(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("save plan execute terminal completion record round trips", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	record := NewPlanExecuteTerminalCompletionRecord(
 		progressStateForTerminalCompletionTest(func(state *ProgressState) {
 			state.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
@@ -778,37 +602,26 @@ func TestSavePlanExecuteTerminalCompletionRecordRoundTrips(t *testing.T) {
 	)
 
 	path, err := SavePlanExecuteTerminalCompletionRecord(root, record)
-	if err != nil {
-		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("SavePlanExecuteTerminalCompletionRecord: %v", err))
 
 	if want := filepath.ToSlash(filepath.Join(".idiom", "plan-execute", "sessions", "terminal_completion_test.terminal.json")); path != want {
-		t.Fatalf("path = %q, want %q", path, want)
+		ginkgo.Fail(fmt.Sprintf("path = %q, want %q", path, want))
 	}
 
 	loaded, loadedPath, found, err := TryLoadPlanExecuteTerminalCompletionRecord(root, "terminal_completion_test")
-	if err != nil || !found {
-		t.Fatalf("TryLoadPlanExecuteTerminalCompletionRecord found=%v err=%v", found, err)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("TryLoadPlanExecuteTerminalCompletionRecord found=%v err=%v", found, err))
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("TryLoadPlanExecuteTerminalCompletionRecord found=%v err=%v", found, err))
+	gomega.Expect(loadedPath != path).To(gomega.BeFalse(), fmt.Sprintf("loaded path = %q, want %q", loadedPath, path))
+	gomega.Expect(loaded.TerminalClass).To(gomega.Equal(plancontract.PlanExecuteTerminalClassRecoveryRequired), fmt.Sprintf("loaded classification = class %q outcome %q", loaded.TerminalClass, loaded.Outcome))
+	gomega.Expect(loaded.Outcome).To(gomega.Equal(plancontract.PlanExecuteTerminalOutcomeBlocked), fmt.Sprintf("loaded classification = class %q outcome %q", loaded.TerminalClass, loaded.Outcome))
+	gomega.Expect(loaded.FailureID).To(gomega.Equal("failure-123"), fmt.Sprintf("loaded recovery metadata incomplete: %#v", loaded))
+	gomega.Expect(loaded.PacketPath).NotTo(gomega.Equal(""), fmt.Sprintf("loaded recovery metadata incomplete: %#v", loaded))
+	gomega.Expect(loaded.NextAction).To(gomega.Equal(recoverycontract.NextActionReviewDecomposition), fmt.Sprintf("loaded recovery metadata incomplete: %#v", loaded))
+	gomega.Expect(loaded.WriteAllowedPaths).To(gomega.HaveLen(1), fmt.Sprintf("write allowed paths not normalized: %#v", loaded.WriteAllowedPaths))
+	gomega.Expect(loaded.WriteAllowedPaths[0]).To(gomega.Equal("logs/telemetry/run.jsonl"), fmt.Sprintf("write allowed paths not normalized: %#v", loaded.WriteAllowedPaths))
+})
 
-	if loadedPath != path {
-		t.Fatalf("loaded path = %q, want %q", loadedPath, path)
-	}
-
-	if loaded.TerminalClass != plancontract.PlanExecuteTerminalClassRecoveryRequired || loaded.Outcome != plancontract.PlanExecuteTerminalOutcomeBlocked {
-		t.Fatalf("loaded classification = class %q outcome %q", loaded.TerminalClass, loaded.Outcome)
-	}
-
-	if loaded.FailureID != "failure-123" || loaded.PacketPath == "" || loaded.NextAction != "review_decomposition" {
-		t.Fatalf("loaded recovery metadata incomplete: %#v", loaded)
-	}
-
-	if len(loaded.WriteAllowedPaths) != 1 || loaded.WriteAllowedPaths[0] != "logs/telemetry/run.jsonl" {
-		t.Fatalf("write allowed paths not normalized: %#v", loaded.WriteAllowedPaths)
-	}
-}
-
-func TestLoadPlanExecuteTerminalCompletionRejectsInvalidLifecycleFields(t *testing.T) {
+var _ = ginkgo.Describe("loading plan execute terminal completion with invalid lifecycle fields", func() {
 	tests := []struct {
 		name    string
 		mutate  func(*plancontract.PlanExecuteTerminalCompletionRecord)
@@ -853,8 +666,9 @@ func TestLoadPlanExecuteTerminalCompletionRejectsInvalidLifecycleFields(t *testi
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
+		tt := tt
+		ginkgo.It(tt.name, func() {
+			root := ginkgo.GinkgoT().TempDir()
 			record := NewPlanExecuteTerminalCompletionRecord(
 				progressStateForTerminalCompletionTest(func(state *ProgressState) {
 					state.Phase = plancontract.PlanExecuteProgressPhaseComplete
@@ -864,20 +678,18 @@ func TestLoadPlanExecuteTerminalCompletionRejectsInvalidLifecycleFields(t *testi
 				PlanExecuteTerminalCompletionInput{},
 			)
 			tt.mutate(&record)
-			writeTerminalCompletionRecordFixture(t, root, record)
+			writeTerminalCompletionRecordFixture(root, record)
 
 			_, _, found, err := TryLoadPlanExecuteTerminalCompletionRecord(root, record.SessionID)
-			if err == nil || found {
-				t.Fatalf("expected invalid terminal completion error and found=false, found=%v err=%v", found, err)
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected invalid terminal completion error and found=false, found=%v err=%v", found, err))
+			gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("expected invalid terminal completion error and found=false, found=%v err=%v", found, err))
+			gomega.Expect(strings.Contains(err.Error(), tt.wantErr)).To(gomega.BeTrue(), fmt.Sprintf("unexpected error: %v", err))
+
 		})
 	}
-}
+})
 
-func TestSavePlanExecuteTerminalCompletionRecordRejectsInvalidLifecycle(t *testing.T) {
+var _ = ginkgo.It("save plan execute terminal completion record rejects invalid lifecycle", func() {
 	record := NewPlanExecuteTerminalCompletionRecord(
 		progressStateForTerminalCompletionTest(func(state *ProgressState) {
 			state.Phase = plancontract.PlanExecuteProgressPhasePlanning
@@ -887,13 +699,13 @@ func TestSavePlanExecuteTerminalCompletionRecordRejectsInvalidLifecycle(t *testi
 	)
 	record.Status = "typo"
 
-	if _, err := SavePlanExecuteTerminalCompletionRecord(t.TempDir(), record); err == nil || !strings.Contains(err.Error(), "invalid plan-execute terminal completion status") {
-		t.Fatalf("expected invalid terminal completion error, got %v", err)
+	if _, err := SavePlanExecuteTerminalCompletionRecord(ginkgo.GinkgoT().TempDir(), record); err == nil || !strings.Contains(err.Error(), "invalid plan-execute terminal completion status") {
+		ginkgo.Fail(fmt.Sprintf("expected invalid terminal completion error, got %v", err))
 	}
-}
+})
 
-func TestSavePlanExecuteTerminalCompletionRecordDoesNotFollowPredictableTempSymlink(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("save plan execute terminal completion record does not follow predictable temp symlink", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	record := NewPlanExecuteTerminalCompletionRecord(
 		progressStateForTerminalCompletionTest(func(state *ProgressState) {
 			state.SessionID = "tmp_symlink_terminal"
@@ -903,37 +715,33 @@ func TestSavePlanExecuteTerminalCompletionRecordDoesNotFollowPredictableTempSyml
 		PlanExecuteTerminalCompletionInput{ExitCode: 1},
 	)
 	fullPath, _, err := planExecuteTerminalCompletionPath(root, record.SessionID)
-	if err != nil {
-		t.Fatalf("planExecuteTerminalCompletionPath: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("planExecuteTerminalCompletionPath: %v", err))
+
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir terminal dir: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir terminal dir: %v", err))
 	}
 	outside := filepath.Join(root, "outside-terminal.txt")
 	if err := os.WriteFile(outside, []byte("sentinel"), 0o600); err != nil {
-		t.Fatalf("seed outside: %v", err)
+		ginkgo.Fail(fmt.Sprintf("seed outside: %v", err))
 	}
 	if err := os.Symlink(outside, fullPath+".tmp"); err != nil {
-		t.Fatalf("symlink predictable temp: %v", err)
+		ginkgo.Fail(fmt.Sprintf("symlink predictable temp: %v", err))
 	}
 
 	if _, err := SavePlanExecuteTerminalCompletionRecord(root, record); err != nil {
-		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
+		ginkgo.Fail(fmt.Sprintf("SavePlanExecuteTerminalCompletionRecord: %v", err))
 	}
 	body, err := os.ReadFile(outside)
-	if err != nil {
-		t.Fatalf("read outside: %v", err)
-	}
-	if string(body) != "sentinel" {
-		t.Fatalf("predictable temp symlink target was modified: %q", string(body))
-	}
-	if _, err := os.Lstat(fullPath + ".tmp"); err != nil {
-		t.Fatalf("predictable temp symlink should remain untouched: %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read outside: %v", err))
+	gomega.Expect(string(body) != "sentinel").To(gomega.BeFalse(), fmt.Sprintf("predictable temp symlink target was modified: %q", string(body)))
 
-func TestLoadPlanExecuteTerminalCompletionRejectsSessionMismatch(t *testing.T) {
-	root := t.TempDir()
+	if _, err := os.Lstat(fullPath + ".tmp"); err != nil {
+		ginkgo.Fail(fmt.Sprintf("predictable temp symlink should remain untouched: %v", err))
+	}
+})
+
+var _ = ginkgo.It("load plan execute terminal completion rejects session mismatch", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	record := NewPlanExecuteTerminalCompletionRecord(
 		progressStateForTerminalCompletionTest(func(state *ProgressState) {}),
 		PlanExecuteTerminalCompletionInput{},
@@ -941,45 +749,38 @@ func TestLoadPlanExecuteTerminalCompletionRejectsSessionMismatch(t *testing.T) {
 	record.SessionID = "other-session"
 
 	fullPath, _, err := planExecuteTerminalCompletionPath(root, "terminal_completion_test")
-	if err != nil {
-		t.Fatalf("planExecuteTerminalCompletionPath: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("planExecuteTerminalCompletionPath: %v", err))
+
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir: %v", err))
 	}
 	body, err := json.Marshal(record)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal: %v", err))
+
 	if err := os.WriteFile(fullPath, body, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write: %v", err))
 	}
 
 	_, _, found, err := TryLoadPlanExecuteTerminalCompletionRecord(root, "terminal_completion_test")
-	if err == nil || found {
-		t.Fatalf("expected session mismatch error and found=false, found=%v err=%v", found, err)
-	}
-	if !strings.Contains(err.Error(), "does not match requested session") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected session mismatch error and found=false, found=%v err=%v", found, err))
+	gomega.Expect(found).To(gomega.BeFalse(), fmt.Sprintf("expected session mismatch error and found=false, found=%v err=%v", found, err))
+	gomega.Expect(strings.Contains(err.Error(), "does not match requested session")).To(gomega.BeTrue(), fmt.Sprintf("unexpected error: %v", err))
+})
 
-func writeTerminalCompletionRecordFixture(t *testing.T, root string, record plancontract.PlanExecuteTerminalCompletionRecord) {
-	t.Helper()
+func writeTerminalCompletionRecordFixture(root string, record plancontract.PlanExecuteTerminalCompletionRecord) {
+	ginkgo.GinkgoHelper()
 
 	fullPath, _, err := planExecuteTerminalCompletionPath(root, record.SessionID)
-	if err != nil {
-		t.Fatalf("planExecuteTerminalCompletionPath: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("planExecuteTerminalCompletionPath: %v", err))
+
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir: %v", err))
 	}
 	body, err := json.Marshal(record)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal: %v", err))
+
 	if err := os.WriteFile(fullPath, append(body, '\n'), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write: %v", err))
 	}
 }
 

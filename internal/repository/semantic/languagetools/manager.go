@@ -1,5 +1,7 @@
 package languagetools
 
+//go:generate go tool mockgen -source=manager.go -destination=mock_host_test.go -package=languagetools -typed
+
 import (
 	"context"
 	"fmt"
@@ -34,7 +36,7 @@ type Host interface {
 	HandleDisplay(abs string) string
 	RememberPath(abs string)
 	PrimeDiscoveredPaths(paths []string)
-	PathForHandle(handle string) (string, error)
+	PathForHandle(ctx context.Context, handle string) (string, error)
 	RouteLanguageTool(ctx context.Context, req RouteLanguageToolRequest) ToolResult
 	SearchContent(ctx context.Context, req SearchContentRequest) ToolResult
 	RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) CommandResult
@@ -122,12 +124,12 @@ func (m *Manager) PrimeDiscoveredPaths(paths []string) {
 	}
 }
 
-func (m *Manager) pathForHandle(handle string) (string, error) {
+func (m *Manager) pathForHandle(ctx context.Context, handle string) (string, error) {
 	if m == nil || m.host == nil {
 		return "", fmt.Errorf("language tool host unavailable")
 	}
 
-	return m.host.PathForHandle(handle)
+	return m.host.PathForHandle(ctx, handle)
 }
 
 func (m *Manager) searchContent(ctx context.Context, req ToolRequest, toolName string) ToolResult {
@@ -216,6 +218,11 @@ type ToolRequest struct {
 	Destination  string
 	Declarations []string
 	Moves        []GoDeclarationMove
+	// MutationPreimages are rooted snapshots supplied by workspace. They are
+	// consumed only by pure mutation planners.
+	MutationPreimages []FileMutationPreimage
+
+	invocationContext context.Context
 }
 
 type SearchContentRequest struct {
@@ -249,6 +256,12 @@ type GoDeclarationMove struct {
 	Declarations []string
 }
 
+type FileMutationPreimage struct {
+	Path   string
+	Exists bool
+	Body   []byte
+}
+
 type ToolResult struct {
 	Tool          string
 	Summary       string
@@ -258,8 +271,37 @@ type ToolResult struct {
 	Paths         []string
 	ChangedPaths  []string
 	Facts         *toolfacts.ToolResultFacts
+	SourceWindows []SourceWindowPlan
 	PrecisionTier string
 	Relationships []ToolRelationship
+	MutationPlan  *MutationPlan
+}
+
+// SourceWindowPlan is an untrusted language-reader claim that the workspace
+// adapter must re-open, clamp, canonicalize, and revision-bind before exposing
+// it as producer-owned source evidence.
+type SourceWindowPlan struct {
+	Path      string
+	StartLine int
+	EndLine   int
+	Truncated bool
+}
+
+// MutationPlan is a pure language-tool proposal. The language package may
+// parse and render source, but only the workspace capability owner may consume
+// the expected preimages and commit the resulting file bodies.
+type MutationPlan struct {
+	TargetPaths []string
+	Files       []FileMutationPlan
+}
+
+type FileMutationPlan struct {
+	Path           string
+	DisplayPath    string
+	Description    string
+	ExpectedExists bool
+	ExpectedBody   []byte
+	RenderedBody   []byte
 }
 
 func diagnosticToolFacts(paths []string) *toolfacts.ToolResultFacts {

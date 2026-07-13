@@ -1,30 +1,37 @@
 package sessionid
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestValidateAcceptsGeneratedShape(t *testing.T) {
-	id := New()
-	if err := Validate(id); err != nil {
-		t.Fatalf("Validate(New()) = %v for %q", err, id)
-	}
-}
+var _ = ginkgo.Describe("Session IDs", func() {
+	ginkgo.It("accepts IDs produced by the generator", func() {
+		gomega.Expect(Validate(New())).To(gomega.Succeed())
+	})
 
-func TestValidateRejectsPathComponentsAndDots(t *testing.T) {
-	for _, id := range []string{"", " ", ".", "..", "a/b", `a\b`, "a..b", "with.dot", "with space", "with@sign"} {
-		t.Run(id, func(t *testing.T) {
-			if Validate(id) == nil {
-				t.Fatalf("Validate(%q) succeeded, want rejection", id)
-			}
-			if got, ok := Normalize(id); ok || got != "" {
-				t.Fatalf("Normalize(%q) = %q %v, want empty false", id, got, ok)
-			}
-		})
-	}
-}
+	ginkgo.DescribeTable("rejects path components and punctuation",
+		func(id string) {
+			gomega.Expect(Validate(id)).To(gomega.HaveOccurred())
+			normalized, ok := Normalize(id)
+			gomega.Expect(ok).To(gomega.BeFalse())
+			gomega.Expect(normalized).To(gomega.BeEmpty())
+		},
+		ginkgo.Entry("empty", ""),
+		ginkgo.Entry("blank", " "),
+		ginkgo.Entry("current directory", "."),
+		ginkgo.Entry("parent directory", ".."),
+		ginkgo.Entry("forward slash", "a/b"),
+		ginkgo.Entry("backslash", `a\b`),
+		ginkgo.Entry("double dot", "a..b"),
+		ginkgo.Entry("dot", "with.dot"),
+		ginkgo.Entry("space", "with space"),
+		ginkgo.Entry("at sign", "with@sign"),
+	)
 
-func TestNormalizeTrimsValidID(t *testing.T) {
-	got, ok := Normalize(" session_123 ")
-	if !ok || got != "session_123" {
-		t.Fatalf("Normalize = %q %v, want session_123 true", got, ok)
-	}
-}
+	ginkgo.It("trims a valid ID during normalization", func() {
+		normalized, ok := Normalize(" session_123 ")
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(normalized).To(gomega.Equal("session_123"))
+	})
+})

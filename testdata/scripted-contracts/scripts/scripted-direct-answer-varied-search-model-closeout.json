@@ -1,0 +1,6 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":8}",
+  "{\"tool\":\"search_files\",\"pattern\":\"labels.go\"}",
+  "{\"tool\":\"search_files\",\"pattern\":\"README.md\"}",
+  "ShortLabel returns \"Save changes\" from internal/labels/labels.go. The additional authorized searches confirmed the fixture paths; no files were edited."
+]

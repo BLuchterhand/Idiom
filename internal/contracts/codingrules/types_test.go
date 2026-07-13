@@ -3,106 +3,78 @@ package codingrules
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestDefaultPolicyValidates(t *testing.T) {
-	if err := ValidatePolicy(DefaultPolicy()); err != nil {
-		t.Fatalf("DefaultPolicy should validate: %v", err)
-	}
-}
+var _ = ginkgo.Describe("Coding-rule policy types", func() {
+	ginkgo.Describe("the default policy", func() {
+		ginkgo.It("is valid", func() {
+			gomega.Expect(ValidatePolicy(DefaultPolicy())).To(gomega.Succeed())
+		})
 
-func TestDefaultPolicyPassThroughDefaultsAreStable(t *testing.T) {
-	policy := DefaultPolicy()
-	if policy.SchemaVersion != PolicySchemaVersion {
-		t.Fatalf("schema version = %q, want %q", policy.SchemaVersion, PolicySchemaVersion)
-	}
-	if policy.Defaults.Enabled == nil || !*policy.Defaults.Enabled {
-		t.Fatalf("default enabled = %#v, want true", policy.Defaults.Enabled)
-	}
-	if policy.Defaults.Enforcement != EnforcementAdvisory || policy.Defaults.Severity != SeverityWarning {
-		t.Fatalf("defaults = %#v, want advisory/warning", policy.Defaults)
-	}
-	if !slices.Equal(policy.Defaults.Include, []string{"**/*.go"}) {
-		t.Fatalf("default include = %#v", policy.Defaults.Include)
-	}
-	if !slices.Equal(policy.Defaults.Exclude, []string{"vendor/**", ".git/**", ".idiom/**"}) {
-		t.Fatalf("default exclude = %#v", policy.Defaults.Exclude)
-	}
-	if len(policy.Rules) != 1 {
-		t.Fatalf("default policy has %d rules, want only pass-through", len(policy.Rules))
-	}
+		ginkgo.It("keeps the pass-through-wrapper contract stable", func() {
+			policy := DefaultPolicy()
 
-	rule := policy.Rules[0]
-	if rule.ID != RuleNoPassThroughWrapper || len(rule.Languages) != 1 || rule.Languages[0] != LanguageGo || rule.Kind != RuleKindStructure {
-		t.Fatalf("default rule identity = %#v", rule)
-	}
-	if rule.Enforcement != EnforcementAdvisory || rule.Severity != SeverityWarning {
-		t.Fatalf("default rule policy = %#v, want advisory/warning", rule)
-	}
-	wantAllowances := []AllowanceReason{
-		AllowImplementsInterface,
-		AllowBoundaryAdapter,
-		AllowValidation,
-		AllowErrorContext,
-		AllowObservability,
-		AllowPermissionCheck,
-	}
-	if !slices.Equal(rule.AllowWhen, wantAllowances) {
-		t.Fatalf("default rule allowances = %#v, want %#v", rule.AllowWhen, wantAllowances)
-	}
-	if rule.Options.PassThroughWrapper == nil {
-		t.Fatal("default pass-through rule missing options")
-	}
-	if got := *rule.Options.PassThroughWrapper; got != DefaultPassThroughWrapperOptions() {
-		t.Fatalf("default pass-through options = %#v, want %#v", got, DefaultPassThroughWrapperOptions())
-	}
-}
+			gomega.Expect(policy.SchemaVersion).To(gomega.Equal(PolicySchemaVersion))
+			gomega.Expect(policy.Defaults.Enabled).NotTo(gomega.BeNil())
+			gomega.Expect(*policy.Defaults.Enabled).To(gomega.BeTrue())
+			gomega.Expect(policy.Defaults.Enforcement).To(gomega.Equal(EnforcementAdvisory))
+			gomega.Expect(policy.Defaults.Severity).To(gomega.Equal(SeverityWarning))
+			gomega.Expect(policy.Defaults.Include).To(gomega.Equal([]string{"**/*.go"}))
+			gomega.Expect(policy.Defaults.Exclude).To(gomega.Equal([]string{"vendor/**", ".git/**", ".idiom/**"}))
+			gomega.Expect(policy.Rules).To(gomega.HaveLen(1))
 
-func TestDecodePolicyRejectsTopLevelUnknownKeys(t *testing.T) {
-	_, err := DecodePolicy(strings.NewReader(`{
+			rule := policy.Rules[0]
+			gomega.Expect(rule.ID).To(gomega.Equal(RuleNoPassThroughWrapper))
+			gomega.Expect(rule.Languages).To(gomega.Equal([]LanguageID{LanguageGo}))
+			gomega.Expect(rule.Kind).To(gomega.Equal(RuleKindStructure))
+			gomega.Expect(rule.Enforcement).To(gomega.Equal(EnforcementAdvisory))
+			gomega.Expect(rule.Severity).To(gomega.Equal(SeverityWarning))
+			gomega.Expect(rule.AllowWhen).To(gomega.Equal([]AllowanceReason{
+				AllowImplementsInterface,
+				AllowBoundaryAdapter,
+				AllowValidation,
+				AllowErrorContext,
+				AllowObservability,
+				AllowPermissionCheck,
+			}))
+			gomega.Expect(rule.Options.PassThroughWrapper).NotTo(gomega.BeNil())
+			gomega.Expect(*rule.Options.PassThroughWrapper).To(gomega.Equal(DefaultPassThroughWrapperOptions()))
+		})
+	})
+
+	ginkgo.Describe("decoding and validation", func() {
+		ginkgo.It("rejects unknown top-level keys", func() {
+			_, err := DecodePolicy(strings.NewReader(`{
 		"schema_version":"idiom.coding_rules.v1",
 		"unexpected":true
 	}`))
-	if err == nil {
-		t.Fatalf("DecodePolicy should reject unknown keys")
-	}
-}
 
-func TestValidatePolicyRequiresSuppressionRationale(t *testing.T) {
-	policy := DefaultPolicy()
-	policy.Suppressions = []Suppression{{
-		RuleID: RuleNoPassThroughWrapper,
-		Path:   "internal/example.go",
-		Reason: AllowBoundaryAdapter,
-	}}
+			gomega.Expect(err).To(gomega.HaveOccurred())
+		})
 
-	if err := ValidatePolicy(policy); err == nil {
-		t.Fatalf("ValidatePolicy should reject suppression without rationale")
-	}
-}
+		ginkgo.It("requires a rationale for every suppression", func() {
+			policy := DefaultPolicy()
+			policy.Suppressions = []Suppression{{
+				RuleID: RuleNoPassThroughWrapper,
+				Path:   "internal/example.go",
+				Reason: AllowBoundaryAdapter,
+			}}
 
-func TestCheckedInCodingRuleExampleValidatesAndMatchesDefaultAllowances(t *testing.T) {
-	for _, rel := range []string{
-		"coding_rules.example.json",
-	} {
-		t.Run(rel, func(t *testing.T) {
+			gomega.Expect(ValidatePolicy(policy)).To(gomega.HaveOccurred())
+		})
+	})
+
+	ginkgo.DescribeTable("checked-in policy examples",
+		func(rel string) {
 			body, err := os.ReadFile(filepath.Join("..", "..", "..", rel))
-			if err != nil {
-				t.Fatalf("read template: %v", err)
-			}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			policy, err := DecodePolicyFile(body)
-			if err != nil {
-				t.Fatalf("DecodePolicyFile: %v", err)
-			}
-
-			defaultAllowances := map[AllowanceReason]struct{}{}
-			for _, reason := range DefaultPolicy().Rules[0].AllowWhen {
-				defaultAllowances[reason] = struct{}{}
-			}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			var passThrough RuleConfig
 			for _, rule := range policy.Rules {
@@ -111,32 +83,24 @@ func TestCheckedInCodingRuleExampleValidatesAndMatchesDefaultAllowances(t *testi
 					break
 				}
 			}
-			if passThrough.ID == "" {
-				t.Fatal("template missing go.no_pass_through_wrapper")
-			}
-			for _, reason := range passThrough.AllowWhen {
-				delete(defaultAllowances, reason)
-			}
-			if len(defaultAllowances) != 0 {
-				t.Fatalf("template pass-through rule missing default allowance(s): %#v", defaultAllowances)
-			}
-		})
-	}
-}
+			gomega.Expect(passThrough.ID).To(gomega.Equal(RuleNoPassThroughWrapper))
+			gomega.Expect(passThrough.AllowWhen).To(gomega.ContainElements(DefaultPolicy().Rules[0].AllowWhen))
+		},
+		ginkgo.Entry("validates coding_rules.example.json with every default allowance", "coding_rules.example.json"),
+	)
 
-func TestFindingHashStable(t *testing.T) {
-	finding := Finding{
-		RuleID:      RuleNoPassThroughWrapper,
-		Severity:    SeverityWarning,
-		Enforcement: EnforcementAdvisory,
-		Path:        "internal/example.go",
-		Line:        12,
-		Symbol:      "Save",
-	}
+	ginkgo.It("produces a stable, non-empty finding hash", func() {
+		finding := Finding{
+			RuleID:      RuleNoPassThroughWrapper,
+			Severity:    SeverityWarning,
+			Enforcement: EnforcementAdvisory,
+			Path:        "internal/example.go",
+			Line:        12,
+			Symbol:      "Save",
+		}
 
-	first := FindingHash(finding)
-	second := FindingHash(finding)
-	if first == "" || first != second {
-		t.Fatalf("FindingHash should be stable and non-empty: %q %q", first, second)
-	}
-}
+		first := FindingHash(finding)
+		gomega.Expect(first).NotTo(gomega.BeEmpty())
+		gomega.Expect(FindingHash(finding)).To(gomega.Equal(first))
+	})
+})

@@ -2,31 +2,23 @@ package languagetools
 
 import (
 	"fmt"
-	"testing"
 
 	"idiom/internal/platform/failures"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestDispatchAnnotatesUnsupportedToolFailure(t *testing.T) {
-	result := NewManager(nil).Dispatch(t.Context(), ToolRequest{Tool: "not_a_real_language_tool"})
+var _ = Describe("Language-tool failures", func() {
+	It("annotates unsupported dispatches", func() {
+		result := NewManager(nil).Dispatch(GinkgoT().Context(), ToolRequest{Tool: "not_a_real_language_tool"})
+		Expect(result.Failure).NotTo(BeNil())
+		Expect(failures.CodeOf(result.Failure)).To(Equal(failures.Unimplemented))
+	})
 
-	if result.Failure == nil {
-		t.Fatal("Dispatch did not annotate unsupported tool failure")
-	}
-
-	if got := failures.CodeOf(result.Failure); got != failures.Unimplemented {
-		t.Fatalf("failure code = %v, want %v", got, failures.Unimplemented)
-	}
-}
-
-func TestPythonLSPUnavailableIsTyped(t *testing.T) {
-	err := fmt.Errorf("outer: %w", ErrPythonLSPUnavailable)
-
-	if got := failures.CodeOf(err); got != failures.Unavailable {
-		t.Fatalf("failure code = %v, want %v", got, failures.Unavailable)
-	}
-
-	if got := failures.ReasonOf(err); got != reasonLanguageToolPythonLSPUnavailable {
-		t.Fatalf("failure reason = %v, want %v", got, reasonLanguageToolPythonLSPUnavailable)
-	}
-}
+	It("preserves typed Python LSP unavailability through wrapping", func() {
+		err := fmt.Errorf("outer: %w", ErrPythonLSPUnavailable)
+		Expect(failures.CodeOf(err)).To(Equal(failures.Unavailable))
+		Expect(failures.ReasonOf(err)).To(Equal(reasonLanguageToolPythonLSPUnavailable))
+	})
+})

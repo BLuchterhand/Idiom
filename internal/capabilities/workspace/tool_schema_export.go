@@ -291,7 +291,7 @@ func toolSchemaEnforcement(tool string, sideEffects []autonomy.SideEffectClass) 
 		enforcement = append(enforcement, "command_classification", "approval_guard")
 	}
 
-	if tool == ToolNameTask || tool == ToolNameDelegateEdit {
+	if tool == ToolNameTask {
 		enforcement = append(enforcement, "delegation_scope")
 	}
 

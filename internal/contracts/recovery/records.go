@@ -3,7 +3,10 @@ package recovery
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"idiom/internal/contracts/toolfacts"
 )
 
 const (
@@ -85,20 +88,58 @@ type PartialState struct {
 }
 
 type ImplementationState struct {
-	Phase                      string                          `json:"phase,omitempty"`
-	StopReason                 string                          `json:"stop_reason,omitempty"`
-	RemainingRequiredEditPaths []string                        `json:"remaining_required_edit_paths,omitempty"`
-	ChangedPaths               []string                        `json:"changed_paths,omitempty"`
-	SourcedEvidencePaths       []string                        `json:"sourced_evidence_paths,omitempty"`
-	PendingRedirects           []ImplementationPendingRedirect `json:"pending_redirects,omitempty"`
-	WriteReadyNudgeCount       int                             `json:"write_ready_nudge_count,omitempty"`
+	Phase                           string                            `json:"phase,omitempty"`
+	StopReason                      string                            `json:"stop_reason,omitempty"`
+	RemainingRequiredEditPaths      []string                          `json:"remaining_required_edit_paths,omitempty"`
+	MissingRequiredEditSnippetIDs   []string                          `json:"missing_required_edit_snippet_ids,omitempty"`
+	MissingRequiredEditSnippetPaths []string                          `json:"missing_required_edit_snippet_paths,omitempty"`
+	UnresolvedRejectedMutationPaths []string                          `json:"unresolved_rejected_mutation_paths,omitempty"`
+	OpenTaskLedgerObligationIDs     []string                          `json:"open_task_ledger_obligation_ids,omitempty"`
+	BlockedTaskLedgerItems          []ImplementationBlockedTaskItem   `json:"blocked_task_ledger_items,omitempty"`
+	TerminalDisposition             string                            `json:"terminal_disposition,omitempty"`
+	SourceSatisfiedPaths            []string                          `json:"source_satisfied_paths,omitempty"`
+	ChangedPaths                    []string                          `json:"changed_paths,omitempty"`
+	SourcedEvidencePaths            []string                          `json:"sourced_evidence_paths,omitempty"`
+	SourceWindows                   []toolfacts.SourceWindowEvidence  `json:"source_windows,omitempty"`
+	VerificationPending             bool                              `json:"verification_pending,omitempty"`
+	VerificationFailed              bool                              `json:"verification_failed,omitempty"`
+	SemanticVerificationPending     bool                              `json:"semantic_verification_pending,omitempty"`
+	WriteReadyNudgeCount            int                               `json:"write_ready_nudge_count,omitempty"`
+	CanonicalMutationScope          *CanonicalMutationScopeProjection `json:"canonical_mutation_scope,omitempty"`
+	CommitReceipts                  []MutationCommitProjection        `json:"commit_receipts,omitempty"`
+	CompletionRecovery              *ImplementationCompletionRecovery `json:"completion_recovery,omitempty"`
 }
 
-type ImplementationPendingRedirect struct {
-	Path        string `json:"path,omitempty"`
-	PendingTool string `json:"pending_tool,omitempty"`
-	Source      string `json:"source,omitempty"`
-	Detail      string `json:"detail,omitempty"`
+type ImplementationCompletionRecovery struct {
+	TotalAttempts   int                                      `json:"total_attempts"`
+	ActiveViolation *ImplementationCompletionActiveViolation `json:"active_violation,omitempty"`
+}
+
+type ImplementationCompletionActiveViolation struct {
+	InvariantID                  string                              `json:"invariant_id"`
+	ViolationID                  string                              `json:"violation_id,omitempty"`
+	Class                        string                              `json:"class"`
+	PendingSourceBodyPaths       []string                            `json:"pending_source_body_paths,omitempty"`
+	PendingSourceBodyReferences  []ImplementationSourceBodyReference `json:"pending_source_body_references,omitempty"`
+	PendingContractPaths         []string                            `json:"pending_contract_paths,omitempty"`
+	PendingObligationIDs         []string                            `json:"pending_obligation_ids,omitempty"`
+	AcceptedVerificationCommands []string                            `json:"accepted_verification_commands,omitempty"`
+	AttemptsSinceProgress        int                                 `json:"attempts_since_progress"`
+}
+
+type ImplementationSourceBodyReference struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line,omitempty"`
+	EndLine   int    `json:"end_line,omitempty"`
+}
+
+type ImplementationBlockedTaskItem struct {
+	ID               string   `json:"id"`
+	Kind             string   `json:"kind"`
+	SubjectNamespace string   `json:"subject_namespace"`
+	SubjectID        string   `json:"subject_id"`
+	Reason           string   `json:"reason"`
+	Paths            []string `json:"paths,omitempty"`
 }
 
 func ValidateFailureRecord(record FailureRecord) error {
@@ -162,18 +203,64 @@ func ValidateImplementationState(state *ImplementationState) error {
 	if err := ValidateRecoveryPaths("implementation_state.remaining_required_edit_paths", state.RemainingRequiredEditPaths); err != nil {
 		return err
 	}
+	if err := ValidateRecoveryPaths("implementation_state.missing_required_edit_snippet_paths", state.MissingRequiredEditSnippetPaths); err != nil {
+		return err
+	}
+	if err := ValidateRecoveryPaths("implementation_state.unresolved_rejected_mutation_paths", state.UnresolvedRejectedMutationPaths); err != nil {
+		return err
+	}
 	if err := ValidateRecoveryPaths("implementation_state.changed_paths", state.ChangedPaths); err != nil {
+		return err
+	}
+	if err := ValidateRecoveryPaths("implementation_state.source_satisfied_paths", state.SourceSatisfiedPaths); err != nil {
 		return err
 	}
 	if err := ValidateRecoveryPaths("implementation_state.sourced_evidence_paths", state.SourcedEvidencePaths); err != nil {
 		return err
 	}
-	for i, redirect := range state.PendingRedirects {
-		if strings.TrimSpace(redirect.Path) == "" {
-			continue
+	if normalized := toolfacts.NormalizeSourceWindows(state.SourceWindows); !slices.Equal(normalized, state.SourceWindows) {
+		return fmt.Errorf("implementation_state.source_windows contains invalid or duplicate metadata")
+	}
+	for index, item := range state.BlockedTaskLedgerItems {
+		if err := ValidateRecoveryPaths(fmt.Sprintf("implementation_state.blocked_task_ledger_items[%d].paths", index), item.Paths); err != nil {
+			return err
 		}
-		if normalizeRecoveryPath(redirect.Path) == "" {
-			return fmt.Errorf("implementation_state.pending_redirects[%d].path is unsafe: %q", i, redirect.Path)
+	}
+	if err := validateCanonicalMutationScopeProjection("implementation_state.canonical_mutation_scope", state.CanonicalMutationScope); err != nil {
+		return err
+	}
+	if err := validateMutationCommitProjections("implementation_state.commit_receipts", state.CommitReceipts); err != nil {
+		return err
+	}
+	if recovery := state.CompletionRecovery; recovery != nil {
+		if recovery.TotalAttempts < 0 {
+			return fmt.Errorf("invalid implementation_state.completion_recovery.total_attempts %d", recovery.TotalAttempts)
+		}
+		if active := recovery.ActiveViolation; active != nil {
+			if strings.TrimSpace(active.InvariantID) == "" || strings.TrimSpace(active.Class) == "" {
+				return fmt.Errorf("implementation_state.completion_recovery.active_violation requires invariant_id and class")
+			}
+			if active.AttemptsSinceProgress < 0 {
+				return fmt.Errorf("invalid implementation_state.completion_recovery.active_violation.attempts_since_progress %d", active.AttemptsSinceProgress)
+			}
+			if err := ValidateRecoveryPaths("implementation_state.completion_recovery.active_violation.pending_source_body_paths", active.PendingSourceBodyPaths); err != nil {
+				return err
+			}
+			for index, reference := range active.PendingSourceBodyReferences {
+				if err := ValidateRecoveryPaths(
+					fmt.Sprintf("implementation_state.completion_recovery.active_violation.pending_source_body_references[%d].path", index),
+					[]string{reference.Path},
+				); err != nil {
+					return err
+				}
+				if (reference.StartLine == 0) != (reference.EndLine == 0) ||
+					reference.StartLine < 0 || reference.EndLine < reference.StartLine {
+					return fmt.Errorf("invalid implementation_state.completion_recovery.active_violation.pending_source_body_references[%d] range %d-%d", index, reference.StartLine, reference.EndLine)
+				}
+			}
+			if err := ValidateRecoveryPaths("implementation_state.completion_recovery.active_violation.pending_contract_paths", active.PendingContractPaths); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

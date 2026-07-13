@@ -52,6 +52,9 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	var events []Event
 
 	if opts.ProductWorkflowBrief != nil {
+		if err := BindProductTaskIdentity(&state, opts.ProductWorkflowBrief.TaskID); err != nil {
+			return RunResult{State: state}, err
+		}
 		state.Plan.BehavioralCoverageDraft = nil
 	}
 
@@ -1657,6 +1660,7 @@ func verificationClosureFromCompletion(state FeatureState, atom FeatureAtomState
 		ScopeContractHash:            completion.ScopeContractHash,
 		ChangedPaths:                 normalizeCompletionStringList(completion.ChangedPaths),
 		SourceSatisfiedEvidencePaths: normalizeCompletionStringList(completion.SourceSatisfiedEvidencePaths),
+		SourceSatisfiedEvidence:      plancontract.NormalizeSourceSatisfiedEvidenceRefs(completion.SourceSatisfiedEvidence),
 		RequiredTestResults:          verificationCommandResultsFromCompletion(atom, completion, false, string(status)),
 		TDDCommandResults:            verificationCommandResultsFromCompletion(atom, completion, true, string(status)),
 		SourceSanity:                 verificationCheckResultsFromPhaseChecks(completion.SourceSanity),

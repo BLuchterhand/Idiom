@@ -5,11 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/platform/config"
 )
@@ -17,8 +18,8 @@ import (
 // sessionsPanelModel builds a Model wired to a debug-log dir so the
 // panel rendering and key handlers can run without depending on the
 // rest of the app's lifecycle.
-func sessionsPanelModel(t *testing.T, dir string) *Model {
-	t.Helper()
+func sessionsPanelModel(t ginkgo.FullGinkgoTInterface, dir string) *Model {
+	ginkgo.GinkgoHelper()
 
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
 	m := &Model{cfg: cfg}
@@ -34,7 +35,8 @@ func sessionsPanelModel(t *testing.T, dir string) *Model {
 // TestRefreshSessionsListExcludesCurrentSession verifies the live
 // session's own log is filtered out of the list — resuming into
 // yourself is meaningless and would invite duplicate-state confusion.
-func TestRefreshSessionsListExcludesCurrentSession(t *testing.T) {
+var _ = ginkgo.It("refresh sessions list excludes current session", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	writeSessionLog(t, dir, "old1.jsonl", []string{`{"type":"message","role":"user","content":"first task"}`})
 	writeSessionLog(t, dir, "live.jsonl", []string{`{"type":"message","role":"user","content":"current"}`})
@@ -45,18 +47,15 @@ func TestRefreshSessionsListExcludesCurrentSession(t *testing.T) {
 	m.debugLogPath = filepath.Join(dir, "live.jsonl")
 	m.refreshSessionsList()
 
-	if len(m.sessions.list) != 2 {
-		t.Fatalf("want 2 sessions (live filtered), got %d", len(m.sessions.list))
-	}
+	gomega.Expect(len(m.sessions.list)).To(gomega.Equal(2), fmt.Sprintf("want 2 sessions (live filtered), got %d", len(m.sessions.list)))
 
 	for _, s := range m.sessions.list {
-		if s.ID == "live" {
-			t.Errorf("live session should be filtered out of the list")
-		}
+		gomega.Expect(s.ID).NotTo(gomega.Equal("live"), fmt.Sprintf("live session should be filtered out of the list"))
 	}
-}
+})
 
-func TestRefreshSessionsListHidesLogsWithoutUserMessages(t *testing.T) {
+var _ = ginkgo.It("refresh sessions list hides logs without user messages", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	writeSessionLog(t, dir, "human.jsonl", []string{
 		`{"type":"message","role":"user","content":"real prompt"}`,
@@ -71,18 +70,15 @@ func TestRefreshSessionsListHidesLogsWithoutUserMessages(t *testing.T) {
 	m := sessionsPanelModel(t, dir)
 	m.refreshSessionsList()
 
-	if len(m.sessions.list) != 1 {
-		t.Fatalf("expected only the human session, got %#v", m.sessions.list)
-	}
-	if m.sessions.list[0].ID != "human" {
-		t.Fatalf("test-only session should be hidden, got %#v", m.sessions.list)
-	}
-}
+	gomega.Expect(len(m.sessions.list)).To(gomega.Equal(1), fmt.Sprintf("expected only the human session, got %#v", m.sessions.list))
+	gomega.Expect(m.sessions.list[0].ID).To(gomega.Equal("human"), fmt.Sprintf("test-only session should be hidden, got %#v", m.sessions.list))
+})
 
 // TestRenderSessionsPanelShowsSummaryNotJustID verifies the rendered
 // panel surfaces each session's first user prompt — without a summary
 // the user can't tell sessions apart by id alone.
-func TestRenderSessionsPanelShowsSummaryNotJustID(t *testing.T) {
+var _ = ginkgo.It("render sessions panel shows summary not just id", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	writeSessionLog(t, dir, "20260101-000000.jsonl", []string{
 		`{"type":"message","role":"user","content":"refactor the eval harness"}`,
@@ -94,35 +90,29 @@ func TestRenderSessionsPanelShowsSummaryNotJustID(t *testing.T) {
 	m.renderSessionsPanelContent()
 
 	got := m.sessions.viewport.View()
-	if !strings.Contains(got, "20260101-000000") {
-		t.Errorf("rendered panel missing session id:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "20260101-000000")).To(gomega.BeTrue(), fmt.Sprintf("rendered panel missing session id:\n%s", got))
 
-	if !strings.Contains(got, "refactor the eval harness") {
-		t.Errorf("rendered panel missing summary:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "refactor the eval harness")).To(gomega.BeTrue(), fmt.Sprintf("rendered panel missing summary:\n%s", got))
 
-	if !strings.Contains(got, "Sessions") {
-		t.Errorf("rendered panel missing title:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "Sessions")).To(gomega.BeTrue(), fmt.Sprintf("rendered panel missing title:\n%s", got))
+})
 
 // TestRenderSessionsPanelEmptyShowsPlaceholder protects the
 // no-sessions case (e.g. brand-new install). A blank panel would
 // look broken; the placeholder confirms the panel is alive but empty.
-func TestRenderSessionsPanelEmptyShowsPlaceholder(t *testing.T) {
+var _ = ginkgo.It("render sessions panel empty shows placeholder", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	m := sessionsPanelModel(t, dir)
 	m.refreshSessionsList()
 	m.renderSessionsPanelContent()
 
 	got := m.sessions.viewport.View()
-	if !strings.Contains(got, "No prior sessions") {
-		t.Errorf("empty panel should surface a placeholder, got:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "No prior sessions")).To(gomega.BeTrue(), fmt.Sprintf("empty panel should surface a placeholder, got:\n%s", got))
+})
 
-func TestSessionsPanelKeepsCursorVisibleWhenNavigating(t *testing.T) {
+var _ = ginkgo.It("sessions panel keeps cursor visible when navigating", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 
 	for i := 0; i < 12; i++ {
@@ -138,26 +128,24 @@ func TestSessionsPanelKeepsCursorVisibleWhenNavigating(t *testing.T) {
 
 	for i := 0; i < 8; i++ {
 		handled, _ := m.handleSessionsPanelKey(tea.KeyMsg{Type: tea.KeyDown})
-		if !handled {
-			t.Fatalf("key down %d was not handled", i)
-		}
+		gomega.Expect(handled).To(gomega.BeTrue(), fmt.Sprintf("key down %d was not handled", i))
 	}
 
 	selected := m.sessions.list[m.sessions.cursor].ID
-	if got := m.sessions.viewport.View(); !strings.Contains(got, selected) {
-		t.Fatalf("selected session %q scrolled off-screen:\n%s", selected, got)
+	{
+		got := m.sessions.viewport.View()
+		gomega.Expect(strings.Contains(got, selected)).To(gomega.BeTrue(), fmt.Sprintf("selected session %q scrolled off-screen:\n%s", selected, got))
 	}
 
-	if m.sessions.viewport.YOffset == 0 {
-		t.Fatal("expected sessions viewport to scroll after navigating beyond visible rows")
-	}
-}
+	gomega.Expect(m.sessions.viewport.YOffset).NotTo(gomega.Equal(0), fmt.Sprint("expected sessions viewport to scroll after navigating beyond visible rows"))
+})
 
 // TestSessionsCursorClampsAfterRefresh guards a subtle bug class: if
 // the underlying session list shrinks (file deleted) between renders,
 // a stale cursor would index out of bounds. refreshSessionsList must
 // clamp the cursor to the new bounds.
-func TestSessionsCursorClampsAfterRefresh(t *testing.T) {
+var _ = ginkgo.It("sessions cursor clamps after refresh", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"x"}`})
 	writeSessionLog(t, dir, "b.jsonl", []string{`{"type":"message","role":"user","content":"y"}`})
@@ -167,18 +155,18 @@ func TestSessionsCursorClampsAfterRefresh(t *testing.T) {
 
 	m.sessions.cursor = 1
 
-	if err := os.Remove(filepath.Join(dir, "b.jsonl")); err != nil {
-		t.Fatalf("remove: %v", err)
+	{
+		err := os.Remove(filepath.Join(dir, "b.jsonl"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("remove: %v", err))
 	}
 
 	m.refreshSessionsList()
 
-	if m.sessions.cursor >= len(m.sessions.list) {
-		t.Errorf("cursor not clamped after list shrank: cursor=%d len=%d", m.sessions.cursor, len(m.sessions.list))
-	}
-}
+	gomega.Expect(m.sessions.cursor >= len(m.sessions.list)).To(gomega.BeFalse(), fmt.Sprintf("cursor not clamped after list shrank: cursor=%d len=%d", m.sessions.cursor, len(m.sessions.list)))
+})
 
-func TestRefreshSessionsListReusesCachedSummaryForUnchangedLog(t *testing.T) {
+var _ = ginkgo.It("refresh sessions list reuses cached summary for unchanged log", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"original prompt"}`})
 	m := sessionsPanelModel(t, dir)
@@ -192,16 +180,16 @@ func TestRefreshSessionsListReusesCachedSummaryForUnchangedLog(t *testing.T) {
 
 	m.refreshSessionsList()
 
-	if len(m.sessions.list) != 1 {
-		t.Fatalf("expected one session, got %d", len(m.sessions.list))
-	}
+	gomega.Expect(len(m.sessions.list)).To(gomega.Equal(1), fmt.Sprintf("expected one session, got %d", len(m.sessions.list)))
 
-	if got := m.sessions.list[0].FirstPrompt; got != "cached prompt" {
-		t.Fatalf("expected unchanged log to reuse cached summary, got %q", got)
+	{
+		got := m.sessions.list[0].FirstPrompt
+		gomega.Expect(got).To(gomega.Equal("cached prompt"), fmt.Sprintf("expected unchanged log to reuse cached summary, got %q", got))
 	}
-}
+})
 
-func TestRefreshSessionsListReloadsChangedLogSummary(t *testing.T) {
+var _ = ginkgo.It("refresh sessions list reloads changed log summary", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"first prompt"}`})
 	m := sessionsPanelModel(t, dir)
@@ -211,17 +199,17 @@ func TestRefreshSessionsListReloadsChangedLogSummary(t *testing.T) {
 	writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"updated prompt"}`})
 
 	modTime := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(path, modTime, modTime); err != nil {
-		t.Fatalf("chtimes: %v", err)
+	{
+		err := os.Chtimes(path, modTime, modTime)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("chtimes: %v", err))
 	}
 
 	m.refreshSessionsList()
 
-	if len(m.sessions.list) != 1 {
-		t.Fatalf("expected one session, got %d", len(m.sessions.list))
-	}
+	gomega.Expect(len(m.sessions.list)).To(gomega.Equal(1), fmt.Sprintf("expected one session, got %d", len(m.sessions.list)))
 
-	if got := m.sessions.list[0].FirstPrompt; got != "updated prompt" {
-		t.Fatalf("expected changed log to be re-summarized, got %q", got)
+	{
+		got := m.sessions.list[0].FirstPrompt
+		gomega.Expect(got).To(gomega.Equal("updated prompt"), fmt.Sprintf("expected changed log to be re-summarized, got %q", got))
 	}
-}
+})

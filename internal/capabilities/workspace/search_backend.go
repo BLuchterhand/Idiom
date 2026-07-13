@@ -3,9 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"runtime"
-	"strings"
 
 	"idiom/internal/platform/hosttools"
 )
@@ -63,98 +61,4 @@ func findGNUStyleGrep(name string) (string, bool) {
 	}
 
 	return path, true
-}
-
-func (b contentSearchBackend) args(req ToolRequest, excludes []string) []string {
-	switch b.kind {
-	case contentSearchGrep:
-		return grepContentSearchArgs(req, excludes)
-	default:
-		return ripgrepContentSearchArgs(req, excludes)
-	}
-}
-
-func ripgrepContentSearchArgs(req ToolRequest, excludes []string) []string {
-	args := []string{"-n", "-H", "--hidden", "--no-heading", "--color", "never"}
-	if req.FixedStrings {
-		args = append(args, "-F")
-	}
-
-	if req.Glob != "" {
-		args = append(args, "-g", req.Glob)
-	}
-
-	for _, glob := range excludes {
-		args = append(args, "-g", glob)
-	}
-
-	args = append(args, strings.TrimSpace(req.Pattern), defaultString(req.Path, "."))
-
-	return args
-}
-
-func grepContentSearchArgs(req ToolRequest, excludes []string) []string {
-	args := []string{"-R", "-n", "-H", "-I", "--binary-files=without-match", "--color=never"}
-	if req.FixedStrings {
-		args = append(args, "-F")
-	}
-
-	if glob := strings.TrimSpace(req.Glob); glob != "" {
-		args = append(args, "--include="+glob)
-	}
-
-	args = append(args, grepExcludeArgs(excludes)...)
-	if !req.FixedStrings {
-		args = append(args, "-E")
-	}
-	args = append(args, strings.TrimSpace(req.Pattern), defaultString(req.Path, "."))
-
-	return args
-}
-
-func grepExcludeArgs(excludes []string) []string {
-	seenDir := map[string]struct{}{}
-	seenFile := map[string]struct{}{}
-	args := make([]string, 0, len(excludes))
-
-	for _, exclude := range excludes {
-		pattern := strings.TrimPrefix(strings.TrimSpace(exclude), "!")
-
-		pattern = filepath.ToSlash(strings.TrimSpace(pattern))
-
-		if pattern == "" {
-			continue
-		}
-
-		switch {
-		case strings.HasSuffix(pattern, "/**"):
-			dir := strings.TrimSuffix(pattern, "/**")
-			base := filepath.Base(dir)
-
-			if base == "" || base == "." || base == "/" {
-				continue
-			}
-
-			if _, ok := seenDir[base]; ok {
-				continue
-			}
-
-			seenDir[base] = struct{}{}
-			args = append(args, "--exclude-dir="+base)
-		default:
-			base := filepath.Base(pattern)
-			if base == "" || base == "." || base == "/" {
-				continue
-			}
-
-			if _, ok := seenFile[base]; ok {
-				continue
-			}
-
-			seenFile[base] = struct{}{}
-			args = append(args, "--exclude="+base)
-		}
-	}
-
-	return args
 }

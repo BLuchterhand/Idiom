@@ -12,7 +12,7 @@ import (
 	"idiom/internal/runtime/writerrouting"
 )
 
-func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecutionPlan) writerroute.Decision {
+func (m *promptExecutionSession) writerRouteDecisionForPrompt(prompt string, plan promptExecutionPlan) writerroute.Decision {
 	mode := writerroute.ModeReadOnly
 	lane := strings.TrimSpace(plan.route.InitialLane)
 
@@ -53,7 +53,7 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		}
 	}
 
-	aliases := writerrouting.RoleAliases(m.projectRoot(), "")
+	aliases := writerrouting.RoleAliases(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), "")
 	plannerModel := m.writerRouteModelForRole(aliases, backends.RolePlanner)
 	executorModel := m.writerRouteModelForRole(aliases, backends.RoleExecutor)
 	classifierModel := m.writerRouteModelForRole(aliases, backends.RoleClassifier)
@@ -74,18 +74,18 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 	})
 }
 
-func (m *Model) emitWriterRouteDecision(decision writerroute.Decision) {
+func (m *promptExecutionSession) emitWriterRouteDecision(decision writerroute.Decision) {
 	fields := decision.EventFields()
 
 	fields["type"] = string(writerroute.EventWriterRouteDecision)
-	m.emitJSONEvent(fields)
+	m.eventStream.emit(fields)
 
 	if body, err := json.Marshal(fields); err == nil {
 		m.logMessage(string(writerroute.EventWriterRouteDecision), string(body))
 	}
 }
 
-func (m *Model) writerRouteModelForRole(aliases map[string]string, role string) string {
+func (m *promptExecutionSession) writerRouteModelForRole(aliases map[string]string, role string) string {
 	return writerrouting.ModelForRole(writerrouting.ModelSelection{
 		Config:                    m.cfg,
 		Aliases:                   aliases,

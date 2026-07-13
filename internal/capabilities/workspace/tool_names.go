@@ -16,7 +16,6 @@ const (
 	ToolNameContextTracePack   = "context_trace_pack"
 	ToolNameContextZoom        = "context_zoom"
 	ToolNameCtagsSymbols       = "ctags_symbols"
-	ToolNameDelegateEdit       = "delegate_edit"
 	ToolNameDependencyGraph    = "dependency_graph"
 	ToolNameDiscoveryQuery     = "discovery_query"
 	ToolNameEditFile           = "edit_file"

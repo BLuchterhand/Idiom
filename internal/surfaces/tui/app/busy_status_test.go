@@ -1,25 +1,24 @@
 package app
 
 import (
+	"fmt"
 	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/agent"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestBusyStatusForPromptGenericizesRequest(t *testing.T) {
+var _ = ginkgo.It("busy status for prompt genericizes request", func() {
 	got := busyStatusForPrompt("Can we change the Qwen is working on your request affordance?")
-	if got != "Qwen is orienting around your request" {
-		t.Fatalf("unexpected prompt status: %q", got)
-	}
+	gomega.Expect(got).To(gomega.Equal("Qwen is orienting around your request"), fmt.Sprintf("unexpected prompt status: %q", got))
 
-	if strings.Contains(got, "working on your request") {
-		t.Fatalf("prompt status should not use the old static busy text: %q", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "working on your request")).To(gomega.BeFalse(), fmt.Sprintf("prompt status should not use the old static busy text: %q", got))
+})
 
-func TestBusyStatusForSearchRequestUsesGenericTopic(t *testing.T) {
+var _ = ginkgo.It("busy status for search request uses generic topic", func() {
 	got := busyStatusForToolRequest(agent.ToolRequestEvent{
 		Request: workspace.ToolRequest{
 			Tool:    "search_content",
@@ -27,55 +26,46 @@ func TestBusyStatusForSearchRequestUsesGenericTopic(t *testing.T) {
 			Glob:    "internal/surfaces/tui/app/*.go",
 		},
 	}, "")
-	if got != "Qwen is searching for code related to current turn busy status" {
-		t.Fatalf("unexpected search status: %q", got)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal("Qwen is searching for code related to current turn busy status"), fmt.Sprintf("unexpected search status: %q", got))
+})
 
-func TestBusyStatusForReadRequestUsesPathTopic(t *testing.T) {
+var _ = ginkgo.It("busy status for read request uses path topic", func() {
 	got := busyStatusForToolRequest(agent.ToolRequestEvent{
 		Request: workspace.ToolRequest{
 			Tool: "read_file",
 			Path: "internal/surfaces/tui/app/model_state.go",
 		},
 	}, "")
-	if got != "Qwen is reading code related to model state" {
-		t.Fatalf("unexpected read status: %q", got)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal("Qwen is reading code related to model state"), fmt.Sprintf("unexpected read status: %q", got))
+})
 
-func TestBusyStatusForRelationshipRequest(t *testing.T) {
+var _ = ginkgo.It("busy status for relationship request", func() {
 	got := busyStatusForToolRequest(agent.ToolRequestEvent{
 		Request: workspace.ToolRequest{
 			Tool:  "context_query",
 			Query: "callers of runAgentTurn and handleToolTrace",
 		},
 	}, "")
-	if got != "Qwen is finding intersections between run agent turn and handle tool trace" {
-		t.Fatalf("unexpected relationship status: %q", got)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal("Qwen is finding intersections between run agent turn and handle tool trace"), fmt.Sprintf("unexpected relationship status: %q", got))
+})
 
-func TestBusyStatusForVerificationCommand(t *testing.T) {
+var _ = ginkgo.It("busy status for verification command", func() {
 	got := busyStatusForToolRequest(agent.ToolRequestEvent{
 		Request: workspace.ToolRequest{
 			Tool:    "shell",
 			Command: "go test ./internal/surfaces/tui/app -count=1",
 		},
 	}, "")
-	if got != "Qwen is running tests" {
-		t.Fatalf("unexpected shell status: %q", got)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal("Qwen is running tests"), fmt.Sprintf("unexpected shell status: %q", got))
+})
 
-func TestBusyStatusDoesNotExposeFullPaths(t *testing.T) {
+var _ = ginkgo.It("busy status does not expose full paths", func() {
 	got := busyStatusForToolRequest(agent.ToolRequestEvent{
 		Request: workspace.ToolRequest{
 			Tool: "read_file",
 			Path: "internal/surfaces/tui/app/update_handlers.go",
 		},
 	}, "")
-	if strings.Contains(got, "internal/surfaces/tui/app") || strings.Contains(got, ".go") {
-		t.Fatalf("status should genericize paths, got %q", got)
-	}
-}
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring("internal/surfaces/tui/app")), fmt.Sprintf("status should genericize paths, got %q", got))
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring(".go")), fmt.Sprintf("status should genericize paths, got %q", got))
+})

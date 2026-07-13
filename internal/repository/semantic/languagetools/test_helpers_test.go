@@ -3,9 +3,12 @@ package languagetools_test
 import (
 	"os"
 	"path/filepath"
-	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/repository/semantic/language"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 func languageDetects(root string, name string) bool {
@@ -13,14 +16,16 @@ func languageDetects(root string, name string) bool {
 	return ok && lang.Detect != nil && lang.Detect(root)
 }
 
-func writeTestFile(t *testing.T, path string, content string) {
-	t.Helper()
+func writeTestFile(path string, content string) {
+	GinkgoHelper()
+	Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(Succeed())
+	Expect(os.WriteFile(path, []byte(content), 0o644)).To(Succeed())
+}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", path, err)
-	}
-
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
+func expectToolSuccess(result workspace.ToolResult, outputSubstrings ...string) {
+	GinkgoHelper()
+	Expect(result.Error).To(BeEmpty())
+	for _, substring := range outputSubstrings {
+		Expect(result.Output).To(ContainSubstring(substring))
 	}
 }

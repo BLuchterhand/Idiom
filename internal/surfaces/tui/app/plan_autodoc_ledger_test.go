@@ -1,22 +1,26 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/taskledger"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
 // TestRecordTaskLedgerAppendsPlannedItems covers the happy-path triage
 // flow: a task_ledger submission lands a "### Planned" section with one
 // unchecked line per item, each carrying its tid anchor and a parsed
 // paths note so a human reader can see the scope at a glance.
-func TestRecordTaskLedgerAppendsPlannedItems(t *testing.T) {
+var _ = ginkgo.It("record task ledger appends planned items", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -28,40 +32,29 @@ func TestRecordTaskLedgerAppendsPlannedItems(t *testing.T) {
 	m.recordTaskLedger(req, workspace.ToolResult{Tool: "task_ledger", Summary: "updated ledger"})
 
 	plan, err := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-	if err != nil {
-		t.Fatalf("read plan: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read plan: %v", err))
 
 	got := string(plan)
-	if !strings.Contains(got, "### Planned") {
-		t.Errorf("missing Planned heading:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Planned")).To(gomega.BeTrue(), fmt.Sprintf("missing Planned heading:\n%s", got))
 
-	if !strings.Contains(got, "- [ ] rename Qwen to Idiom in config") {
-		t.Errorf("missing t1 line:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "- [ ] rename Qwen to Idiom in config")).To(gomega.BeTrue(), fmt.Sprintf("missing t1 line:\n%s", got))
 
-	if !strings.Contains(got, "(paths: config.go, cmd/idiom/main.go)") {
-		t.Errorf("missing paths note on t1:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "(paths: config.go, cmd/idiom/main.go)")).To(gomega.BeTrue(), fmt.Sprintf("missing paths note on t1:\n%s", got))
 
-	if !strings.Contains(got, "<!-- tid:t1 -->") {
-		t.Errorf("missing tid anchor on t1:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "<!-- tid:t1 -->")).To(gomega.BeTrue(), fmt.Sprintf("missing tid anchor on t1:\n%s", got))
 
-	if !strings.Contains(got, "<!-- tid:t2 -->") {
-		t.Errorf("missing tid anchor on t2:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "<!-- tid:t2 -->")).To(gomega.BeTrue(), fmt.Sprintf("missing tid anchor on t2:\n%s", got))
+})
 
 // TestRecordTaskLedgerOnlyAppendsNewItems locks in the dedupe rule:
 // re-submitting the same ledger (with status changes but the same ids)
 // does not append duplicate "- [ ]" lines. The in-memory rendered-id
 // set is the contract; without it the plan would grow unboundedly on
 // each task_ledger update.
-func TestRecordTaskLedgerOnlyAppendsNewItems(t *testing.T) {
+var _ = ginkgo.It("record task ledger only appends new items", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	first := workspace.ToolRequest{
 		Tool: "task_ledger",
 		Todos: []workspace.TaskLedgerItem{
@@ -82,29 +75,33 @@ func TestRecordTaskLedgerOnlyAppendsNewItems(t *testing.T) {
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 	// Only one `### Planned` heading even across two submissions.
-	if n := strings.Count(got, "### Planned"); n != 1 {
-		t.Errorf("want 1 Planned heading across two submissions, got %d:\n%s", n, got)
+	{
+		n := strings.Count(got, "### Planned")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("want 1 Planned heading across two submissions, got %d:\n%s", n, got))
 	}
 
 	// t1 appears once; t2 appears once.
-	if n := strings.Count(got, "<!-- tid:t1 -->"); n != 1 {
-		t.Errorf("t1 duplicated, want 1, got %d", n)
+	{
+		n := strings.Count(got, "<!-- tid:t1 -->")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("t1 duplicated, want 1, got %d", n))
 	}
 
-	if n := strings.Count(got, "<!-- tid:t2 -->"); n != 1 {
-		t.Errorf("t2 missing or duplicated, want 1, got %d", n)
+	{
+		n := strings.Count(got, "<!-- tid:t2 -->")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("t2 missing or duplicated, want 1, got %d", n))
 	}
-}
+})
 
 // TestRecordWriteSuccessAttachesToPlannedItem is the core P3 contract:
 // a write to a path listed in a planned item checks that item's
 // checkbox in place and annotates it with the diff id — no "Unplanned"
 // entry created.
-func TestRecordWriteSuccessAttachesToPlannedItem(t *testing.T) {
+var _ = ginkgo.It("record write success attaches to planned item", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeFile(t, root, "a.go", "pkg a\n")
+	writeFile(t, root, "a.go", "package a\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -113,44 +110,39 @@ func TestRecordWriteSuccessAttachesToPlannedItem(t *testing.T) {
 		},
 	}, workspace.ToolResult{Summary: "ok"})
 
-	req := workspace.ToolRequest{Tool: "edit_file", Path: "a.go", Description: "bump"}
-	m.capturePlanSnapshot(1, req)
-	writeFile(t, root, "a.go", "pkg a; changed\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Tool: "edit_file", Summary: "ok"})
+	req := workspace.ToolRequest{Tool: "edit_file", Path: "a.go", OldText: "package a\n", NewText: "package a\n// changed\n", Description: "bump"}
+	executeAndRecordPlanWrite(t, m, 1, req)
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if strings.Contains(got, "### Unplanned") {
-		t.Errorf("planned attach should not fall back to Unplanned:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Unplanned")).To(gomega.BeFalse(), fmt.Sprintf("planned attach should not fall back to Unplanned:\n%s", got))
 
 	// The tid line should now be checked off.
-	if !strings.Contains(got, "- [x] bump a.go") {
-		t.Errorf("planned item not checked off in place:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "- [x] bump a.go")).To(gomega.BeTrue(), fmt.Sprintf("planned item not checked off in place:\n%s", got))
 
 	// And it should carry the diff-id anchor so the UI can resolve a click.
-	if !strings.Contains(got, "<!-- tid:t1 -->") || !strings.Contains(got, "<!-- id:") {
-		t.Errorf("checked line missing anchors:\n%s", got)
-	}
+	gomega.Expect(got).To(gomega.ContainSubstring("<!-- tid:t1 -->"), fmt.Sprintf("checked line missing anchors:\n%s", got))
+	gomega.Expect(got).To(gomega.ContainSubstring("<!-- id:"), fmt.Sprintf("checked line missing anchors:\n%s", got))
 
 	// There must be exactly one checkbox line for t1 — never duplicated.
-	if n := strings.Count(got, "<!-- tid:t1 -->"); n != 1 {
-		t.Errorf("want 1 tid line for t1, got %d", n)
+	{
+		n := strings.Count(got, "<!-- tid:t1 -->")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("want 1 tid line for t1, got %d", n))
 	}
-}
+})
 
 // TestRecordWriteSuccessUnplannedFallback verifies that a write to a
 // path not mentioned by any ledger item lands under "### Unplanned".
 // The Unplanned bucket is how the UI signals that the triage missed
 // this file, so emitting it correctly is load-bearing for P3's intent.
-func TestRecordWriteSuccessUnplannedFallback(t *testing.T) {
+var _ = ginkgo.It("record write success unplanned fallback", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeFile(t, root, "a.go", "pkg a\n")
-	writeFile(t, root, "b.go", "pkg b\n")
+	writeFile(t, root, "a.go", "package a\n")
+	writeFile(t, root, "b.go", "package b\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -160,37 +152,30 @@ func TestRecordWriteSuccessUnplannedFallback(t *testing.T) {
 	}, workspace.ToolResult{Summary: "ok"})
 
 	// Write to b.go — not in any planned paths.
-	req := workspace.ToolRequest{Tool: "edit_file", Path: "b.go", Description: "drive-by"}
-	m.capturePlanSnapshot(1, req)
-	writeFile(t, root, "b.go", "pkg b; drive-by\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
+	req := workspace.ToolRequest{Tool: "edit_file", Path: "b.go", OldText: "package b\n", NewText: "package b\n// drive-by\n", Description: "drive-by"}
+	executeAndRecordPlanWrite(t, m, 1, req)
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if !strings.Contains(got, "### Unplanned") {
-		t.Errorf("expected Unplanned section for drive-by write:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Unplanned")).To(gomega.BeTrue(), fmt.Sprintf("expected Unplanned section for drive-by write:\n%s", got))
 
-	if !strings.Contains(got, "- [x] drive-by (b.go)") {
-		t.Errorf("Unplanned line missing:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "- [x] drive-by (b.go)")).To(gomega.BeTrue(), fmt.Sprintf("Unplanned line missing:\n%s", got))
 
 	// Planned item t1 must remain unchecked (we did not write a.go).
-	if !strings.Contains(got, "- [ ] edit a") {
-		t.Errorf("unrelated planned item should still be unchecked:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "- [ ] edit a")).To(gomega.BeTrue(), fmt.Sprintf("unrelated planned item should still be unchecked:\n%s", got))
+})
 
 // TestAttachCompletesItemSoSecondWriteDoesNotDoubleCheck guards the
 // ledger state machine: once an item is attached/completed, a second
 // write to the same path should fall back to "Unplanned" rather than
 // silently re-checking the already-done item.
-func TestAttachCompletesItemSoSecondWriteDoesNotDoubleCheck(t *testing.T) {
+var _ = ginkgo.It("attach completes item so second write does not double check", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeFile(t, root, "a.go", "pkg a\n")
+	writeFile(t, root, "a.go", "package a\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
 		Todos: []workspace.TaskLedgerItem{
@@ -198,31 +183,24 @@ func TestAttachCompletesItemSoSecondWriteDoesNotDoubleCheck(t *testing.T) {
 		},
 	}, workspace.ToolResult{Summary: "ok"})
 
-	req := workspace.ToolRequest{Tool: "edit_file", Path: "a.go", Description: "first touch"}
-	m.capturePlanSnapshot(1, req)
-	writeFile(t, root, "a.go", "v1\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
+	req := workspace.ToolRequest{Tool: "write_file", Path: "a.go", Content: "package a\n// v1\n", Description: "first touch"}
+	executeAndRecordPlanWrite(t, m, 1, req)
 
-	req2 := workspace.ToolRequest{Tool: "edit_file", Path: "a.go", Description: "second touch"}
-	m.capturePlanSnapshot(2, req2)
-	writeFile(t, root, "a.go", "v2\n")
-	m.recordWriteSuccess(2, req2, workspace.ToolResult{Summary: "ok"})
+	req2 := workspace.ToolRequest{Tool: "write_file", Path: "a.go", Content: "package a\n// v2\n", Description: "second touch"}
+	executeAndRecordPlanWrite(t, m, 2, req2)
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if !strings.Contains(got, "### Unplanned") {
-		t.Errorf("second touch should land under Unplanned:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Unplanned")).To(gomega.BeTrue(), fmt.Sprintf("second touch should land under Unplanned:\n%s", got))
 
-	if !strings.Contains(got, "second touch (a.go)") {
-		t.Errorf("second-touch label missing:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "second touch (a.go)")).To(gomega.BeTrue(), fmt.Sprintf("second-touch label missing:\n%s", got))
 
-	if n := strings.Count(got, "<!-- tid:t1 -->"); n != 1 {
-		t.Errorf("planned item should still be a single line, got %d:\n%s", n, got)
+	{
+		n := strings.Count(got, "<!-- tid:t1 -->")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("planned item should still be a single line, got %d:\n%s", n, got))
 	}
-}
+})
 
 // TestMultiPathItemStaysUncheckedUntilAllPathsHit verifies that a
 // ledger item listing multiple paths only flips to [x] after every
@@ -230,12 +208,13 @@ func TestAttachCompletesItemSoSecondWriteDoesNotDoubleCheck(t *testing.T) {
 // without falling to Unplanned and without prematurely marking the
 // item completed. The second write lands on the same tid line,
 // appending a second diff-id anchor and finally checking the box.
-func TestMultiPathItemStaysUncheckedUntilAllPathsHit(t *testing.T) {
+var _ = ginkgo.It("multi path item stays unchecked until all paths hit", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeFile(t, root, "a.go", "pkg a\n")
-	writeFile(t, root, "b.go", "pkg b\n")
+	writeFile(t, root, "a.go", "package a\n")
+	writeFile(t, root, "b.go", "package b\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -245,55 +224,46 @@ func TestMultiPathItemStaysUncheckedUntilAllPathsHit(t *testing.T) {
 	}, workspace.ToolResult{Summary: "ok"})
 
 	// First write: a.go. Item must attach but stay unchecked.
-	req1 := workspace.ToolRequest{Tool: "edit_file", Path: "a.go", Description: "rename a"}
-	m.capturePlanSnapshot(1, req1)
-	writeFile(t, root, "a.go", "pkg a; renamed\n")
-	m.recordWriteSuccess(1, req1, workspace.ToolResult{Summary: "ok"})
+	req1 := workspace.ToolRequest{Tool: "edit_file", Path: "a.go", OldText: "package a\n", NewText: "package a\n// renamed\n", Description: "rename a"}
+	executeAndRecordPlanWrite(t, m, 1, req1)
 
 	planPath := filepath.Join(root, ".planning", "sessA.md")
 	got, _ := os.ReadFile(planPath)
 
-	if strings.Contains(string(got), "### Unplanned") {
-		t.Fatalf("first write should attach, not fall to Unplanned:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(string(got), "### Unplanned")).To(gomega.BeFalse(), fmt.Sprintf("first write should attach, not fall to Unplanned:\n%s", got))
 
-	if !strings.Contains(string(got), "- [ ] rename across files") {
-		t.Errorf("multi-path item should still be unchecked after first write:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(string(got), "- [ ] rename across files")).To(gomega.BeTrue(), fmt.Sprintf("multi-path item should still be unchecked after first write:\n%s", got))
 
-	if n := strings.Count(string(got), "<!-- id:"); n != 1 {
-		t.Errorf("want 1 diff-id anchor after first write, got %d:\n%s", n, got)
+	{
+		n := strings.Count(string(got), "<!-- id:")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("want 1 diff-id anchor after first write, got %d:\n%s", n, got))
 	}
 
 	// Second write: b.go. Now every listed path is hit — flip to [x].
-	req2 := workspace.ToolRequest{Tool: "edit_file", Path: "b.go", Description: "rename b"}
-	m.capturePlanSnapshot(2, req2)
-	writeFile(t, root, "b.go", "pkg b; renamed\n")
-	m.recordWriteSuccess(2, req2, workspace.ToolResult{Summary: "ok"})
+	req2 := workspace.ToolRequest{Tool: "edit_file", Path: "b.go", OldText: "package b\n", NewText: "package b\n// renamed\n", Description: "rename b"}
+	executeAndRecordPlanWrite(t, m, 2, req2)
 
 	got, _ = os.ReadFile(planPath)
-	if strings.Contains(string(got), "### Unplanned") {
-		t.Fatalf("second write of multi-path item should not fall to Unplanned:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(string(got), "### Unplanned")).To(gomega.BeFalse(), fmt.Sprintf("second write of multi-path item should not fall to Unplanned:\n%s", got))
 
-	if !strings.Contains(string(got), "- [x] rename across files") {
-		t.Errorf("multi-path item should flip to [x] after all paths hit:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(string(got), "- [x] rename across files")).To(gomega.BeTrue(), fmt.Sprintf("multi-path item should flip to [x] after all paths hit:\n%s", got))
 
-	if n := strings.Count(string(got), "<!-- id:"); n != 2 {
-		t.Errorf("want 2 diff-id anchors after both writes, got %d:\n%s", n, got)
+	{
+		n := strings.Count(string(got), "<!-- id:")
+		gomega.Expect(n).To(gomega.Equal(2), fmt.Sprintf("want 2 diff-id anchors after both writes, got %d:\n%s", n, got))
 	}
 
 	// Still only one tid line — the two writes share the same plan row.
-	if n := strings.Count(string(got), "<!-- tid:t1 -->"); n != 1 {
-		t.Errorf("tid line should remain single, got %d:\n%s", n, got)
+	{
+		n := strings.Count(string(got), "<!-- tid:t1 -->")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("tid line should remain single, got %d:\n%s", n, got))
 	}
-}
+})
 
 // TestPlannedItemLineStatus covers the completed/cancelled rendering
 // path — if a resumed session carries over a ledger with already-done
 // items, their boxes must render checked on first appearance.
-func TestPlannedItemLineStatus(t *testing.T) {
+var _ = ginkgo.It("planned item line status", func() {
 	cases := map[string]string{
 		"pending":     "- [ ] ",
 		"in_progress": "- [~] ",
@@ -302,48 +272,51 @@ func TestPlannedItemLineStatus(t *testing.T) {
 	}
 	for status, prefix := range cases {
 		line := plannedItemLine(workspace.TaskLedgerItem{ID: "x", Content: "c", Status: taskledger.Status(status)})
-		if !strings.HasPrefix(line, prefix) {
-			t.Errorf("status %s: got %q, want prefix %q", status, line, prefix)
-		}
+		gomega.Expect(strings.HasPrefix(line, prefix)).To(gomega.BeTrue(), fmt.Sprintf("status %s: got %q, want prefix %q", status, line, prefix))
 	}
-}
+})
 
 // TestRecordTaskLedgerIgnoresFailures verifies that a task_ledger call
 // that errored (e.g. the model sent malformed todos) does not pollute
 // the plan file with a phantom Planned section.
-func TestRecordTaskLedgerIgnoresFailures(t *testing.T) {
+var _ = ginkgo.It("record task ledger ignores failures", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	m.recordTaskLedger(
 		workspace.ToolRequest{Tool: "task_ledger", Todos: []workspace.TaskLedgerItem{{ID: "t1", Content: "x", Status: "pending"}}},
 		workspace.ToolResult{Tool: "task_ledger", Error: "validation failed"},
 	)
 
-	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
-		t.Fatalf("errored ledger should not create .planning; err = %v", err)
+	{
+		_, err := os.Stat(filepath.Join(root, ".planning"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("errored ledger should not create .planning; err = %v", err))
 	}
-}
+})
 
 // TestRecordTaskLedgerSkipsNonLedgerTools ensures only task_ledger
 // events trigger the ledger path.
-func TestRecordTaskLedgerSkipsNonLedgerTools(t *testing.T) {
+var _ = ginkgo.It("record task ledger skips non ledger tools", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{Tool: "edit_file"}, workspace.ToolResult{Summary: "ok"})
 
-	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
-		t.Fatalf("non-ledger event should not create .planning; err = %v", err)
+	{
+		_, err := os.Stat(filepath.Join(root, ".planning"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("non-ledger event should not create .planning; err = %v", err))
 	}
-}
+})
 
 // TestAttachByExplicitTaskIDWhenPathsMissing exercises the primary
 // fix for the "planned item fell to Unplanned after resume" bug: the
 // model passes task_id on the write call, and the planned item gets
 // checked off in place even though the ledger entry carried no
 // `paths` and the write's path doesn't match anything listed.
-func TestAttachByExplicitTaskIDWhenPathsMissing(t *testing.T) {
+var _ = ginkgo.It("attach by explicit task id when paths missing", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
 		Todos: []workspace.TaskLedgerItem{
@@ -356,36 +329,33 @@ func TestAttachByExplicitTaskIDWhenPathsMissing(t *testing.T) {
 	req := workspace.ToolRequest{
 		Tool:        "write_file",
 		Path:        "garbage.txt",
+		Content:     "asdfghjkl;'\n",
 		Description: "write the garbage content",
 		TaskID:      "garbage-test-1",
 	}
-	m.capturePlanSnapshot(1, req)
-	writeFile(t, root, "garbage.txt", "asdfghjkl;'\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
+	executeAndRecordPlanWrite(t, m, 1, req)
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if strings.Contains(got, "### Unplanned") {
-		t.Errorf("explicit task_id should prevent Unplanned fallback:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Unplanned")).To(gomega.BeFalse(), fmt.Sprintf("explicit task_id should prevent Unplanned fallback:\n%s", got))
 
-	if !strings.Contains(got, "- [x] asdfghjkl;'") {
-		t.Errorf("planned item should be checked off in place:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "- [x] asdfghjkl;'")).To(gomega.BeTrue(), fmt.Sprintf("planned item should be checked off in place:\n%s", got))
 
-	if n := strings.Count(got, "<!-- tid:garbage-test-1 -->"); n != 1 {
-		t.Errorf("want 1 tid line, got %d:\n%s", n, got)
+	{
+		n := strings.Count(got, "<!-- tid:garbage-test-1 -->")
+		gomega.Expect(n).To(gomega.Equal(1), fmt.Sprintf("want 1 tid line, got %d:\n%s", n, got))
 	}
-}
+})
 
 // TestAttachByExplicitTaskIDWinsOverPathMismatch guards the priority
 // order: when task_id is set, we attach to that item even if the
 // write's path happens to coincide with a different pending item's
 // paths list. The model's declared intent beats the path heuristic.
-func TestAttachByExplicitTaskIDWinsOverPathMismatch(t *testing.T) {
+var _ = ginkgo.It("attach by explicit task id wins over path mismatch", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
 		Todos: []workspace.TaskLedgerItem{
@@ -394,37 +364,34 @@ func TestAttachByExplicitTaskIDWinsOverPathMismatch(t *testing.T) {
 		},
 	}, workspace.ToolResult{Summary: "ok"})
 
-	writeFile(t, root, "x.go", "pkg x\n")
+	writeFile(t, root, "x.go", "package x\n")
 
 	req := workspace.ToolRequest{
 		Tool:        "edit_file",
 		Path:        "x.go",
+		OldText:     "package x\n",
+		NewText:     "package x\n// done\n",
 		Description: "primary work happens to touch x.go",
 		TaskID:      "t-primary",
 	}
-	m.capturePlanSnapshot(1, req)
-	writeFile(t, root, "x.go", "pkg x; done\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
+	executeAndRecordPlanWrite(t, m, 1, req)
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if !strings.Contains(got, "- [x] the real work") {
-		t.Errorf("t-primary should be checked via task_id:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "- [x] the real work")).To(gomega.BeTrue(), fmt.Sprintf("t-primary should be checked via task_id:\n%s", got))
 
-	if !strings.Contains(got, "- [ ] unrelated edit of x.go") {
-		t.Errorf("t-coincident should remain unchecked — task_id beats path match:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "- [ ] unrelated edit of x.go")).To(gomega.BeTrue(), fmt.Sprintf("t-coincident should remain unchecked — task_id beats path match:\n%s", got))
+})
 
 // TestHeuristicAttachSinglePathsLessItem covers the backstop: the
 // model omitted task_id AND forgot to list paths, but there's exactly
 // one pending paths-less item. We take that as "the only reasonable
 // candidate" and attach to it rather than silently creating Unplanned.
-func TestHeuristicAttachSinglePathsLessItem(t *testing.T) {
+var _ = ginkgo.It("heuristic attach single paths less item", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
 		Todos: []workspace.TaskLedgerItem{
@@ -432,31 +399,26 @@ func TestHeuristicAttachSinglePathsLessItem(t *testing.T) {
 		},
 	}, workspace.ToolResult{Summary: "ok"})
 
-	req := workspace.ToolRequest{Tool: "write_file", Path: "out.txt", Description: "the thing"}
-	m.capturePlanSnapshot(1, req)
-	writeFile(t, root, "out.txt", "done\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
+	req := workspace.ToolRequest{Tool: "write_file", Path: "out.txt", Content: "done\n", Description: "the thing"}
+	executeAndRecordPlanWrite(t, m, 1, req)
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if strings.Contains(got, "### Unplanned") {
-		t.Errorf("heuristic should attach rather than fall to Unplanned:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Unplanned")).To(gomega.BeFalse(), fmt.Sprintf("heuristic should attach rather than fall to Unplanned:\n%s", got))
 
-	if !strings.Contains(got, "- [x] do the thing") {
-		t.Errorf("paths-less item should be checked via heuristic:\n%s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "- [x] do the thing")).To(gomega.BeTrue(), fmt.Sprintf("paths-less item should be checked via heuristic:\n%s", got))
+})
 
 // TestHeuristicDoesNotFireWhenAmbiguous guards against false positives:
 // if there are multiple paths-less pending items, the heuristic
 // refuses to guess and we fall through to Unplanned. Silently picking
 // "the first one" would mis-attribute work, which is worse than the
 // Unplanned signal.
-func TestHeuristicDoesNotFireWhenAmbiguous(t *testing.T) {
+var _ = ginkgo.It("heuristic does not fire when ambiguous", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
 		Todos: []workspace.TaskLedgerItem{
@@ -465,29 +427,25 @@ func TestHeuristicDoesNotFireWhenAmbiguous(t *testing.T) {
 		},
 	}, workspace.ToolResult{Summary: "ok"})
 
-	req := workspace.ToolRequest{Tool: "write_file", Path: "out.txt", Description: "which?"}
-	m.capturePlanSnapshot(1, req)
-	writeFile(t, root, "out.txt", "done\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
+	req := workspace.ToolRequest{Tool: "write_file", Path: "out.txt", Content: "done\n", Description: "which?"}
+	executeAndRecordPlanWrite(t, m, 1, req)
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if !strings.Contains(got, "### Unplanned") {
-		t.Errorf("ambiguous paths-less items should fall to Unplanned:\n%s", got)
-	}
+	gomega.Expect(strings.Contains(got, "### Unplanned")).To(gomega.BeTrue(), fmt.Sprintf("ambiguous paths-less items should fall to Unplanned:\n%s", got))
 
-	if !strings.Contains(got, "- [ ] task a") || !strings.Contains(got, "- [ ] task b") {
-		t.Errorf("both planned items should remain unchecked:\n%s", got)
-	}
-}
+	gomega.Expect(got).To(gomega.ContainSubstring("- [ ] task a"), fmt.Sprintf("both planned items should remain unchecked:\n%s", got))
+	gomega.Expect(got).To(gomega.ContainSubstring("- [ ] task b"), fmt.Sprintf("both planned items should remain unchecked:\n%s", got))
+})
 
 // TestRecordTaskLedgerAcceptsItemsField covers the alternate field
 // name: some call sites use `Items` instead of `Todos` on ToolRequest.
 // Both should work — dropping one would silently lose coverage.
-func TestRecordTaskLedgerAcceptsItemsField(t *testing.T) {
+var _ = ginkgo.It("record task ledger accepts items field", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	req := workspace.ToolRequest{
 		Tool:  "task_ledger",
 		Items: []workspace.TaskLedgerItem{{ID: "t1", Content: "c", Status: "pending"}},
@@ -495,11 +453,7 @@ func TestRecordTaskLedgerAcceptsItemsField(t *testing.T) {
 	m.recordTaskLedger(req, workspace.ToolResult{Summary: "ok"})
 
 	plan, err := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-	if err != nil {
-		t.Fatalf("read plan: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read plan: %v", err))
 
-	if !strings.Contains(string(plan), "<!-- tid:t1 -->") {
-		t.Errorf("Items field should be honored: %s", plan)
-	}
-}
+	gomega.Expect(strings.Contains(string(plan), "<!-- tid:t1 -->")).To(gomega.BeTrue(), fmt.Sprintf("Items field should be honored: %s", plan))
+})

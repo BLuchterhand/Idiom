@@ -2,10 +2,17 @@ package sidecarvalidation
 
 import (
 	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
 type externalDependencyManifest struct {
@@ -48,18 +55,14 @@ type externalDependencyAuditStatus struct {
 	BackendName  string `json:"backend_name"`
 }
 
-func TestExternalDependencyManifestShapeAndRequiredCoverage(t *testing.T) {
-	manifest := readExternalDependencyManifest(t)
+var _ = ginkgo.It("external dependency manifest shape and required coverage", func() {
+	manifest := readExternalDependencyManifest()
 
-	if manifest.SchemaVersion != "external_dependency_backend_manifest.v1" {
-		t.Fatalf("unexpected schema version %q", manifest.SchemaVersion)
-	}
+	gomega.Expect(manifest.SchemaVersion).To(gomega.BeEquivalentTo("external_dependency_backend_manifest.v1"), fmt.Sprintf("unexpected schema version %q", manifest.SchemaVersion))
 
-	if manifest.ManifestKind != "external_dependency_backend_manifest" {
-		t.Fatalf("manifest must identify external dependencies, got %q", manifest.ManifestKind)
-	}
+	gomega.Expect(manifest.ManifestKind).To(gomega.BeEquivalentTo("external_dependency_backend_manifest"), fmt.Sprintf("manifest must identify external dependencies, got %q", manifest.ManifestKind))
 
-	entries := externalDependencyEntriesByID(t, manifest)
+	entries := externalDependencyEntriesByID(manifest)
 	for _, id := range []string{
 		"git",
 		"ripgrep",
@@ -76,54 +79,44 @@ func TestExternalDependencyManifestShapeAndRequiredCoverage(t *testing.T) {
 		"madge",
 		"pydeps",
 	} {
-		if _, ok := entries[id]; !ok {
-			t.Fatalf("manifest missing dependency %q", id)
+		{
+			_, ok := entries[id]
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("manifest missing dependency %q", id))
 		}
 	}
 
 	for _, dep := range manifest.Dependencies {
-		if dep.Category == "" {
-			t.Fatalf("%s missing category", dep.ID)
-		}
+		gomega.Expect(dep.Category).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s missing category", dep.ID))
 
-		if len(dep.Tools) == 0 {
-			t.Fatalf("%s missing affected tools", dep.ID)
-		}
+		gomega.Expect(dep.Tools).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s missing affected tools", dep.ID))
 
-		if len(dep.Binaries) == 0 {
-			t.Fatalf("%s missing binary probes", dep.ID)
-		}
+		gomega.Expect(dep.Binaries).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s missing binary probes", dep.ID))
 
 		for _, binary := range dep.Binaries {
-			if binary.Name == "" || binary.Validation == "" {
-				t.Fatalf("%s has incomplete binary probe: %#v", dep.ID, binary)
-			}
+			gomega.Expect(binary.Name).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s has incomplete binary probe: %#v", dep.ID, binary))
+			gomega.Expect(binary.Validation).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s has incomplete binary probe: %#v", dep.ID, binary))
 		}
 
-		if len(dep.Install) == 0 {
-			t.Fatalf("%s missing install guidance", dep.ID)
-		}
+		gomega.Expect(dep.Install).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s missing install guidance", dep.ID))
 
 		for _, install := range dep.Install {
-			if install.Platform == "" || install.Mode == "" || install.InstallerFlag == "" || install.ImplementedBy == "" {
-				t.Fatalf("%s has incomplete install guidance: %#v", dep.ID, install)
-			}
+			gomega.Expect(install.Platform).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s has incomplete install guidance: %#v", dep.ID, install))
+			gomega.Expect(install.Mode).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s has incomplete install guidance: %#v", dep.ID, install))
+			gomega.Expect(install.InstallerFlag).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s has incomplete install guidance: %#v", dep.ID, install))
+			gomega.Expect(install.ImplementedBy).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s has incomplete install guidance: %#v", dep.ID, install))
 		}
 
-		if dep.Doctor.CurrentStatus == "" || dep.Doctor.CurrentOwner == "" {
-			t.Fatalf("%s missing doctor ownership/status", dep.ID)
-		}
+		gomega.Expect(dep.Doctor.CurrentStatus).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s missing doctor ownership/status", dep.ID))
+		gomega.Expect(dep.Doctor.CurrentOwner).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s missing doctor ownership/status", dep.ID))
 
-		if dep.Audit.BackendName == "" || dep.Audit.CurrentOwner == "" {
-			t.Fatalf("%s missing audit ownership/backend", dep.ID)
-		}
+		gomega.Expect(dep.Audit.BackendName).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s missing audit ownership/backend", dep.ID))
+		gomega.Expect(dep.Audit.CurrentOwner).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s missing audit ownership/backend", dep.ID))
 	}
-}
-
-func TestExternalDependencyManifestMatchesCurrentInstallerSurface(t *testing.T) {
-	root := sidecarValidationRepoRoot(t)
-	installer := readInstallToolFile(t, root, filepath.Join("scripts", "install-requirements.sh"))
-	manifest := readExternalDependencyManifest(t)
+})
+var _ = ginkgo.It("external dependency manifest matches current installer surface", func() {
+	root := sidecarValidationRepoRoot()
+	installer := readInstallToolFile(root, filepath.Join("scripts", "install-requirements.sh"))
+	manifest := readExternalDependencyManifest()
 
 	for _, dep := range manifest.Dependencies {
 		for _, install := range dep.Install {
@@ -131,96 +124,93 @@ func TestExternalDependencyManifestMatchesCurrentInstallerSurface(t *testing.T) 
 				continue
 			}
 
-			if install.InstallerFlag == "default" && !strings.Contains(installer, "brew_install go ripgrep ast-grep universal-ctags semgrep joern gopls") && dep.ID != "git" {
-				t.Fatalf("default installer command block missing while validating %s", dep.ID)
+			if install.InstallerFlag == "default" && !strings.Contains(installer, "brew_install go ripgrep ast-grep universal-ctags semgrep joern gopls") {
+				gomega.Expect(dep.ID).To(gomega.BeEquivalentTo("git"), fmt.Sprintf("default installer command block missing while validating %s", dep.ID))
 			}
 
-			if install.InstallerFlag == "--all" && !strings.Contains(installer, "if $install_all") {
-				t.Fatalf("--all installer block missing while validating %s", dep.ID)
+			if install.InstallerFlag == "--all" {
+				gomega.Expect(installer).To(gomega.ContainSubstring("if $install_all"), fmt.Sprintf("--all installer block missing while validating %s", dep.ID))
 			}
 
-			assertInstallerMentionsPackageOrCommand(t, installer, dep.ID, install)
+			assertInstallerMentionsPackageOrCommand(installer, dep.ID, install)
 		}
 	}
-}
-
-func TestExternalDependencyManifestMatchesCurrentAuditBackends(t *testing.T) {
-	root := sidecarValidationRepoRoot(t)
-	auditSource := readInstallToolFile(t, root, filepath.Join("internal", "capabilities", "workspace", "harness_audit.go"))
-	searchBackendSource := readInstallToolFile(t, root, filepath.Join("internal", "capabilities", "workspace", "search_backend.go"))
-	auditBackendSources := auditSource + "\n" + searchBackendSource
-	manifest := readExternalDependencyManifest(t)
+})
+var _ = ginkgo.It("external dependency manifest matches current audit backends", func() {
+	root := sidecarValidationRepoRoot()
+	searchBackendSource := readInstallToolFile(root, filepath.Join("internal", "capabilities", "workspace", "search_backend.go"))
+	searchBackendLiterals := goStringLiterals(searchBackendSource, "search_backend.go")
+	manifest := readExternalDependencyManifest()
+	ownerBackends := map[string]map[string]map[string]struct{}{}
 
 	for _, dep := range manifest.Dependencies {
-		if !strings.Contains(auditSource, `Name:     "`+dep.Audit.BackendName+`"`) {
-			t.Fatalf("%s audit backend %q not found in harness_audit.go", dep.ID, dep.Audit.BackendName)
+		owner := filepath.FromSlash(dep.Audit.CurrentOwner)
+		backends, ok := ownerBackends[owner]
+		if !ok {
+			ownerSource := readInstallToolFile(root, owner)
+			backends = auditBackendsInSource(ownerSource, owner)
+			ownerBackends[owner] = backends
 		}
+
+		backendBinaries, found := backends[dep.Audit.BackendName]
+		gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("%s audit backend %q not found in declared owner %s", dep.ID, dep.Audit.BackendName, dep.Audit.CurrentOwner))
 
 		for _, binary := range dep.Binaries {
 			if strings.Contains(binary.Validation, "precondition") || binary.Validation == "conditional_package" {
 				continue
 			}
 
-			if !strings.Contains(auditBackendSources, `"`+binary.Name+`"`) {
-				t.Fatalf("%s binary %q not found in harness audit backend surface", dep.ID, binary.Name)
+			if dep.Audit.BackendName == "content_search" {
+				if _, declaredBySearchResolver := searchBackendLiterals[binary.Name]; declaredBySearchResolver {
+					continue
+				}
 			}
+			gomega.Expect(backendBinaries).To(gomega.HaveKey(binary.Name), fmt.Sprintf("%s binary %q not found in harness audit backend surface", dep.ID, binary.Name))
 		}
 	}
-}
+})
+var _ = ginkgo.It("external dependency manifest doctor scope is current state", func() {
+	root := sidecarValidationRepoRoot()
+	doctorSource := readInstallToolFile(root, filepath.Join("internal", "surfaces", "cli", "doctor", "doctor.go"))
+	manifest := readExternalDependencyManifest()
 
-func TestExternalDependencyManifestDoctorScopeIsCurrentState(t *testing.T) {
-	root := sidecarValidationRepoRoot(t)
-	doctorSource := readInstallToolFile(t, root, filepath.Join("internal", "surfaces", "cli", "doctor", "doctor.go"))
-	manifest := readExternalDependencyManifest(t)
-
-	if !strings.Contains(doctorSource, "checkGit()") {
-		t.Fatal("doctor source no longer shows the git host check this manifest describes")
-	}
+	gomega.Expect(doctorSource).To(gomega.ContainSubstring("checkGit()"), fmt.Sprint("doctor source no longer shows the git host check this manifest describes"))
 
 	for _, dep := range manifest.Dependencies {
 		switch dep.Doctor.CurrentStatus {
 		case "host_check":
-			if dep.ID != "git" {
-				t.Fatalf("%s claims doctor host_check, but current doctor only probes git from this manifest", dep.ID)
-			}
+			gomega.Expect(dep.ID).To(gomega.BeEquivalentTo("git"), fmt.Sprintf("%s claims doctor host_check, but current doctor only probes git from this manifest", dep.ID))
 		case "not_wired_currently":
-			if dep.Doctor.CurrentOwner != "harness_audit" {
-				t.Fatalf("%s not-wired doctor metadata should point users to harness_audit ownership, got %#v", dep.ID, dep.Doctor)
-			}
+			gomega.Expect(dep.Doctor.CurrentOwner).To(gomega.BeEquivalentTo("harness_audit"), fmt.Sprintf("%s not-wired doctor metadata should point users to harness_audit ownership, got %#v", dep.ID, dep.Doctor))
 		default:
-			t.Fatalf("%s has unknown doctor status %q", dep.ID, dep.Doctor.CurrentStatus)
+			ginkgo.Fail(fmt.Sprintf("%s has unknown doctor status %q", dep.ID, dep.Doctor.CurrentStatus), 1)
 		}
 	}
-}
+})
 
-func readExternalDependencyManifest(t *testing.T) externalDependencyManifest {
-	t.Helper()
+func readExternalDependencyManifest() externalDependencyManifest {
+	ginkgo.GinkgoHelper()
 
-	root := sidecarValidationRepoRoot(t)
+	root := sidecarValidationRepoRoot()
 	data, err := os.ReadFile(filepath.Join(root, "scripts", "install", "manifest.json"))
-	if err != nil {
-		t.Fatalf("read external dependency manifest: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read external dependency manifest: %v", err))
 
 	var manifest externalDependencyManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		t.Fatalf("decode external dependency manifest: %v", err)
-	}
+	gomega.Expect(json.Unmarshal(data, &manifest)).To(gomega.Succeed(), "decode external dependency manifest")
 
 	return manifest
 }
 
-func externalDependencyEntriesByID(t *testing.T, manifest externalDependencyManifest) map[string]externalDependencyManifestEntry {
-	t.Helper()
+func externalDependencyEntriesByID(manifest externalDependencyManifest) map[string]externalDependencyManifestEntry {
+	ginkgo.GinkgoHelper()
 
 	entries := make(map[string]externalDependencyManifestEntry, len(manifest.Dependencies))
 	for _, dep := range manifest.Dependencies {
-		if dep.ID == "" {
-			t.Fatal("manifest contains dependency with blank id")
-		}
+		gomega.Expect(dep.ID).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("manifest contains dependency with blank id"))
 
-		if _, exists := entries[dep.ID]; exists {
-			t.Fatalf("manifest contains duplicate dependency id %q", dep.ID)
+		{
+			_, exists := entries[dep.ID]
+			gomega.Expect(exists).To(gomega.BeFalse(), fmt.Sprintf("manifest contains duplicate dependency id %q", dep.ID))
 		}
 
 		entries[dep.ID] = dep
@@ -229,26 +219,101 @@ func externalDependencyEntriesByID(t *testing.T, manifest externalDependencyMani
 	return entries
 }
 
-func assertInstallerMentionsPackageOrCommand(t *testing.T, installer, id string, install externalDependencyInstall) {
-	t.Helper()
+func auditBackendsInSource(source, filename string) map[string]map[string]struct{} {
+	ginkgo.GinkgoHelper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), filename, source, 0)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("parse audit backend owner %s: %v", filename, err))
+
+	backends := map[string]map[string]struct{}{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+
+		name := ""
+		var binaries map[string]struct{}
+		for _, element := range literal.Elts {
+			field, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+
+			key, ok := field.Key.(*ast.Ident)
+			if !ok {
+				continue
+			}
+
+			switch key.Name {
+			case "Name":
+				name = goStringLiteral(field.Value)
+			case "Binaries":
+				binaries = goStringLiteralsInNode(field.Value)
+			}
+		}
+
+		if name != "" && binaries != nil {
+			backends[name] = binaries
+		}
+
+		return true
+	})
+
+	return backends
+}
+
+func goStringLiterals(source, filename string) map[string]struct{} {
+	ginkgo.GinkgoHelper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), filename, source, 0)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("parse Go source %s: %v", filename, err))
+
+	return goStringLiteralsInNode(file)
+}
+
+func goStringLiteralsInNode(node ast.Node) map[string]struct{} {
+	literals := map[string]struct{}{}
+	ast.Inspect(node, func(node ast.Node) bool {
+		value := goStringLiteral(node)
+		if value != "" {
+			literals[value] = struct{}{}
+		}
+
+		return true
+	})
+
+	return literals
+}
+
+func goStringLiteral(node ast.Node) string {
+	literal, ok := node.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return ""
+	}
+
+	value, err := strconv.Unquote(literal.Value)
+	if err != nil {
+		return ""
+	}
+
+	return value
+}
+
+func assertInstallerMentionsPackageOrCommand(installer, id string, install externalDependencyInstall) {
+	ginkgo.GinkgoHelper()
 
 	if install.Command != "" {
 		for _, part := range strings.Fields(install.Command) {
-			if !strings.Contains(installer, part) {
-				t.Fatalf("%s installer guidance command %q not reflected in install script", id, install.Command)
-			}
+			gomega.Expect(installer).To(gomega.ContainSubstring(part), fmt.Sprintf("%s installer guidance command %q not reflected in install script", id, install.Command))
 		}
 
 		return
 	}
 
-	if install.Package == "" {
-		t.Fatalf("%s installer guidance has neither command nor package: %#v", id, install)
-	}
+	gomega.Expect(install.Package).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("%s installer guidance has neither command nor package: %#v", id, install))
 
 	for _, part := range strings.Fields(install.Package) {
-		if !strings.Contains(installer, part) {
-			t.Fatalf("%s installer package %q not reflected in install script", id, install.Package)
-		}
+		gomega.Expect(installer).To(gomega.ContainSubstring(part), fmt.Sprintf("%s installer package %q not reflected in install script", id, install.Package))
 	}
 }

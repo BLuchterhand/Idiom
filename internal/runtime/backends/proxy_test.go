@@ -10,15 +10,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
-	"testing"
 	"time"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 )
 
-// sampleProfile builds a two-model profile with a configured proxy
-// block — the canonical shape `idiom backend proxy` is built around.
-// Tests reach for this when they want a representative routing
-// table without retyping fields.
 func sampleProfile(reasonerPort, coderPort, listen int) Profile {
 	return Profile{
 		Models: []Model{
@@ -29,524 +27,334 @@ func sampleProfile(reasonerPort, coderPort, listen int) Profile {
 	}
 }
 
-// TestBuildProxyConfigAcceptsValidProfile exercises the canonical
-// happy path: a complete profile resolves into a routing table,
-// preserves the configured listen/default values, and points each
-// alias at 127.0.0.1:<port> with the absolute model path.
-func TestBuildProxyConfigAcceptsValidProfile(t *testing.T) {
-	cfg, err := BuildProxyConfig(sampleProfile(47780, 47781, 47680))
-	if err != nil {
-		t.Fatalf("BuildProxyConfig: %v", err)
-	}
+var _ = ginkgo.Describe("Backend proxy", func() {
+	ginkgo.Describe("configuration", func() {
+		ginkgo.It("builds routes from a valid profile", func() {
+			config, err := BuildProxyConfig(sampleProfile(47780, 47781, 47680))
 
-	if cfg.Listen != 47680 || cfg.DefaultAlias != "qwen3.6-35b" {
-		t.Fatalf("listen/default mis-derived: %+v", cfg)
-	}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(config.Listen).To(gomega.Equal(47680))
+			gomega.Expect(config.DefaultAlias).To(gomega.Equal("qwen3.6-35b"))
+			gomega.Expect(config.Routes).To(gomega.HaveKeyWithValue("qwen3-coder-30b", ProxyRoute{
+				Alias:       "qwen3-coder-30b",
+				BackendAddr: "127.0.0.1:47781",
+				AbsPath:     "/abs/qwen3-coder-30b",
+			}))
+		})
 
-	r, ok := cfg.Routes["qwen3-coder-30b"]
-	if !ok {
-		t.Fatalf("missing coder route in %v", cfg.Routes)
-	}
+		ginkgo.It("rejects an empty model path", func() {
+			_, err := BuildProxyConfig(Profile{Models: []Model{{Alias: "x", Binary: "x", Port: 1}}})
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("model_path")))
+		})
 
-	if r.BackendAddr != "127.0.0.1:47781" || r.AbsPath != "/abs/qwen3-coder-30b" {
-		t.Fatalf("coder route shape wrong: %+v", r)
-	}
-}
+		ginkgo.It("rejects an unknown default alias", func() {
+			profile := sampleProfile(1, 2, 3)
+			profile.Proxy.DefaultAlias = "no-such-alias"
 
-// TestBuildProxyConfigRejectsEmptyModelPath makes the contract
-// explicit: a model without model_path can't be proxied because
-// there's nothing to rewrite the alias to. Silent dropping would
-// surface as a confusing 404 at request time, so the configuration
-// error has to be loud at startup.
-func TestBuildProxyConfigRejectsEmptyModelPath(t *testing.T) {
-	prof := Profile{Models: []Model{{Alias: "x", Binary: "x", Port: 1}}}
-	_, err := BuildProxyConfig(prof)
+			_, err := BuildProxyConfig(profile)
 
-	if err == nil || !strings.Contains(err.Error(), "model_path") {
-		t.Fatalf("expected model_path error, got %v", err)
-	}
-}
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("default_alias")))
+		})
 
-// TestBuildProxyConfigRejectsUnknownDefaultAlias guards the proxy
-// against a misconfigured default that names an alias the schema
-// doesn't define. Without this check, every request without a
-// `model` field would 404 — surfacing as "the proxy is broken"
-// rather than "the schema is wrong."
-func TestBuildProxyConfigRejectsUnknownDefaultAlias(t *testing.T) {
-	prof := sampleProfile(1, 2, 3)
+		ginkgo.It("rejects an invalid backend port", func() {
+			_, err := BuildProxyConfig(Profile{Models: []Model{{Alias: "x", Binary: "x", ModelPath: "/m"}}})
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("invalid port")))
+		})
 
-	prof.Proxy.DefaultAlias = "no-such-alias"
+		ginkgo.It("rejects duplicate aliases", func() {
+			_, err := BuildProxyConfig(Profile{Models: []Model{
+				{Alias: "dup", Binary: "x", ModelPath: "/a", Port: 1},
+				{Alias: "dup", Binary: "x", ModelPath: "/b", Port: 2},
+			}})
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("duplicate alias")))
+		})
+	})
 
-	_, err := BuildProxyConfig(prof)
+	ginkgo.Describe("request routing", func() {
+		ginkgo.It("falls back to the default for malformed JSON", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			var forwardedURL string
+			expectSuccessfulProxyRequest(doer, func(request *http.Request, _ []byte) {
+				forwardedURL = request.URL.String()
+			})
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
 
-	if err == nil || !strings.Contains(err.Error(), "default_alias") {
-		t.Fatalf("expected default_alias error, got %v", err)
-	}
-}
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions", "not-json{")
 
-// TestBuildProxyConfigRejectsInvalidPort closes the matching gap
-// in BuildLaunchSpec's validation suite: a model with port <= 0
-// can't be reached, so the proxy must reject it at config-build
-// time rather than 502 every request later.
-func TestBuildProxyConfigRejectsInvalidPort(t *testing.T) {
-	prof := Profile{Models: []Model{{Alias: "x", Binary: "x", ModelPath: "/m", Port: 0}}}
-	_, err := BuildProxyConfig(prof)
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			gomega.Expect(forwardedURL).To(gomega.ContainSubstring("127.0.0.1:47780"))
+		})
 
-	if err == nil || !strings.Contains(err.Error(), "invalid port") {
-		t.Fatalf("expected invalid-port error, got %v", err)
-	}
-}
+		ginkgo.It("rewrites an alias to its absolute model path", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			var forwardedURL string
+			var forwardedBody []byte
+			expectSuccessfulProxyRequest(doer, func(request *http.Request, body []byte) {
+				forwardedURL = request.URL.String()
+				forwardedBody = body
+			})
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
 
-// TestProxyMalformedJSONOnV1FallsBackToDefault verifies the
-// graceful-degradation path called out in the Phase 4c review
-// coverage notes: a /v1/ request with a non-JSON body still routes
-// to the default backend instead of 400'ing. Matches the Python
-// proxy's behavior; without the fallback, a typo'd curl invocation
-// would surface as "the proxy is broken" rather than the operator
-// realizing they sent bad JSON.
-func TestProxyMalformedJSONOnV1FallsBackToDefault(t *testing.T) {
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("not-json{"))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions",
+				`{"model":"qwen3-coder-30b","messages":[{"role":"user","content":"hi"}]}`)
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200 from default backend, got %d", w.Code)
-	}
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			gomega.Expect(forwardedURL).To(gomega.ContainSubstring("127.0.0.1:47781"))
+			gomega.Expect(forwardedBody).To(gomega.MatchJSON(`{"model":"/abs/qwen3-coder-30b","messages":[{"role":"user","content":"hi"}]}`))
+		})
 
-	if !strings.Contains(doer.gotURL, "47780") {
-		t.Fatalf("malformed body should route to default: %s", doer.gotURL)
-	}
-}
+		ginkgo.It("accepts a provider-prefixed alias", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			var forwardedURL string
+			expectSuccessfulProxyRequest(doer, func(request *http.Request, _ []byte) {
+				forwardedURL = request.URL.String()
+			})
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
 
-// TestBuildProxyConfigRejectsDuplicateAlias guards against schema
-// bugs where two models accidentally share an alias. The router is
-// alias-keyed; allowing duplicates would silently use whichever the
-// last loop iteration wrote, which is non-deterministic in spirit
-// even if Go's range over slice is ordered.
-func TestBuildProxyConfigRejectsDuplicateAlias(t *testing.T) {
-	prof := Profile{Models: []Model{
-		{Alias: "dup", Binary: "x", ModelPath: "/a", Port: 1},
-		{Alias: "dup", Binary: "x", ModelPath: "/b", Port: 2},
-	}}
-	_, err := BuildProxyConfig(prof)
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions", `{"model":"mlx/qwen3-coder-30b","messages":[]}`)
 
-	if err == nil || !strings.Contains(err.Error(), "duplicate alias") {
-		t.Fatalf("expected duplicate alias error, got %v", err)
-	}
-}
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			gomega.Expect(forwardedURL).To(gomega.ContainSubstring("127.0.0.1:47781"))
+		})
 
-// stubDoer captures whatever request the handler forwarded so each
-// test can assert on the rewritten body / chosen backend address.
-type stubDoer struct {
-	mu       sync.Mutex
-	gotURL   string
-	gotBody  []byte
-	gotHdr   http.Header
-	respFunc func(req *http.Request) (*http.Response, error)
-}
+		ginkgo.It("uses the default route for an unknown alias", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			var forwardedURL string
+			var forwardedBody []byte
+			expectSuccessfulProxyRequest(doer, func(request *http.Request, body []byte) {
+				forwardedURL = request.URL.String()
+				forwardedBody = body
+			})
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
 
-func (s *stubDoer) Do(req *http.Request) (*http.Response, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions", `{"model":"some-unknown-alias"}`)
 
-	// req.Body is nil for body-less requests (GET /healthz, etc.) —
-	// the production handler at proxy.go:181-184 leaves it unset in
-	// that case. Mirror that here so the stub doesn't panic.
-	var body []byte
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			gomega.Expect(forwardedURL).To(gomega.ContainSubstring("127.0.0.1:47780"))
+			gomega.Expect(forwardedBody).To(gomega.MatchJSON(`{"model":"/abs/qwen3.6-35b"}`))
+		})
 
-	if req.Body != nil {
-		body, _ = io.ReadAll(req.Body)
-	}
+		ginkgo.It("returns 404 without calling a backend when no route exists", func() {
+			profile := sampleProfile(47780, 47781, 47680)
+			profile.Proxy.DefaultAlias = ""
+			doer := newStrictProxyHTTPDoerMock()
+			handler := newProxyHandler(profile, doer)
 
-	s.gotURL = req.URL.String()
-	s.gotBody = body
-	s.gotHdr = req.Header.Clone()
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions", `{"model":"nope"}`)
 
-	if s.respFunc != nil {
-		// Replace the consumed body so the user-supplied callback
-		// sees the request as the production transport would.
-		if body != nil {
-			req.Body = io.NopCloser(bytes.NewReader(body))
-		}
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusNotFound))
+			gomega.Expect(response.Body.String()).To(gomega.ContainSubstring("qwen3.6-35b"))
+		})
 
-		return s.respFunc(req)
-	}
+		ginkgo.It("merges multiple system messages", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			var forwardedBody []byte
+			expectSuccessfulProxyRequest(doer, func(_ *http.Request, body []byte) {
+				forwardedBody = body
+			})
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
 
-	return &http.Response{
-		StatusCode: 200,
-		Body:       io.NopCloser(bytes.NewReader([]byte(`{"ok":true}`))),
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-	}, nil
-}
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions", `{
+				"model":"qwen3.6-35b",
+				"messages":[
+					{"role":"system","content":"base rules"},
+					{"role":"user","content":"q1"},
+					{"role":"system","content":"lane preamble"}
+				]
+			}`)
 
-// newHandlerWithStub builds a handler around the sample profile and
-// the supplied Doer stub. Centralizing the wiring keeps the test
-// bodies focused on the assertion they're making, not the boilerplate.
-func newHandlerWithStub(t *testing.T, prof Profile, doer *stubDoer) http.Handler {
-	t.Helper()
-
-	cfg, err := BuildProxyConfig(prof)
-	if err != nil {
-		t.Fatalf("BuildProxyConfig: %v", err)
-	}
-
-	return NewProxyHandler(cfg, ProxyOptions{Doer: doer})
-}
-
-// TestProxyRewritesModelFieldToAbsolutePath verifies the core
-// router contract: an alias like `qwen3-coder-30b` lands at the
-// matching backend port, and the body forwarded upstream carries
-// the absolute filesystem path mlx_lm.server expects.
-func TestProxyRewritesModelFieldToAbsolutePath(t *testing.T) {
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	body := `{"model":"qwen3-coder-30b","messages":[{"role":"user","content":"hi"}]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
-	}
-
-	if !strings.Contains(doer.gotURL, "127.0.0.1:47781") {
-		t.Fatalf("forwarded URL should target the coder backend: %s", doer.gotURL)
-	}
-
-	var payload map[string]any
-
-	if err := json.Unmarshal(doer.gotBody, &payload); err != nil {
-		t.Fatalf("forwarded body not JSON: %v (body=%s)", err, doer.gotBody)
-	}
-
-	if payload["model"] != "/abs/qwen3-coder-30b" {
-		t.Fatalf("model field should be rewritten to abs path; got %v", payload["model"])
-	}
-}
-
-// TestProxyToleratesProviderPrefixedAlias ensures `mlx/qwen3.6-35b`
-// (the OpenCode-style provider-tagged form) routes the same as the
-// bare alias. Important because some clients always prefix.
-func TestProxyToleratesProviderPrefixedAlias(t *testing.T) {
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	body := `{"model":"mlx/qwen3-coder-30b","messages":[]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	if !strings.Contains(doer.gotURL, "47781") {
-		t.Fatalf("provider-prefixed alias should still route to coder backend: %s", doer.gotURL)
-	}
-}
-
-// TestProxyFallsBackToDefaultAliasOnUnknownModel verifies the
-// configured fallback path: a request naming an alias the proxy
-// doesn't know lands at the default route rather than 404'ing.
-// The Python proxy worked this way and idiom invocations sometimes
-// pass legacy aliases, so the safety net must stay.
-func TestProxyFallsBackToDefaultAliasOnUnknownModel(t *testing.T) {
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	body := `{"model":"some-unknown-alias"}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected fallback to succeed, got %d", w.Code)
-	}
-
-	if !strings.Contains(doer.gotURL, "47780") {
-		t.Fatalf("fallback should hit the default backend: %s", doer.gotURL)
-	}
-
-	var payload map[string]any
-
-	_ = json.Unmarshal(doer.gotBody, &payload)
-
-	if payload["model"] != "/abs/qwen3.6-35b" {
-		t.Fatalf("model field should be rewritten to default's abs path; got %v", payload["model"])
-	}
-}
-
-// TestProxyReturns404WhenNoDefaultAndUnknownAlias is the strict
-// path: a profile without a default_alias must 404 unknown aliases
-// instead of silently picking one. The error body lists the known
-// aliases so the operator can correct the request.
-func TestProxyReturns404WhenNoDefaultAndUnknownAlias(t *testing.T) {
-	prof := sampleProfile(47780, 47781, 47680)
-
-	prof.Proxy.DefaultAlias = ""
-
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, prof, doer)
-	body := `{"model":"nope"}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown alias with no default, got %d", w.Code)
-	}
-
-	if !strings.Contains(w.Body.String(), "qwen3.6-35b") {
-		t.Fatalf("404 body should list known aliases: %s", w.Body.String())
-	}
-}
-
-// TestProxyMergesMultipleSystemMessages exercises the chat-template
-// compatibility shim: when idiom sends multiple system fragments,
-// the proxy collapses them into a single leading system message so
-// mlx_lm.server's Qwen template doesn't reject the request.
-func TestProxyMergesMultipleSystemMessages(t *testing.T) {
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	body := `{"model":"qwen3.6-35b","messages":[
-		{"role":"system","content":"base rules"},
-		{"role":"user","content":"q1"},
-		{"role":"system","content":"lane preamble"}
-	]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var payload map[string]any
-
-	if err := json.Unmarshal(doer.gotBody, &payload); err != nil {
-		t.Fatalf("forwarded body not JSON: %v", err)
-	}
-
-	msgs, ok := payload["messages"].([]any)
-	if !ok || len(msgs) != 2 {
-		t.Fatalf("expected exactly 2 messages after merge, got %d (%v)", len(msgs), msgs)
-	}
-
-	first, _ := msgs[0].(map[string]any)
-	if first["role"] != "system" {
-		t.Fatalf("first message must be the merged system: %v", first)
-	}
-
-	if !strings.Contains(first["content"].(string), "base rules") || !strings.Contains(first["content"].(string), "lane preamble") {
-		t.Fatalf("merged system must contain both fragments: %v", first["content"])
-	}
-}
-
-// TestProxySingleLeadingSystemMessageIsNoOp guards the streaming
-// hot path: a request with one system message already at index 0
-// must not trigger a JSON re-marshal. We assert the bytes
-// forwarded match the bytes received.
-func TestProxySingleLeadingSystemMessageIsNoOp(t *testing.T) {
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	body := `{"messages":[{"role":"system","content":"only"},{"role":"user","content":"hi"}]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if string(doer.gotBody) != body {
-		t.Fatalf("body should pass through unchanged when no normalization needed:\n  got:  %s\n  want: %s", doer.gotBody, body)
-	}
-}
-
-// TestProxyForwardsStreamingChunks verifies SSE pass-through: a
-// backend that writes chunks separated by flushes must reach the
-// client as separate writes (not coalesced). This is the
-// load-bearing property for `stream: true` chat completions —
-// without it, clients see all tokens at once at end-of-response.
-func TestProxyForwardsStreamingChunks(t *testing.T) {
-	chunks := []string{"data: token1\n\n", "data: token2\n\n", "data: [DONE]\n\n"}
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(200)
-
-		flusher, _ := w.(http.Flusher)
-		for _, c := range chunks {
-			_, _ = w.Write([]byte(c))
-
-			if flusher != nil {
-				flusher.Flush()
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			var payload struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
 			}
+			gomega.Expect(json.Unmarshal(forwardedBody, &payload)).To(gomega.Succeed())
+			gomega.Expect(payload.Messages).To(gomega.HaveLen(2))
+			gomega.Expect(payload.Messages[0].Role).To(gomega.Equal("system"))
+			gomega.Expect(payload.Messages[0].Content).To(gomega.And(
+				gomega.ContainSubstring("base rules"),
+				gomega.ContainSubstring("lane preamble"),
+			))
+		})
 
-			time.Sleep(10 * time.Millisecond)
-		}
-	}))
-	t.Cleanup(backend.Close)
+		ginkgo.It("passes through one leading system message byte-for-byte", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			var forwardedBody []byte
+			expectSuccessfulProxyRequest(doer, func(_ *http.Request, body []byte) {
+				forwardedBody = body
+			})
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
+			body := `{"messages":[{"role":"system","content":"only"},{"role":"user","content":"hi"}]}`
 
-	// Point the routing table at the test backend rather than the
-	// canned 127.0.0.1:47781. Using a custom Doer that rewrites the
-	// host on the way out keeps the rest of the routing logic
-	// intact under test.
-	prof := sampleProfile(47780, 47781, 47680)
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions", body)
 
-	cfg, err := BuildProxyConfig(prof)
-	if err != nil {
-		t.Fatalf("BuildProxyConfig: %v", err)
-	}
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			gomega.Expect(string(forwardedBody)).To(gomega.Equal(body))
+		})
 
-	doer := &redirectingDoer{target: backend.URL}
-	h := NewProxyHandler(cfg, ProxyOptions{Doer: doer})
+		ginkgo.It("translates an outbound transport error to a JSON 502", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			doer.EXPECT().Do(gomock.Any()).Return(nil, errors.New("dial tcp: connection refused")).Times(1)
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
 
-	req := httptest.NewRequest("POST", "/v1/chat/completions",
-		strings.NewReader(`{"model":"qwen3.6-35b","stream":true,"messages":[]}`))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions", `{"model":"qwen3.6-35b"}`)
 
-	got := w.Body.String()
-	for _, c := range chunks {
-		if !strings.Contains(got, c) {
-			t.Fatalf("response body missing chunk %q; got: %q", c, got)
-		}
-	}
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusBadGateway))
+			gomega.Expect(response.Body.String()).To(gomega.ContainSubstring("backend unreachable"))
+		})
+
+		ginkgo.It("routes non-v1 paths to the default without a body", func() {
+			doer := newStrictProxyHTTPDoerMock()
+			var forwardedURL string
+			expectSuccessfulProxyRequest(doer, func(request *http.Request, body []byte) {
+				forwardedURL = request.URL.String()
+				gomega.Expect(body).To(gomega.BeEmpty())
+			})
+			handler := newProxyHandler(sampleProfile(47780, 47781, 47680), doer)
+
+			response := serveProxyRequest(handler, "GET", "/healthz", "")
+
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			gomega.Expect(forwardedURL).To(gomega.ContainSubstring("127.0.0.1:47780"))
+		})
+	})
+
+	ginkgo.Describe("HTTP server boundaries", func() {
+		ginkgo.It("forwards streaming response chunks from a real backend server", ginkgo.Label("integration", "e2e", "smoke"), func() {
+			chunks := []string{"data: token1\n\n", "data: token2\n\n", "data: [DONE]\n\n"}
+			backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				writer.WriteHeader(http.StatusOK)
+				flusher, _ := writer.(http.Flusher)
+				for _, chunk := range chunks {
+					_, _ = writer.Write([]byte(chunk))
+					if flusher != nil {
+						flusher.Flush()
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}))
+			ginkgo.DeferCleanup(backend.Close)
+
+			config, err := BuildProxyConfig(sampleProfile(47780, 47781, 47680))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			doer := newStrictProxyHTTPDoerMock()
+			doer.EXPECT().Do(gomock.Any()).DoAndReturn(func(request *http.Request) (*http.Response, error) {
+				outbound, requestErr := http.NewRequestWithContext(
+					request.Context(),
+					request.Method,
+					backend.URL+request.URL.RequestURI(),
+					request.Body,
+				)
+				if requestErr != nil {
+					return nil, requestErr
+				}
+				outbound.Header = request.Header.Clone()
+
+				return http.DefaultClient.Do(outbound)
+			}).Times(1)
+			handler := NewProxyHandler(config, ProxyOptions{Doer: doer})
+
+			response := serveProxyRequest(handler, "POST", "/v1/chat/completions",
+				`{"model":"qwen3.6-35b","stream":true,"messages":[]}`)
+
+			gomega.Expect(response.Code).To(gomega.Equal(http.StatusOK))
+			for _, chunk := range chunks {
+				gomega.Expect(response.Body.String()).To(gomega.ContainSubstring(chunk))
+			}
+		})
+
+		ginkgo.It("serves a real listener and shuts down on cancellation", ginkgo.Label("integration", "e2e", "smoke"), func() {
+			config, err := BuildProxyConfig(sampleProfile(47780, 47781, 0))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			doer := newStrictProxyHTTPDoerMock()
+			expectSuccessfulProxyRequest(doer, nil)
+			ctx, cancel := context.WithCancel(context.Background())
+			ginkgo.DeferCleanup(cancel)
+			address := make(chan string, 1)
+			done := make(chan error, 1)
+			go func() {
+				done <- ServeProxy(ctx, config, ProxyOptions{Doer: doer, Listener: listener}, func(value string) {
+					address <- value
+				})
+			}()
+
+			var readyAddress string
+			gomega.Eventually(address).WithTimeout(2 * time.Second).Should(gomega.Receive(&readyAddress))
+			gomega.Expect(readyAddress).NotTo(gomega.BeEmpty())
+			client := &http.Client{Timeout: 2 * time.Second}
+			response, err := client.Post("http://"+readyAddress+"/v1/chat/completions", "application/json",
+				strings.NewReader(`{"model":"qwen3.6-35b"}`))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(response.Body.Close()).To(gomega.Succeed())
+
+			cancel()
+			var serveErr error
+			gomega.Eventually(done).WithTimeout(2 * time.Second).Should(gomega.Receive(&serveErr))
+			gomega.Expect(serveErr).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("requires a configured or injected listener", func() {
+			err := ServeProxy(context.Background(), ProxyConfig{
+				Routes: map[string]ProxyRoute{"x": {Alias: "x", BackendAddr: "127.0.0.1:1"}},
+			}, ProxyOptions{}, nil)
+
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("listen")))
+		})
+	})
+})
+
+func newStrictProxyHTTPDoerMock() *MockProxyHTTPDoer {
+	ginkgo.GinkgoHelper()
+	return NewMockProxyHTTPDoer(gomock.NewController(ginkgo.GinkgoT()))
 }
 
-// redirectingDoer forwards every request to a fixed test server,
-// regardless of the routed BackendAddr. It lets streaming/upstream
-// tests reuse the canonical sample profile without binding to its
-// fictional 47781 port.
-type redirectingDoer struct{ target string }
+func expectSuccessfulProxyRequest(doer *MockProxyHTTPDoer, inspect func(*http.Request, []byte)) {
+	ginkgo.GinkgoHelper()
 
-func (d *redirectingDoer) Do(req *http.Request) (*http.Response, error) {
-	out, err := http.NewRequestWithContext(req.Context(), req.Method, d.target+req.URL.RequestURI(), req.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	out.Header = req.Header.Clone()
-
-	return http.DefaultClient.Do(out)
-}
-
-// TestProxyReturns502OnBackendError verifies the failure surface:
-// a transport error from Doer becomes a JSON 502 with a descriptive
-// body. Important because clients distinguish 502 (backend down)
-// from 5xx originating in the proxy itself.
-func TestProxyReturns502OnBackendError(t *testing.T) {
-	doer := &stubDoer{
-		respFunc: func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("dial tcp: connection refused")
-		},
-	}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	req := httptest.NewRequest("POST", "/v1/chat/completions",
-		strings.NewReader(`{"model":"qwen3.6-35b"}`))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502 on backend error, got %d", w.Code)
-	}
-
-	if !strings.Contains(w.Body.String(), "backend unreachable") {
-		t.Fatalf("error body should explain failure: %s", w.Body.String())
-	}
-}
-
-// TestProxyNonV1PathRoutesToDefault verifies the side-channel
-// contract: paths outside `/v1/` (think /metrics, /healthz, the
-// mlx_lm.server admin surface) bypass the JSON-rewriting logic but
-// still land at the default backend. Without this, health checks
-// against the proxy would 404.
-func TestProxyNonV1PathRoutesToDefault(t *testing.T) {
-	doer := &stubDoer{}
-	h := newHandlerWithStub(t, sampleProfile(47780, 47781, 47680), doer)
-	req := httptest.NewRequest("GET", "/healthz", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200 from default backend, got %d", w.Code)
-	}
-
-	if !strings.Contains(doer.gotURL, "47780") {
-		t.Fatalf("non-/v1 should route to default: %s", doer.gotURL)
-	}
-}
-
-// TestServeProxyBindsAndShutsDownGracefully exercises the listener
-// glue end-to-end: ServeProxy serves, signals readiness, accepts a
-// request, and exits cleanly when its context is canceled. Uses
-// the ProxyOptions.Listener seam so we hand over a kernel-assigned
-// port instead of bind-then-rebind, eliminating the race window
-// that earlier versions of this test relied on.
-func TestServeProxyBindsAndShutsDownGracefully(t *testing.T) {
-	cfg, err := BuildProxyConfig(sampleProfile(47780, 47781, 0))
-	if err != nil {
-		t.Fatalf("BuildProxyConfig: %v", err)
-	}
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	addrCh := make(chan string, 1)
-	doneCh := make(chan error, 1)
-
-	go func() {
-		doneCh <- ServeProxy(ctx, cfg, ProxyOptions{
-			Doer:     &stubDoer{},
-			Listener: listener,
-		}, func(addr string) { addrCh <- addr })
-	}()
-
-	select {
-	case addr := <-addrCh:
-		if addr == "" {
-			t.Fatal("ready callback fired with empty addr")
+	doer.EXPECT().Do(gomock.Any()).DoAndReturn(func(request *http.Request) (*http.Response, error) {
+		var body []byte
+		if request.Body != nil {
+			var err error
+			body, err = io.ReadAll(request.Body)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if inspect != nil {
+			inspect(request, body)
 		}
 
-		client := &http.Client{Timeout: 2 * time.Second}
-
-		resp, err := client.Post("http://"+addr+"/v1/chat/completions",
-			"application/json", strings.NewReader(`{"model":"qwen3.6-35b"}`))
-		if err != nil {
-			t.Fatalf("dial proxy: %v", err)
-		}
-
-		_ = resp.Body.Close()
-	case <-time.After(2 * time.Second):
-		t.Fatal("ServeProxy never invoked the ready callback")
-	}
-
-	cancel()
-
-	select {
-	case err := <-doneCh:
-		if err != nil {
-			t.Fatalf("ServeProxy returned error on shutdown: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("ServeProxy did not return after context cancel")
-	}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader([]byte(`{"ok":true}`))),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	}).Times(1)
 }
 
-// TestServeProxyRequiresListenPort guards the configuration shim:
-// a config without Listen and no injected listener must surface a
-// clear error rather than binding to port 0 (which would assign a
-// random port the operator can't predict or reuse).
-func TestServeProxyRequiresListenPort(t *testing.T) {
-	cfg := ProxyConfig{Listen: 0, Routes: map[string]ProxyRoute{
-		"x": {Alias: "x", BackendAddr: "127.0.0.1:1"},
-	}}
-	err := ServeProxy(context.Background(), cfg, ProxyOptions{}, nil)
+func newProxyHandler(profile Profile, doer proxyHTTPDoer) http.Handler {
+	ginkgo.GinkgoHelper()
 
-	if err == nil || !strings.Contains(err.Error(), "listen") {
-		t.Fatalf("expected listen-port error, got %v", err)
+	config, err := BuildProxyConfig(profile)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return NewProxyHandler(config, ProxyOptions{Doer: doer})
+}
+
+func serveProxyRequest(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	ginkgo.GinkgoHelper()
+
+	var requestBody io.Reader
+	if body != "" {
+		requestBody = strings.NewReader(body)
 	}
+	request := httptest.NewRequest(method, path, requestBody)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
 }

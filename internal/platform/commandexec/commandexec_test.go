@@ -1,10 +1,14 @@
 package commandexec
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -12,633 +16,384 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+
 	"idiom/internal/platform/config"
 )
 
-func TestRunCapturesStdoutStderrAndExitCode(t *testing.T) {
-	result := Run(t.Context(), helperSpec("exit", "7"))
+var _ = ginkgo.Describe("Command execution", ginkgo.Label("integration"), func() {
+	ginkgo.It("captures stdout, stderr, and a nonzero exit code", func(ctx ginkgo.SpecContext) {
+		result := Run(ctx, helperSpec("exit", "7"))
+		gomega.Expect(result.ExitCode).To(gomega.Equal(7))
+		gomega.Expect(result.ExitError).To(gomega.BeTrue())
+		gomega.Expect(strings.TrimSpace(result.Stdout)).To(gomega.Equal("stdout text"))
+		gomega.Expect(strings.TrimSpace(result.Stderr)).To(gomega.Equal("stderr text"))
+		gomega.Expect(result.Err).To(gomega.HaveOccurred())
+		gomega.Expect(result.FailureError("")).To(gomega.MatchError(gomega.ContainSubstring("command failed:")))
+	})
 
-	if result.ExitCode != 7 {
-		t.Fatalf("ExitCode = %d, want 7; result=%#v", result.ExitCode, result)
-	}
-	if !result.ExitError {
-		t.Fatalf("ExitError = false for non-zero process exit; result=%#v", result)
-	}
+	ginkgo.It("combines trimmed stdout and stderr", func() {
+		result := Result{Stdout: " stdout text \n", Stderr: "\nstderr text "}
+		gomega.Expect(result.CombinedOutput()).To(gomega.Equal("stdout text\nstderr text"))
+	})
 
-	if strings.TrimSpace(result.Stdout) != "stdout text" {
-		t.Fatalf("Stdout = %q", result.Stdout)
-	}
+	ginkgo.It("classifies a missing command as a non-exit spawn error", func(ctx ginkgo.SpecContext) {
+		result := Run(ctx, Spec{Name: "definitely-not-an-idiom-test-command"})
+		gomega.Expect(result.Err).To(gomega.HaveOccurred())
+		gomega.Expect(result.ExitError).To(gomega.BeFalse())
+		gomega.Expect(result.CommandNotFound).To(gomega.BeTrue())
+		gomega.Expect(result.ExitCode).To(gomega.Equal(1))
+	})
 
-	if strings.TrimSpace(result.Stderr) != "stderr text" {
-		t.Fatalf("Stderr = %q", result.Stderr)
-	}
+	ginkgo.It("bounds captured output before returning", func(ctx ginkgo.SpecContext) {
+		spec := helperSpec("large-output")
+		spec.MaxOutputBytes = 16
+		result := Run(ctx, spec)
+		gomega.Expect(result.StdoutTruncated).To(gomega.BeTrue())
+		gomega.Expect(result.Stdout).To(gomega.HavePrefix(strings.Repeat("x", 16)))
+		gomega.Expect(result.Stdout).To(gomega.ContainSubstring("...[truncated]"))
+	})
 
-	if result.Err == nil {
-		t.Fatalf("Err is nil for non-zero exit")
-	}
+	ginkgo.It("reports command timeouts", func(ctx ginkgo.SpecContext) {
+		spec := helperSpec("sleep")
+		spec.Timeout = 10 * time.Millisecond
+		result := Run(ctx, spec)
+		gomega.Expect(result.TimedOut).To(gomega.BeTrue())
+		gomega.Expect(result.Err).To(gomega.HaveOccurred())
+		gomega.Expect(result.FailureError("10ms")).To(gomega.MatchError("command timed out after 10ms"))
+	})
 
-	if err := result.FailureError(""); err == nil || !strings.Contains(err.Error(), "command failed:") {
-		t.Fatalf("FailureError = %v, want command failed error", err)
-	}
-}
+	ginkgo.It("uses the canonical working directory in PWD", func(ctx ginkgo.SpecContext) {
+		dir := ginkgo.GinkgoT().TempDir()
+		result := Run(ctx, helperSpecWithDir(dir, "print-pwd"))
+		gomega.Expect(result.Err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(strings.TrimSpace(result.Stdout)).To(gomega.Equal(config.CanonicalizeExistingPath(dir)))
+	})
 
-func TestResultCombinesOutput(t *testing.T) {
-	result := Result{Stdout: " stdout text \n", Stderr: "\nstderr text "}
-
-	if got := result.CombinedOutput(); got != "stdout text\nstderr text" {
-		t.Fatalf("CombinedOutput = %q", got)
-	}
-}
-
-func TestRunMissingCommandReportsNonExitError(t *testing.T) {
-	result := Run(t.Context(), Spec{Name: "definitely-not-an-idiom-test-command"})
-
-	if result.Err == nil {
-		t.Fatalf("Err is nil for missing command")
-	}
-	if result.ExitError {
-		t.Fatalf("ExitError = true for spawn failure; result=%#v", result)
-	}
-	if !result.CommandNotFound {
-		t.Fatalf("CommandNotFound = false for missing command; result=%#v", result)
-	}
-	if result.ExitCode != 1 {
-		t.Fatalf("ExitCode = %d, want 1; result=%#v", result.ExitCode, result)
-	}
-}
-
-func TestRunBoundsOutputBeforeReturning(t *testing.T) {
-	spec := helperSpec("large-output")
-	spec.MaxOutputBytes = 16
-	result := Run(t.Context(), spec)
-
-	if !result.StdoutTruncated {
-		t.Fatalf("StdoutTruncated = false; stdout=%q", result.Stdout)
-	}
-
-	if !strings.HasPrefix(result.Stdout, strings.Repeat("x", 16)) {
-		t.Fatalf("Stdout should keep the first bounded bytes, got %q", result.Stdout)
-	}
-
-	if !strings.Contains(result.Stdout, "...[truncated]") {
-		t.Fatalf("Stdout should include truncation marker, got %q", result.Stdout)
-	}
-}
-
-func TestRunReportsTimeout(t *testing.T) {
-	spec := helperSpec("sleep")
-	spec.Timeout = 10 * time.Millisecond
-
-	result := Run(t.Context(), spec)
-
-	if !result.TimedOut {
-		t.Fatalf("TimedOut = false; result=%#v", result)
-	}
-
-	if result.Err == nil {
-		t.Fatalf("Err is nil for timed out command")
-	}
-
-	if err := result.FailureError("10ms"); err == nil || err.Error() != "command timed out after 10ms" {
-		t.Fatalf("FailureError = %v", err)
-	}
-}
-
-func TestRunUsesCanonicalPWDOverlay(t *testing.T) {
-	dir := t.TempDir()
-	result := Run(t.Context(), helperSpecWithDir(dir, "print-pwd"))
-
-	if result.Err != nil {
-		t.Fatalf("Run failed: %v", result.Err)
-	}
-
-	want := config.CanonicalizeExistingPath(dir)
-	if got := strings.TrimSpace(result.Stdout); got != want {
-		t.Fatalf("PWD = %q, want %q", got, want)
-	}
-}
-
-func TestEnvWithCanonicalPWDOverridesDuplicates(t *testing.T) {
-	dir := t.TempDir()
-	env := EnvWithCanonicalPWD([]string{"PATH=/bin", "PWD=/tmp/Logical"}, dir, []string{"PWD=/tmp/Other"})
-	count := 0
-
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "PWD=") {
-			count++
-
-			if got := strings.TrimPrefix(entry, "PWD="); got != config.CanonicalizeExistingPath(dir) {
-				t.Fatalf("PWD = %q, want %q", got, config.CanonicalizeExistingPath(dir))
+	ginkgo.It("overrides duplicate PWD entries with one canonical value", func() {
+		dir := ginkgo.GinkgoT().TempDir()
+		env := EnvWithCanonicalPWD([]string{"PATH=/bin", "PWD=/tmp/Logical"}, dir, []string{"PWD=/tmp/Other"})
+		var pwdEntries []string
+		for _, entry := range env {
+			if strings.HasPrefix(entry, "PWD=") {
+				pwdEntries = append(pwdEntries, strings.TrimPrefix(entry, "PWD="))
 			}
 		}
-	}
-
-	if count != 1 {
-		t.Fatalf("PWD count = %d in %#v, want 1", count, env)
-	}
-}
-
-func TestRunPlainShellMode(t *testing.T) {
-	result := Run(t.Context(), Spec{
-		Mode:           ModePlainShell,
-		Shell:          "/bin/sh",
-		Command:        "printf shell-mode",
-		MaxOutputBytes: 64,
+		gomega.Expect(pwdEntries).To(gomega.Equal([]string{config.CanonicalizeExistingPath(dir)}))
 	})
 
-	if result.Err != nil {
-		t.Fatalf("Run failed: %v", result.Err)
-	}
+	ginkgo.It("makes explicit environment values replace inherited duplicates in the child", func(ctx ginkgo.SpecContext) {
+		wantHome := filepath.Join(ginkgo.GinkgoT().TempDir(), "isolated-home")
+		spec := helperSpec("print-env", "HOME")
+		spec.BaseEnv = []string{"HOME=/inherited-home", "HOME=/stale-home"}
+		spec.Env = append(spec.Env, "HOME=/first-override", "HOME="+wantHome)
 
-	if result.Stdout != "shell-mode" {
-		t.Fatalf("Stdout = %q, want shell-mode", result.Stdout)
-	}
-}
+		result := Run(ctx, spec)
+		gomega.Expect(result.Err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(result.Stdout).To(gomega.Equal(wantHome))
 
-func TestRunPassesStdin(t *testing.T) {
-	spec := helperSpec("echo-stdin")
-	spec.Stdin = `{"message":"hello"}`
-
-	result := Run(t.Context(), spec)
-
-	if result.Err != nil {
-		t.Fatalf("Run failed: %v", result.Err)
-	}
-
-	if strings.TrimSpace(result.Stdout) != spec.Stdin {
-		t.Fatalf("Stdout = %q, want stdin %q", result.Stdout, spec.Stdin)
-	}
-}
-
-func TestRunMergeOutputUsesSingleOutputLimit(t *testing.T) {
-	spec := helperSpec("mixed-output")
-	spec.MaxOutputBytes = 12
-	spec.MergeOutput = true
-
-	result := Run(t.Context(), spec)
-
-	if !result.StdoutTruncated {
-		t.Fatalf("StdoutTruncated = false; result=%#v", result)
-	}
-
-	if result.Stderr != "" || result.StderrTruncated {
-		t.Fatalf("merged output should be returned as stdout only, result=%#v", result)
-	}
-
-	if len(strings.TrimSuffix(result.Stdout, "\n...[truncated]")) > 12 {
-		t.Fatalf("merged output exceeded single limit: %q", result.Stdout)
-	}
-}
-
-func TestRunForegroundStreamsProvidedIOEnvAndDir(t *testing.T) {
-	dir := t.TempDir()
-	spec := helperSpecWithDir(dir, "foreground-stream")
-	spec.Env = append(spec.Env, "IDIOM_FOREGROUND_VALUE=from-env")
-
-	var stdout strings.Builder
-	var stderr strings.Builder
-	result := RunForeground(t.Context(), spec, ForegroundIO{
-		Stdin:  strings.NewReader("payload"),
-		Stdout: &stdout,
-		Stderr: &stderr,
-	})
-
-	if result.Err != nil {
-		t.Fatalf("RunForeground failed: %v", result.Err)
-	}
-
-	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
-	if !strings.Contains(stdout.String(), wantPWD) {
-		t.Fatalf("stdout missing %q: %q", wantPWD, stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "env=from-env") {
-		t.Fatalf("stdout missing env overlay: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "stdin=payload") {
-		t.Fatalf("stdout missing stdin: %q", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "stderr=payload") {
-		t.Fatalf("stderr missing streamed payload: %q", stderr.String())
-	}
-}
-
-func TestPrepareForegroundCommandStreamsProvidedIOEnvAndDir(t *testing.T) {
-	dir := t.TempDir()
-	spec := helperSpecWithDir(dir, "foreground-stream")
-	spec.Env = append(spec.Env, "IDIOM_FOREGROUND_VALUE=from-env")
-	spec.Timeout = 0
-
-	var stdout strings.Builder
-	var stderr strings.Builder
-	cmd, err := PrepareForegroundCommand(t.Context(), spec, ForegroundIO{
-		Stdin:  strings.NewReader("payload"),
-		Stdout: &stdout,
-		Stderr: &stderr,
-	})
-	if err != nil {
-		t.Fatalf("PrepareForegroundCommand failed: %v", err)
-	}
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("prepared command failed: %v", err)
-	}
-
-	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
-	if !strings.Contains(stdout.String(), wantPWD) {
-		t.Fatalf("stdout missing %q: %q", wantPWD, stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "env=from-env") {
-		t.Fatalf("stdout missing env overlay: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "stdin=payload") {
-		t.Fatalf("stdout missing stdin: %q", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "stderr=payload") {
-		t.Fatalf("stderr missing streamed payload: %q", stderr.String())
-	}
-}
-
-func TestRunForegroundPropagatesExitCode(t *testing.T) {
-	result := RunForeground(t.Context(), helperSpec("exit", "7"), ForegroundIO{
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-
-	if result.ExitCode != 7 || !result.ExitError {
-		t.Fatalf("RunForeground result = %#v, want exit code 7 with ExitError", result)
-	}
-}
-
-func TestRunForegroundReportsMissingCommand(t *testing.T) {
-	result := RunForeground(t.Context(), Spec{Name: "definitely-not-an-idiom-test-command"}, ForegroundIO{})
-
-	if result.Err == nil || !result.CommandNotFound || result.ExitCode != 1 {
-		t.Fatalf("RunForeground missing command result = %#v", result)
-	}
-}
-
-func TestRunForegroundHonorsTimeout(t *testing.T) {
-	spec := helperSpec("sleep")
-	spec.Timeout = 10 * time.Millisecond
-
-	result := RunForeground(t.Context(), spec, ForegroundIO{
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-
-	if !result.TimedOut {
-		t.Fatalf("TimedOut = false; result=%#v", result)
-	}
-	if result.Err == nil {
-		t.Fatalf("Err is nil for timed out foreground command")
-	}
-}
-
-func TestRunForegroundRejectsCaptureOnlyOptions(t *testing.T) {
-	cases := []struct {
-		name string
-		spec Spec
-		want string
-	}{
-		{name: "static stdin", spec: Spec{Name: os.Args[0], Stdin: "input"}, want: "static stdin"},
-		{name: "output log path", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log")}, want: "output log path"},
-		{name: "merge output", spec: Spec{Name: os.Args[0], MergeOutput: true}, want: "merge output"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := RunForeground(t.Context(), tc.spec, ForegroundIO{})
-			if result.Err == nil || !strings.Contains(result.Err.Error(), tc.want) {
-				t.Fatalf("RunForeground result = %#v, want error containing %q", result, tc.want)
+		var homeEntries []string
+		for _, entry := range commandEnv(spec) {
+			if strings.HasPrefix(entry, "HOME=") {
+				homeEntries = append(homeEntries, entry)
 			}
+		}
+		gomega.Expect(homeEntries).To(gomega.Equal([]string{"HOME=" + wantHome}))
+	})
+
+	ginkgo.It("runs a plain shell command", func(ctx ginkgo.SpecContext) {
+		result := Run(ctx, Spec{
+			Mode:           ModePlainShell,
+			Shell:          "/bin/sh",
+			Command:        "printf shell-mode",
+			MaxOutputBytes: 64,
 		})
-	}
-}
+		gomega.Expect(result.Err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(result.Stdout).To(gomega.Equal("shell-mode"))
+	})
 
-func TestPrepareForegroundCommandRejectsManagedOnlyOptions(t *testing.T) {
-	cases := []struct {
-		name string
-		spec Spec
-		want string
-	}{
-		{name: "static stdin", spec: Spec{Name: os.Args[0], Stdin: "input"}, want: "static stdin"},
-		{name: "output log path", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log")}, want: "output log path"},
-		{name: "merge output", spec: Spec{Name: os.Args[0], MergeOutput: true}, want: "merge output"},
-		{name: "timeout", spec: Spec{Name: os.Args[0], Timeout: time.Second}, want: "timeout"},
-	}
+	ginkgo.It("passes static stdin to a captured command", func(ctx ginkgo.SpecContext) {
+		spec := helperSpec("echo-stdin")
+		spec.Stdin = `{"message":"hello"}`
+		result := Run(ctx, spec)
+		gomega.Expect(result.Err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(strings.TrimSpace(result.Stdout)).To(gomega.Equal(spec.Stdin))
+	})
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := PrepareForegroundCommand(t.Context(), tc.spec, ForegroundIO{})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("PrepareForegroundCommand error = %v, want containing %q", err, tc.want)
-			}
+	ginkgo.It("applies one output limit when stdout and stderr are merged", func(ctx ginkgo.SpecContext) {
+		spec := helperSpec("mixed-output")
+		spec.MaxOutputBytes = 12
+		spec.MergeOutput = true
+		result := Run(ctx, spec)
+		gomega.Expect(result.StdoutTruncated).To(gomega.BeTrue())
+		gomega.Expect(result.Stderr).To(gomega.BeEmpty())
+		gomega.Expect(result.StderrTruncated).To(gomega.BeFalse())
+		gomega.Expect(len(strings.TrimSuffix(result.Stdout, "\n...[truncated]"))).To(gomega.BeNumerically("<=", 12))
+	})
+
+	ginkgo.It("streams foreground IO with the configured environment and directory", func(ctx ginkgo.SpecContext) {
+		dir := ginkgo.GinkgoT().TempDir()
+		spec := helperSpecWithDir(dir, "foreground-stream")
+		spec.Env = append(spec.Env, "IDIOM_FOREGROUND_VALUE=from-env")
+		var stdout strings.Builder
+		var stderr strings.Builder
+
+		result := RunForeground(ctx, spec, ForegroundIO{
+			Stdin:  strings.NewReader("payload"),
+			Stdout: &stdout,
+			Stderr: &stderr,
 		})
-	}
-}
+		gomega.Expect(result.Err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(stdout.String()).To(gomega.And(
+			gomega.ContainSubstring("pwd="+config.CanonicalizeExistingPath(dir)),
+			gomega.ContainSubstring("env=from-env"),
+			gomega.ContainSubstring("stdin=payload"),
+		))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("stderr=payload"))
+	})
 
-func TestStartProvidesStreamingPipesEnvAndDir(t *testing.T) {
-	dir := t.TempDir()
-	spec := helperSpecWithDir(dir, "stream-context")
-	spec.Env = append(spec.Env, "IDIOM_STREAM_VALUE=from-env")
+	ginkgo.It("prepares a foreground command with streamed IO, environment, and directory", func(ctx ginkgo.SpecContext) {
+		dir := ginkgo.GinkgoT().TempDir()
+		spec := helperSpecWithDir(dir, "foreground-stream")
+		spec.Env = append(spec.Env, "IDIOM_FOREGROUND_VALUE=from-env")
+		spec.Timeout = 0
+		var stdout strings.Builder
+		var stderr strings.Builder
 
-	process, err := Start(t.Context(), spec)
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer process.Close()
+		cmd, err := PrepareForegroundCommand(ctx, spec, ForegroundIO{
+			Stdin:  strings.NewReader("payload"),
+			Stdout: &stdout,
+			Stderr: &stderr,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(cmd.Run()).To(gomega.Succeed())
+		gomega.Expect(stdout.String()).To(gomega.And(
+			gomega.ContainSubstring("pwd="+config.CanonicalizeExistingPath(dir)),
+			gomega.ContainSubstring("env=from-env"),
+			gomega.ContainSubstring("stdin=payload"),
+		))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("stderr=payload"))
+	})
 
-	if _, err := io.WriteString(process.Stdin(), "payload"); err != nil {
-		t.Fatalf("write stdin: %v", err)
-	}
-	if err := process.Stdin().Close(); err != nil {
-		t.Fatalf("close stdin: %v", err)
-	}
+	ginkgo.It("propagates a foreground process exit code", func(ctx ginkgo.SpecContext) {
+		result := RunForeground(ctx, helperSpec("exit", "7"), ForegroundIO{Stdout: io.Discard, Stderr: io.Discard})
+		gomega.Expect(result.ExitCode).To(gomega.Equal(7))
+		gomega.Expect(result.ExitError).To(gomega.BeTrue())
+	})
 
-	data, err := io.ReadAll(process.Stdout())
-	if err != nil {
-		t.Fatalf("read stdout: %v", err)
-	}
-	if err := process.wait(); err != nil {
-		t.Fatalf("Wait failed: %v", err)
-	}
+	ginkgo.It("keeps direct exit classification separate from lifecycle failures", func(ctx ginkgo.SpecContext) {
+		cmd, err := configuredCommand(ctx, helperSpec("exit", "7"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		directErr := cmd.Run()
+		gomega.Expect(directErr).To(gomega.HaveOccurred())
 
-	got := string(data)
-	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
-	if !strings.Contains(got, wantPWD) {
-		t.Fatalf("stdout missing %q: %q", wantPWD, got)
-	}
-	if !strings.Contains(got, "env=from-env") {
-		t.Fatalf("stdout missing env overlay: %q", got)
-	}
-	if !strings.Contains(got, "stdin=payload") {
-		t.Fatalf("stdout missing streamed stdin: %q", got)
-	}
-}
+		lifecycleErr := errors.New("injected lifecycle failure")
+		result := resultFromRun(ctx, 0, managedCommandOutcome{
+			commandErr:   directErr,
+			lifecycleErr: lifecycleErr,
+		})
 
-func TestStartCapturesBoundedStderr(t *testing.T) {
-	spec := helperSpec("stderr-large")
-	spec.MaxOutputBytes = 8
+		gomega.Expect(result.ExitCode).To(gomega.Equal(7))
+		gomega.Expect(result.ExitError).To(gomega.BeTrue())
+		gomega.Expect(errors.Is(result.Err, lifecycleErr)).To(gomega.BeTrue())
+	})
 
-	process, err := Start(t.Context(), spec)
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer process.Close()
+	ginkgo.It("reports a missing foreground command", func(ctx ginkgo.SpecContext) {
+		result := RunForeground(ctx, Spec{Name: "definitely-not-an-idiom-test-command"}, ForegroundIO{})
+		gomega.Expect(result.Err).To(gomega.HaveOccurred())
+		gomega.Expect(result.CommandNotFound).To(gomega.BeTrue())
+		gomega.Expect(result.ExitCode).To(gomega.Equal(1))
+	})
 
-	if err := process.wait(); err != nil {
-		t.Fatalf("Wait failed: %v", err)
-	}
+	ginkgo.It("honors foreground command timeouts", func(ctx ginkgo.SpecContext) {
+		spec := helperSpec("sleep")
+		spec.Timeout = 10 * time.Millisecond
+		result := RunForeground(ctx, spec, ForegroundIO{Stdout: io.Discard, Stderr: io.Discard})
+		gomega.Expect(result.TimedOut).To(gomega.BeTrue())
+		gomega.Expect(result.Err).To(gomega.HaveOccurred())
+	})
 
-	stderr, truncated := process.Stderr()
-	if !truncated {
-		t.Fatalf("Stderr truncated = false; stderr=%q", stderr)
-	}
-	if !strings.HasPrefix(stderr, strings.Repeat("e", 8)) {
-		t.Fatalf("stderr should keep the first bounded bytes, got %q", stderr)
-	}
-	if !strings.Contains(stderr, "...[truncated]") {
-		t.Fatalf("stderr should include truncation marker, got %q", stderr)
-	}
-}
+	ginkgo.DescribeTable("rejecting capture-only options for foreground execution",
+		func(spec Spec, want string) {
+			result := RunForeground(context.Background(), spec, ForegroundIO{})
+			gomega.Expect(result.Err).To(gomega.MatchError(gomega.ContainSubstring(want)))
+		},
+		ginkgo.Entry("static stdin", Spec{Name: os.Args[0], Stdin: "input"}, "static stdin"),
+		ginkgo.Entry("output log path", Spec{Name: os.Args[0], OutputLogPath: filepath.Join(os.TempDir(), "idiom-foreground-run.log")}, "output log path"),
+		ginkgo.Entry("merge output", Spec{Name: os.Args[0], MergeOutput: true}, "merge output"),
+	)
 
-func TestStartCloseTerminatesRunningProcess(t *testing.T) {
-	process, err := Start(t.Context(), helperSpec("sleep"))
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	ginkgo.DescribeTable("rejecting managed-only options while preparing foreground execution",
+		func(spec Spec, want string) {
+			_, err := PrepareForegroundCommand(context.Background(), spec, ForegroundIO{})
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(want)))
+		},
+		ginkgo.Entry("static stdin", Spec{Name: os.Args[0], Stdin: "input"}, "static stdin"),
+		ginkgo.Entry("output log path", Spec{Name: os.Args[0], OutputLogPath: filepath.Join(os.TempDir(), "idiom-prepared-run.log")}, "output log path"),
+		ginkgo.Entry("merge output", Spec{Name: os.Args[0], MergeOutput: true}, "merge output"),
+		ginkgo.Entry("timeout", Spec{Name: os.Args[0], Timeout: time.Second}, "timeout"),
+	)
 
-	done := make(chan error, 1)
-	go func() {
-		done <- process.wait()
-	}()
+	ginkgo.It("provides streaming pipes with the configured environment and directory", func(ctx ginkgo.SpecContext) {
+		dir := ginkgo.GinkgoT().TempDir()
+		spec := helperSpecWithDir(dir, "stream-context")
+		spec.Env = append(spec.Env, "IDIOM_STREAM_VALUE=from-env")
+		process, err := Start(ctx, spec)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(process.Close)
 
-	time.Sleep(10 * time.Millisecond)
-	if err := process.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
+		_, err = io.WriteString(process.Stdin(), "payload")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(process.Stdin().Close()).To(gomega.Succeed())
+		data, err := io.ReadAll(process.Stdout())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(process.wait()).To(gomega.Succeed())
+		gomega.Expect(string(data)).To(gomega.And(
+			gomega.ContainSubstring("pwd="+config.CanonicalizeExistingPath(dir)),
+			gomega.ContainSubstring("env=from-env"),
+			gomega.ContainSubstring("stdin=payload"),
+		))
+	})
 
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("process did not terminate after Close")
-	}
-}
+	ginkgo.It("captures bounded stderr from a streaming process", func(ctx ginkgo.SpecContext) {
+		spec := helperSpec("stderr-large")
+		spec.MaxOutputBytes = 8
+		process, err := Start(ctx, spec)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(process.Close)
+		gomega.Expect(process.wait()).To(gomega.Succeed())
 
-func TestStartLoggedProcessOwnsOutputAndSignalLifecycle(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell signal trap is Unix-specific")
-	}
+		stderr, truncated := process.Stderr()
+		gomega.Expect(truncated).To(gomega.BeTrue())
+		gomega.Expect(stderr).To(gomega.HavePrefix(strings.Repeat("e", 8)))
+		gomega.Expect(stderr).To(gomega.ContainSubstring("...[truncated]"))
+	})
 
-	root := t.TempDir()
-	logPath := filepath.Join(root, "logs", "process.log")
-	readyPath := filepath.Join(root, "ready")
-	binary := filepath.Join(root, "logged-process")
-	script := `#!/bin/sh
+	ginkgo.It("terminates a running streaming process when closed", func(ctx ginkgo.SpecContext) {
+		process, err := Start(ctx, helperSpec("sleep"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		done := make(chan error, 1)
+		go func() { done <- process.wait() }()
+		gomega.Expect(process.Close()).To(gomega.Succeed())
+		gomega.Eventually(done).Should(gomega.Receive())
+	})
+
+	ginkgo.It("surfaces lifecycle cleanup failures from Close without returning the forced exit", func(ctx ginkgo.SpecContext) {
+		lifecycleErr := errors.New("injected close lifecycle failure")
+		process := startProcessWithLifecycleFailure(ctx, lifecycleErr)
+
+		closeErr := process.Close()
+		gomega.Expect(errors.Is(closeErr, lifecycleErr)).To(gomega.BeTrue())
+		var exitErr *exec.ExitError
+		gomega.Expect(errors.As(closeErr, &exitErr)).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("surfaces lifecycle cleanup failures from Stop", func(ctx ginkgo.SpecContext) {
+		lifecycleErr := errors.New("injected stop lifecycle failure")
+		process := startProcessWithLifecycleFailure(ctx, lifecycleErr)
+
+		stopErr := process.Stop(ctx, os.Kill)
+		gomega.Expect(errors.Is(stopErr, lifecycleErr)).To(gomega.BeTrue())
+	})
+
+	ginkgo.It("owns a logged process output and graceful-signal lifecycle", func(ctx ginkgo.SpecContext) {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("shell signal trap is Unix-specific")
+		}
+
+		root := ginkgo.GinkgoT().TempDir()
+		logPath := filepath.Join(root, "logs", "process.log")
+		readyPath := filepath.Join(root, "ready")
+		binary := filepath.Join(root, "logged-process")
+		script := `#!/bin/sh
 trap 'echo interrupted >&2; exit 0' TERM
 echo ready
 echo ready > "$READY_FILE"
 while true; do sleep 0.05; done
 `
-	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
-		t.Fatalf("write helper script: %v", err)
-	}
+		gomega.Expect(os.WriteFile(binary, []byte(script), 0o755)).To(gomega.Succeed())
+		process, err := Start(ctx, Spec{
+			Name:          binary,
+			Env:           []string{"READY_FILE=" + readyPath},
+			Timeout:       5 * time.Second,
+			OutputLogPath: logPath,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(process.Close)
+		gomega.Expect(process.PID()).To(gomega.BeNumerically(">", 0))
+		gomega.Expect(process.Alive()).To(gomega.BeTrue())
+		gomega.Expect(process.Stdin()).To(gomega.BeNil())
+		gomega.Expect(process.Stdout()).To(gomega.BeNil())
+		waitForFileContent(readyPath, "ready")
 
-	spec := Spec{
-		Name:          binary,
-		Env:           []string{"READY_FILE=" + readyPath},
-		Timeout:       5 * time.Second,
-		OutputLogPath: logPath,
-	}
+		stopCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		ginkgo.DeferCleanup(cancel)
+		gomega.Expect(process.Stop(stopCtx, syscall.SIGTERM)).To(gomega.Succeed())
+		gomega.Expect(process.Alive()).To(gomega.BeFalse())
+		body, err := os.ReadFile(logPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(string(body)).To(gomega.And(gomega.ContainSubstring("ready"), gomega.ContainSubstring("interrupted")))
+	})
 
-	process, err := Start(t.Context(), spec)
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer process.Close()
+	ginkgo.It("rejects graceful Stop for a streaming process", func(ctx ginkgo.SpecContext) {
+		process, err := Start(ctx, helperSpec("sleep"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(process.Close)
+		gomega.Expect(process.Stop(ctx, syscall.SIGTERM)).To(gomega.MatchError(gomega.ContainSubstring("non-streaming")))
+	})
 
-	if process.PID() <= 0 {
-		t.Fatalf("PID = %d, want positive process id", process.PID())
-	}
-	if !process.Alive() {
-		t.Fatal("process should be alive after start")
-	}
-	if process.Stdin() != nil || process.Stdout() != nil {
-		t.Fatalf("logged process should not expose streaming pipes: stdin=%#v stdout=%#v", process.Stdin(), process.Stdout())
-	}
-
-	waitForFileContent(t, readyPath, "ready")
-
-	stopCtx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	if err := process.Stop(stopCtx, syscall.SIGTERM); err != nil {
-		t.Fatalf("Stop failed: %v", err)
-	}
-
-	if process.Alive() {
-		t.Fatal("process should not be alive after Done closes")
-	}
-
-	body, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
-	}
-	if got := string(body); !strings.Contains(got, "ready") || !strings.Contains(got, "interrupted") {
-		t.Fatalf("log missing lifecycle output: %q", got)
-	}
-}
-
-func TestStartDetachedOwnsProcessGroupAndLog(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("detached process groups are POSIX-specific")
-	}
-
-	logPath := filepath.Join(t.TempDir(), "detached.log")
-	spec := helperSpec("log-and-sleep")
-	spec.OutputLogPath = logPath
-	spec.Timeout = 0
-
-	pid, err := StartDetached(t.Context(), spec)
-	if err != nil {
-		t.Fatalf("StartDetached failed: %v", err)
-	}
-	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
-
-	pgid, err := syscall.Getpgid(pid)
-	if err != nil {
-		t.Fatalf("Getpgid(%d): %v", pid, err)
-	}
-	if pgid != pid {
-		t.Fatalf("detached process should own its process group: pgid=%d pid=%d", pgid, pid)
-	}
-
-	waitForFileContent(t, logPath, "detached-ready")
-}
-
-func TestStartDetachedUsesDirEnvAndCanonicalPWD(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("detached process groups are POSIX-specific")
-	}
-
-	dir := t.TempDir()
-	logPath := filepath.Join(t.TempDir(), "detached-context.log")
-	spec := helperSpecWithDir(dir, "detached-context")
-	spec.OutputLogPath = logPath
-	spec.Timeout = 0
-	spec.Env = append(spec.Env, "IDIOM_DETACHED_VALUE=from-env")
-
-	pid, err := StartDetached(t.Context(), spec)
-	if err != nil {
-		t.Fatalf("StartDetached failed: %v", err)
-	}
-	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
-
-	waitForFileContent(t, logPath, "env=from-env")
-	body, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
-	}
-	got := string(body)
-	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
-	if !strings.Contains(got, wantPWD) {
-		t.Fatalf("log missing %q: %q", wantPWD, got)
-	}
-}
-
-func TestStopRejectsStreamingProcess(t *testing.T) {
-	process, err := Start(t.Context(), helperSpec("sleep"))
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer process.Close()
-
-	err = process.Stop(t.Context(), syscall.SIGTERM)
-	if err == nil || !strings.Contains(err.Error(), "non-streaming") {
-		t.Fatalf("Stop should reject streaming processes, got %v", err)
-	}
-}
-
-func TestStopFallsBackToCloseWhenGracefulSignalFails(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("invalid Unix signal fixture is Unix-specific")
-	}
-
-	root := t.TempDir()
-	logPath := filepath.Join(root, "logs", "process.log")
-	readyPath := filepath.Join(root, "ready")
-	binary := filepath.Join(root, "logged-process")
-	script := `#!/bin/sh
+	ginkgo.It("falls back to forced cleanup when a graceful signal fails", func(ctx ginkgo.SpecContext) {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("invalid Unix signal fixture is Unix-specific")
+		}
+		root := ginkgo.GinkgoT().TempDir()
+		logPath := filepath.Join(root, "logs", "process.log")
+		readyPath := filepath.Join(root, "ready")
+		binary := filepath.Join(root, "logged-process")
+		script := `#!/bin/sh
 echo ready > "$READY_FILE"
 while true; do sleep 0.05; done
 `
-	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
-		t.Fatalf("write helper script: %v", err)
-	}
-
-	process, err := Start(t.Context(), Spec{
-		Name:          binary,
-		Env:           []string{"READY_FILE=" + readyPath},
-		Timeout:       5 * time.Second,
-		OutputLogPath: logPath,
-	})
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer process.Close()
-
-	waitForFileContent(t, readyPath, "ready")
-
-	stopCtx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	if err := process.Stop(stopCtx, syscall.Signal(-1)); err != nil {
-		t.Fatalf("Stop should fall back to forced cleanup after signal failure: %v", err)
-	}
-	if process.Alive() {
-		t.Fatal("process should not be alive after fallback cleanup")
-	}
-}
-
-func TestRunRejectsOutputLogPath(t *testing.T) {
-	result := Run(t.Context(), Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log")})
-
-	if result.Err == nil || !strings.Contains(result.Err.Error(), "output log path") {
-		t.Fatalf("Run should reject output log path, result=%#v", result)
-	}
-}
-
-func TestStartRejectsStaticStdin(t *testing.T) {
-	spec := helperSpec("echo-stdin")
-	spec.Stdin = "not a streaming pipe"
-
-	_, err := Start(t.Context(), spec)
-	if err == nil {
-		t.Fatal("expected Start to reject static stdin")
-	}
-	if !strings.Contains(err.Error(), "static stdin") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestStartDetachedRejectsManagedOnlyOptions(t *testing.T) {
-	cases := []struct {
-		name string
-		spec Spec
-		want string
-	}{
-		{name: "missing log", spec: helperSpec("sleep"), want: "output log path"},
-		{name: "static stdin", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log"), Stdin: "input"}, want: "static stdin"},
-		{name: "merge output", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log"), MergeOutput: true}, want: "merge output"},
-		{name: "timeout", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log"), Timeout: time.Second}, want: "timeout"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := StartDetached(t.Context(), tc.spec)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("StartDetached error = %v, want containing %q", err, tc.want)
-			}
+		gomega.Expect(os.WriteFile(binary, []byte(script), 0o755)).To(gomega.Succeed())
+		process, err := Start(ctx, Spec{
+			Name:          binary,
+			Env:           []string{"READY_FILE=" + readyPath},
+			Timeout:       5 * time.Second,
+			OutputLogPath: logPath,
 		})
-	}
-}
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(process.Close)
+		waitForFileContent(readyPath, "ready")
+		stopCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		ginkgo.DeferCleanup(cancel)
+		gomega.Expect(process.Stop(stopCtx, syscall.Signal(-1))).To(gomega.Succeed())
+		gomega.Expect(process.Alive()).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("rejects a captured Run with an output log path", func(ctx ginkgo.SpecContext) {
+		result := Run(ctx, Spec{Name: os.Args[0], OutputLogPath: filepath.Join(ginkgo.GinkgoT().TempDir(), "run.log")})
+		gomega.Expect(result.Err).To(gomega.MatchError(gomega.ContainSubstring("output log path")))
+	})
+
+	ginkgo.It("rejects static stdin for a streaming process", func(ctx ginkgo.SpecContext) {
+		spec := helperSpec("echo-stdin")
+		spec.Stdin = "not a streaming pipe"
+		_, err := Start(ctx, spec)
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("static stdin")))
+	})
+
+	ginkgo.DescribeTable("rejecting managed-only options for detached execution",
+		func(spec Spec, want string) {
+			_, err := StartDetached(context.Background(), spec)
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(want)))
+		},
+		ginkgo.Entry("missing log", helperSpec("sleep"), "output log path"),
+		ginkgo.Entry("static stdin", Spec{Name: os.Args[0], OutputLogPath: filepath.Join(os.TempDir(), "idiom-detached-stdin.log"), Stdin: "input"}, "static stdin"),
+		ginkgo.Entry("merge output", Spec{Name: os.Args[0], OutputLogPath: filepath.Join(os.TempDir(), "idiom-detached-merged.log"), MergeOutput: true}, "merge output"),
+		ginkgo.Entry("timeout", Spec{Name: os.Args[0], OutputLogPath: filepath.Join(os.TempDir(), "idiom-detached-timeout.log"), Timeout: time.Second}, "timeout"),
+	)
+})
 
 func helperSpec(args ...string) Spec {
 	return helperSpecWithDir("", args...)
@@ -668,7 +423,6 @@ func TestCommandExecHelperProcess(t *testing.T) {
 			break
 		}
 	}
-
 	if sep < 0 || sep+1 >= len(os.Args) {
 		os.Exit(2)
 	}
@@ -679,75 +433,177 @@ func TestCommandExecHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stdout, "stdout text")
 		fmt.Fprintln(os.Stderr, "stderr text")
 		os.Exit(atoiDefault(args[1], 1))
-
 	case "large-output":
 		fmt.Fprint(os.Stdout, strings.Repeat("x", 64))
 		os.Exit(0)
-
 	case "sleep":
 		time.Sleep(200 * time.Millisecond)
 		os.Exit(0)
-
 	case "print-pwd":
 		fmt.Fprint(os.Stdout, filepath.Clean(os.Getenv("PWD")))
 		os.Exit(0)
-
+	case "print-env":
+		fmt.Fprint(os.Stdout, os.Getenv(args[1]))
+		os.Exit(0)
 	case "echo-stdin":
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Fprint(os.Stdout, string(data))
 		os.Exit(0)
-
 	case "mixed-output":
 		fmt.Fprint(os.Stdout, strings.Repeat("o", 16))
 		fmt.Fprint(os.Stderr, strings.Repeat("e", 16))
 		os.Exit(0)
-
 	case "foreground-stream":
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Fprintf(os.Stdout, "pwd=%s\nenv=%s\nstdin=%s", filepath.Clean(os.Getenv("PWD")), os.Getenv("IDIOM_FOREGROUND_VALUE"), string(data))
 		fmt.Fprintf(os.Stderr, "stderr=%s", string(data))
 		os.Exit(0)
-
 	case "stream-context":
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Fprintf(os.Stdout, "pwd=%s\nenv=%s\nstdin=%s", filepath.Clean(os.Getenv("PWD")), os.Getenv("IDIOM_STREAM_VALUE"), string(data))
 		os.Exit(0)
-
 	case "stderr-large":
 		fmt.Fprint(os.Stderr, strings.Repeat("e", 64))
 		os.Exit(0)
-
 	case "log-and-sleep":
 		fmt.Fprintln(os.Stdout, "detached-ready")
 		fmt.Fprintln(os.Stderr, "detached-stderr")
 		time.Sleep(200 * time.Millisecond)
 		os.Exit(0)
-
 	case "detached-context":
 		fmt.Fprintf(os.Stdout, "pwd=%s\nenv=%s\n", filepath.Clean(os.Getenv("PWD")), os.Getenv("IDIOM_DETACHED_VALUE"))
 		time.Sleep(200 * time.Millisecond)
 		os.Exit(0)
-
+	case "managed-tree-parent", "managed-tree-natural-parent", "managed-tree-parent-no-wait":
+		if len(args) != 4 && len(args) != 5 {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(args[1], []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+			os.Exit(3)
+		}
+		childArgs := []string{"-test.run=TestCommandExecHelperProcess", "--", "managed-tree-child"}
+		if len(args) == 5 {
+			childArgs = append(childArgs, args[4])
+		}
+		child := exec.Command(os.Args[0], childArgs...)
+		child.Env = append(os.Environ(), "GO_WANT_COMMAND_EXEC_HELPER=1")
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			os.Exit(4)
+		}
+		if err := os.WriteFile(args[2], []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o600); err != nil {
+			_ = child.Process.Kill()
+			os.Exit(5)
+		}
+		if err := os.WriteFile(args[3], []byte("ready\n"), 0o600); err != nil {
+			_ = child.Process.Kill()
+			os.Exit(6)
+		}
+		if args[0] == "managed-tree-natural-parent" {
+			fmt.Fprintln(os.Stdout, "natural-stdout")
+			fmt.Fprintln(os.Stderr, "natural-stderr")
+			os.Exit(0)
+		}
+		if args[0] == "managed-tree-parent-no-wait" {
+			for {
+				time.Sleep(time.Hour)
+			}
+		}
+		_ = child.Wait()
+		os.Exit(0)
+	case "managed-tree-child":
+		if len(args) == 2 {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				os.Exit(7)
+			}
+			if err := os.WriteFile(args[1], []byte(listener.Addr().String()+"\n"), 0o600); err != nil {
+				_ = listener.Close()
+				os.Exit(8)
+			}
+			for {
+				connection, err := listener.Accept()
+				if err != nil {
+					os.Exit(9)
+				}
+				_ = connection.Close()
+			}
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
+	case "foreground-job-wrapper":
+		if len(args) != 2 {
+			os.Exit(2)
+		}
+		spec := helperSpec("foreground-job-child", args[1])
+		spec.Timeout = 0
+		result := RunForeground(context.Background(), spec, ForegroundIO{
+			Stdin:  os.Stdin,
+			Stdout: os.Stdout,
+			Stderr: os.Stderr,
+		})
+		if result.Err != nil {
+			fmt.Fprintf(os.Stderr, "wrapper-error:%v\n", result.Err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "wrapper-exit")
+		os.Exit(0)
+	case "foreground-job-child":
+		if len(args) != 2 {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(args[1], []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+			os.Exit(3)
+		}
+		fmt.Fprintln(os.Stdout, "child-ready")
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Fprintf(os.Stdout, "child-input:%s\n", line)
+			if line == "exit" {
+				os.Exit(0)
+			}
+		}
+		os.Exit(4)
 	}
 
 	os.Exit(2)
 }
 
-func waitForFileContent(t *testing.T, path string, want string) {
-	t.Helper()
+func startProcessWithLifecycleFailure(ctx context.Context, lifecycleErr error) *Process {
+	ginkgo.GinkgoHelper()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		body, err := os.ReadFile(path)
-		if err == nil && strings.Contains(string(body), want) {
-			return
-		}
+	cmd, err := configuredCommand(ctx, helperSpec("sleep"))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(cmd.Start()).To(gomega.Succeed())
 
-		time.Sleep(10 * time.Millisecond)
+	attachDone := make(chan struct{})
+	close(attachDone)
+	teardownDone := make(chan struct{})
+	close(teardownDone)
+	process := &Process{
+		cmd: cmd,
+		tree: &managedProcessTree{
+			cmd:          cmd,
+			attachDone:   attachDone,
+			teardownDone: teardownDone,
+			teardownErr:  lifecycleErr,
+		},
+		done: make(chan struct{}),
 	}
+	go process.wait()
 
-	body, _ := os.ReadFile(path)
-	t.Fatalf("timed out waiting for %q in %s; content=%q", want, path, string(body))
+	return process
+}
+
+func waitForFileContent(path string, want string) {
+	ginkgo.GinkgoHelper()
+	gomega.Eventually(func() string {
+		body, _ := os.ReadFile(path)
+		return string(body)
+	}).WithTimeout(3 * time.Second).WithPolling(10 * time.Millisecond).Should(gomega.ContainSubstring(want))
 }
 
 func atoiDefault(value string, fallback int) int {
@@ -755,6 +611,5 @@ func atoiDefault(value string, fallback int) int {
 	if _, err := fmt.Sscanf(value, "%d", &out); err != nil {
 		return fallback
 	}
-
 	return out
 }

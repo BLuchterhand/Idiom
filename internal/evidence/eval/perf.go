@@ -1624,7 +1624,7 @@ func completionGateNoWriteRejection(data map[string]any) bool {
 
 func workspaceWriteToolName(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "mkdir", "submit_plan":
+	case "edit_file", "write_file", "append_file", "apply_patch", "mkdir", "submit_plan":
 		return true
 	default:
 		return false

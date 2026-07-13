@@ -5,8 +5,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	cmdconfig "idiom/internal/surfaces/cli/config"
 	localopscmd "idiom/internal/surfaces/cli/localops"
 	toolcmd "idiom/internal/surfaces/cli/tool"
@@ -40,13 +41,11 @@ func p711RunMainNoTelemetry(args []string, stdout io.Writer, stderr io.Writer) i
 	}
 }
 
-func p711TestRepoRoot(t *testing.T) string {
-	t.Helper()
+func p711TestRepoRoot() string {
+	ginkgo.GinkgoHelper()
 
 	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get cwd: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("get cwd: %v", err))
 
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
@@ -54,9 +53,7 @@ func p711TestRepoRoot(t *testing.T) string {
 		}
 
 		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repo root not found from cwd")
-		}
+		gomega.Expect(parent).NotTo(gomega.Equal(dir), fmt.Sprintf("repo root not found from cwd"))
 
 		dir = parent
 	}

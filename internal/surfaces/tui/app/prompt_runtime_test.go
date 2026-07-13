@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
-	"testing"
 	"time"
 
 	"idiom/internal/capabilities/workspace"
@@ -20,221 +20,230 @@ import (
 	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
-	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
+	runtimesession "idiom/internal/runtime/session"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestModeRunPolicySeparatesAdvisoryAndOperationalModelCallLimits(t *testing.T) {
+var _ = ginkgo.It("mode run policy separates advisory and operational model call limits", func() {
 	cfg := config.Default().Chat
 	cfg.MaxModelCalls = 7
 	cfg.MaxOperationalModelCalls = 11
 
 	policy := modeRunPolicy(modepolicy.Mode{}, cfg)
-	if policy.MaxModelCalls != 7 {
-		t.Fatalf("MaxModelCalls should remain advisory config threshold, got %d", policy.MaxModelCalls)
-	}
-	if policy.MaxOperationalModelCalls != 11 {
-		t.Fatalf("MaxOperationalModelCalls should carry hard operational fuse, got %d", policy.MaxOperationalModelCalls)
-	}
-}
+	gomega.Expect(policy.MaxModelCalls).To(gomega.Equal(7), fmt.Sprintf("MaxModelCalls should remain advisory config threshold, got %d", policy.MaxModelCalls))
+	gomega.Expect(policy.MaxOperationalModelCalls).To(gomega.Equal(11), fmt.Sprintf("MaxOperationalModelCalls should carry hard operational fuse, got %d", policy.MaxOperationalModelCalls))
+})
 
-func TestSystemPromptSkipsModePromptFilesAlreadyInPromptStack(t *testing.T) {
+var _ = ginkgo.It("system prompt skips mode prompt files already in prompt stack", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "prompts", "base.md")
 
-	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
-		t.Fatalf("mkdir prompts: %v", err)
+	{
+		err := os.MkdirAll(filepath.Dir(basePath), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir prompts: %v", err))
 	}
 
-	if err := os.WriteFile(basePath, []byte("Base behavior\n"), 0o644); err != nil {
-		t.Fatalf("write base prompt: %v", err)
+	{
+		err := os.WriteFile(basePath, []byte("Base behavior\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write base prompt: %v", err))
 	}
 
 	model := &Model{
 		cfg: config.Config{Chat: config.Chat{ProjectRoot: dir}},
-		promptStack: promptstack.Stack{
-			Text: "[baseline behavior: base.md]\nBase behavior",
-			Sources: []promptstack.Source{{
-				Kind:        "baseline",
-				DisplayName: "base.md",
-				Path:        filepath.Join("prompts", "base.md"),
+		promptRuntimeState: promptRuntimeState{
+			promptRuntimeCompletionState: promptRuntimeCompletionState{promptStack: promptstack.Stack{
+				Text: "[baseline behavior: base.md]\nBase behavior",
+				Sources: []promptstack.Source{{
+					Kind:        "baseline",
+					DisplayName: "base.md",
+					Path:        filepath.Join("prompts", "base.md"),
+				}},
 			}},
 		},
 		agentModeName: "build",
 	}
 
 	prompt := model.systemPrompt()
-	if strings.Count(prompt, "Base behavior") != 1 {
-		t.Fatalf("expected mode/system prompt dedupe, got:\n%s", prompt)
-	}
-}
+	gomega.Expect(strings.Count(prompt, "Base behavior")).To(gomega.Equal(1), fmt.Sprintf("expected mode/system prompt dedupe, got:\n%s", prompt))
+})
 
-func TestSystemPromptAutoAppendsQwenCompatibilityOverlay(t *testing.T) {
+var _ = ginkgo.It("system prompt auto appends qwen compatibility overlay", func() {
 	model := &Model{
 		cfg: config.Config{
 			LlamaServer: config.LlamaServer{Model: "/models/Qwen3-Coder-30B"},
 			Chat:        config.Chat{ModelFamily: "auto"},
 		},
-		promptStack: promptstack.Stack{
-			Text: "Base behavior",
-			Sources: []promptstack.Source{{
-				Kind:        "baseline",
-				DisplayName: "base.md",
+		promptRuntimeState: promptRuntimeState{
+			promptRuntimeCompletionState: promptRuntimeCompletionState{promptStack: promptstack.Stack{
+				Text: "Base behavior",
+				Sources: []promptstack.Source{{
+					Kind:        "baseline",
+					DisplayName: "base.md",
+				}},
 			}},
 		},
 		agentModeName: "build",
 	}
 
 	prompt := model.systemPrompt()
-	if !strings.Contains(prompt, "[model compatibility: model:qwen]") {
-		t.Fatalf("expected qwen compatibility overlay, got:\n%s", prompt)
-	}
+	gomega.Expect(strings.Contains(prompt, "[model compatibility: model:qwen]")).To(gomega.BeTrue(), fmt.Sprintf("expected qwen compatibility overlay, got:\n%s", prompt))
 
-	if !slices.Contains(model.contextSourceNames(), "model:qwen") {
-		t.Fatalf("expected qwen overlay in context sources, got %#v", model.contextSourceNames())
-	}
-}
+	gomega.Expect(slices.Contains(model.contextSourceNames(), "model:qwen")).To(gomega.BeTrue(), fmt.Sprintf("expected qwen overlay in context sources, got %#v", model.contextSourceNames()))
+})
 
-func TestSystemPromptSkipsQwenOverlayForGenericFamily(t *testing.T) {
+var _ = ginkgo.It("system prompt skips qwen overlay for generic family", func() {
 	model := &Model{
 		cfg: config.Config{
 			LlamaServer: config.LlamaServer{Model: "/models/Qwen3-Coder-30B"},
 			Chat:        config.Chat{ModelFamily: "generic"},
 		},
-		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		promptRuntimeState: promptRuntimeState{promptRuntimeCompletionState: promptRuntimeCompletionState{
+			promptStack: promptstack.Stack{Text: "Base behavior"},
+		}},
 		agentModeName: "build",
 	}
 
 	prompt := model.systemPrompt()
-	if strings.Contains(prompt, "model:qwen") {
-		t.Fatalf("expected generic model family to suppress qwen overlay, got:\n%s", prompt)
-	}
-}
+	gomega.Expect(strings.Contains(prompt, "model:qwen")).To(gomega.BeFalse(), fmt.Sprintf("expected generic model family to suppress qwen overlay, got:\n%s", prompt))
+})
 
-func TestSystemPromptUsesResolvedPlannerSpecForModelOverlay(t *testing.T) {
+var _ = ginkgo.It("system prompt uses resolved planner spec for model overlay", func() {
 	model := &Model{
 		cfg: config.Config{
 			LlamaServer: config.LlamaServer{Model: "/models/Qwen3-Coder-30B"},
 			Chat:        config.Chat{ModelFamily: "auto"},
 		},
-		plannerSpec:   config.LlamaServer{Kind: "zai", Model: "glm-5.1"},
-		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		plannerSpec: config.LlamaServer{Kind: "zai", Model: "glm-5.1"},
+		promptRuntimeState: promptRuntimeState{promptRuntimeCompletionState: promptRuntimeCompletionState{
+			promptStack: promptstack.Stack{Text: "Base behavior"},
+		}},
 		agentModeName: "build",
 	}
 
 	prompt := model.systemPrompt()
-	if strings.Contains(prompt, "model:qwen") {
-		t.Fatalf("resolved non-Qwen planner should suppress inherited config overlay, got:\n%s", prompt)
-	}
-}
+	gomega.Expect(strings.Contains(prompt, "model:qwen")).To(gomega.BeFalse(), fmt.Sprintf("resolved non-Qwen planner should suppress inherited config overlay, got:\n%s", prompt))
+})
 
-func TestSystemPromptCanForceQwenOverlayForModelAlias(t *testing.T) {
+var _ = ginkgo.It("system prompt can force qwen overlay for model alias", func() {
 	model := &Model{
 		cfg: config.Config{
 			LlamaServer: config.LlamaServer{Model: "local-coder"},
 			Chat:        config.Chat{ModelFamily: "qwen"},
 		},
-		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		promptRuntimeState: promptRuntimeState{promptRuntimeCompletionState: promptRuntimeCompletionState{
+			promptStack: promptstack.Stack{Text: "Base behavior"},
+		}},
 		agentModeName: "build",
 	}
 
 	prompt := model.systemPrompt()
-	if !strings.Contains(prompt, "model:qwen") {
-		t.Fatalf("expected explicit qwen family to append overlay, got:\n%s", prompt)
-	}
-}
+	gomega.Expect(strings.Contains(prompt, "model:qwen")).To(gomega.BeTrue(), fmt.Sprintf("expected explicit qwen family to append overlay, got:\n%s", prompt))
+})
 
-func TestContextSourcesIncludeModePromptFiles(t *testing.T) {
+var _ = ginkgo.It("context sources include mode prompt files", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "prompts", "base.md")
 	planPath := filepath.Join(dir, "prompts", "plan-mode.md")
 
-	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
-		t.Fatalf("mkdir prompts: %v", err)
+	{
+		err := os.MkdirAll(filepath.Dir(basePath), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir prompts: %v", err))
 	}
 
-	if err := os.WriteFile(basePath, []byte("Base behavior\n"), 0o644); err != nil {
-		t.Fatalf("write base prompt: %v", err)
+	{
+		err := os.WriteFile(basePath, []byte("Base behavior\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write base prompt: %v", err))
 	}
 
-	if err := os.WriteFile(planPath, []byte("Plan behavior\n"), 0o644); err != nil {
-		t.Fatalf("write plan prompt: %v", err)
+	{
+		err := os.WriteFile(planPath, []byte("Plan behavior\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan prompt: %v", err))
 	}
 
 	model := &Model{
 		cfg: config.Config{Chat: config.Chat{ProjectRoot: dir}},
-		promptStack: promptstack.Stack{
-			Text: "[baseline behavior: base.md]\nBase behavior",
-			Sources: []promptstack.Source{{
-				Kind:        "baseline",
-				DisplayName: "base.md",
-				Path:        filepath.Join("prompts", "base.md"),
+		promptRuntimeState: promptRuntimeState{
+			promptRuntimeCompletionState: promptRuntimeCompletionState{promptStack: promptstack.Stack{
+				Text: "[baseline behavior: base.md]\nBase behavior",
+				Sources: []promptstack.Source{{
+					Kind:        "baseline",
+					DisplayName: "base.md",
+					Path:        filepath.Join("prompts", "base.md"),
+				}},
 			}},
 		},
 		agentModeName: "plan",
 	}
 
 	prompt := model.systemPrompt()
-	if strings.Count(prompt, "Base behavior") != 1 || !strings.Contains(prompt, "Plan behavior") {
-		t.Fatalf("expected deduped base and loaded plan prompt, got:\n%s", prompt)
-	}
+	gomega.Expect(strings.Count(prompt, "Base behavior")).To(gomega.Equal(1), fmt.Sprintf("expected deduped base and loaded plan prompt, got:\n%s", prompt))
+	gomega.Expect(prompt).To(gomega.ContainSubstring("Plan behavior"), fmt.Sprintf("expected deduped base and loaded plan prompt, got:\n%s", prompt))
 
-	if !slices.Contains(model.contextSourceNames(), "mode:plan:plan-mode.md") {
-		t.Fatalf("expected mode prompt in context sources, got %#v", model.contextSourceNames())
-	}
-}
+	gomega.Expect(slices.Contains(model.contextSourceNames(), "mode:plan:plan-mode.md")).To(gomega.BeTrue(), fmt.Sprintf("expected mode prompt in context sources, got %#v", model.contextSourceNames()))
+})
 
-func TestSystemPromptSourcesUseCachedModePromptUntilInvalidated(t *testing.T) {
+var _ = ginkgo.It("system prompt sources use cached mode prompt until invalidated", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "prompts", "plan-mode.md")
 
-	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
-		t.Fatalf("mkdir prompts: %v", err)
+	{
+		err := os.MkdirAll(filepath.Dir(planPath), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir prompts: %v", err))
 	}
 
-	if err := os.WriteFile(planPath, []byte("Plan behavior\n"), 0o644); err != nil {
-		t.Fatalf("write plan prompt: %v", err)
+	{
+		err := os.WriteFile(planPath, []byte("Plan behavior\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan prompt: %v", err))
 	}
 
 	model := &Model{
-		cfg:           config.Config{Chat: config.Chat{ProjectRoot: dir}},
-		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		cfg: config.Config{Chat: config.Chat{ProjectRoot: dir}},
+		promptRuntimeState: promptRuntimeState{promptRuntimeCompletionState: promptRuntimeCompletionState{
+			promptStack: promptstack.Stack{Text: "Base behavior"},
+		}},
 		agentModeName: "plan",
 	}
 
 	first := model.systemPrompt()
-	if !strings.Contains(first, "Plan behavior") {
-		t.Fatalf("expected initial mode prompt, got:\n%s", first)
+	gomega.Expect(strings.Contains(first, "Plan behavior")).To(gomega.BeTrue(), fmt.Sprintf("expected initial mode prompt, got:\n%s", first))
+
+	{
+		err := os.Remove(planPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("remove plan prompt: %v", err))
 	}
 
-	if err := os.Remove(planPath); err != nil {
-		t.Fatalf("remove plan prompt: %v", err)
-	}
-
-	if got := model.contextSummary(); !strings.Contains(got, "mode:plan:plan-mode.md") {
-		t.Fatalf("expected context summary to use cached prompt sources, got %q", got)
+	{
+		got := model.contextSummary()
+		gomega.Expect(strings.Contains(got, "mode:plan:plan-mode.md")).To(gomega.BeTrue(), fmt.Sprintf("expected context summary to use cached prompt sources, got %q", got))
 	}
 
 	second := model.systemPrompt()
-	if second != first {
-		t.Fatalf("expected cached system prompt after mode file removal\nfirst:\n%s\nsecond:\n%s", first, second)
-	}
+	gomega.Expect(second).To(gomega.Equal(first), fmt.Sprintf("expected cached system prompt after mode file removal\nfirst:\n%s\nsecond:\n%s", first, second))
 
 	model.invalidateComposedPrompt()
 
-	if prompt := model.systemPrompt(); strings.Contains(prompt, "Plan behavior") {
-		t.Fatalf("expected invalidation to observe missing mode prompt, got:\n%s", prompt)
+	{
+		prompt := model.systemPrompt()
+		gomega.Expect(strings.Contains(prompt, "Plan behavior")).To(gomega.BeFalse(), fmt.Sprintf("expected invalidation to observe missing mode prompt, got:\n%s", prompt))
 	}
-}
+})
 
-func TestRoleSpecExplicitAliasCanTargetNonDefaultProfile(t *testing.T) {
+var _ = ginkgo.It("role spec explicit alias can target non default profile", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
 	}
 
 	body := `{
@@ -254,30 +263,33 @@ func TestRoleSpecExplicitAliasCanTargetNonDefaultProfile(t *testing.T) {
 			}
 		}
 	}`
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write backends.json: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
 	}
 
-	spec, ok := roleSpec(root, backends.RolePlanner, config.LlamaServer{
+	defaults := config.LlamaServer{
 		Kind:  "mlx",
 		Host:  "127.0.0.1",
 		Port:  47680,
 		Model: "qwen3.6-27b",
-	})
-
-	if !ok {
-		t.Fatalf("expected explicit 27B alias to resolve")
 	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.LlamaServer = defaults
+	spec := runtimesession.ResolveBackendResources(cfg).PlannerSpec
 
-	if spec.Port != 47783 || spec.Model != "/models/qwen3.6-27b" {
-		t.Fatalf("resolved spec = %+v, want 27B profile target", spec)
-	}
-}
+	gomega.Expect(spec.Port).To(gomega.Equal(47783), fmt.Sprintf("resolved spec = %+v, want 27B profile target", spec))
+	gomega.Expect(spec.Model).To(gomega.Equal("/models/qwen3.6-27b"), fmt.Sprintf("resolved spec = %+v, want 27B profile target", spec))
+})
 
-func TestRoleSpecExecutorIgnoresExplicitPlannerAlias(t *testing.T) {
+var _ = ginkgo.It("role spec executor ignores explicit planner alias", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
 	}
 
 	body := `{
@@ -297,27 +309,28 @@ func TestRoleSpecExecutorIgnoresExplicitPlannerAlias(t *testing.T) {
 			}
 		}
 	}`
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write backends.json: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
 	}
 
-	spec, ok := roleSpec(root, backends.RoleExecutor, config.LlamaServer{
+	defaults := config.LlamaServer{
 		Kind:  "mlx",
 		Host:  "127.0.0.1",
 		Port:  47680,
 		Model: "qwen3.6-27b",
-	})
-
-	if !ok {
-		t.Fatalf("expected executor role to resolve")
 	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Implementer = &defaults
+	spec := runtimesession.ResolveBackendResources(cfg).ExecutorSpec
 
-	if spec.Port != 47781 || spec.Model != "/models/qwen3-coder-30b" {
-		t.Fatalf("resolved spec = %+v, want coder executor", spec)
-	}
-}
+	gomega.Expect(spec.Port).To(gomega.Equal(47781), fmt.Sprintf("resolved spec = %+v, want coder executor", spec))
+	gomega.Expect(spec.Model).To(gomega.Equal("/models/qwen3-coder-30b"), fmt.Sprintf("resolved spec = %+v, want coder executor", spec))
+})
 
-func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.T) {
+var _ = ginkgo.It("tune chat options for read only plan disables thinking and caps tokens", func() {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		Temperature:      0.95,
@@ -334,28 +347,20 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 	}
 
 	tuned := tuneChatOptionsForPlan(opts, plan)
-	if tuned.EnableThinking == nil || *tuned.EnableThinking {
-		t.Fatalf("expected read-only lane to disable thinking, got %#v", tuned.EnableThinking)
-	}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprintf("expected read-only lane to disable thinking, got %#v", tuned.EnableThinking))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeFalse(), fmt.Sprintf("expected read-only lane to disable thinking, got %#v", tuned.EnableThinking))
 
-	if tuned.PreserveThinking {
-		t.Fatalf("expected preserve thinking off for read-only lane")
-	}
+	gomega.Expect(tuned.PreserveThinking).To(gomega.BeFalse(), fmt.Sprintf("expected preserve thinking off for read-only lane"))
 
-	if !tuned.ChatTemplateKwargs {
-		t.Fatalf("expected read-only lane to send explicit chat template kwargs")
-	}
+	gomega.Expect(tuned.ChatTemplateKwargs).To(gomega.BeTrue(), fmt.Sprintf("expected read-only lane to send explicit chat template kwargs"))
 
-	if tuned.Temperature != 0.2 || tuned.TopP != 1 {
-		t.Fatalf("read-only sampling = temp %.2f top_p %.2f, want deterministic cap", tuned.Temperature, tuned.TopP)
-	}
+	gomega.Expect(tuned.Temperature).To(gomega.Equal(0.2), fmt.Sprintf("read-only sampling = temp %.2f top_p %.2f, want deterministic cap", tuned.Temperature, tuned.TopP))
+	gomega.Expect(tuned.TopP).To(gomega.BeNumerically("==", 1), fmt.Sprintf("read-only sampling = temp %.2f top_p %.2f, want deterministic cap", tuned.Temperature, tuned.TopP))
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("expected grounded explanation token floor of 1536 (8192 exceeds floor, should stay 8192), got %d", tuned.MaxTokens)
-	}
-}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("expected grounded explanation token floor of 1536 (8192 exceeds floor, should stay 8192), got %d", tuned.MaxTokens))
+})
 
-func TestTuneChatOptionsForReadOnlyPlanRaisesLowMaxTokensToRouteFloor(t *testing.T) {
+var _ = ginkgo.It("tune chat options for read only plan raises low max tokens to route floor", func() {
 	tests := []struct {
 		name               string
 		contract           string
@@ -400,7 +405,7 @@ func TestTuneChatOptionsForReadOnlyPlanRaisesLowMaxTokensToRouteFloor(t *testing
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.By(fmt.Sprint(tt.name), func() {
 			opts := llama.ChatOptions{
 				MaxTokens:          tt.initialMaxTokens,
 				ModelThinkingFloor: tt.modelThinkingFloor,
@@ -413,14 +418,12 @@ func TestTuneChatOptionsForReadOnlyPlanRaisesLowMaxTokensToRouteFloor(t *testing
 			}
 
 			tuned := tuneChatOptionsForPlan(opts, plan)
-			if tuned.MaxTokens != tt.wantMaxTokens {
-				t.Fatalf("MaxTokens = %d, want route floor %d", tuned.MaxTokens, tt.wantMaxTokens)
-			}
+			gomega.Expect(tuned.MaxTokens).To(gomega.Equal(tt.wantMaxTokens), fmt.Sprintf("MaxTokens = %d, want route floor %d", tuned.MaxTokens, tt.wantMaxTokens))
 		})
 	}
-}
+})
 
-func TestTuneChatOptionsForReadOnlyPlanPreservesLowerConfiguredTemperature(t *testing.T) {
+var _ = ginkgo.It("tune chat options for read only plan preserves lower configured temperature", func() {
 	thinkingOn := true
 	plan := promptExecutionPlan{
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -438,19 +441,17 @@ func TestTuneChatOptionsForReadOnlyPlanPreservesLowerConfiguredTemperature(t *te
 	}
 	tuned := tuneChatOptionsForPlan(opts, plan)
 
-	if tuned.Temperature != 0.1 || tuned.TopP != 1 {
-		t.Fatalf("read-only low sampling = temp %.2f top_p %.2f, want low temp preserved with deterministic top_p", tuned.Temperature, tuned.TopP)
-	}
+	gomega.Expect(tuned.Temperature).To(gomega.Equal(0.1), fmt.Sprintf("read-only low sampling = temp %.2f top_p %.2f, want low temp preserved with deterministic top_p", tuned.Temperature, tuned.TopP))
+	gomega.Expect(tuned.TopP).To(gomega.BeNumerically("==", 1), fmt.Sprintf("read-only low sampling = temp %.2f top_p %.2f, want low temp preserved with deterministic top_p", tuned.Temperature, tuned.TopP))
 
 	opts.Temperature = 0
 	tuned = tuneChatOptionsForPlan(opts, plan)
 
-	if tuned.Temperature != 0 || tuned.TopP != 1 {
-		t.Fatalf("read-only zero sampling = temp %.2f top_p %.2f, want explicit zero temp preserved", tuned.Temperature, tuned.TopP)
-	}
-}
+	gomega.Expect(tuned.Temperature).To(gomega.BeNumerically("==", 0), fmt.Sprintf("read-only zero sampling = temp %.2f top_p %.2f, want explicit zero temp preserved", tuned.Temperature, tuned.TopP))
+	gomega.Expect(tuned.TopP).To(gomega.BeNumerically("==", 1), fmt.Sprintf("read-only zero sampling = temp %.2f top_p %.2f, want explicit zero temp preserved", tuned.Temperature, tuned.TopP))
+})
 
-func TestTuneChatOptionsForPlanExecutePlannerUsesStrictLocalToolMode(t *testing.T) {
+var _ = ginkgo.It("tune chat options for plan execute planner uses strict local tool mode", func() {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		Temperature:      0.6,
@@ -468,28 +469,20 @@ func TestTuneChatOptionsForPlanExecutePlannerUsesStrictLocalToolMode(t *testing.
 	}
 
 	tuned := tuneChatOptionsForPlan(opts, plan)
-	if tuned.Temperature != 0 || tuned.TopP != 1 {
-		t.Fatalf("plan-execute planner sampling = temp %.2f top_p %.2f, want deterministic tool sampling", tuned.Temperature, tuned.TopP)
-	}
+	gomega.Expect(tuned.Temperature).To(gomega.BeNumerically("==", 0), fmt.Sprintf("plan-execute planner sampling = temp %.2f top_p %.2f, want deterministic tool sampling", tuned.Temperature, tuned.TopP))
+	gomega.Expect(tuned.TopP).To(gomega.BeNumerically("==", 1), fmt.Sprintf("plan-execute planner sampling = temp %.2f top_p %.2f, want deterministic tool sampling", tuned.Temperature, tuned.TopP))
 
-	if tuned.EnableThinking == nil || *tuned.EnableThinking {
-		t.Fatalf("plan-execute planner should disable local thinking for strict tool emission, got %#v", tuned.EnableThinking)
-	}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprintf("plan-execute planner should disable local thinking for strict tool emission, got %#v", tuned.EnableThinking))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeFalse(), fmt.Sprintf("plan-execute planner should disable local thinking for strict tool emission, got %#v", tuned.EnableThinking))
 
-	if tuned.PreserveThinking {
-		t.Fatalf("plan-execute planner should strip hidden reasoning from follow-up history")
-	}
+	gomega.Expect(tuned.PreserveThinking).To(gomega.BeFalse(), fmt.Sprintf("plan-execute planner should strip hidden reasoning from follow-up history"))
 
-	if !tuned.ChatTemplateKwargs {
-		t.Fatalf("plan-execute planner should send explicit thinking kwargs")
-	}
+	gomega.Expect(tuned.ChatTemplateKwargs).To(gomega.BeTrue(), fmt.Sprintf("plan-execute planner should send explicit thinking kwargs"))
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("plan-execute planner should not inherit read-only token clamps, got %d", tuned.MaxTokens)
-	}
-}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("plan-execute planner should not inherit read-only token clamps, got %d", tuned.MaxTokens))
+})
 
-func TestTuneChatOptionsForImplementationLaneKeepsConfiguredSampling(t *testing.T) {
+var _ = ginkgo.It("tune chat options for implementation lane keeps configured sampling", func() {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		Temperature:      0.6,
@@ -507,16 +500,15 @@ func TestTuneChatOptionsForImplementationLaneKeepsConfiguredSampling(t *testing.
 	}
 
 	tuned := tuneChatOptionsForPlan(opts, plan)
-	if tuned.Temperature != 0.6 || tuned.TopP != 0.95 {
-		t.Fatalf("implementation sampling changed unexpectedly: temp %.2f top_p %.2f", tuned.Temperature, tuned.TopP)
-	}
+	gomega.Expect(tuned.Temperature).To(gomega.Equal(0.6), fmt.Sprintf("implementation sampling changed unexpectedly: temp %.2f top_p %.2f", tuned.Temperature, tuned.TopP))
+	gomega.Expect(tuned.TopP).To(gomega.Equal(0.95), fmt.Sprintf("implementation sampling changed unexpectedly: temp %.2f top_p %.2f", tuned.Temperature, tuned.TopP))
 
-	if tuned.EnableThinking == nil || !*tuned.EnableThinking || !tuned.PreserveThinking {
-		t.Fatalf("implementation thinking config should stay as configured, got %#v preserve=%t", tuned.EnableThinking, tuned.PreserveThinking)
-	}
-}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprintf("implementation thinking config should stay as configured, got %#v preserve=%t", tuned.EnableThinking, tuned.PreserveThinking))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeTrue(), fmt.Sprintf("implementation thinking config should stay as configured, got %#v preserve=%t", tuned.EnableThinking, tuned.PreserveThinking))
+	gomega.Expect(tuned.PreserveThinking).To(gomega.BeTrue(), fmt.Sprintf("implementation thinking config should stay as configured, got %#v preserve=%t", tuned.EnableThinking, tuned.PreserveThinking))
+})
 
-func TestChatOptionsCanForceThinkingOffForRun(t *testing.T) {
+var _ = ginkgo.It("chat options can force thinking off for run", func() {
 	thinkingOn := true
 	model := &Model{
 		cfg: config.Config{
@@ -526,31 +518,24 @@ func TestChatOptionsCanForceThinkingOffForRun(t *testing.T) {
 				MaxTokens:        8192,
 			},
 		},
-		modelID: "qwen3.6-35b",
+		backendRuntimeState: backendRuntimeState{modelID: "qwen3.6-35b"},
 	}
 
 	model.SetDisableThinkingOverride(true)
 
-	opts := model.chatOptions()
+	opts := chatOptions(model.cfg.Chat, model.modelID, model.modelThinkingFloor, model.disableThinkingOverride)
 
-	if opts.Model != "qwen3.6-35b" {
-		t.Fatalf("model = %q", opts.Model)
-	}
+	gomega.Expect(opts.Model).To(gomega.Equal("qwen3.6-35b"), fmt.Sprintf("model = %q", opts.Model))
 
-	if opts.EnableThinking == nil || *opts.EnableThinking {
-		t.Fatalf("expected thinking disabled, got %#v", opts.EnableThinking)
-	}
+	gomega.Expect(opts.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprintf("expected thinking disabled, got %#v", opts.EnableThinking))
+	gomega.Expect(*opts.EnableThinking).To(gomega.BeFalse(), fmt.Sprintf("expected thinking disabled, got %#v", opts.EnableThinking))
 
-	if opts.PreserveThinking {
-		t.Fatalf("expected preserve thinking off")
-	}
+	gomega.Expect(opts.PreserveThinking).To(gomega.BeFalse(), fmt.Sprintf("expected preserve thinking off"))
 
-	if !opts.ChatTemplateKwargs {
-		t.Fatalf("expected explicit chat template kwargs for thinking override")
-	}
-}
+	gomega.Expect(opts.ChatTemplateKwargs).To(gomega.BeTrue(), fmt.Sprintf("expected explicit chat template kwargs for thinking override"))
+})
 
-func TestChatOptionsSendsTemplateKwargsForConfigThinkingOff(t *testing.T) {
+var _ = ginkgo.It("chat options sends template kwargs for config thinking off", func() {
 	thinkingOff := false
 	model := &Model{
 		cfg: config.Config{
@@ -560,25 +545,20 @@ func TestChatOptionsSendsTemplateKwargsForConfigThinkingOff(t *testing.T) {
 				MaxTokens:        8192,
 			},
 		},
-		modelID: "qwen3.6-35b",
+		backendRuntimeState: backendRuntimeState{modelID: "qwen3.6-35b"},
 	}
 
-	opts := model.chatOptions()
+	opts := chatOptions(model.cfg.Chat, model.modelID, model.modelThinkingFloor, model.disableThinkingOverride)
 
-	if opts.EnableThinking == nil || *opts.EnableThinking {
-		t.Fatalf("expected config thinking disabled, got %#v", opts.EnableThinking)
-	}
+	gomega.Expect(opts.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprintf("expected config thinking disabled, got %#v", opts.EnableThinking))
+	gomega.Expect(*opts.EnableThinking).To(gomega.BeFalse(), fmt.Sprintf("expected config thinking disabled, got %#v", opts.EnableThinking))
 
-	if opts.PreserveThinking != true {
-		t.Fatalf("expected preserve thinking to follow config")
-	}
+	gomega.Expect(opts.PreserveThinking).To(gomega.Equal(true), fmt.Sprintf("expected preserve thinking to follow config"))
 
-	if !opts.ChatTemplateKwargs {
-		t.Fatalf("expected explicit chat template kwargs for config thinking off")
-	}
-}
+	gomega.Expect(opts.ChatTemplateKwargs).To(gomega.BeTrue(), fmt.Sprintf("expected explicit chat template kwargs for config thinking off"))
+})
 
-func TestChatOptionsOmitsTemplateKwargsForConfigThinkingOn(t *testing.T) {
+var _ = ginkgo.It("chat options omits template kwargs for config thinking on", func() {
 	thinkingOn := true
 	model := &Model{
 		cfg: config.Config{
@@ -588,21 +568,18 @@ func TestChatOptionsOmitsTemplateKwargsForConfigThinkingOn(t *testing.T) {
 				MaxTokens:        8192,
 			},
 		},
-		modelID: "qwen3.6-35b",
+		backendRuntimeState: backendRuntimeState{modelID: "qwen3.6-35b"},
 	}
 
-	opts := model.chatOptions()
+	opts := chatOptions(model.cfg.Chat, model.modelID, model.modelThinkingFloor, model.disableThinkingOverride)
 
-	if opts.EnableThinking == nil || !*opts.EnableThinking {
-		t.Fatalf("expected config thinking enabled, got %#v", opts.EnableThinking)
-	}
+	gomega.Expect(opts.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprintf("expected config thinking enabled, got %#v", opts.EnableThinking))
+	gomega.Expect(*opts.EnableThinking).To(gomega.BeTrue(), fmt.Sprintf("expected config thinking enabled, got %#v", opts.EnableThinking))
 
-	if opts.ChatTemplateKwargs {
-		t.Fatalf("did not expect template kwargs for config thinking on")
-	}
-}
+	gomega.Expect(opts.ChatTemplateKwargs).To(gomega.BeFalse(), fmt.Sprintf("did not expect template kwargs for config thinking on"))
+})
 
-func TestApplyMaxTokensOverrideLeavesRouteClampWhenUnset(t *testing.T) {
+var _ = ginkgo.It("apply max tokens override leaves route clamp when unset", func() {
 	opts := llama.ChatOptions{MaxTokens: 8192}
 	plan := promptExecutionPlan{
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -615,12 +592,10 @@ func TestApplyMaxTokensOverrideLeavesRouteClampWhenUnset(t *testing.T) {
 
 	tuned = applyMaxTokensOverride(tuned, 0)
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("expected grounded explanation token floor of 1536 (8192 exceeds floor, should stay 8192), got %d", tuned.MaxTokens)
-	}
-}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("expected grounded explanation token floor of 1536 (8192 exceeds floor, should stay 8192), got %d", tuned.MaxTokens))
+})
 
-func TestApplyMaxTokensOverrideWinsOverRouteClamp(t *testing.T) {
+var _ = ginkgo.It("apply max tokens override wins over route clamp", func() {
 	opts := llama.ChatOptions{MaxTokens: 8192}
 	plan := promptExecutionPlan{
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -633,80 +608,65 @@ func TestApplyMaxTokensOverrideWinsOverRouteClamp(t *testing.T) {
 
 	tuned = applyMaxTokensOverride(tuned, 4096)
 
-	if tuned.MaxTokens != 4096 {
-		t.Fatalf("expected max-token override, got %d", tuned.MaxTokens)
-	}
-}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(4096), fmt.Sprintf("expected max-token override, got %d", tuned.MaxTokens))
+})
 
-func TestDefaultVerificationPlanPrefersGoTestWhenGoModExists(t *testing.T) {
+var _ = ginkgo.It("default verification plan prefers go test when go mod exists", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.22\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write go.mod: %v", err))
 	}
 
 	plan := defaultVerificationPlan(dir)
-	if len(plan) == 0 || plan[0] != "go test ./..." {
-		t.Fatalf("expected go test verification plan, got %#v", plan)
-	}
-}
+	gomega.Expect(len(plan)).To(gomega.Not(gomega.Equal(0)), fmt.Sprintf("expected go test verification plan, got %#v", plan))
+	gomega.Expect(plan[0]).To(gomega.Equal("go test ./..."), fmt.Sprintf("expected go test verification plan, got %#v", plan))
+})
 
-func TestBuildPromptExecutionPlanCapturesMentionedImplementationRefsAsEvidencePaths(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures mentioned implementation refs as evidence paths", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
 	model.SetForcedTaskFamily("review_then_implement")
 
-	plan := model.buildPromptExecutionPlan(context.Background(), "Investigate the routing flow in this codebase and then update docs/frontier-routing-implementation-plan.md with what you find.")
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), "Investigate the routing flow in this codebase and then update docs/frontier-routing-implementation-plan.md with what you find.")
 
-	if plan.route.Family != "review_then_implement" {
-		t.Fatalf("unexpected family: %q", plan.route.Family)
-	}
+	gomega.Expect(plan.route.Family).To(gomega.Equal("review_then_implement"), fmt.Sprintf("unexpected family: %q", plan.route.Family))
 
-	if len(plan.runtimeBrief.TargetRefs) != 0 {
-		t.Fatalf("natural implementation prose should not make mentioned paths target refs, got %#v", plan.runtimeBrief.TargetRefs)
-	}
+	gomega.Expect(len(plan.runtimeBrief.TargetRefs)).To(gomega.Equal(0), fmt.Sprintf("natural implementation prose should not make mentioned paths target refs, got %#v", plan.runtimeBrief.TargetRefs))
 
-	if !slices.Contains(plan.runtimeBrief.EvidencePaths, "docs/frontier-routing-implementation-plan.md") {
-		t.Fatalf("expected mentioned implementation path as evidence, got %#v", plan.runtimeBrief.EvidencePaths)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.EvidencePaths, "docs/frontier-routing-implementation-plan.md")).To(gomega.BeTrue(), fmt.Sprintf("expected mentioned implementation path as evidence, got %#v", plan.runtimeBrief.EvidencePaths))
 
-	if slices.Contains(plan.runtimeBrief.RequiredNext, "gather source evidence before large reads of named target refs") {
-		t.Fatalf("mentioned implementation evidence paths must not trigger target-read gate, got %#v", plan.runtimeBrief.RequiredNext)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredNext, "gather source evidence before large reads of named target refs")).To(gomega.BeFalse(), fmt.Sprintf("mentioned implementation evidence paths must not trigger target-read gate, got %#v", plan.runtimeBrief.RequiredNext))
+})
 
-func TestBuildPromptExecutionPlanHonorsForcedTaskFamily(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan honors forced task family", func() {
 	model := &Model{}
 	model.SetForcedTaskFamily("implementation")
 
-	plan := model.buildPromptExecutionPlan(context.Background(), "Do not run tests; just inspect this.")
-	if plan.route.Family != "implementation" {
-		t.Fatalf("family = %q, want implementation", plan.route.Family)
-	}
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), "Do not run tests; just inspect this.")
+	gomega.Expect(plan.route.Family).To(gomega.Equal("implementation"), fmt.Sprintf("family = %q, want implementation", plan.route.Family))
 
-	if plan.route.InitialLane != "implement" || plan.runtimeBrief.Contract != "implementation_result" {
-		t.Fatalf("unexpected forced implementation plan: %#v brief=%#v", plan.route, plan.runtimeBrief)
-	}
-}
+	gomega.Expect(plan.route.InitialLane).To(gomega.Equal("implement"), fmt.Sprintf("unexpected forced implementation plan: %#v brief=%#v", plan.route, plan.runtimeBrief))
+	gomega.Expect(plan.runtimeBrief.Contract).To(gomega.Equal("implementation_result"), fmt.Sprintf("unexpected forced implementation plan: %#v brief=%#v", plan.route, plan.runtimeBrief))
+})
 
-func TestPlannerOwnedVerificationMarksImplementationBrief(t *testing.T) {
+var _ = ginkgo.It("planner owned verification marks implementation brief", func() {
 	model := &Model{}
 	model.SetForcedTaskFamily("implementation")
 	model.SetPlannerOwnedVerification(true)
 
-	plan := model.buildPromptExecutionPlan(context.Background(), "Modify the file and leave tests to the caller.")
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), "Modify the file and leave tests to the caller.")
 
-	if !slices.Contains(plan.runtimeBrief.Constraints, "planner_owned_verification") {
-		t.Fatalf("expected planner-owned verification constraint, got %#v", plan.runtimeBrief.Constraints)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "planner_owned_verification")).To(gomega.BeTrue(), fmt.Sprintf("expected planner-owned verification constraint, got %#v", plan.runtimeBrief.Constraints))
 
-	if !slices.Contains(plan.runtimeBrief.InvalidActions, "build_or_test_shell") {
-		t.Fatalf("expected build/test shell invalid action, got %#v", plan.runtimeBrief.InvalidActions)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.InvalidActions, "build_or_test_shell")).To(gomega.BeTrue(), fmt.Sprintf("expected build/test shell invalid action, got %#v", plan.runtimeBrief.InvalidActions))
+})
 
-func TestPlanExecutePromptRuntimeBriefDoesNotAdvertiseImplementationActions(t *testing.T) {
+var _ = ginkgo.It("plan execute prompt runtime brief does not advertise implementation actions", func() {
 	model := &Model{}
 	model.SetForcedTaskFamily(agent.PlanThenExecutePlannerTaskFamily)
 	model.SetPlannerOwnedVerification(true)
@@ -726,7 +686,7 @@ oldRuntimeBrief()
 New text:
 newRuntimeBrief()
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 	joinedNext := strings.Join(plan.runtimeBrief.RequiredNext, "\n")
 	joinedPolicy := strings.Join(plan.runtimeBrief.SearchPolicy, "\n")
 	joinedInvalid := strings.Join(plan.runtimeBrief.InvalidActions, "\n")
@@ -737,31 +697,27 @@ newRuntimeBrief()
 		"packet anchors establish scope but existing paths still need source-body obligations satisfied before submit_plan",
 		"do not run build, test, shell, git, or source_sanity in the plan-execute planner phase",
 	} {
-		if !strings.Contains(joinedNext+"\n"+joinedPolicy, want) {
-			t.Fatalf("plan-execute runtime brief missing %q\nnext=%#v\npolicy=%#v", want, plan.runtimeBrief.RequiredNext, plan.runtimeBrief.SearchPolicy)
-		}
+		gomega.Expect(strings.Contains(joinedNext+"\n"+joinedPolicy, want)).To(gomega.BeTrue(), fmt.Sprintf("plan-execute runtime brief missing %q\nnext=%#v\npolicy=%#v", want, plan.runtimeBrief.RequiredNext, plan.runtimeBrief.SearchPolicy))
 	}
 
 	for _, forbidden := range []string{
 		"edit an in-scope required path",
 		"after source edits run source_sanity",
 	} {
-		if strings.Contains(joinedNext, forbidden) {
-			t.Fatalf("plan-execute runtime brief retained implementation action %q\nnext=%#v", forbidden, plan.runtimeBrief.RequiredNext)
-		}
+		gomega.Expect(strings.Contains(joinedNext, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("plan-execute runtime brief retained implementation action %q\nnext=%#v", forbidden, plan.runtimeBrief.RequiredNext))
 	}
 
-	if !strings.Contains(joinedInvalid, "source_sanity_in_planner_phase") {
-		t.Fatalf("plan-execute runtime brief should reject planner-phase source_sanity, got %#v", plan.runtimeBrief.InvalidActions)
-	}
-}
+	gomega.Expect(strings.Contains(joinedInvalid, "source_sanity_in_planner_phase")).To(gomega.BeTrue(), fmt.Sprintf("plan-execute runtime brief should reject planner-phase source_sanity, got %#v", plan.runtimeBrief.InvalidActions))
+})
 
-func TestPlanExecuteRuntimeBriefUsesTypedCandidateScopeInsteadOfPromptSchema(t *testing.T) {
+var _ = ginkgo.It("plan execute runtime brief uses typed candidate scope instead of prompt schema", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
-	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+	execution := newDetachedPromptExecutionSession(context.Background(), model)
+	restore := execution.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
 		ScopeContract: plancontract.NewPlanScopeContract(nil, []string{
 			"internal/surfaces/tui/app/rendering.go",
@@ -781,51 +737,46 @@ allowed_edit_paths:
 The planner schema supports edit entries with old_text and new_text fields.
 Each submit_plan edit may include old_text/new_text copied from source evidence.
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := execution.buildPromptExecutionPlan(context.Background(), prompt)
 
-	if len(plan.runtimeBrief.RequiredEditPaths) != 0 {
-		t.Fatalf("typed plan-execute candidate scope must not become required coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
+	gomega.Expect(len(plan.runtimeBrief.RequiredEditPaths)).To(gomega.Equal(0), fmt.Sprintf("typed plan-execute candidate scope must not become required coverage, got %#v", plan.runtimeBrief.RequiredEditPaths))
 
 	for _, want := range []string{"internal/surfaces/tui/app/rendering.go", "internal/workflows/productworkflow/status.go"} {
-		if !slices.Contains(plan.runtimeBrief.AllowedEditPaths, want) {
-			t.Fatalf("typed plan-execute allowed paths missing %q, got %#v", want, plan.runtimeBrief.AllowedEditPaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.AllowedEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("typed plan-execute allowed paths missing %q, got %#v", want, plan.runtimeBrief.AllowedEditPaths))
 
-		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
-			t.Fatalf("typed plan-execute target refs missing %q, got %#v", want, plan.runtimeBrief.TargetRefs)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.TargetRefs, want)).To(gomega.BeTrue(), fmt.Sprintf("typed plan-execute target refs missing %q, got %#v", want, plan.runtimeBrief.TargetRefs))
 	}
 
-	if slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
-		t.Fatalf("generated schema text must not add exact-anchor constraints in typed plan-execute scope, got %#v", plan.runtimeBrief.Constraints)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation")).To(gomega.BeFalse(), fmt.Sprintf("generated schema text must not add exact-anchor constraints in typed plan-execute scope, got %#v", plan.runtimeBrief.Constraints))
+})
 
-func TestPlanExecuteReviewRepairRuntimeBriefCarriesFailedPhaseObligations(t *testing.T) {
+var _ = ginkgo.It("plan execute review repair runtime brief carries failed phase obligations", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
-	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+	execution := newDetachedPromptExecutionSession(context.Background(), model)
+	restore := execution.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily:                  agent.PlanThenExecuteReviewRepairTaskFamily,
 		ReviewRepairOpenObligations: []string{"verification_failed:go test ./..."},
 	}, io.Discard)
 
 	defer restore()
 
-	plan := model.buildPromptExecutionPlan(context.Background(), "review repair")
-	if plan.runtimeBrief.Readiness == nil || !slices.Contains(plan.runtimeBrief.Readiness.OpenObligations, "verification_failed:go test ./...") {
-		t.Fatalf("review-repair runtime brief should carry failed phase obligations, got %#v", plan.runtimeBrief.Readiness)
-	}
-}
+	plan := execution.buildPromptExecutionPlan(context.Background(), "review repair")
+	gomega.Expect(plan.runtimeBrief.Readiness).To(gomega.Not(gomega.BeNil()), fmt.Sprintf("review-repair runtime brief should carry failed phase obligations, got %#v", plan.runtimeBrief.Readiness))
+	gomega.Expect(plan.runtimeBrief.Readiness.OpenObligations).To(gomega.ContainElement("verification_failed:go test ./..."), fmt.Sprintf("review-repair runtime brief should carry failed phase obligations, got %#v", plan.runtimeBrief.Readiness))
+})
 
-func TestPlanExecuteRuntimeBriefKeepsRealCandidateScopeExactSnippets(t *testing.T) {
+var _ = ginkgo.It("plan execute runtime brief keeps real candidate scope exact snippets", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
-	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+	execution := newDetachedPromptExecutionSession(context.Background(), model)
+	restore := execution.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
 		ScopeContract: plancontract.NewPlanScopeContract(nil, []string{
 			"native/src/feature.cpp",
@@ -849,30 +800,24 @@ bool Hardened() {
 }
 ` + "```" + `
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := execution.buildPromptExecutionPlan(context.Background(), prompt)
 
-	if len(plan.runtimeBrief.RequiredEditPaths) != 0 {
-		t.Fatalf("candidate scope snippets must not promote required paths, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	gomega.Expect(len(plan.runtimeBrief.RequiredEditPaths)).To(gomega.Equal(0), fmt.Sprintf("candidate scope snippets must not promote required paths, got %#v", plan.runtimeBrief.RequiredEditPaths))
+
+	{
+		got := len(plan.runtimeBrief.RequiredEditSnippets)
+		gomega.Expect(got).To(gomega.Equal(1), fmt.Sprintf("expected one candidate-scope exact snippet, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets))
 	}
 
-	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 1 {
-		t.Fatalf("expected one candidate-scope exact snippet, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
-	}
+	gomega.Expect(plan.runtimeBrief.RequiredEditSnippets[0].Path).To(gomega.Equal("native/src/feature.cpp"), fmt.Sprintf("snippet path = %q, want candidate source path", plan.runtimeBrief.RequiredEditSnippets[0].Path))
 
-	if plan.runtimeBrief.RequiredEditSnippets[0].Path != "native/src/feature.cpp" {
-		t.Fatalf("snippet path = %q, want candidate source path", plan.runtimeBrief.RequiredEditSnippets[0].Path)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation")).To(gomega.BeTrue(), fmt.Sprintf("real candidate-scope snippets should keep exact-anchor constraint, got %#v", plan.runtimeBrief.Constraints))
 
-	if !slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
-		t.Fatalf("real candidate-scope snippets should keep exact-anchor constraint, got %#v", plan.runtimeBrief.Constraints)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.SearchPolicy, "preserve_exact_anchor_snippets_in_submit_plan_before_broad_discovery")).To(gomega.BeTrue(), fmt.Sprintf("plan-execute exact snippet should use submit_plan search policy, got %#v", plan.runtimeBrief.SearchPolicy))
+})
 
-	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "preserve_exact_anchor_snippets_in_submit_plan_before_broad_discovery") {
-		t.Fatalf("plan-execute exact snippet should use submit_plan search policy, got %#v", plan.runtimeBrief.SearchPolicy)
-	}
-}
-
-func TestBuildPromptExecutionPlanSkipsClassifierWhenTaskFamilyForced(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan skips classifier when task family forced", func() {
+	t := ginkgo.GinkgoT()
 	var classifierCalls int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -889,17 +834,18 @@ func TestBuildPromptExecutionPlanSkipsClassifierWhenTaskFamilyForced(t *testing.
 	}
 	model.SetForcedTaskFamily("implementation")
 
-	plan := model.buildPromptExecutionPlan(context.Background(), "Run tests and only report results.")
-	if plan.route.Family != "implementation" || plan.route.InitialLane != "implement" {
-		t.Fatalf("unexpected forced implementation plan: %#v", plan.route)
-	}
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), "Run tests and only report results.")
+	gomega.Expect(plan.route.Family).To(gomega.Equal("implementation"), fmt.Sprintf("unexpected forced implementation plan: %#v", plan.route))
+	gomega.Expect(plan.route.InitialLane).To(gomega.Equal("implement"), fmt.Sprintf("unexpected forced implementation plan: %#v", plan.route))
 
-	if got := atomic.LoadInt32(&classifierCalls); got != 0 {
-		t.Fatalf("forced task family should bypass classifier, got %d classifier calls", got)
+	{
+		got := atomic.LoadInt32(&classifierCalls)
+		gomega.Expect(got).To(gomega.BeNumerically("==", 0), fmt.Sprintf("forced task family should bypass classifier, got %d classifier calls", got))
 	}
-}
+})
 
-func TestBuildPromptExecutionPlanSkipsClassifierWhenDisabled(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan skips classifier when disabled", func() {
+	t := ginkgo.GinkgoT()
 	var classifierCalls int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -918,17 +864,17 @@ func TestBuildPromptExecutionPlanSkipsClassifierWhenDisabled(t *testing.T) {
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := model.buildPromptExecutionPlan(context.Background(), "Run the tests and report failures.")
-	if plan.route.Family != "conversation" {
-		t.Fatalf("expected conservative fallback route when classifier disabled, got %#v", plan.route)
-	}
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), "Run the tests and report failures.")
+	gomega.Expect(plan.route.Family).To(gomega.Equal("conversation"), fmt.Sprintf("expected conservative fallback route when classifier disabled, got %#v", plan.route))
 
-	if got := atomic.LoadInt32(&classifierCalls); got != 0 {
-		t.Fatalf("disabled route classifier should not call model, got %d classifier calls", got)
+	{
+		got := atomic.LoadInt32(&classifierCalls)
+		gomega.Expect(got).To(gomega.BeNumerically("==", 0), fmt.Sprintf("disabled route classifier should not call model, got %d classifier calls", got))
 	}
-}
+})
 
-func TestBuildPromptExecutionPlanCapturesRequiredEditPathsAndExactAnchor(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures required edit paths and exact anchor", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -951,32 +897,23 @@ enqueue_loader_job();
 New text:
 enqueue_loader_job_once();
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
 	for _, want := range []string{"native/src/simulation/job_queue.cpp", "scripts/ui/status_panel.gd"} {
-		if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
-			t.Fatalf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths))
 	}
 
-	if !slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
-		t.Fatalf("expected exact-anchor constraint, got %#v", plan.runtimeBrief.Constraints)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation")).To(gomega.BeTrue(), fmt.Sprintf("expected exact-anchor constraint, got %#v", plan.runtimeBrief.Constraints))
 
-	if !slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope") {
-		t.Fatalf("expected required-path write-scope constraint, got %#v", plan.runtimeBrief.Constraints)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope")).To(gomega.BeTrue(), fmt.Sprintf("expected required-path write-scope constraint, got %#v", plan.runtimeBrief.Constraints))
 
-	if !slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
-		t.Fatalf("expected broad-read invalid action, got %#v", plan.runtimeBrief.InvalidActions)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt")).To(gomega.BeTrue(), fmt.Sprintf("expected broad-read invalid action, got %#v", plan.runtimeBrief.InvalidActions))
 
-	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as edit scope; prefer semantic/context/declared project discovery before narrow required-path reads for named edit-safety facts") {
-		t.Fatalf("expected required-path scoped search policy, got %#v", plan.runtimeBrief.SearchPolicy)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as edit scope; prefer semantic/context/declared project discovery before narrow required-path reads for named edit-safety facts")).To(gomega.BeTrue(), fmt.Sprintf("expected required-path scoped search policy, got %#v", plan.runtimeBrief.SearchPolicy))
+})
 
-func TestBuildPromptExecutionPlanCarriesObjectiveIntoRuntimeBrief(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan carries objective into runtime brief", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -984,18 +921,14 @@ func TestBuildPromptExecutionPlanCarriesObjectiveIntoRuntimeBrief(t *testing.T) 
 	model.SetForcedTaskFamily(agent.PlanThenExecutePlannerTaskFamily)
 
 	prompt := "Smoke test without changing files and answer source-satisfied with evidence. Required edit paths: internal/surfaces/tui/app/app.go, internal/runtime/agent/runner.go."
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if plan.runtimeBrief.Objective != prompt {
-		t.Fatalf("runtime brief objective = %q, want original prompt", plan.runtimeBrief.Objective)
-	}
+	gomega.Expect(plan.runtimeBrief.Objective).To(gomega.Equal(prompt), fmt.Sprintf("runtime brief objective = %q, want original prompt", plan.runtimeBrief.Objective))
 
-	if plan.runtimeBrief.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
-		t.Fatalf("expected plan-execute planner family, got %q", plan.runtimeBrief.TaskFamily)
-	}
-}
+	gomega.Expect(plan.runtimeBrief.TaskFamily).To(gomega.Equal(agent.PlanThenExecutePlannerTaskFamily), fmt.Sprintf("expected plan-execute planner family, got %q", plan.runtimeBrief.TaskFamily))
+})
 
-func TestImplementationFollowupRuntimeBriefCarriesPreviousRecommendation(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief carries previous recommendation", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		Contract:             "implementation_result",
@@ -1022,50 +955,32 @@ func TestImplementationFollowupRuntimeBriefCarriesPreviousRecommendation(t *test
 		brief,
 	)
 
-	if !slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation") {
-		t.Fatalf("expected previous recommendation marker, got %#v", got.TargetPacket)
-	}
+	gomega.Expect(slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation")).To(gomega.BeTrue(), fmt.Sprintf("expected previous recommendation marker, got %#v", got.TargetPacket))
 
 	packet := strings.Join(got.TargetPacket, "\n")
 	for _, want := range []string{"FinalCriticID", "SearchPolicyID", "vocabulary.go", "catalog.go"} {
-		if !strings.Contains(packet, want) {
-			t.Fatalf("target packet missing %q:\n%s", want, packet)
-		}
+		gomega.Expect(strings.Contains(packet, want)).To(gomega.BeTrue(), fmt.Sprintf("target packet missing %q:\n%s", want, packet))
 	}
 
-	if !reflect.DeepEqual(got.AllowedTools, baseline.AllowedTools) ||
-		!reflect.DeepEqual(got.ForbiddenTools, baseline.ForbiddenTools) ||
-		!reflect.DeepEqual(got.RequiredTools, baseline.RequiredTools) ||
-		!reflect.DeepEqual(got.ToolManifest, baseline.ToolManifest) ||
-		!reflect.DeepEqual(got.EvidenceCapabilities, baseline.EvidenceCapabilities) {
-
-		t.Fatalf("follow-up context must not mutate tool-control fields:\ngot=%#v\nbaseline=%#v", got, baseline)
-	}
-	if !slices.Contains(got.TargetPacket, "prompt_context:structured_packet") {
-		t.Fatalf("existing target packet entries should be preserved, got %#v", got.TargetPacket)
-	}
+	gomega.Expect(got.AllowedTools).To(gomega.Equal(baseline.AllowedTools), fmt.Sprintf("follow-up context must not mutate tool-control fields:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(got.ForbiddenTools).To(gomega.Equal(baseline.ForbiddenTools), fmt.Sprintf("follow-up context must not mutate tool-control fields:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(got.RequiredTools).To(gomega.Equal(baseline.RequiredTools), fmt.Sprintf("follow-up context must not mutate tool-control fields:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(got.ToolManifest).To(gomega.Equal(baseline.ToolManifest), fmt.Sprintf("follow-up context must not mutate tool-control fields:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(got.EvidenceCapabilities).To(gomega.Equal(baseline.EvidenceCapabilities), fmt.Sprintf("follow-up context must not mutate tool-control fields:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(slices.Contains(got.TargetPacket, "prompt_context:structured_packet")).To(gomega.BeTrue(), fmt.Sprintf("existing target packet entries should be preserved, got %#v", got.TargetPacket))
 	for _, want := range []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"} {
-		if !slices.Contains(got.AllowedEditPaths, want) {
-			t.Fatalf("expected prior recommendation edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths)
-		}
-		if !slices.Contains(got.TargetRefs, want) {
-			t.Fatalf("expected prior recommendation edit path %q in target refs, got %#v", want, got.TargetRefs)
-		}
-		if !strings.Contains(packet, "Editable candidate file from previous assistant recommendation: "+want) {
-			t.Fatalf("target packet should surface editable candidate file %q:\n%s", want, packet)
-		}
+		gomega.Expect(slices.Contains(got.AllowedEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected prior recommendation edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths))
+		gomega.Expect(slices.Contains(got.TargetRefs, want)).To(gomega.BeTrue(), fmt.Sprintf("expected prior recommendation edit path %q in target refs, got %#v", want, got.TargetRefs))
+		gomega.Expect(strings.Contains(packet, "Editable candidate file from previous assistant recommendation: "+want)).To(gomega.BeTrue(), fmt.Sprintf("target packet should surface editable candidate file %q:\n%s", want, packet))
 	}
 
 	rendered := workerruntime.RenderInitialRuntimeBrief(got)
-	if !strings.Contains(rendered, "conversation_context:previous_assistant_recommendation") {
-		t.Fatalf("rendered runtime brief should carry previous recommendation context:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(rendered, "internal/runtime/workerruntime/catalog.go") {
-		t.Fatalf("rendered runtime brief should carry prior recommendation edit scope:\n%s", rendered)
-	}
-}
+	gomega.Expect(strings.Contains(rendered, "conversation_context:previous_assistant_recommendation")).To(gomega.BeTrue(), fmt.Sprintf("rendered runtime brief should carry previous recommendation context:\n%s", rendered))
+	gomega.Expect(rendered).To(gomega.ContainSubstring("internal/runtime/workerruntime/vocabulary.go"), fmt.Sprintf("rendered runtime brief should carry prior recommendation edit scope:\n%s", rendered))
+	gomega.Expect(rendered).To(gomega.ContainSubstring("internal/runtime/workerruntime/catalog.go"), fmt.Sprintf("rendered runtime brief should carry prior recommendation edit scope:\n%s", rendered))
+})
 
-func TestImplementationFollowupRuntimeBriefPromotesRecommendationBackedSourceSurfaces(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief promotes recommendation backed source surfaces", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1100,16 +1015,12 @@ func TestImplementationFollowupRuntimeBriefPromotesRecommendationBackedSourceSur
 		"internal/runtime/workerruntime/catalog.go",
 		"internal/runtime/workerruntime/roles.go",
 	} {
-		if !slices.Contains(got.AllowedEditPaths, want) {
-			t.Fatalf("expected recommendation-backed edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths)
-		}
-		if !slices.Contains(got.TargetRefs, want) {
-			t.Fatalf("expected recommendation-backed target ref %q, got %#v", want, got.TargetRefs)
-		}
+		gomega.Expect(slices.Contains(got.AllowedEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected recommendation-backed edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths))
+		gomega.Expect(slices.Contains(got.TargetRefs, want)).To(gomega.BeTrue(), fmt.Sprintf("expected recommendation-backed target ref %q, got %#v", want, got.TargetRefs))
 	}
-}
+})
 
-func TestImplementationFollowupRuntimeBriefPromotesRecommendationSectionPaths(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief promotes recommendation section paths", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1146,15 +1057,9 @@ func TestImplementationFollowupRuntimeBriefPromotesRecommendationSectionPaths(t 
 		"internal/runtime/workerruntime/vocabulary.go",
 		"internal/runtime/workerruntime/catalog.go",
 	} {
-		if !slices.Contains(got.AllowedEditPaths, want) {
-			t.Fatalf("expected recommendation-section edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths)
-		}
-		if !slices.Contains(got.TargetRefs, want) {
-			t.Fatalf("expected recommendation-section target ref %q, got %#v", want, got.TargetRefs)
-		}
-		if !strings.Contains(packet, "Editable candidate file from previous assistant recommendation: "+want) {
-			t.Fatalf("target packet should surface editable candidate file %q:\n%s", want, packet)
-		}
+		gomega.Expect(slices.Contains(got.AllowedEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected recommendation-section edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths))
+		gomega.Expect(slices.Contains(got.TargetRefs, want)).To(gomega.BeTrue(), fmt.Sprintf("expected recommendation-section target ref %q, got %#v", want, got.TargetRefs))
+		gomega.Expect(strings.Contains(packet, "Editable candidate file from previous assistant recommendation: "+want)).To(gomega.BeTrue(), fmt.Sprintf("target packet should surface editable candidate file %q:\n%s", want, packet))
 	}
 
 	rendered := workerruntime.RenderInitialRuntimeBrief(got)
@@ -1164,13 +1069,11 @@ func TestImplementationFollowupRuntimeBriefPromotesRecommendationSectionPaths(t 
 		"internal/runtime/workerruntime/vocabulary.go",
 		"internal/runtime/workerruntime/catalog.go",
 	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("rendered runtime brief missing %q:\n%s", want, rendered)
-		}
+		gomega.Expect(strings.Contains(rendered, want)).To(gomega.BeTrue(), fmt.Sprintf("rendered runtime brief missing %q:\n%s", want, rendered))
 	}
-}
+})
 
-func TestImplementationFollowupRuntimeBriefPromotesPathOnlyRecommendationSection(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief promotes path only recommendation section", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1202,26 +1105,25 @@ func TestImplementationFollowupRuntimeBriefPromotesPathOnlyRecommendationSection
 		"internal/runtime/workerruntime/vocabulary.go",
 		"internal/runtime/workerruntime/catalog.go",
 	} {
-		if !slices.Contains(got.AllowedEditPaths, want) {
-			t.Fatalf("expected path-only recommendation section to promote %q, got %#v", want, got.AllowedEditPaths)
-		}
+		gomega.Expect(slices.Contains(got.AllowedEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected path-only recommendation section to promote %q, got %#v", want, got.AllowedEditPaths))
 	}
-	if slices.Contains(got.AllowedEditPaths, "internal/runtime/workerruntime/roles.go") {
-		t.Fatalf("recommendation section should stop before later evidence-only path, got %#v", got.AllowedEditPaths)
-	}
-}
+	gomega.Expect(slices.Contains(got.AllowedEditPaths, "internal/runtime/workerruntime/roles.go")).To(gomega.BeFalse(), fmt.Sprintf("recommendation section should stop before later evidence-only path, got %#v", got.AllowedEditPaths))
+})
 
-func TestImplementationFollowupRuntimeBriefDoesNotPromoteMissingRecommendationPath(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief does not promote missing recommendation path", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755); err != nil {
-		t.Fatalf("mkdir fixture: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir fixture: %v", err))
 	}
 	for _, rel := range []string{
 		"internal/runtime/workerruntime/vocabulary.go",
 		"internal/runtime/workerruntime/catalog.go",
 	} {
-		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte("package workerruntime\n"), 0o644); err != nil {
-			t.Fatalf("write fixture %s: %v", rel, err)
+		{
+			err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte("package workerruntime\n"), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write fixture %s: %v", rel, err))
 		}
 	}
 
@@ -1255,20 +1157,14 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteMissingRecommendationPa
 		"internal/runtime/workerruntime/vocabulary.go",
 		"internal/runtime/workerruntime/catalog.go",
 	} {
-		if !slices.Contains(got.AllowedEditPaths, want) {
-			t.Fatalf("expected existing recommendation path %q to become editable, got %#v", want, got.AllowedEditPaths)
-		}
+		gomega.Expect(slices.Contains(got.AllowedEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected existing recommendation path %q to become editable, got %#v", want, got.AllowedEditPaths))
 	}
-	if slices.Contains(got.AllowedEditPaths, "internal/runtime/workerruntime/analysis_agents.go") ||
-		slices.Contains(got.TargetRefs, "internal/runtime/workerruntime/analysis_agents.go") {
-		t.Fatalf("missing prior recommendation path must not become edit authority:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
-	}
-	if !strings.Contains(strings.Join(got.TargetPacket, "\n"), "Unresolved prior recommendation path; not granted as edit scope until verified or explicitly authorized as a new file: internal/runtime/workerruntime/analysis_agents.go") {
-		t.Fatalf("missing prior recommendation should remain visible as unresolved context, got %#v", got.TargetPacket)
-	}
-}
+	gomega.Expect(got.AllowedEditPaths).To(gomega.Not(gomega.ContainElement("internal/runtime/workerruntime/analysis_agents.go")), fmt.Sprintf("missing prior recommendation path must not become edit authority:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(got.TargetRefs).To(gomega.Not(gomega.ContainElement("internal/runtime/workerruntime/analysis_agents.go")), fmt.Sprintf("missing prior recommendation path must not become edit authority:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(strings.Contains(strings.Join(got.TargetPacket, "\n"), "Unresolved prior recommendation path; not granted as edit scope until verified or explicitly authorized as a new file: internal/runtime/workerruntime/analysis_agents.go")).To(gomega.BeTrue(), fmt.Sprintf("missing prior recommendation should remain visible as unresolved context, got %#v", got.TargetPacket))
+})
 
-func TestImplementationFollowupRuntimeBriefDoesNotPromoteEvidenceOnlyPaths(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief does not promote evidence only paths", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1295,15 +1191,12 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteEvidenceOnlyPaths(t *te
 		brief,
 	)
 
-	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
-		t.Fatalf("evidence-only prior paths must not become editable candidates:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
-	}
-	if strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation") {
-		t.Fatalf("evidence-only prior answer should not mark editable candidate files: %#v", got.TargetPacket)
-	}
-}
+	gomega.Expect(len(got.AllowedEditPaths)).To(gomega.Equal(0), fmt.Sprintf("evidence-only prior paths must not become editable candidates:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(len(got.TargetRefs)).To(gomega.Equal(0), fmt.Sprintf("evidence-only prior paths must not become editable candidates:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation")).To(gomega.BeFalse(), fmt.Sprintf("evidence-only prior answer should not mark editable candidate files: %#v", got.TargetPacket))
+})
 
-func TestImplementationFollowupRuntimeBriefDoesNotPromoteRawLiteralEvidenceAsEditScope(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief does not promote raw literal evidence as edit scope", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1328,15 +1221,12 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteRawLiteralEvidenceAsEdi
 		brief,
 	)
 
-	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
-		t.Fatalf("raw-literal evidence must not become editable candidate scope without recommendation language:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
-	}
-	if strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation") {
-		t.Fatalf("raw-literal evidence should not mark editable candidate files: %#v", got.TargetPacket)
-	}
-}
+	gomega.Expect(len(got.AllowedEditPaths)).To(gomega.Equal(0), fmt.Sprintf("raw-literal evidence must not become editable candidate scope without recommendation language:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(len(got.TargetRefs)).To(gomega.Equal(0), fmt.Sprintf("raw-literal evidence must not become editable candidate scope without recommendation language:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation")).To(gomega.BeFalse(), fmt.Sprintf("raw-literal evidence should not mark editable candidate files: %#v", got.TargetPacket))
+})
 
-func TestImplementationFollowupRuntimeBriefDoesNotOpenSectionFromNegativeDestinationProse(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief does not open section from negative destination prose", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1360,12 +1250,11 @@ func TestImplementationFollowupRuntimeBriefDoesNotOpenSectionFromNegativeDestina
 		brief,
 	)
 
-	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
-		t.Fatalf("negative destination prose must not open editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
-	}
-}
+	gomega.Expect(len(got.AllowedEditPaths)).To(gomega.Equal(0), fmt.Sprintf("negative destination prose must not open editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(len(got.TargetRefs)).To(gomega.Equal(0), fmt.Sprintf("negative destination prose must not open editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+})
 
-func TestImplementationFollowupRuntimeBriefDoesNotPromoteSameLineNegativeDestinationPath(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief does not promote same line negative destination path", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1386,12 +1275,11 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteSameLineNegativeDestina
 		brief,
 	)
 
-	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
-		t.Fatalf("same-line negative destination path must not become editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
-	}
-}
+	gomega.Expect(len(got.AllowedEditPaths)).To(gomega.Equal(0), fmt.Sprintf("same-line negative destination path must not become editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+	gomega.Expect(len(got.TargetRefs)).To(gomega.Equal(0), fmt.Sprintf("same-line negative destination path must not become editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs))
+})
 
-func TestImplementationFollowupRuntimeBriefLeavesStandaloneImplementationAlone(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief leaves standalone implementation alone", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:       "implementation",
 		Contract:         "implementation_result",
@@ -1414,12 +1302,10 @@ func TestImplementationFollowupRuntimeBriefLeavesStandaloneImplementationAlone(t
 		brief,
 	)
 
-	if !reflect.DeepEqual(got, baseline) {
-		t.Fatalf("standalone implementation should preserve the normalized baseline:\ngot=%#v\nbaseline=%#v", got, baseline)
-	}
-}
+	gomega.Expect(reflect.DeepEqual(got, baseline)).To(gomega.BeTrue(), fmt.Sprintf("standalone implementation should preserve the normalized baseline:\ngot=%#v\nbaseline=%#v", got, baseline))
+})
 
-func TestImplementationFollowupRuntimeBriefDoesNotWidenExplicitScope(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief does not widen explicit scope", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1441,22 +1327,17 @@ func TestImplementationFollowupRuntimeBriefDoesNotWidenExplicitScope(t *testing.
 		brief,
 	)
 
-	if !slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation") {
-		t.Fatalf("explicit-scope follow-up should still carry prior recommendation packet, got %#v", got.TargetPacket)
-	}
-	if !reflect.DeepEqual(got.AllowedEditPaths, baseline.AllowedEditPaths) || !reflect.DeepEqual(got.TargetRefs, baseline.TargetRefs) {
-		t.Fatalf("current-turn explicit scope must not be widened by prior answer candidates:\ngot=%#v\nbaseline=%#v", got, baseline)
-	}
+	gomega.Expect(slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation")).To(gomega.BeTrue(), fmt.Sprintf("explicit-scope follow-up should still carry prior recommendation packet, got %#v", got.TargetPacket))
+	gomega.Expect(got.AllowedEditPaths).To(gomega.Equal(baseline.AllowedEditPaths), fmt.Sprintf("current-turn explicit scope must not be widened by prior answer candidates:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(got.TargetRefs).To(gomega.Equal(baseline.TargetRefs), fmt.Sprintf("current-turn explicit scope must not be widened by prior answer candidates:\ngot=%#v\nbaseline=%#v", got, baseline))
 	packet := strings.Join(got.TargetPacket, "\n")
-	if strings.Contains(packet, "Editable candidate file from previous assistant recommendation") {
-		t.Fatalf("explicit-scope follow-up should not mark prior paths as editable candidate files: %#v", got.TargetPacket)
+	gomega.Expect(strings.Contains(packet, "Editable candidate file from previous assistant recommendation")).To(gomega.BeFalse(), fmt.Sprintf("explicit-scope follow-up should not mark prior paths as editable candidate files: %#v", got.TargetPacket))
+	if strings.Contains(packet, "Editable candidate file: internal/runtime/workerruntime/vocabulary.go") {
+		gomega.Expect(packet).To(gomega.ContainSubstring("read_only_evidence"), fmt.Sprintf("explicit-scope follow-up must neutralize writable prior-answer target-packet phrasing: %#v", got.TargetPacket))
 	}
-	if strings.Contains(packet, "Editable candidate file: internal/runtime/workerruntime/vocabulary.go") && !strings.Contains(packet, "read_only_evidence") {
-		t.Fatalf("explicit-scope follow-up must neutralize writable prior-answer target-packet phrasing: %#v", got.TargetPacket)
-	}
-}
+})
 
-func TestImplementationFollowupRuntimeBriefIgnoresRecommendedDefaultsFalsePositive(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief ignores recommended defaults false positive", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -1476,12 +1357,10 @@ func TestImplementationFollowupRuntimeBriefIgnoresRecommendedDefaultsFalsePositi
 		brief,
 	)
 
-	if !reflect.DeepEqual(got, baseline) {
-		t.Fatalf("bare recommended wording should not carry unrelated prior answer:\ngot=%#v\nbaseline=%#v", got, baseline)
-	}
-}
+	gomega.Expect(reflect.DeepEqual(got, baseline)).To(gomega.BeTrue(), fmt.Sprintf("bare recommended wording should not carry unrelated prior answer:\ngot=%#v\nbaseline=%#v", got, baseline))
+})
 
-func TestImplementationFollowupRuntimeBriefIgnoresNonImplementationAnaphora(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief ignores non implementation anaphora", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:   "conversation",
 		Contract:     "direct_answer",
@@ -1500,12 +1379,10 @@ func TestImplementationFollowupRuntimeBriefIgnoresNonImplementationAnaphora(t *t
 		brief,
 	)
 
-	if !reflect.DeepEqual(got, baseline) {
-		t.Fatalf("non-implementation route should not carry prior recommendation context:\ngot=%#v\nbaseline=%#v", got, baseline)
-	}
-}
+	gomega.Expect(reflect.DeepEqual(got, baseline)).To(gomega.BeTrue(), fmt.Sprintf("non-implementation route should not carry prior recommendation context:\ngot=%#v\nbaseline=%#v", got, baseline))
+})
 
-func TestImplementationFollowupRuntimeBriefDoesNotPromotePlanExecuteScope(t *testing.T) {
+var _ = ginkgo.It("implementation followup runtime brief does not promote plan execute scope", func() {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:       agent.PlanThenExecutePlannerTaskFamily,
 		Contract:         "implementation_result",
@@ -1527,21 +1404,17 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromotePlanExecuteScope(t *tes
 		brief,
 	)
 
-	if !slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation") {
-		t.Fatalf("plan-execute follow-up should still carry prior recommendation packet, got %#v", got.TargetPacket)
-	}
-	if !reflect.DeepEqual(got.AllowedEditPaths, baseline.AllowedEditPaths) || !reflect.DeepEqual(got.TargetRefs, baseline.TargetRefs) {
-		t.Fatalf("plan-execute follow-up must not promote prior answer paths into planner scope:\ngot=%#v\nbaseline=%#v", got, baseline)
-	}
-	if strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation") {
-		t.Fatalf("plan-execute follow-up should not mark prior paths as editable candidate files: %#v", got.TargetPacket)
-	}
-}
+	gomega.Expect(slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation")).To(gomega.BeTrue(), fmt.Sprintf("plan-execute follow-up should still carry prior recommendation packet, got %#v", got.TargetPacket))
+	gomega.Expect(got.AllowedEditPaths).To(gomega.Equal(baseline.AllowedEditPaths), fmt.Sprintf("plan-execute follow-up must not promote prior answer paths into planner scope:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(got.TargetRefs).To(gomega.Equal(baseline.TargetRefs), fmt.Sprintf("plan-execute follow-up must not promote prior answer paths into planner scope:\ngot=%#v\nbaseline=%#v", got, baseline))
+	gomega.Expect(strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation")).To(gomega.BeFalse(), fmt.Sprintf("plan-execute follow-up should not mark prior paths as editable candidate files: %#v", got.TargetPacket))
+})
 
-func TestPlanExecuteCommandFollowupCarriesContextWithoutPromotingScope(t *testing.T) {
+var _ = ginkgo.It("plan execute command followup carries context without promoting scope", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{cfg: config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}}, agentModeName: "build"}
 	objective := "move these values to the locations you recommended"
-	plan := model.planExecuteCommandExecutionPlan(objective)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).planExecuteCommandExecutionPlan(objective)
 	plan.runtimeBrief.AllowedEditPaths = []string{"internal/runtime/workerruntime/existing.go"}
 	plan.runtimeBrief.TargetRefs = []string{"internal/runtime/workerruntime/existing.go"}
 	history := []llama.ChatMessage{
@@ -1552,65 +1425,68 @@ func TestPlanExecuteCommandFollowupCarriesContextWithoutPromotingScope(t *testin
 
 	got := promptExecutionPlanWithConversationContext(objective, history, plan)
 
-	if !slices.Contains(got.runtimeBrief.TargetPacket, implementationFollowupPriorAssistantMarker) {
-		t.Fatalf("plan-execute follow-up should carry prior recommendation context, got %#v", got.runtimeBrief.TargetPacket)
-	}
-	if !reflect.DeepEqual(got.runtimeBrief.AllowedEditPaths, []string{"internal/runtime/workerruntime/existing.go"}) ||
-		!reflect.DeepEqual(got.runtimeBrief.TargetRefs, []string{"internal/runtime/workerruntime/existing.go"}) {
-		t.Fatalf("plan-execute follow-up must not promote prior answer paths into planner scope: %#v", got.runtimeBrief)
-	}
-}
+	gomega.Expect(slices.Contains(got.runtimeBrief.TargetPacket, implementationFollowupPriorAssistantMarker)).To(gomega.BeTrue(), fmt.Sprintf("plan-execute follow-up should carry prior recommendation context, got %#v", got.runtimeBrief.TargetPacket))
+	gomega.Expect(got.runtimeBrief.AllowedEditPaths).To(gomega.Equal([]string{"internal/runtime/workerruntime/existing.go"}), fmt.Sprintf("plan-execute follow-up must not promote prior answer paths into planner scope: %#v", got.runtimeBrief))
+	gomega.Expect(got.runtimeBrief.TargetRefs).To(gomega.Equal([]string{"internal/runtime/workerruntime/existing.go"}), fmt.Sprintf("plan-execute follow-up must not promote prior answer paths into planner scope: %#v", got.runtimeBrief))
+})
 
-func TestImplementCommandFollowupUsesRawConversationWhenPayloadHistoryIsCompacted(t *testing.T) {
+var _ = ginkgo.It("implement command followup uses raw conversation when payload history is compacted", func() {
+	t := ginkgo.GinkgoT()
 	model := newTestModelWithWorkspace(t)
 	root := model.workspace.Root()
-	if err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755); err != nil {
-		t.Fatalf("mkdir fixture: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir fixture: %v", err))
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"), []byte("package workerruntime\n"), 0o644); err != nil {
-		t.Fatalf("write vocabulary fixture: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"), []byte("package workerruntime\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write vocabulary fixture: %v", err))
 	}
 
 	objective := "move these values to the locations you recommended"
-	plan := model.implementCommandExecutionPlan(objective)
-	model.messages = []llama.ChatMessage{
+	execution := newDetachedPromptExecutionSession(context.Background(), model)
+	plan := execution.implementCommandExecutionPlan(objective)
+	execution.messages = []llama.ChatMessage{
 		{Role: "user", Content: "Where should the catalog constants go?"},
 		{Role: "assistant", Content: "Move them to internal/runtime/workerruntime/vocabulary.go."},
 		{Role: "user", Content: objective},
 	}
 	payloadHistory := []llama.ChatMessage{
-		{Role: "system", Content: model.systemPrompt()},
+		{Role: "system", Content: execution.systemPrompt()},
 		{Role: "user", Content: objective},
 	}
 
-	got := promptExecutionPlanWithConversationContext(objective, model.conversationFollowupHistory(objective, false), plan, root)
+	got := promptExecutionPlanWithConversationContext(objective, execution.conversationFollowupHistory(objective, false), plan, root)
 	lost := promptExecutionPlanWithConversationContext(objective, payloadHistory, plan, root)
 
-	if !slices.Contains(got.runtimeBrief.AllowedEditPaths, "internal/runtime/workerruntime/vocabulary.go") {
-		t.Fatalf("raw conversation follow-up should recover prior recommendation edit path, got %#v", got.runtimeBrief.AllowedEditPaths)
-	}
-	if slices.Contains(lost.runtimeBrief.AllowedEditPaths, "internal/runtime/workerruntime/vocabulary.go") {
-		t.Fatalf("compacted payload-only history should not be the source of prior recommendation recovery: %#v", lost.runtimeBrief.AllowedEditPaths)
-	}
-}
+	gomega.Expect(slices.Contains(got.runtimeBrief.AllowedEditPaths, "internal/runtime/workerruntime/vocabulary.go")).To(gomega.BeTrue(), fmt.Sprintf("raw conversation follow-up should recover prior recommendation edit path, got %#v", got.runtimeBrief.AllowedEditPaths))
+	gomega.Expect(slices.Contains(lost.runtimeBrief.AllowedEditPaths, "internal/runtime/workerruntime/vocabulary.go")).To(gomega.BeFalse(), fmt.Sprintf("compacted payload-only history should not be the source of prior recommendation recovery: %#v", lost.runtimeBrief.AllowedEditPaths))
+})
 
-func TestImplementCommandConversationFollowupProjectsRecommendationIntoRunnerPrompt(t *testing.T) {
+var _ = ginkgo.It("implement command conversation followup projects recommendation into runner prompt", func() {
+	t := ginkgo.GinkgoT()
 	model := newTestModelWithWorkspace(t)
 	root := model.workspace.Root()
-	if err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755); err != nil {
-		t.Fatalf("mkdir fixture: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir fixture: %v", err))
 	}
 	for _, rel := range []string{
 		"internal/runtime/workerruntime/vocabulary.go",
 		"internal/runtime/workerruntime/catalog.go",
 	} {
-		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte("package workerruntime\n"), 0o644); err != nil {
-			t.Fatalf("write fixture %s: %v", rel, err)
+		{
+			err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte("package workerruntime\n"), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write fixture %s: %v", rel, err))
 		}
 	}
 	model.SetNonInteractive(true)
-	client := &scriptedLLMClient{responses: []string{"I will apply the recommended edit scope."}}
-	model.client = client
+	client := &scriptedLLMRecorder{
+		responses:         []string{"I will apply the recommended edit scope."},
+		assertCallCount:   true,
+		expectedCallCount: 2,
+	}
+	model.client = client.Mock(t)
 	model.messages = []llama.ChatMessage{
 		{Role: "user", Content: "Which literal strings in internal/runtime/workerruntime/catalog.go should become enums?"},
 		{Role: "assistant", Content: "The fix: add FinalCriticID and SearchPolicyID constants in internal/runtime/workerruntime/vocabulary.go, then replace catalog.go literals."},
@@ -1618,9 +1494,7 @@ func TestImplementCommandConversationFollowupProjectsRecommendationIntoRunnerPro
 
 	_, _ = model.RunPromptOnce(context.Background(), "/implement move these values to the locations you recommended")
 
-	if len(client.messages) == 0 {
-		t.Fatal("expected implement command to reach the runner model call")
-	}
+	gomega.Expect(len(client.messages)).NotTo(gomega.Equal(0), fmt.Sprint("expected implement command to reach the runner model call"))
 
 	firstRequest := renderMessagesForRuntimeBriefAssertion(client.messages[0])
 	for _, want := range []string{
@@ -1632,11 +1506,9 @@ func TestImplementCommandConversationFollowupProjectsRecommendationIntoRunnerPro
 		"target_refs",
 		"allowed_edit_paths",
 	} {
-		if !strings.Contains(firstRequest, want) {
-			t.Fatalf("runner prompt missing %q:\n%s", want, firstRequest)
-		}
+		gomega.Expect(strings.Contains(firstRequest, want)).To(gomega.BeTrue(), fmt.Sprintf("runner prompt missing %q:\n%s", want, firstRequest))
 	}
-}
+})
 
 func renderMessagesForRuntimeBriefAssertion(messages []llama.ChatMessage) string {
 	var b strings.Builder
@@ -1650,7 +1522,8 @@ func renderMessagesForRuntimeBriefAssertion(messages []llama.ChatMessage) string
 	return b.String()
 }
 
-func TestPlanExecutePromptRunnerDirectQuestionUsesConversationOnlyBrief(t *testing.T) {
+var _ = ginkgo.It("plan execute prompt runner direct question uses conversation only brief", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	model := &Model{
 		cfg: config.Config{
@@ -1659,23 +1532,22 @@ func TestPlanExecutePromptRunnerDirectQuestionUsesConversationOnlyBrief(t *testi
 		},
 		agentModeName: "build",
 	}
-	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+	execution := newDetachedPromptExecutionSession(context.Background(), model)
+	restore := execution.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily: "direct_question",
 	}, io.Discard)
 
 	defer restore()
 
-	plan := model.buildPromptExecutionPlan(context.Background(), "answer directly")
-	if plan.runtimeBrief.PermissionProfile != "conversation_only" {
-		t.Fatalf("permission profile = %q, want conversation_only", plan.runtimeBrief.PermissionProfile)
-	}
+	plan := execution.buildPromptExecutionPlan(context.Background(), "answer directly")
+	gomega.Expect(plan.runtimeBrief.PermissionProfile).To(gomega.Equal("conversation_only"), fmt.Sprintf("permission profile = %q, want conversation_only", plan.runtimeBrief.PermissionProfile))
 
-	if len(plan.runtimeBrief.AllowedTools) != 0 || len(plan.runtimeBrief.RequiredEvidence) != 0 {
-		t.Fatalf("direct-question prompt runner should not advertise workspace evidence gates, brief=%#v", plan.runtimeBrief)
-	}
-}
+	gomega.Expect(len(plan.runtimeBrief.AllowedTools)).To(gomega.Equal(0), fmt.Sprintf("direct-question prompt runner should not advertise workspace evidence gates, brief=%#v", plan.runtimeBrief))
+	gomega.Expect(len(plan.runtimeBrief.RequiredEvidence)).To(gomega.Equal(0), fmt.Sprintf("direct-question prompt runner should not advertise workspace evidence gates, brief=%#v", plan.runtimeBrief))
+})
 
-func TestBuildPromptExecutionPlanScopesWrappedPlanExecuteObjective(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan scopes wrapped plan execute objective", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -1694,18 +1566,16 @@ required_edit_paths:
 - internal/surfaces/tui/app/app.go
 - internal/runtime/agent/runner.go
 <!-- IDIOM:BRIEF-BODY-END -->`
-	plan := model.buildPromptExecutionPlan(context.Background(), wrapped)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), wrapped)
 
-	if strings.Contains(plan.runtimeBrief.Objective, "planner addendum text") {
-		t.Fatalf("runtime brief objective leaked planner addendum: %q", plan.runtimeBrief.Objective)
-	}
+	gomega.Expect(strings.Contains(plan.runtimeBrief.Objective, "planner addendum text")).To(gomega.BeFalse(), fmt.Sprintf("runtime brief objective leaked planner addendum: %q", plan.runtimeBrief.Objective))
 
-	if !strings.Contains(plan.runtimeBrief.Objective, "source-satisfied") || !strings.Contains(plan.runtimeBrief.Objective, "without changing files") {
-		t.Fatalf("runtime brief objective lost source-satisfied no-write intent: %q", plan.runtimeBrief.Objective)
-	}
-}
+	gomega.Expect(plan.runtimeBrief.Objective).To(gomega.ContainSubstring("source-satisfied"), fmt.Sprintf("runtime brief objective lost source-satisfied no-write intent: %q", plan.runtimeBrief.Objective))
+	gomega.Expect(plan.runtimeBrief.Objective).To(gomega.ContainSubstring("without changing files"), fmt.Sprintf("runtime brief objective lost source-satisfied no-write intent: %q", plan.runtimeBrief.Objective))
+})
 
-func TestRequiredEditPathsTableDoesNotCaptureProseSlashTokens(t *testing.T) {
+var _ = ginkgo.It("required edit paths table does not capture prose slash tokens", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -1722,20 +1592,17 @@ func TestRequiredEditPathsTableDoesNotCaptureProseSlashTokens(t *testing.T) {
 | native/tests/test_funeral.cpp | Add STRANGER, BEST_FRIEND, and RIVAL/NEMESIS unburied penalty coverage |
 | native/src/simulation/creatures/social_welfare.cpp | Scale the emitted mood value |
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
 	for _, want := range []string{"native/tests/test_funeral.cpp", "native/src/simulation/creatures/social_welfare.cpp"} {
-		if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
-			t.Fatalf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths))
 	}
 
-	if slices.Contains(plan.runtimeBrief.RequiredEditPaths, "RIVAL/NEMESIS") {
-		t.Fatalf("slash-shaped prose leaked into required edit paths: %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "RIVAL/NEMESIS")).To(gomega.BeFalse(), fmt.Sprintf("slash-shaped prose leaked into required edit paths: %#v", plan.runtimeBrief.RequiredEditPaths))
+})
 
-func TestBuildPromptExecutionPlanDoesNotTreatGenericAnchorGuidanceAsExactAnchor(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan does not treat generic anchor guidance as exact anchor", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -1767,26 +1634,19 @@ TEST_CASE("existing pattern") {
 
 Add a new test that wires the existing systems together using local APIs.
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_track_system.cpp") {
-		t.Fatalf("expected required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_track_system.cpp")).To(gomega.BeTrue(), fmt.Sprintf("expected required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths))
 
-	if slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
-		t.Fatalf("generic launcher guidance and verified-state snippets should not force exact-anchor write-first: %#v", plan.runtimeBrief.Constraints)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation")).To(gomega.BeFalse(), fmt.Sprintf("generic launcher guidance and verified-state snippets should not force exact-anchor write-first: %#v", plan.runtimeBrief.Constraints))
 
-	if slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
-		t.Fatalf("non-exact add-test brief should allow bounded prewrite reads, got %#v", plan.runtimeBrief.InvalidActions)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt")).To(gomega.BeFalse(), fmt.Sprintf("non-exact add-test brief should allow bounded prewrite reads, got %#v", plan.runtimeBrief.InvalidActions))
 
-	if !slices.Contains(plan.runtimeBrief.RequiredNext, "use semantic/context/declared project discovery or narrow reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>") {
-		t.Fatalf("expected non-exact required-path packet to bias toward discovery/read/edit/block after bounded probes, got %#v", plan.runtimeBrief.RequiredNext)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredNext, "use semantic/context/declared project discovery or narrow reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>")).To(gomega.BeTrue(), fmt.Sprintf("expected non-exact required-path packet to bias toward discovery/read/edit/block after bounded probes, got %#v", plan.runtimeBrief.RequiredNext))
+})
 
-func TestBuildPromptExecutionPlanCapturesRichContextPacketEvidence(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures rich context packet evidence", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -1827,7 +1687,7 @@ TEST_CASE("routes connect depots") {}
 TEST_CASE("routes reject disconnected depots") {}
 ` + "```" + `
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
 	for _, want := range []string{
 		"prompt_context:context_packet",
@@ -1835,9 +1695,7 @@ TEST_CASE("routes reject disconnected depots") {}
 		"prompt_context:required_edits",
 		"prompt_context:structured_packet",
 	} {
-		if !slices.Contains(plan.runtimeBrief.TargetPacket, want) {
-			t.Fatalf("expected target packet marker %q, got %#v", want, plan.runtimeBrief.TargetPacket)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.TargetPacket, want)).To(gomega.BeTrue(), fmt.Sprintf("expected target packet marker %q, got %#v", want, plan.runtimeBrief.TargetPacket))
 	}
 
 	for _, want := range []string{
@@ -1845,17 +1703,14 @@ TEST_CASE("routes reject disconnected depots") {}
 		"native/src/simulation/transport/route_graph.h",
 		"native/tests/test_transport_system.cpp",
 	} {
-		if !slices.Contains(plan.runtimeBrief.EvidencePaths, want) {
-			t.Fatalf("expected context evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.EvidencePaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected context evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths))
 	}
 
-	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp") {
-		t.Fatalf("expected required edit path from rich packet prompt, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp")).To(gomega.BeTrue(), fmt.Sprintf("expected required edit path from rich packet prompt, got %#v", plan.runtimeBrief.RequiredEditPaths))
+})
 
-func TestBuildPromptExecutionPlanCapturesColonStyleContextPacketEvidence(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures colon style context packet evidence", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -1870,27 +1725,22 @@ Context Packet:
 Files To Modify:
 - native/tests/test_transport_system.cpp
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if !slices.Contains(plan.runtimeBrief.TargetPacket, "prompt_context:context_packet") {
-		t.Fatalf("expected colon-style context packet marker, got %#v", plan.runtimeBrief.TargetPacket)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.TargetPacket, "prompt_context:context_packet")).To(gomega.BeTrue(), fmt.Sprintf("expected colon-style context packet marker, got %#v", plan.runtimeBrief.TargetPacket))
 
 	for _, want := range []string{
 		"native/src/simulation/transport/route_graph.cpp",
 		"native/src/simulation/transport/route_graph.h",
 	} {
-		if !slices.Contains(plan.runtimeBrief.EvidencePaths, want) {
-			t.Fatalf("expected colon-style context evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.EvidencePaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected colon-style context evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths))
 	}
 
-	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp") {
-		t.Fatalf("expected colon-style required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp")).To(gomega.BeTrue(), fmt.Sprintf("expected colon-style required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths))
+})
 
-func TestBuildPromptExecutionPlanCapturesRequiredReadsAsEvidence(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures required reads as evidence", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -1913,102 +1763,92 @@ func TestBuildPromptExecutionPlanCapturesRequiredReadsAsEvidence(t *testing.T) {
 		"|------|--------|",
 		"| `.idiom/refine/example/iter-2/draft.md` | NEW FILE |",
 	}, "\n")
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
 	for _, want := range []string{
 		".idiom/refine/example/iter-1/draft.md",
 		".idiom/refine/example/iter-1/review.md",
 		"native/src/simulation/ai/appraisal.cpp",
 	} {
-		if !slices.Contains(plan.runtimeBrief.EvidencePaths, want) {
-			t.Fatalf("expected required-read evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.EvidencePaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected required-read evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths))
 	}
 
-	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, ".idiom/refine/example/iter-2/draft.md") {
-		t.Fatalf("expected output draft as required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, ".idiom/refine/example/iter-2/draft.md")).To(gomega.BeTrue(), fmt.Sprintf("expected output draft as required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths))
+})
 
-func TestPromptStructuredPacketMarkerRequiresPacketShape(t *testing.T) {
-	if plancontract.PromptHasStructuredPacketMarker(`{"evidence":"one incidental field"}`) {
-		t.Fatal("single generic evidence field should not be enough to mark a structured packet")
-	}
+var _ = ginkgo.It("prompt structured packet marker requires packet shape", func() {
+	gomega.Expect(plancontract.PromptHasStructuredPacketMarker(`{"evidence":"one incidental field"}`)).To(gomega.BeFalse(), fmt.Sprint("single generic evidence field should not be enough to mark a structured packet"))
 
-	if plancontract.PromptHasStructuredPacketMarker(`Document how planning_packet_v2 is named in prompts.`) {
-		t.Fatal("bare planning_packet prose should not mark a structured packet")
-	}
+	gomega.Expect(plancontract.PromptHasStructuredPacketMarker(`Document how planning_packet_v2 is named in prompts.`)).To(gomega.BeFalse(), fmt.Sprint("bare planning_packet prose should not mark a structured packet"))
 
-	if plancontract.PromptHasStructuredPacketMarker(`Document the "schema" for planning_packet_v2 prompts.`) {
-		t.Fatal("planning_packet prose plus quoted schema should not mark a structured packet")
-	}
+	gomega.Expect(plancontract.PromptHasStructuredPacketMarker(`Document the "schema" for planning_packet_v2 prompts.`)).To(gomega.BeFalse(), fmt.Sprint("planning_packet prose plus quoted schema should not mark a structured packet"))
 
-	if !plancontract.PromptHasStructuredPacketMarker(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`) {
-		t.Fatal("candidate scope plus evidence should mark a structured packet")
-	}
-}
+	gomega.Expect(plancontract.PromptHasStructuredPacketMarker(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`)).To(gomega.BeTrue(), fmt.Sprint("candidate scope plus evidence should mark a structured packet"))
+})
 
-func TestPromptContextPacketProjectionPrefersStructuredPacket(t *testing.T) {
+var _ = ginkgo.It("prompt context packet projection prefers structured packet", func() {
 	projection := plancontract.PromptContextPacketProjectionFromPrompt(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`)
-	if !projection.StructuredPacket || !projection.Dispatchable || projection.LegacyHeadingFallback {
-		t.Fatalf("structured packet should be typed dispatchable without heading fallback: %#v", projection)
-	}
-	if !slices.Contains(projection.Markers, "prompt_context:structured_packet") {
-		t.Fatalf("structured projection missing marker: %#v", projection)
-	}
-}
+	gomega.Expect(projection.StructuredPacket).To(gomega.BeTrue(), fmt.Sprintf("structured packet should be typed dispatchable without heading fallback: %#v", projection))
+	gomega.Expect(projection.Dispatchable).To(gomega.BeTrue(), fmt.Sprintf("structured packet should be typed dispatchable without heading fallback: %#v", projection))
+	gomega.Expect(projection.LegacyHeadingFallback).To(gomega.BeFalse(), fmt.Sprintf("structured packet should be typed dispatchable without heading fallback: %#v", projection))
+	gomega.Expect(slices.Contains(projection.Markers, "prompt_context:structured_packet")).To(gomega.BeTrue(), fmt.Sprintf("structured projection missing marker: %#v", projection))
+})
 
-func TestPromptContextPacketProjectionMarksHeadingScanAsCompatibilityFallback(t *testing.T) {
+var _ = ginkgo.It("prompt context packet projection marks heading scan as compatibility fallback", func() {
 	projection := plancontract.PromptContextPacketProjectionFromPrompt("## Context Pack\n\n- internal/surfaces/tui/app/prompt_routing.go\n")
-	if projection.StructuredPacket || !projection.LegacyHeadingFallback || projection.State != "dispatchable" || !projection.Dispatchable {
-		t.Fatalf("heading context should be compatibility fallback, got %#v", projection)
-	}
-}
+	gomega.Expect(projection.StructuredPacket).To(gomega.BeFalse(), fmt.Sprintf("heading context should be compatibility fallback, got %#v", projection))
+	gomega.Expect(projection.LegacyHeadingFallback).To(gomega.BeTrue(), fmt.Sprintf("heading context should be compatibility fallback, got %#v", projection))
+	gomega.Expect(projection.State).To(gomega.Equal(workflowstate.StateDispatchable), fmt.Sprintf("heading context should be compatibility fallback, got %#v", projection))
+	gomega.Expect(projection.Dispatchable).To(gomega.BeTrue(), fmt.Sprintf("heading context should be compatibility fallback, got %#v", projection))
+})
 
-func TestPromptContextPacketProjectionRequiresStructuredOrLegacyEvidence(t *testing.T) {
+var _ = ginkgo.It("prompt context packet projection requires structured or legacy evidence", func() {
 	projection := plancontract.PromptContextPacketProjectionFromPrompt("Explain the prompt router without any attached packet.")
-	if projection.StructuredPacket || projection.LegacyHeadingFallback || projection.Dispatchable || projection.State != workflowstate.StateTerminal {
-		t.Fatalf("plain prompt should not be context-packet dispatchable: %#v", projection)
-	}
-	if projection.Reason != "missing_structured_packet_or_legacy_heading" {
-		t.Fatalf("unexpected projection reason: %#v", projection)
-	}
-}
+	gomega.Expect(projection.StructuredPacket).To(gomega.BeFalse(), fmt.Sprintf("plain prompt should not be context-packet dispatchable: %#v", projection))
+	gomega.Expect(projection.LegacyHeadingFallback).To(gomega.BeFalse(), fmt.Sprintf("plain prompt should not be context-packet dispatchable: %#v", projection))
+	gomega.Expect(projection.Dispatchable).To(gomega.BeFalse(), fmt.Sprintf("plain prompt should not be context-packet dispatchable: %#v", projection))
+	gomega.Expect(projection.State).To(gomega.Equal(workflowstate.StateTerminal), fmt.Sprintf("plain prompt should not be context-packet dispatchable: %#v", projection))
+	gomega.Expect(projection.Reason).To(gomega.Equal("missing_structured_packet_or_legacy_heading"), fmt.Sprintf("unexpected projection reason: %#v", projection))
+})
 
-func TestPromptContextPacketMarkerRequiresSectionContent(t *testing.T) {
+var _ = ginkgo.It("prompt context packet marker requires section content", func() {
 	prompt := `
 Context Packet:
 
 Required Behavior:
 - Explain the route.
 `
-	if markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt); slices.Contains(markers, "prompt_context:context_packet") {
-		t.Fatalf("empty context packet heading should not create marker, got %#v", markers)
+	{
+		markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt)
+		gomega.Expect(slices.Contains(markers, "prompt_context:context_packet")).To(gomega.BeFalse(), fmt.Sprintf("empty context packet heading should not create marker, got %#v", markers))
 	}
-}
+})
 
-func TestPromptContextPacketMarkerAcceptsTrailingColonPathContent(t *testing.T) {
+var _ = ginkgo.It("prompt context packet marker accepts trailing colon path content", func() {
 	prompt := `
 Context Packet:
 - internal/surfaces/tui/app/prompt_routing.go:
 `
-	if markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
-		t.Fatalf("path content ending in colon should create context packet marker, got %#v", markers)
+	{
+		markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt)
+		gomega.Expect(slices.Contains(markers, "prompt_context:context_packet")).To(gomega.BeTrue(), fmt.Sprintf("path content ending in colon should create context packet marker, got %#v", markers))
 	}
-}
+})
 
-func TestPromptContextPacketMarkerAcceptsNestedEvidenceSection(t *testing.T) {
+var _ = ginkgo.It("prompt context packet marker accepts nested evidence section", func() {
 	prompt := `
 Context Packet:
 Evidence:
 - internal/surfaces/tui/app/prompt_routing.go
 `
-	if markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
-		t.Fatalf("nested evidence should create context packet marker, got %#v", markers)
+	{
+		markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt)
+		gomega.Expect(slices.Contains(markers, "prompt_context:context_packet")).To(gomega.BeTrue(), fmt.Sprintf("nested evidence should create context packet marker, got %#v", markers))
 	}
-}
+})
 
-func TestBuildPromptExecutionPlanCapturesStructuredRequiredEditPaths(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures structured required edit paths", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2021,29 +1861,26 @@ func TestBuildPromptExecutionPlanCapturesStructuredRequiredEditPaths(t *testing.
   "candidate_scope": [{"path": "native/src/simulation/transport/route_graph.cpp"}],
   "evidence": [{"source": "native/src/simulation/transport/route_graph.h"}]
 }`
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if !slices.Contains(plan.runtimeBrief.TargetPacket, "prompt_context:structured_packet") {
-		t.Fatalf("expected structured packet marker, got %#v", plan.runtimeBrief.TargetPacket)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.TargetPacket, "prompt_context:structured_packet")).To(gomega.BeTrue(), fmt.Sprintf("expected structured packet marker, got %#v", plan.runtimeBrief.TargetPacket))
 
-	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp") {
-		t.Fatalf("expected structured required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp")).To(gomega.BeTrue(), fmt.Sprintf("expected structured required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths))
+})
 
-func TestStructuredRequiredEditPathsIgnoresNegativeAllowlistKeys(t *testing.T) {
+var _ = ginkgo.It("structured required edit paths ignores negative allowlist keys", func() {
 	prompt := `{
   "not_allowed_files": ["native/src/secret.cpp"],
   "candidate_scope": [{"path": "native/src/simulation/transport/route_graph.cpp"}],
   "evidence": [{"source": "native/src/simulation/transport/route_graph.h"}]
 }`
-	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
-		t.Fatalf("negative allowlist-like keys should not define required edit paths, got %#v", got)
+	{
+		got := plancontract.RequiredEditPathsFromPrompt(prompt)
+		gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("negative allowlist-like keys should not define required edit paths, got %#v", got))
 	}
-}
+})
 
-func TestStructuredAllowedEditPathsCapturesYAMLStyleWriteScope(t *testing.T) {
+var _ = ginkgo.It("structured allowed edit paths captures yaml style write scope", func() {
 	prompt := `
 Write Scope:
 - native/tests/test_transport_system.cpp
@@ -2053,52 +1890,45 @@ Evidence:
 `
 	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
-	if len(got) != 0 {
-		t.Fatalf("write_scope is candidate scope, not required edit coverage, got %#v", got)
-	}
+	gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("write_scope is candidate scope, not required edit coverage, got %#v", got))
 
 	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
-	if len(allowed) != 1 || allowed[0] != "native/tests/test_transport_system.cpp" {
-		t.Fatalf("expected YAML-style write_scope candidate path only, got %#v", allowed)
-	}
-}
+	gomega.Expect(len(allowed)).To(gomega.Equal(1), fmt.Sprintf("expected YAML-style write_scope candidate path only, got %#v", allowed))
+	gomega.Expect(allowed[0]).To(gomega.Equal("native/tests/test_transport_system.cpp"), fmt.Sprintf("expected YAML-style write_scope candidate path only, got %#v", allowed))
+})
 
-func TestEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
+var _ = ginkgo.It("editable files heading is candidate scope only", func() {
 	prompt := `
 Editable Files:
 - native/tests/test_transport_system.cpp
 - native/src/simulation/transport/route_graph.cpp
 `
-	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
-		t.Fatalf("editable files must not define required edit coverage, got %#v", got)
+	{
+		got := plancontract.RequiredEditPathsFromPrompt(prompt)
+		gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("editable files must not define required edit coverage, got %#v", got))
 	}
 
 	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"native/tests/test_transport_system.cpp", "native/src/simulation/transport/route_graph.cpp"} {
-		if !slices.Contains(allowed, want) {
-			t.Fatalf("editable files missing allowed path %q, got %#v", want, allowed)
-		}
+		gomega.Expect(slices.Contains(allowed, want)).To(gomega.BeTrue(), fmt.Sprintf("editable files missing allowed path %q, got %#v", want, allowed))
 	}
-}
+})
 
-func TestStructuredRequiredEditPathsInlineScalarDoesNotBleed(t *testing.T) {
+var _ = ginkgo.It("structured required edit paths inline scalar does not bleed", func() {
 	prompt := `
 write_scope: native/tests/test_transport_system.cpp
 evidence: native/src/simulation/transport/route_graph.cpp
 `
 	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
-	if len(got) != 0 {
-		t.Fatalf("write_scope is candidate scope, not required edit coverage, got %#v", got)
-	}
+	gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("write_scope is candidate scope, not required edit coverage, got %#v", got))
 
 	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
-	if len(allowed) != 1 || allowed[0] != "native/tests/test_transport_system.cpp" {
-		t.Fatalf("expected inline write_scope candidate path only, got %#v", allowed)
-	}
-}
+	gomega.Expect(len(allowed)).To(gomega.Equal(1), fmt.Sprintf("expected inline write_scope candidate path only, got %#v", allowed))
+	gomega.Expect(allowed[0]).To(gomega.Equal("native/tests/test_transport_system.cpp"), fmt.Sprintf("expected inline write_scope candidate path only, got %#v", allowed))
+})
 
-func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
+var _ = ginkgo.It("required edit paths ignore allowed edit paths", func() {
 	prompt := `
 ## Allowed Edit Paths
 
@@ -2109,8 +1939,9 @@ func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
 
 - docs/design.md
 `
-	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
-		t.Fatalf("allowed edit paths must not define required coverage, got %#v", got)
+	{
+		got := plancontract.RequiredEditPathsFromPrompt(prompt)
+		gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("allowed edit paths must not define required coverage, got %#v", got))
 	}
 
 	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
@@ -2118,28 +1949,23 @@ func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
 		"native/tests/test_transport_system.cpp",
 		"native/src/simulation/transport/route_graph.cpp",
 	} {
-		if !slices.Contains(allowed, want) {
-			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
-		}
+		gomega.Expect(slices.Contains(allowed, want)).To(gomega.BeTrue(), fmt.Sprintf("missing allowed path %q, got %#v", want, allowed))
 	}
 
-	if slices.Contains(allowed, "docs/design.md") {
-		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
-	}
-}
+	gomega.Expect(slices.Contains(allowed, "docs/design.md")).To(gomega.BeFalse(), fmt.Sprintf("evidence path must not bleed into allowed edit paths, got %#v", allowed))
+})
 
-func TestRequiredEditPathsCaptureInlineColonList(t *testing.T) {
+var _ = ginkgo.It("required edit paths capture inline colon list", func() {
 	prompt := "Implement the change. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
 	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
-		if !slices.Contains(got, want) {
-			t.Fatalf("missing required path %q, got %#v", want, got)
-		}
+		gomega.Expect(slices.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("missing required path %q, got %#v", want, got))
 	}
-}
+})
 
-func TestImplementationAtomPromptPreservesRequiredEditPathsAfterDesignDocReference(t *testing.T) {
+var _ = ginkgo.It("implementation atom prompt preserves required edit paths after design doc reference", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2161,27 +1987,21 @@ Acceptance:
 - Add or update focused tests that fail before the change.
 - Preserve the current durable product workflow fixture pass path.`
 
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 	want := []string{
 		"internal/workflows/productworkflow/coverage_gate.go",
 		"internal/workflows/productworkflow/coverage_gate_test.go",
 		"cmd/idiom/product_workflow_test.go",
 	}
 
-	if !slices.Equal(plan.runtimeBrief.RequiredEditPaths, want) {
-		t.Fatalf("required edit paths = %#v, want %#v", plan.runtimeBrief.RequiredEditPaths, want)
-	}
+	gomega.Expect(slices.Equal(plan.runtimeBrief.RequiredEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("required edit paths = %#v, want %#v", plan.runtimeBrief.RequiredEditPaths, want))
 
-	if slices.Contains(plan.runtimeBrief.RequiredEditPaths, "docs/design-tdd-coverage.md") {
-		t.Fatalf("design doc evidence must not become required edit scope: %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "docs/design-tdd-coverage.md")).To(gomega.BeFalse(), fmt.Sprintf("design doc evidence must not become required edit scope: %#v", plan.runtimeBrief.RequiredEditPaths))
 
-	if !slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope") {
-		t.Fatalf("expected required-path write scope constraint, got %#v", plan.runtimeBrief.Constraints)
-	}
-}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope")).To(gomega.BeTrue(), fmt.Sprintf("expected required-path write scope constraint, got %#v", plan.runtimeBrief.Constraints))
+})
 
-func TestRequiredEditPathsRejectDirectoryLikeObligations(t *testing.T) {
+var _ = ginkgo.It("required edit paths reject directory like obligations", func() {
 	prompt := `
 ## Files To Modify
 
@@ -2192,63 +2012,54 @@ func TestRequiredEditPathsRejectDirectoryLikeObligations(t *testing.T) {
 	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
 
-	if len(got) != len(want) {
-		t.Fatalf("expected file-only required paths %#v, got %#v", want, got)
-	}
+	gomega.Expect(len(got)).To(gomega.Equal(len(want)), fmt.Sprintf("expected file-only required paths %#v, got %#v", want, got))
 
 	for _, path := range want {
-		if !slices.Contains(got, path) {
-			t.Fatalf("missing required path %q, got %#v", path, got)
-		}
+		gomega.Expect(slices.Contains(got, path)).To(gomega.BeTrue(), fmt.Sprintf("missing required path %q, got %#v", path, got))
 	}
 
-	if slices.Contains(got, "cmd/idiom") {
-		t.Fatalf("directory-like target must not become an exact required edit path: %#v", got)
-	}
-}
+	gomega.Expect(slices.Contains(got, "cmd/idiom")).To(gomega.BeFalse(), fmt.Sprintf("directory-like target must not become an exact required edit path: %#v", got))
+})
 
-func TestStructuredRequiredEditPathsIgnoreAllowedKeys(t *testing.T) {
+var _ = ginkgo.It("structured required edit paths ignore allowed keys", func() {
 	prompt := `{
   "allowed_edit_paths": ["native/src/a.cpp"],
   "allowed_files": ["native/src/b.cpp"],
   "evidence": ["native/src/c.cpp"]
 }`
-	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
-		t.Fatalf("allowed structured keys must not define required coverage, got %#v", got)
+	{
+		got := plancontract.RequiredEditPathsFromPrompt(prompt)
+		gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("allowed structured keys must not define required coverage, got %#v", got))
 	}
 
 	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"native/src/a.cpp", "native/src/b.cpp"} {
-		if !slices.Contains(allowed, want) {
-			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
-		}
+		gomega.Expect(slices.Contains(allowed, want)).To(gomega.BeTrue(), fmt.Sprintf("missing allowed path %q, got %#v", want, allowed))
 	}
 
-	if slices.Contains(allowed, "native/src/c.cpp") {
-		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
-	}
-}
+	gomega.Expect(slices.Contains(allowed, "native/src/c.cpp")).To(gomega.BeFalse(), fmt.Sprintf("evidence path must not bleed into allowed edit paths, got %#v", allowed))
+})
 
-func TestStructuredRequiredEditPathsSingleLineJSONDoesNotBleed(t *testing.T) {
+var _ = ginkgo.It("structured required edit paths single line json does not bleed", func() {
 	prompt := `{"required_edit_paths":["native/src/a.cpp"],"evidence":[".idiom/config.json","native/src/b.cpp"]}`
 	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
-	if len(got) != 1 || got[0] != "native/src/a.cpp" {
-		t.Fatalf("expected single-line JSON required paths only, got %#v", got)
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(1), fmt.Sprintf("expected single-line JSON required paths only, got %#v", got))
+	gomega.Expect(got[0]).To(gomega.Equal("native/src/a.cpp"), fmt.Sprintf("expected single-line JSON required paths only, got %#v", got))
+})
 
-func TestStructuredRequiredEditPathsIgnoreInlineEvidenceCommand(t *testing.T) {
+var _ = ginkgo.It("structured required edit paths ignore inline evidence command", func() {
 	prompt := `
 Freshness:
 - idiom tool context_status --config .idiom/config.json --input '{"refresh":true,"required_edit_paths":["native/src/a.cpp"],"limit":20}'
 `
-	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
-		t.Fatalf("inline evidence commands must not define required edit paths, got %#v", got)
+	{
+		got := plancontract.RequiredEditPathsFromPrompt(prompt)
+		gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("inline evidence commands must not define required edit paths, got %#v", got))
 	}
-}
+})
 
-func TestRequiredEditPathsIgnoreStructuredKeysInsideEvidenceCommands(t *testing.T) {
+var _ = ginkgo.It("required edit paths ignore structured keys inside evidence commands", func() {
 	prompt := `
 # Atom
 
@@ -2266,21 +2077,15 @@ func TestRequiredEditPathsIgnoreStructuredKeysInsideEvidenceCommands(t *testing.
 	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	for _, want := range []string{"native/src/a.cpp", "native/tests/test_a.cpp"} {
-		if !slices.Contains(got, want) {
-			t.Fatalf("missing required edit path %q, got %#v", want, got)
-		}
+		gomega.Expect(slices.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("missing required edit path %q, got %#v", want, got))
 	}
 
-	if slices.Contains(got, ".idiom/config.json") {
-		t.Fatalf("evidence command config path must not become required edit path, got %#v", got)
-	}
+	gomega.Expect(slices.Contains(got, ".idiom/config.json")).To(gomega.BeFalse(), fmt.Sprintf("evidence command config path must not become required edit path, got %#v", got))
 
-	if len(got) != 2 {
-		t.Fatalf("expected only Files To Modify paths, got %#v", got)
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(2), fmt.Sprintf("expected only Files To Modify paths, got %#v", got))
+})
 
-func TestRequiredEditPathsCapturesAllowlistTableAfterDescriptorLine(t *testing.T) {
+var _ = ginkgo.It("required edit paths captures allowlist table after descriptor line", func() {
 	prompt := `
 # Atom
 
@@ -2308,57 +2113,52 @@ Exhaustive allowlist for this atom:
 	}
 
 	for _, path := range want {
-		if !slices.Contains(got, path) {
-			t.Fatalf("missing required edit path %q, got %#v", path, got)
-		}
+		gomega.Expect(slices.Contains(got, path)).To(gomega.BeTrue(), fmt.Sprintf("missing required edit path %q, got %#v", path, got))
 	}
 
-	if slices.Contains(got, "scripts/ui/shaft_panel.gd") {
-		t.Fatalf("following evidence table must not become required edit paths, got %#v", got)
-	}
+	gomega.Expect(slices.Contains(got, "scripts/ui/shaft_panel.gd")).To(gomega.BeFalse(), fmt.Sprintf("following evidence table must not become required edit paths, got %#v", got))
 
-	if len(got) != len(want) {
-		t.Fatalf("expected only allowlist paths %#v, got %#v", want, got)
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(len(want)), fmt.Sprintf("expected only allowlist paths %#v, got %#v", want, got))
+})
 
-func TestRequiredEditPathsDoNotBleedFromFollowingEvidenceSection(t *testing.T) {
+var _ = ginkgo.It("required edit paths do not bleed from following evidence section", func() {
 	prompt := `
 Files To Modify:
 
 Evidence:
 - native/src/simulation/transport/route_graph.cpp
 `
-	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
-		t.Fatalf("empty edit section should not borrow evidence paths, got %#v", got)
+	{
+		got := plancontract.RequiredEditPathsFromPrompt(prompt)
+		gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("empty edit section should not borrow evidence paths, got %#v", got))
 	}
-}
+})
 
-func TestRequiredEditPathsCapturesTrailingColonPathLine(t *testing.T) {
+var _ = ginkgo.It("required edit paths captures trailing colon path line", func() {
 	prompt := `
 Files To Modify:
 - internal/surfaces/tui/app/prompt_routing.go:
 `
 	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
-	if !slices.Contains(got, "internal/surfaces/tui/app/prompt_routing.go") {
-		t.Fatalf("expected trailing-colon path to count as required edit path, got %#v", got)
-	}
-}
+	gomega.Expect(slices.Contains(got, "internal/surfaces/tui/app/prompt_routing.go")).To(gomega.BeTrue(), fmt.Sprintf("expected trailing-colon path to count as required edit path, got %#v", got))
+})
 
-func TestContextEvidenceDoesNotBleedFromEmptyPacketHeading(t *testing.T) {
+var _ = ginkgo.It("context evidence does not bleed from empty packet heading", func() {
 	prompt := `
 Context Packet:
 
 Required Behavior:
 - internal/surfaces/tui/app/prompt_routing.go
 `
-	if got := plancontract.PromptContextEvidencePathsFromPrompt(prompt); len(got) != 0 {
-		t.Fatalf("empty context packet should not borrow later behavior paths, got %#v", got)
+	{
+		got := plancontract.PromptContextEvidencePathsFromPrompt(prompt)
+		gomega.Expect(len(got)).To(gomega.Equal(0), fmt.Sprintf("empty context packet should not borrow later behavior paths, got %#v", got))
 	}
-}
+})
 
-func TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence(t *testing.T) {
+var _ = ginkgo.It("runtime brief captures host current state anchor evidence", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2378,17 +2178,14 @@ func TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence(t *testing.T) {
   - ` + "`pkg/a.go:3`: `const A = \"old\"`" + `
 `
 
-	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
-	if !slices.Contains(brief.EvidencePaths, "pkg/a.go") {
-		t.Fatalf("expected host anchor path in EvidencePaths, got %#v", brief.EvidencePaths)
-	}
+	brief := newDetachedPromptExecutionSession(context.Background(), model).runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
+	gomega.Expect(slices.Contains(brief.EvidencePaths, "pkg/a.go")).To(gomega.BeTrue(), fmt.Sprintf("expected host anchor path in EvidencePaths, got %#v", brief.EvidencePaths))
 
-	if !slices.Contains(brief.TargetPacket, "prompt_context:verified_current_state") {
-		t.Fatalf("expected verified-current-state marker, got %#v", brief.TargetPacket)
-	}
-}
+	gomega.Expect(slices.Contains(brief.TargetPacket, "prompt_context:verified_current_state")).To(gomega.BeTrue(), fmt.Sprintf("expected verified-current-state marker, got %#v", brief.TargetPacket))
+})
 
-func TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles(t *testing.T) {
+var _ = ginkgo.It("runtime brief scope contract resolves tui dispatch path roles", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2399,26 +2196,18 @@ func TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles(t *testing.T) {
 		nil,
 	), nil)
 
-	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), "Implement the feature")
+	brief := newDetachedPromptExecutionSession(context.Background(), model).runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), "Implement the feature")
 	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
 		RequiredEditPaths:      brief.RequiredEditPaths,
 		AllowedCandidatePaths:  brief.AllowedEditPaths,
 		CandidateCoveragePaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
 		Source:                 "tui_dispatch_test",
 	})
-	if err != nil {
-		t.Fatalf("resolve path roles: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("resolve path roles: %v", err))
 
-	if !slices.Equal(coverage.RequiredCoveragePaths, []string{"pkg/feature.go"}) {
-		t.Fatalf("required coverage paths = %#v", coverage.RequiredCoveragePaths)
-	}
-	if !slices.Equal(coverage.AllowedCandidatePaths, []string{"pkg/feature_test.go"}) {
-		t.Fatalf("allowed candidate paths = %#v", coverage.AllowedCandidatePaths)
-	}
-	if len(coverage.MissingRequiredCoveragePaths) != 0 {
-		t.Fatalf("required path should be covered by required candidate, missing=%#v", coverage.MissingRequiredCoveragePaths)
-	}
+	gomega.Expect(slices.Equal(coverage.RequiredCoveragePaths, []string{"pkg/feature.go"})).To(gomega.BeTrue(), fmt.Sprintf("required coverage paths = %#v", coverage.RequiredCoveragePaths))
+	gomega.Expect(slices.Equal(coverage.AllowedCandidatePaths, []string{"pkg/feature_test.go"})).To(gomega.BeTrue(), fmt.Sprintf("allowed candidate paths = %#v", coverage.AllowedCandidatePaths))
+	gomega.Expect(len(coverage.MissingRequiredCoveragePaths)).To(gomega.Equal(0), fmt.Sprintf("required path should be covered by required candidate, missing=%#v", coverage.MissingRequiredCoveragePaths))
 
 	var allowedCandidate autonomy.PlanScopePathRoleCoverage
 	for _, candidate := range coverage.CandidateCoverage {
@@ -2427,15 +2216,13 @@ func TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles(t *testing.T) {
 			break
 		}
 	}
-	if allowedCandidate.EffectiveInvariantID != autonomy.InvariantAllowedCandidate ||
-		allowedCandidate.SatisfiesRequiredCoverage ||
-		!allowedCandidate.WithinAllowedCandidatePath {
+	gomega.Expect(allowedCandidate.EffectiveInvariantID).To(gomega.Equal(autonomy.InvariantAllowedCandidate), fmt.Sprintf("TUI allowed path must remain candidate scope only, got %#v", allowedCandidate))
+	gomega.Expect(allowedCandidate.SatisfiesRequiredCoverage).To(gomega.BeFalse(), fmt.Sprintf("TUI allowed path must remain candidate scope only, got %#v", allowedCandidate))
+	gomega.Expect(allowedCandidate.WithinAllowedCandidatePath).To(gomega.BeTrue(), fmt.Sprintf("TUI allowed path must remain candidate scope only, got %#v", allowedCandidate))
+})
 
-		t.Fatalf("TUI allowed path must remain candidate scope only, got %#v", allowedCandidate)
-	}
-}
-
-func TestRuntimeBriefPlanExecuteScopeIncludesTypedAuthorizedNewFiles(t *testing.T) {
+var _ = ginkgo.It("runtime brief plan execute scope includes typed authorized new files", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2445,14 +2232,13 @@ func TestRuntimeBriefPlanExecuteScopeIncludesTypedAuthorizedNewFiles(t *testing.
 		[]string{"pkg/new_helper.go"},
 	)
 
-	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), "Create pkg/new_helper.go")
+	brief := newDetachedPromptExecutionSession(context.Background(), model).runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), "Create pkg/new_helper.go")
 
-	if !slices.Equal(brief.AuthorizedNewFiles, []string{"pkg/new_helper.go"}) {
-		t.Fatalf("authorized new files = %#v, want pkg/new_helper.go", brief.AuthorizedNewFiles)
-	}
-}
+	gomega.Expect(slices.Equal(brief.AuthorizedNewFiles, []string{"pkg/new_helper.go"})).To(gomega.BeTrue(), fmt.Sprintf("authorized new files = %#v, want pkg/new_helper.go", brief.AuthorizedNewFiles))
+})
 
-func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.T) {
+var _ = ginkgo.It("plan execute runtime brief history requirement follows git metadata", func() {
+	t := ginkgo.GinkgoT()
 	nonGitRoot := t.TempDir()
 	nonGit := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: nonGitRoot}},
@@ -2460,19 +2246,16 @@ func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.
 		agentModeName: "build",
 	}
 	prompt := "Use plan-execute to update pkg/a.go.\n\nrequired_edit_paths: pkg/a.go"
-	brief := nonGit.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
+	brief := newDetachedPromptExecutionSession(context.Background(), nonGit).runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
 
-	if slices.Contains(brief.RequiredEvidence, string(workerruntime.RequiredEvidenceGitHistoryRationale)) {
-		t.Fatalf("non-git workspace must not require git history evidence: %#v", brief.RequiredEvidence)
-	}
+	gomega.Expect(slices.Contains(brief.RequiredEvidence, string(workerruntime.RequiredEvidenceGitHistoryRationale))).To(gomega.BeFalse(), fmt.Sprintf("non-git workspace must not require git history evidence: %#v", brief.RequiredEvidence))
 
-	if slices.Contains(brief.RequiredTools, workspace.RequiredToolGitHistoryLookup) {
-		t.Fatalf("non-git workspace must not require git history tools: %#v", brief.RequiredTools)
-	}
+	gomega.Expect(slices.Contains(brief.RequiredTools, workspace.RequiredToolGitHistoryLookup)).To(gomega.BeFalse(), fmt.Sprintf("non-git workspace must not require git history tools: %#v", brief.RequiredTools))
 
 	gitRoot := t.TempDir()
-	if err := os.Mkdir(filepath.Join(gitRoot, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
+	{
+		err := os.Mkdir(filepath.Join(gitRoot, ".git"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .git: %v", err))
 	}
 
 	gitModel := &Model{
@@ -2480,29 +2263,24 @@ func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.
 		workspace:     workspace.NewManager(config.Workspace{Root: gitRoot, CWD: gitRoot}),
 		agentModeName: "build",
 	}
-	gitBrief := gitModel.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
+	gitBrief := newDetachedPromptExecutionSession(context.Background(), gitModel).runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
 
-	if !slices.Contains(gitBrief.RequiredEvidence, string(workerruntime.RequiredEvidenceGitHistoryRationale)) {
-		t.Fatalf("git workspace should retain git history evidence: %#v", gitBrief.RequiredEvidence)
-	}
+	gomega.Expect(slices.Contains(gitBrief.RequiredEvidence, string(workerruntime.RequiredEvidenceGitHistoryRationale))).To(gomega.BeTrue(), fmt.Sprintf("git workspace should retain git history evidence: %#v", gitBrief.RequiredEvidence))
 
-	if !slices.Contains(gitBrief.RequiredTools, workspace.RequiredToolGitHistoryLookup) {
-		t.Fatalf("git workspace should retain git history tool requirement: %#v", gitBrief.RequiredTools)
-	}
-}
+	gomega.Expect(slices.Contains(gitBrief.RequiredTools, workspace.RequiredToolGitHistoryLookup)).To(gomega.BeTrue(), fmt.Sprintf("git workspace should retain git history tool requirement: %#v", gitBrief.RequiredTools))
+})
 
-func TestPromptContainsExactEditAnchorRecognizesStructuredJSONFields(t *testing.T) {
+var _ = ginkgo.It("prompt contains exact edit anchor recognizes structured json fields", func() {
 	prompt := `Apply this exact edit:
 {
   "old_text": "before();",
   "new_text": "after();"
 }`
-	if !plancontract.PromptContainsExactEditAnchor(prompt) {
-		t.Fatal("expected structured old_text/new_text fields to count as an exact edit anchor")
-	}
-}
+	gomega.Expect(plancontract.PromptContainsExactEditAnchor(prompt)).To(gomega.BeTrue(), fmt.Sprint("expected structured old_text/new_text fields to count as an exact edit anchor"))
+})
 
-func TestBuildPromptExecutionPlanCapturesRequiredEditSnippets(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures required edit snippets", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2540,36 +2318,28 @@ TEST_CASE("demand pressure caps production") {
 
 The planner will run the test slice.
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 2 {
-		t.Fatalf("expected two required edit snippets, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	{
+		got := len(plan.runtimeBrief.RequiredEditSnippets)
+		gomega.Expect(got).To(gomega.Equal(2), fmt.Sprintf("expected two required edit snippets, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets))
 	}
 
 	for i, snippet := range plan.runtimeBrief.RequiredEditSnippets {
-		if snippet.ID == "" {
-			t.Fatalf("snippet %d missing id: %#v", i, snippet)
-		}
+		gomega.Expect(snippet.ID).NotTo(gomega.Equal(""), fmt.Sprintf("snippet %d missing id: %#v", i, snippet))
 
-		if snippet.Path != "native/tests/test_production_graph.cpp" {
-			t.Fatalf("snippet %d path = %q, want test file", i, snippet.Path)
-		}
+		gomega.Expect(snippet.Path).To(gomega.Equal("native/tests/test_production_graph.cpp"), fmt.Sprintf("snippet %d path = %q, want test file", i, snippet.Path))
 
-		if strings.Contains(snippet.Content, "old behavior") {
-			t.Fatalf("verified-current-state snippet should not be captured: %#v", snippet)
-		}
+		gomega.Expect(strings.Contains(snippet.Content, "old behavior")).To(gomega.BeFalse(), fmt.Sprintf("verified-current-state snippet should not be captured: %#v", snippet))
 	}
 
-	if !strings.Contains(plan.runtimeBrief.RequiredEditSnippets[0].Content, `#include "core/constants/logistics.h"`) {
-		t.Fatalf("missing include snippet: %#v", plan.runtimeBrief.RequiredEditSnippets)
-	}
+	gomega.Expect(strings.Contains(plan.runtimeBrief.RequiredEditSnippets[0].Content, `#include "core/constants/logistics.h"`)).To(gomega.BeTrue(), fmt.Sprintf("missing include snippet: %#v", plan.runtimeBrief.RequiredEditSnippets))
 
-	if !strings.Contains(plan.runtimeBrief.RequiredEditSnippets[1].Content, "demand pressure caps production") {
-		t.Fatalf("missing regression snippet: %#v", plan.runtimeBrief.RequiredEditSnippets)
-	}
-}
+	gomega.Expect(strings.Contains(plan.runtimeBrief.RequiredEditSnippets[1].Content, "demand pressure caps production")).To(gomega.BeTrue(), fmt.Sprintf("missing regression snippet: %#v", plan.runtimeBrief.RequiredEditSnippets))
+})
 
-func TestBuildPromptExecutionPlanAssignsMultiFileRequiredEditSnippetPaths(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan assigns multi file required edit snippet paths", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2616,10 +2386,11 @@ new_text:
 TEST_CASE("after") {}
 ` + "```" + `
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 2 {
-		t.Fatalf("expected two new snippets, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	{
+		got := len(plan.runtimeBrief.RequiredEditSnippets)
+		gomega.Expect(got).To(gomega.Equal(2), fmt.Sprintf("expected two new snippets, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets))
 	}
 
 	got := map[string]string{}
@@ -2627,16 +2398,13 @@ TEST_CASE("after") {}
 		got[snippet.Path] = snippet.Content
 	}
 
-	if !strings.Contains(got["native/src/a.cpp"], "int after();") {
-		t.Fatalf("source snippet path/content not captured correctly: %#v", plan.runtimeBrief.RequiredEditSnippets)
-	}
+	gomega.Expect(strings.Contains(got["native/src/a.cpp"], "int after();")).To(gomega.BeTrue(), fmt.Sprintf("source snippet path/content not captured correctly: %#v", plan.runtimeBrief.RequiredEditSnippets))
 
-	if !strings.Contains(got["native/tests/test_a.cpp"], `TEST_CASE("after")`) {
-		t.Fatalf("test snippet path/content not captured correctly: %#v", plan.runtimeBrief.RequiredEditSnippets)
-	}
-}
+	gomega.Expect(strings.Contains(got["native/tests/test_a.cpp"], `TEST_CASE("after")`)).To(gomega.BeTrue(), fmt.Sprintf("test snippet path/content not captured correctly: %#v", plan.runtimeBrief.RequiredEditSnippets))
+})
 
-func TestBuildPromptExecutionPlanDuplicatesSharedRequiredEditSnippetPaths(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan duplicates shared required edit snippet paths", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2669,7 +2437,7 @@ new_text:
 // new shared comment
 ` + "```" + `
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
 	got := map[string]string{}
 	for _, snippet := range plan.runtimeBrief.RequiredEditSnippets {
@@ -2677,13 +2445,12 @@ new_text:
 	}
 
 	for _, path := range []string{"native/src/a.h", "native/src/a.cpp"} {
-		if !strings.Contains(got[path], "// new shared comment") {
-			t.Fatalf("shared snippet was not duplicated for %s: %#v", path, plan.runtimeBrief.RequiredEditSnippets)
-		}
+		gomega.Expect(strings.Contains(got[path], "// new shared comment")).To(gomega.BeTrue(), fmt.Sprintf("shared snippet was not duplicated for %s: %#v", path, plan.runtimeBrief.RequiredEditSnippets))
 	}
-}
+})
 
-func TestBuildPromptExecutionPlanCapturesImplementationShapeSnippets(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures implementation shape snippets", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2708,18 +2475,18 @@ int helper(int x) { return x + 1; }
 
 Run the tests.
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 1 {
-		t.Fatalf("expected one snippet from Implementation Shape heading, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	{
+		got := len(plan.runtimeBrief.RequiredEditSnippets)
+		gomega.Expect(got).To(gomega.Equal(1), fmt.Sprintf("expected one snippet from Implementation Shape heading, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets))
 	}
 
-	if !strings.Contains(plan.runtimeBrief.RequiredEditSnippets[0].Content, "int helper(int x)") {
-		t.Fatalf("snippet content missing helper body: %#v", plan.runtimeBrief.RequiredEditSnippets[0])
-	}
-}
+	gomega.Expect(strings.Contains(plan.runtimeBrief.RequiredEditSnippets[0].Content, "int helper(int x)")).To(gomega.BeTrue(), fmt.Sprintf("snippet content missing helper body: %#v", plan.runtimeBrief.RequiredEditSnippets[0]))
+})
 
-func TestBuildPromptExecutionPlanCapturesFilesYouMayEditAsCandidateScope(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan captures files you may edit as candidate scope", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2737,43 +2504,34 @@ func TestBuildPromptExecutionPlanCapturesFilesYouMayEditAsCandidateScope(t *test
 
 Implement the patch in the named files only.
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
 	for _, want := range []string{
 		"native/src/simulation/world/megaflora_stamper.h",
 		"native/src/simulation/world/megaflora_stamper.cpp",
 		"scripts/world/megaflora_stamper.gd",
 	} {
-		if slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
-			t.Fatalf("files-you-may-edit path %q must not become required coverage, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, want)).To(gomega.BeFalse(), fmt.Sprintf("files-you-may-edit path %q must not become required coverage, got %#v", want, plan.runtimeBrief.RequiredEditPaths))
 
-		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
-			t.Fatalf("expected candidate target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.TargetRefs, want)).To(gomega.BeTrue(), fmt.Sprintf("expected candidate target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs))
 
-		if !slices.Contains(plan.runtimeBrief.AllowedEditPaths, want) {
-			t.Fatalf("expected allowed edit scope %q, got %#v", want, plan.runtimeBrief.AllowedEditPaths)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.AllowedEditPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected allowed edit scope %q, got %#v", want, plan.runtimeBrief.AllowedEditPaths))
 	}
-}
+})
 
-func TestAllowedEditPathsFromPromptKeepsInlineScopeSentenceBounded(t *testing.T) {
+var _ = ginkgo.It("allowed edit paths from prompt keeps inline scope sentence bounded", func() {
 	prompt := "Implement the behavior, but only edit pkg/feature.go and pkg/feature_test.go. Use pkg/evidence.go as read-only evidence."
 
 	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
-		if !slices.Contains(allowed, want) {
-			t.Fatalf("missing inline allowed path %q, got %#v", want, allowed)
-		}
+		gomega.Expect(slices.Contains(allowed, want)).To(gomega.BeTrue(), fmt.Sprintf("missing inline allowed path %q, got %#v", want, allowed))
 	}
 
-	if slices.Contains(allowed, "pkg/evidence.go") {
-		t.Fatalf("read-only evidence sentence must not become allowed edit scope, got %#v", allowed)
-	}
-}
+	gomega.Expect(slices.Contains(allowed, "pkg/evidence.go")).To(gomega.BeFalse(), fmt.Sprintf("read-only evidence sentence must not become allowed edit scope, got %#v", allowed))
+})
 
-func TestBuildPromptExecutionPlanPromotesOnlyPayloadPathFromCandidateScope(t *testing.T) {
+var _ = ginkgo.It("build prompt execution plan promotes only payload path from candidate scope", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2804,32 +2562,26 @@ new_text:
 int after();
 ` + "```" + `
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/src/a.cpp") {
-		t.Fatalf("payload path should become required edit coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/src/a.cpp")).To(gomega.BeTrue(), fmt.Sprintf("payload path should become required edit coverage, got %#v", plan.runtimeBrief.RequiredEditPaths))
 
-	if slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/src/b.cpp") {
-		t.Fatalf("candidate-only path must not become required edit coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/src/b.cpp")).To(gomega.BeFalse(), fmt.Sprintf("candidate-only path must not become required edit coverage, got %#v", plan.runtimeBrief.RequiredEditPaths))
 
 	for _, want := range []string{"native/src/a.cpp", "native/src/b.cpp"} {
-		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
-			t.Fatalf("expected candidate target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.TargetRefs, want)).To(gomega.BeTrue(), fmt.Sprintf("expected candidate target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs))
 	}
 
-	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 1 {
-		t.Fatalf("expected one payload snippet, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	{
+		got := len(plan.runtimeBrief.RequiredEditSnippets)
+		gomega.Expect(got).To(gomega.Equal(1), fmt.Sprintf("expected one payload snippet, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets))
 	}
 
-	if plan.runtimeBrief.RequiredEditSnippets[0].Path != "native/src/a.cpp" {
-		t.Fatalf("snippet should bind to explicit payload path, got %#v", plan.runtimeBrief.RequiredEditSnippets[0])
-	}
-}
+	gomega.Expect(plan.runtimeBrief.RequiredEditSnippets[0].Path).To(gomega.Equal("native/src/a.cpp"), fmt.Sprintf("snippet should bind to explicit payload path, got %#v", plan.runtimeBrief.RequiredEditSnippets[0]))
+})
 
-func TestReviewRepairPromptDoesNotPromoteEditScopeToRequiredPaths(t *testing.T) {
+var _ = ginkgo.It("review repair prompt does not promote edit scope to required paths", func() {
+	t := ginkgo.GinkgoT()
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -2879,24 +2631,19 @@ diff --git a/widget_config.json b/widget_config.json
 >
 > <!-- IDIOM:BRIEF-BODY-END -->
 `
-	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	plan := newDetachedPromptExecutionSession(context.Background(), model).buildPromptExecutionPlan(context.Background(), prompt)
 
-	if len(plan.runtimeBrief.RequiredEditPaths) != 0 {
-		t.Fatalf("review-repair allowed/original edit scope must not become required coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
-	}
+	gomega.Expect(len(plan.runtimeBrief.RequiredEditPaths)).To(gomega.Equal(0), fmt.Sprintf("review-repair allowed/original edit scope must not become required coverage, got %#v", plan.runtimeBrief.RequiredEditPaths))
 
-	if slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope") {
-		t.Fatalf("review-repair must not get mutation required-path constraints, got %#v", plan.runtimeBrief.Constraints)
-	}
+	gomega.Expect(slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope")).To(gomega.BeFalse(), fmt.Sprintf("review-repair must not get mutation required-path constraints, got %#v", plan.runtimeBrief.Constraints))
 
 	for _, want := range []string{"widget_config.json", "widget_notes.md"} {
-		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
-			t.Fatalf("expected review target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs)
-		}
+		gomega.Expect(slices.Contains(plan.runtimeBrief.TargetRefs, want)).To(gomega.BeTrue(), fmt.Sprintf("expected review target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs))
 	}
-}
+})
 
-func TestNewHonorsAttachInstructionFilesConfig(t *testing.T) {
+var _ = ginkgo.It("new honors attach instruction files config", func() {
+	t := ginkgo.GinkgoT()
 	cfg := config.Default()
 
 	cfg.Workspace.Root = t.TempDir()
@@ -2905,28 +2652,23 @@ func TestNewHonorsAttachInstructionFilesConfig(t *testing.T) {
 
 	model := New(cfg)
 
-	if model.instructionAttacher != nil {
-		t.Fatal("expected dynamic instruction attachment to be disabled")
-	}
+	gomega.Expect(model.instructionAttacher).To(gomega.BeNil(), fmt.Sprint("expected dynamic instruction attachment to be disabled"))
 
 	cfg.Chat.AttachInstructionFiles = true
 	model = New(cfg)
 
-	if model.instructionAttacher == nil {
-		t.Fatal("expected dynamic instruction attachment to be enabled")
-	}
-}
+	gomega.Expect(model.instructionAttacher).NotTo(gomega.BeNil(), fmt.Sprint("expected dynamic instruction attachment to be enabled"))
+})
 
-func TestNewUsesProjectPromptCandidatesForDynamicInstructionAttachment(t *testing.T) {
+var _ = ginkgo.It("new uses project prompt candidates for dynamic instruction attachment", func() {
+	t := ginkgo.GinkgoT()
 	candidates, explicit := instructionAttachmentCandidates(config.Chat{ProjectPromptCandidates: []string{"AGENTS.md"}})
-	if !explicit || !slices.Equal(candidates, []string{"AGENTS.md"}) {
-		t.Fatalf("expected explicit AGENTS.md candidate only, got explicit=%t candidates=%#v", explicit, candidates)
-	}
+	gomega.Expect(explicit).To(gomega.BeTrue(), fmt.Sprintf("expected explicit AGENTS.md candidate only, got explicit=%t candidates=%#v", explicit, candidates))
+	gomega.Expect(slices.Equal(candidates, []string{"AGENTS.md"})).To(gomega.BeTrue(), fmt.Sprintf("expected explicit AGENTS.md candidate only, got explicit=%t candidates=%#v", explicit, candidates))
 
 	candidates, explicit = instructionAttachmentCandidates(config.Chat{ProjectPromptCandidates: []string{"AGENTS.md", "CLAUDE.md"}})
-	if !explicit || !slices.Equal(candidates, []string{"AGENTS.md", "CLAUDE.md"}) {
-		t.Fatalf("expected explicit candidates to preserve configured list, got explicit=%t candidates=%#v", explicit, candidates)
-	}
+	gomega.Expect(explicit).To(gomega.BeTrue(), fmt.Sprintf("expected explicit candidates to preserve configured list, got explicit=%t candidates=%#v", explicit, candidates))
+	gomega.Expect(slices.Equal(candidates, []string{"AGENTS.md", "CLAUDE.md"})).To(gomega.BeTrue(), fmt.Sprintf("expected explicit candidates to preserve configured list, got explicit=%t candidates=%#v", explicit, candidates))
 
 	cfg := config.Default()
 
@@ -2937,26 +2679,25 @@ func TestNewUsesProjectPromptCandidatesForDynamicInstructionAttachment(t *testin
 
 	model := New(cfg)
 
-	if model.instructionAttacher != nil {
-		t.Fatal("expected empty project_prompt_candidates to suppress dynamic instruction attachment")
-	}
+	gomega.Expect(model.instructionAttacher).To(gomega.BeNil(), fmt.Sprint("expected empty project_prompt_candidates to suppress dynamic instruction attachment"))
 
 	cfg.Chat.ProjectPromptCandidates = []string{"AGENTS.md"}
 	model = New(cfg)
 
-	if model.instructionAttacher == nil {
-		t.Fatal("expected explicit AGENTS.md candidate to enable dynamic instruction attachment")
-	}
-}
+	gomega.Expect(model.instructionAttacher).NotTo(gomega.BeNil(), fmt.Sprint("expected explicit AGENTS.md candidate to enable dynamic instruction attachment"))
+})
 
-func TestReloadPromptStackGeneratesProjectArtifacts(t *testing.T) {
+var _ = ginkgo.It("reload prompt stack generates project artifacts", func() {
+	t := ginkgo.GinkgoT()
 	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Demo\n\nAlways verify focused changes.\n"), 0o644); err != nil {
-		t.Fatalf("write README: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Demo\n\nAlways verify focused changes.\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write README: %v", err))
 	}
 
-	if err := os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("Prefer semantic tools.\n"), 0o644); err != nil {
-		t.Fatalf("write AGENTS: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("Prefer semantic tools.\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write AGENTS: %v", err))
 	}
 
 	model := &Model{
@@ -2965,23 +2706,23 @@ func TestReloadPromptStackGeneratesProjectArtifacts(t *testing.T) {
 		},
 	}
 
-	if err := model.reloadPromptStackWithProfiles(nil); err != nil {
-		t.Fatalf("reloadPromptStackWithProfiles: %v", err)
+	{
+		err := model.reloadPromptStackWithProfiles(nil)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("reloadPromptStackWithProfiles: %v", err))
 	}
 
 	contextPath := filepath.Join(project, ".idiom", "discovery", "context.md")
-	if _, err := os.Stat(contextPath); err != nil {
-		t.Fatalf("expected generated context at %s: %v", contextPath, err)
+	{
+		_, err := os.Stat(contextPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("expected generated context at %s: %v", contextPath, err))
 	}
 
-	if strings.Contains(model.promptStack.Text, "[project behavior: .idiom/discovery/context.md]") ||
-		strings.Contains(model.promptStack.Text, "Generated Project Context") {
+	gomega.Expect(model.promptStack.Text).To(gomega.Not(gomega.ContainSubstring("[project behavior: .idiom/discovery/context.md]")), fmt.Sprintf("generated context should not be auto-loaded as prompt behavior, got:\n%s", model.promptStack.Text))
+	gomega.Expect(model.promptStack.Text).To(gomega.Not(gomega.ContainSubstring("Generated Project Context")), fmt.Sprintf("generated context should not be auto-loaded as prompt behavior, got:\n%s", model.promptStack.Text))
+})
 
-		t.Fatalf("generated context should not be auto-loaded as prompt behavior, got:\n%s", model.promptStack.Text)
-	}
-}
-
-func TestReloadPromptStackRejectsMissingExplicitPromptByDefault(t *testing.T) {
+var _ = ginkgo.It("reload prompt stack rejects missing explicit prompt by default", func() {
+	t := ginkgo.GinkgoT()
 	missing := filepath.Join(t.TempDir(), "missing.md")
 	model := &Model{
 		cfg: config.Config{
@@ -2989,12 +2730,14 @@ func TestReloadPromptStackRejectsMissingExplicitPromptByDefault(t *testing.T) {
 		},
 	}
 
-	if err := model.reloadPromptStackWithProfiles(nil); err == nil {
-		t.Fatalf("reloadPromptStackWithProfiles should reject missing explicit prompts by default")
+	{
+		err := model.reloadPromptStackWithProfiles(nil)
+		gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("reloadPromptStackWithProfiles should reject missing explicit prompts by default"))
 	}
-}
+})
 
-func TestReloadPromptStackCanDegradeMissingExplicitPromptWhenConfigured(t *testing.T) {
+var _ = ginkgo.It("reload prompt stack can degrade missing explicit prompt when configured", func() {
+	t := ginkgo.GinkgoT()
 	missing := filepath.Join(t.TempDir(), "missing.md")
 	model := &Model{
 		cfg: config.Config{
@@ -3005,15 +2748,12 @@ func TestReloadPromptStackCanDegradeMissingExplicitPromptWhenConfigured(t *testi
 		},
 	}
 
-	if err := model.reloadPromptStackWithProfiles(nil); err != nil {
-		t.Fatalf("reloadPromptStackWithProfiles should degrade missing prompts when configured: %v", err)
+	{
+		err := model.reloadPromptStackWithProfiles(nil)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("reloadPromptStackWithProfiles should degrade missing prompts when configured: %v", err))
 	}
 
-	if !strings.Contains(model.contextError, "prompt context degraded") {
-		t.Fatalf("expected context warning, got %q", model.contextError)
-	}
+	gomega.Expect(strings.Contains(model.contextError, "prompt context degraded")).To(gomega.BeTrue(), fmt.Sprintf("expected context warning, got %q", model.contextError))
 
-	if len(model.promptStack.Warnings) == 0 {
-		t.Fatalf("expected prompt stack warnings")
-	}
-}
+	gomega.Expect(len(model.promptStack.Warnings)).NotTo(gomega.Equal(0), fmt.Sprintf("expected prompt stack warnings"))
+})

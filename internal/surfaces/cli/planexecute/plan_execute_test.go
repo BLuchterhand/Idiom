@@ -2,6 +2,7 @@ package planexecute
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +13,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"testing"
 	"time"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"idiom/internal/contracts/autonomy"
 	planartifact "idiom/internal/contracts/planartifact"
@@ -26,15 +29,17 @@ import (
 	"idiom/internal/platform/jsonevents/jsoneventstest"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/runner"
+	runtimesession "idiom/internal/runtime/session"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
+	"idiom/internal/surfaces/tui/app"
 	"idiom/internal/workflows/intentloop"
 	"idiom/internal/workflows/planexecute"
 	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
 	planexecuterunner "idiom/internal/workflows/planexecute/runner"
 )
 
-func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+var _ = ginkgo.It("run plan execute main forwards thinking and max tokens", func() {
+	configPath := writePlanExecuteConfig()
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -51,22 +56,13 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(gotOpts.DisableThinking).To(gomega.BeTrue(), "--no-thinking should reach the plan-execute planner run")
+	gomega.Expect(gotOpts.MaxTokensOverride).To(gomega.Equal(2048), fmt.Sprintf("MaxTokensOverride = %d, want 2048", gotOpts.MaxTokensOverride))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	if !gotOpts.DisableThinking {
-		t.Fatal("--no-thinking should reach the plan-execute planner run")
-	}
-
-	if gotOpts.MaxTokensOverride != 2048 {
-		t.Fatalf("MaxTokensOverride = %d, want 2048", gotOpts.MaxTokensOverride)
-	}
-}
-
-func TestRunPlanExecuteMainForwardsTypedAuthorizedNewFiles(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main forwards typed authorized new files", func() {
+	configPath := writePlanExecuteConfig()
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -83,18 +79,12 @@ func TestRunPlanExecuteMainForwardsTypedAuthorizedNewFiles(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(slices.Equal(gotOpts.AuthorizedNewFiles, []string{"pkg/new_helper.go"})).To(gomega.BeTrue(), fmt.Sprintf("AuthorizedNewFiles = %#v, want pkg/new_helper.go", gotOpts.AuthorizedNewFiles))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	if !slices.Equal(gotOpts.AuthorizedNewFiles, []string{"pkg/new_helper.go"}) {
-		t.Fatalf("AuthorizedNewFiles = %#v, want pkg/new_helper.go", gotOpts.AuthorizedNewFiles)
-	}
-}
-
-func TestRunPlanExecuteMainDefaultDoesNotRouteIntentLoop(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main default does not route intent loop", func() {
+	configPath := writePlanExecuteConfig()
 
 	var stdout, stderr bytes.Buffer
 
@@ -107,14 +97,11 @@ func TestRunPlanExecuteMainDefaultDoesNotRouteIntentLoop(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected normal plan-execute missing-artifact exit 1, got %d stderr=%s", code, stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("expected normal plan-execute missing-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-}
-
-func TestParsePlanExecuteIntentLoopFlags(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("parse plan execute intent loop flags", func() {
+	configPath := writePlanExecuteConfig()
 
 	var stderr bytes.Buffer
 	gotOpts, gotLoopOpts, err := parsePlanExecuteCLIOptions([]string{
@@ -124,20 +111,15 @@ func TestParsePlanExecuteIntentLoopFlags(t *testing.T) {
 		"-max-cycles", "3",
 		"-total-budget-tokens", "12000",
 	}, &stderr)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("parse intent-loop flags: %v stderr=%s", err, stderr.String()))
+	gomega.Expect(gotOpts.Prompt).To(gomega.Equal("loop this"), fmt.Sprintf("prompt = %q, want loop this", gotOpts.Prompt))
+	gomega.Expect(gotLoopOpts.IntentLoop).To(gomega.BeTrue(), fmt.Sprintf("loop opts = %#v, want enabled max=3 budget=12000", gotLoopOpts))
+	gomega.Expect(gotLoopOpts.MaxCycles).To(gomega.Equal(3), fmt.Sprintf("loop opts = %#v, want enabled max=3 budget=12000", gotLoopOpts))
+	gomega.Expect(gotLoopOpts.TotalBudgetTokens).To(gomega.Equal(12000), fmt.Sprintf("loop opts = %#v, want enabled max=3 budget=12000", gotLoopOpts))
 
-	if err != nil {
-		t.Fatalf("parse intent-loop flags: %v stderr=%s", err, stderr.String())
-	}
-	if gotOpts.Prompt != "loop this" {
-		t.Fatalf("prompt = %q, want loop this", gotOpts.Prompt)
-	}
-	if !gotLoopOpts.IntentLoop || gotLoopOpts.MaxCycles != 3 || gotLoopOpts.TotalBudgetTokens != 12000 {
-		t.Fatalf("loop opts = %#v, want enabled max=3 budget=12000", gotLoopOpts)
-	}
-}
-
-func TestRunPlanExecuteMainIntentLoopInvalidBudgetExits2(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main intent loop invalid budget exits2", func() {
+	configPath := writePlanExecuteConfig()
 
 	var stdout, stderr bytes.Buffer
 
@@ -146,24 +128,37 @@ func TestRunPlanExecuteMainIntentLoopInvalidBudgetExits2(t *testing.T) {
 		&stdout,
 		&stderr,
 		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner must not be called after invalid intent-loop budget")
+			ginkgo.Fail("prompt runner must not be called after invalid intent-loop budget")
 			return "", nil
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(2), fmt.Sprintf("expected invalid budget exit 2, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(stderr.String()).To(gomega.ContainSubstring("--total-budget-tokens"), fmt.Sprintf("stderr should name invalid budget flag, got %s", stderr.String()))
 
-	if code != 2 {
-		t.Fatalf("expected invalid budget exit 2, got %d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "--total-budget-tokens") {
-		t.Fatalf("stderr should name invalid budget flag, got %s", stderr.String())
-	}
-}
+})
 
-func TestRunPlanExecuteMainIntentLoopScriptedLiveE2E(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
-	root := filepath.Dir(configPath)
-	prompt := `Scripted live e2e secret marker: RAW_PROMPT_SHOULD_NOT_LEAK.
+var _ = ginkgo.Describe("Plan-execute intent loop", ginkgo.Label("e2e", "scripted"), func() {
+	ginkgo.It("runs a scripted live loop without leaking the raw prompt", func() {
+		t := ginkgo.GinkgoT()
+		root := t.TempDir()
+		socket := filepath.Join("/tmp", "idiom-"+strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())+".sock")
+		_ = os.Remove(socket)
+
+		srv := runner.NewServer(runner.Config{Pools: map[string]runner.PoolConfig{"qwen-35b": {MaxInFlight: 1}}}, socket)
+		gomega.Expect(srv.Start()).To(gomega.Succeed())
+		ginkgo.DeferCleanup(func() {
+			srv.Stop()
+			_ = os.Remove(socket)
+		})
+		t.Setenv("IDIOM_QUEUE_POOL", "qwen-35b")
+		t.Setenv("IDIOM_QUEUE_SOCKET", socket)
+
+		configPath := filepath.Join(root, "config.json")
+		configBody := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
+		gomega.Expect(os.WriteFile(configPath, []byte(configBody), 0o644)).To(gomega.Succeed())
+
+		prompt := `Scripted live e2e secret marker: RAW_PROMPT_SHOULD_NOT_LEAK.
 
 Typed plan execution contract:
 {
@@ -186,117 +181,101 @@ Typed plan execution contract:
   }]
 }`
 
-	var (
-		childSessions []string
-		childPrompts  []string
-	)
-	runOpts := planexecuterunner.Options{IntentLoop: true, MaxCycles: 4}
-	runOpts.ChildRunner = func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-		childSessions = append(childSessions, opts.SessionID)
-		childPrompts = append(childPrompts, opts.Prompt)
+		var (
+			childSessions []string
+			childPrompts  []string
+		)
+		runOpts := planexecuterunner.Options{IntentLoop: true, MaxCycles: 4}
+		runOpts.ChildRunner = func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+			childSessions = append(childSessions, opts.SessionID)
+			childPrompts = append(childPrompts, opts.Prompt)
 
-		if opts.ScopeExtractionPolicy != planexecute.ScopeExtractionFrozen {
-			t.Fatalf("child ScopeExtractionPolicy = %q, want frozen", opts.ScopeExtractionPolicy)
+			gomega.Expect(opts.ScopeExtractionPolicy).To(gomega.Equal(planexecute.ScopeExtractionFrozen))
+			gomega.Expect(opts.ScopeContract.RequiredCoveragePaths).To(gomega.Equal([]string{"internal/intentloop_e2e_target.go"}))
+			gomega.Expect(opts.VerificationPlanExplicitCommands).To(gomega.Equal([]string{"go test ./internal/intentloop-e2e/..."}))
+
+			cycle := len(childSessions)
+			record := scriptedIntentLoopTerminal(opts.SessionID, cycle)
+			exitCode := 1
+			if cycle == 3 {
+				exitCode = 0
+			}
+
+			return planexecute.RunResult{
+				ExitCode:       exitCode,
+				SessionID:      opts.SessionID,
+				Completion:     &record,
+				CompletionPath: ".idiom/plan-execute/sessions/" + opts.SessionID + ".terminal.json",
+			}
 		}
-		if len(opts.ScopeContract.RequiredCoveragePaths) != 1 || opts.ScopeContract.RequiredCoveragePaths[0] != "internal/intentloop_e2e_target.go" {
-			t.Fatalf("child required scope = %#v", opts.ScopeContract.RequiredCoveragePaths)
+
+		cfg, err := config.Load(configPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var stdout, stderr bytes.Buffer
+		result := planexecuterunner.Run(
+			cfg,
+			planexecute.Options{ConfigPath: configPath, Prompt: prompt, JSONEvents: true},
+			runOpts,
+			AdaptPromptRunner(func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				ginkgo.Fail("scripted child runner should avoid live model calls")
+				return "", nil
+			}),
+			nil,
+			&stdout,
+			&stderr,
+		)
+
+		ginkgo.GinkgoWriter.Printf("scripted intent-loop stdout:\n%s", stdout.String())
+		ginkgo.GinkgoWriter.Printf("scripted intent-loop stderr:\n%s", stderr.String())
+
+		gomega.Expect(result.ExitCode).To(gomega.BeZero(), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+		gomega.Expect(childSessions).To(gomega.HaveLen(3))
+		gomega.Expect(childPrompts).To(gomega.HaveLen(3))
+		gomega.Expect(childPrompts[1]).To(gomega.ContainSubstring("verification:go test ./internal/intentloop-e2e/..."))
+		gomega.Expect(childPrompts[2]).To(gomega.And(
+			gomega.ContainSubstring("acceptance:coverage-threshold"),
+			gomega.ContainSubstring("threshold_result: `not_met`"),
+		))
+
+		var events []map[string]any
+		for _, line := range strings.Split(stdout.String(), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || !strings.HasPrefix(line, "{") {
+				continue
+			}
+
+			var event map[string]any
+			gomega.Expect(json.Unmarshal([]byte(line), &event)).To(gomega.Succeed())
+			events = append(events, event)
 		}
-		if len(opts.VerificationPlanExplicitCommands) != 1 || opts.VerificationPlanExplicitCommands[0] != "go test ./internal/intentloop-e2e/..." {
-			t.Fatalf("child explicit verification commands = %#v", opts.VerificationPlanExplicitCommands)
-		}
+		_, foundStart := jsoneventstest.FindByType(events, intentloopcontract.EventName(intentloopcontract.EventStart))
+		gomega.Expect(foundStart).To(gomega.BeTrue(), stdout.String())
 
-		cycle := len(childSessions)
-		record := scriptedIntentLoopTerminal(opts.SessionID, cycle)
-		exitCode := 1
-		if cycle == 3 {
-			exitCode = 0
-		}
+		complete, foundComplete := jsoneventstest.FindByType(events, intentloopcontract.EventName(intentloopcontract.EventComplete))
+		gomega.Expect(foundComplete).To(gomega.BeTrue(), stdout.String())
+		gomega.Expect(complete["total_cycles"]).To(gomega.Equal(float64(3)))
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("RAW_PROMPT_SHOULD_NOT_LEAK"))
 
-		return planexecute.RunResult{
-			ExitCode:       exitCode,
-			SessionID:      opts.SessionID,
-			Completion:     &record,
-			CompletionPath: ".idiom/plan-execute/sessions/" + opts.SessionID + ".terminal.json",
-		}
-	}
+		stateFiles, err := filepath.Glob(filepath.Join(root, ".idiom", "intent-loop", "sessions", "*.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(stateFiles).To(gomega.HaveLen(1))
 
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	result := planexecuterunner.Run(
-		cfg,
-		planexecute.Options{ConfigPath: configPath, Prompt: prompt, JSONEvents: true},
-		runOpts,
-		AdaptPromptRunner(func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("scripted child runner should avoid live model calls")
-			return "", nil
-		}),
-		nil,
-		&stdout,
-		&stderr,
-	)
-
-	t.Logf("scripted intent-loop stdout:\n%s", stdout.String())
-	t.Logf("scripted intent-loop stderr:\n%s", stderr.String())
-
-	if result.ExitCode != 0 {
-		t.Fatalf("runner exit = %d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
-	}
-	if len(childSessions) != 3 {
-		t.Fatalf("child session count = %d, want 3 (%#v)", len(childSessions), childSessions)
-	}
-	if len(childPrompts) != 3 {
-		t.Fatalf("child prompt count = %d", len(childPrompts))
-	}
-	if !strings.Contains(childPrompts[1], "verification:go test ./internal/intentloop-e2e/...") {
-		t.Fatalf("cycle 2 prompt missing cycle 1 verification gap:\n%s", childPrompts[1])
-	}
-	if !strings.Contains(childPrompts[2], "acceptance:coverage-threshold") || !strings.Contains(childPrompts[2], "threshold_result: `not_met`") {
-		t.Fatalf("cycle 3 prompt missing threshold gap:\n%s", childPrompts[2])
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
-	if _, ok := jsoneventstest.FindByType(events, intentloopcontract.EventName(intentloopcontract.EventStart)); !ok {
-		t.Fatalf("missing intent-loop start event in %s", stdout.String())
-	}
-	if complete, ok := jsoneventstest.FindByType(events, intentloopcontract.EventName(intentloopcontract.EventComplete)); !ok {
-		t.Fatalf("missing intent-loop complete event in %s", stdout.String())
-	} else if complete["total_cycles"] != float64(3) {
-		t.Fatalf("complete total_cycles = %#v, want 3", complete["total_cycles"])
-	}
-	if strings.Contains(stdout.String(), "RAW_PROMPT_SHOULD_NOT_LEAK") {
-		t.Fatalf("intent-loop JSON events leaked raw prompt: %s", stdout.String())
-	}
-
-	stateFiles, err := filepath.Glob(filepath.Join(root, ".idiom", "intent-loop", "sessions", "*.json"))
-	if err != nil {
-		t.Fatalf("glob intent-loop state: %v", err)
-	}
-	if len(stateFiles) != 1 {
-		t.Fatalf("state files = %#v, want exactly one", stateFiles)
-	}
-
-	stateID := strings.TrimSuffix(filepath.Base(stateFiles[0]), ".json")
-	state, _, err := intentloop.LoadState(root, stateID)
-	if err != nil {
-		t.Fatalf("LoadState(%s): %v", stateID, err)
-	}
-	if state.Status != intentloopcontract.StatusCompleted || len(state.Cycles) != 3 {
-		t.Fatalf("state status=%q cycles=%d state=%#v", state.Status, len(state.Cycles), state)
-	}
-	if len(state.Cycles[0].RemainingFailures) == 0 || len(state.Cycles[1].RemainingFailures) == 0 || len(state.Cycles[2].RemainingFailures) != 0 {
-		t.Fatalf("unexpected remaining failures by cycle: %#v", state.Cycles)
-	}
-	if state.Cycles[0].CyclePromptSHA256 == "" || state.Cycles[1].CyclePromptPath == "" || state.Cycles[2].ChildIdentity == nil {
-		t.Fatalf("state missing prompt hash/path/identity: %#v", state.Cycles)
-	}
-}
-
-func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+		stateID := strings.TrimSuffix(filepath.Base(stateFiles[0]), ".json")
+		state, _, err := intentloop.LoadState(root, stateID)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(state.Status).To(gomega.Equal(intentloopcontract.StatusCompleted))
+		gomega.Expect(state.Cycles).To(gomega.HaveLen(3))
+		gomega.Expect(state.Cycles[0].RemainingFailures).NotTo(gomega.BeEmpty())
+		gomega.Expect(state.Cycles[1].RemainingFailures).NotTo(gomega.BeEmpty())
+		gomega.Expect(state.Cycles[2].RemainingFailures).To(gomega.BeEmpty())
+		gomega.Expect(state.Cycles[0].CyclePromptSHA256).NotTo(gomega.BeEmpty())
+		gomega.Expect(state.Cycles[1].CyclePromptPath).NotTo(gomega.BeEmpty())
+		gomega.Expect(state.Cycles[2].ChildIdentity).NotTo(gomega.BeNil())
+	})
+})
+var _ = ginkgo.It("run plan execute main delegates planner options and model override", func() {
+	configPath := writePlanExecuteConfig()
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -326,56 +305,28 @@ func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T)
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(gotCfg.LlamaServer.Model).To(gomega.Equal("planner-override"), fmt.Sprintf("model override = %q, want planner-override", gotCfg.LlamaServer.Model))
+	gomega.Expect(strings.TrimSpace(gotCfg.Workspace.SessionID)).NotTo(gomega.Equal(""), "delegated run should stamp workspace session id before planner call")
+	gomega.Expect(gotPrompt).To(gomega.ContainSubstring("plan adapter delegation"), fmt.Sprintf("planner prompt should include original prompt, got:\n%s", gotPrompt))
+	gomega.Expect(gotOpts.JSONEvents).To(gomega.BeTrue(), fmt.Sprintf("planner options should forward json/no-thinking flags, got %#v", gotOpts))
+	gomega.Expect(gotOpts.DisableThinking).To(gomega.BeTrue(), fmt.Sprintf("planner options should forward json/no-thinking flags, got %#v", gotOpts))
+	gomega.Expect(gotOpts.UseActiveModel).To(gomega.BeTrue(), fmt.Sprintf("model override should force active model routing, got %#v", gotOpts))
+	gomega.Expect(gotOpts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecutePlanner)), fmt.Sprintf("planner options should carry plan-execute planner contract, got %#v", gotOpts))
+	gomega.Expect(gotOpts.PlannerOwnedVerification).To(gomega.BeTrue(), fmt.Sprintf("planner options should carry plan-execute planner contract, got %#v", gotOpts))
+	gomega.Expect(gotOpts.MaxTokensOverride).To(gomega.Equal(3072), fmt.Sprintf("MaxTokensOverride = %d, want 3072", gotOpts.MaxTokensOverride))
+	gomega.Expect(gotOpts.ScopeContract.ContractID).NotTo(gomega.Equal(""), fmt.Sprintf("planner options should carry resolved scope contract, got %#v", gotOpts.ScopeContract))
+	gomega.Expect(gotOpts.ScopeContract.RequiredCoveragePaths).To(gomega.HaveLen(1), fmt.Sprintf("planner options should carry resolved scope contract, got %#v", gotOpts.ScopeContract))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotCfg.LlamaServer.Model != "planner-override" {
-		t.Fatalf("model override = %q, want planner-override", gotCfg.LlamaServer.Model)
-	}
-
-	if strings.TrimSpace(gotCfg.Workspace.SessionID) == "" {
-		t.Fatal("delegated run should stamp workspace session id before planner call")
-	}
-
-	if !strings.Contains(gotPrompt, "plan adapter delegation") {
-		t.Fatalf("planner prompt should include original prompt, got:\n%s", gotPrompt)
-	}
-
-	if !gotOpts.JSONEvents || !gotOpts.DisableThinking {
-		t.Fatalf("planner options should forward json/no-thinking flags, got %#v", gotOpts)
-	}
-
-	if !gotOpts.UseActiveModel {
-		t.Fatalf("model override should force active model routing, got %#v", gotOpts)
-	}
-
-	if gotOpts.TaskFamily != string(autonomy.TaskFamilyPlanThenExecutePlanner) || !gotOpts.PlannerOwnedVerification {
-		t.Fatalf("planner options should carry plan-execute planner contract, got %#v", gotOpts)
-	}
-
-	if gotOpts.MaxTokensOverride != 3072 {
-		t.Fatalf("MaxTokensOverride = %d, want 3072", gotOpts.MaxTokensOverride)
-	}
-
-	if gotOpts.ScopeContract.ContractID == "" || len(gotOpts.ScopeContract.RequiredCoveragePaths) != 1 {
-		t.Fatalf("planner options should carry resolved scope contract, got %#v", gotOpts.ScopeContract)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlanArtifactMissing)); !ok {
-		t.Fatalf("delegated planner failure should preserve JSON event, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("delegated planner failure should preserve JSON event, got %s", stdout.String()))
 	}
-}
-
-func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
-	root := t.TempDir()
-	startPlanExecuteTestQueue(t, "qwen-35b")
-
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
-	}
+})
+var _ = ginkgo.It("run plan execute main model override bypasses planner role alias", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	startPlanExecuteTestQueue("qwen-35b")
+	gomega.Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(gomega.Succeed())
 
 	var aliasPlannerChat int
 	aliasPlannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -396,6 +347,8 @@ func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
 		configPlannerModel string
 	)
 	configPlannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer ginkgo.GinkgoRecover()
+
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "deepseek-v4-flash"}}})
@@ -406,7 +359,7 @@ func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
 				Model string `json:"model"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode chat body: %v", err)
+				ginkgo.Fail(fmt.Sprintf("decode chat body: %v", err))
 			}
 			configPlannerModel = body.Model
 
@@ -420,9 +373,7 @@ func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
 	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
 		{"alias":"local-planner","model":"local-planner","base_url":%q,"roles":["planner"]}
 	]}}}`, aliasPlannerServer.URL)
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Default()
 	cfg.LlamaServer.Kind = config.BackendDeepSeek
@@ -441,14 +392,13 @@ func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
 
 	configPath := filepath.Join(root, "config.json")
 	data, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("marshal config: %v", err)
-	}
-	if err := os.WriteFile(configPath, data, 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal config: %v", err))
+	gomega.Expect(os.WriteFile(configPath, data, 0o644)).To(gomega.Succeed())
 
 	var stdout, stderr bytes.Buffer
+	promptRun, _ := cmdruntime.NewHeadlessRunners(func(cfg config.Config) runtimesession.Engine {
+		return app.New(cfg)
+	})
 	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
@@ -458,29 +408,17 @@ func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
 		},
 		&stdout,
 		&stderr,
-		cmdruntime.RunPromptOnce,
+		promptRun,
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
+	gomega.Expect(configPlannerChat).NotTo(gomega.Equal(0), "expected config planner chat request")
+	gomega.Expect(aliasPlannerChat).To(gomega.Equal(0), fmt.Sprintf("explicit model override should bypass planner role alias, got %d alias chats", aliasPlannerChat))
+	gomega.Expect(configPlannerModel).To(gomega.Equal("deepseek-v4-flash"), fmt.Sprintf("config planner request model = %q, want deepseek-v4-flash", configPlannerModel))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	if configPlannerChat == 0 {
-		t.Fatal("expected config planner chat request")
-	}
-
-	if aliasPlannerChat != 0 {
-		t.Fatalf("explicit model override should bypass planner role alias, got %d alias chats", aliasPlannerChat)
-	}
-
-	if configPlannerModel != "deepseek-v4-flash" {
-		t.Fatalf("config planner request model = %q, want deepseek-v4-flash", configPlannerModel)
-	}
-}
-
-func TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main uses shared existing file planner token budget", func() {
+	configPath := writePlanExecuteConfig()
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -497,18 +435,12 @@ func TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget(t *testing.T
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(gotOpts.MaxTokensOverride).To(gomega.Equal(16384), fmt.Sprintf("MaxTokensOverride = %d, want existing-file plan-execute budget 16384", gotOpts.MaxTokensOverride))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotOpts.MaxTokensOverride != 16384 {
-		t.Fatalf("MaxTokensOverride = %d, want existing-file plan-execute budget 16384", gotOpts.MaxTokensOverride)
-	}
-}
-
-func TestRunPlanExecuteMainKeepsLargeBudgetForNewFilePlanner(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main keeps large budget for new file planner", func() {
+	configPath := writePlanExecuteConfig()
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -525,18 +457,12 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForNewFilePlanner(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(gotOpts.MaxTokensOverride).To(gomega.Equal(16384), fmt.Sprintf("MaxTokensOverride = %d, want large-body plan-execute budget 16384", gotOpts.MaxTokensOverride))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotOpts.MaxTokensOverride != 16384 {
-		t.Fatalf("MaxTokensOverride = %d, want large-body plan-execute budget 16384", gotOpts.MaxTokensOverride)
-	}
-}
-
-func TestRunPlanExecuteMainKeepsLargeBudgetForCreatedNamedPath(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main keeps large budget for created named path", func() {
+	configPath := writePlanExecuteConfig()
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -553,18 +479,12 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForCreatedNamedPath(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(gotOpts.MaxTokensOverride).To(gomega.Equal(16384), fmt.Sprintf("MaxTokensOverride = %d, want named create-path budget 16384", gotOpts.MaxTokensOverride))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotOpts.MaxTokensOverride != 16384 {
-		t.Fatalf("MaxTokensOverride = %d, want named create-path budget 16384", gotOpts.MaxTokensOverride)
-	}
-}
-
-func TestRunPlanExecuteMainKeepsLargeBudgetForMissingRequestedTestPath(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main keeps large budget for missing requested test path", func() {
+	configPath := writePlanExecuteConfig()
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -581,30 +501,22 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForMissingRequestedTestPath(t *testin
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
+	gomega.Expect(gotOpts.MaxTokensOverride).To(gomega.Equal(16384), fmt.Sprintf("MaxTokensOverride = %d, want missing requested-test budget 16384", gotOpts.MaxTokensOverride))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotOpts.MaxTokensOverride != 16384 {
-		t.Fatalf("MaxTokensOverride = %d, want missing requested-test budget 16384", gotOpts.MaxTokensOverride)
-	}
-}
-
-func TestPlanExecuteEditSetObligationPathClassification(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute edit set obligation path classification", func() {
 	for _, path := range []string{"tests/parser_test.py", "test/foo.py", "tests/panel_contract.gd"} {
-		if !plancontract.PathLooksLikeTest(path) {
-			t.Fatalf("path should count as a test path: %s", path)
-		}
+		gomega.Expect(plancontract.PathLooksLikeTest(path)).To(gomega.BeTrue(), fmt.Sprintf("path should count as a test path: %s", path))
+
 	}
 
 	if reason := (plancontract.EditSetObligations{}).With(plancontract.EditSetObligationKindImplementationEdit, "test").RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"}); reason != plancontract.PlanExecuteFailureMissingRequestedImplementationEdit {
-		t.Fatalf("docs plus tests should not satisfy implementation edit obligation, got %q", reason)
+		ginkgo.Fail(fmt.Sprintf("docs plus tests should not satisfy implementation edit obligation, got %q", reason))
 	}
-}
-
-func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main json emits writer route decision", func() {
+	configPath := writePlanExecuteConfig()
 
 	var stdout, stderr bytes.Buffer
 
@@ -617,45 +529,27 @@ func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventWriterRouteDecision))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing direct plan-execute writer route event in %s", stdout.String()))
+	gomega.Expect(event["writer_mode"]).To(gomega.Equal("plan_submission"), fmt.Sprintf("unexpected direct plan-execute route event: %#v", event))
+	gomega.Expect(event["lane"]).To(gomega.Equal("plan-execute"), fmt.Sprintf("unexpected direct plan-execute route event: %#v", event))
+	gomega.Expect(event["verification_owner"]).To(gomega.Equal("planner_owned"), fmt.Sprintf("unexpected direct plan-execute route event: %#v", event))
+	gomega.Expect(event["task_family"]).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecutePlanner)), fmt.Sprintf("direct plan-execute route event should carry task_family, got %#v", event))
+	gomega.Expect(event["cost_tier"]).To(gomega.Equal("local_first"), fmt.Sprintf("route event should carry local-first defaults: %#v", event))
+	gomega.Expect(event["review_policy"]).To(gomega.Equal("local_first"), fmt.Sprintf("route event should carry local-first defaults: %#v", event))
+	gomega.Expect(jsonEventStringSliceContains(event["reason_codes"], "route.multi_file_plan_execute")).To(gomega.BeTrue(), fmt.Sprintf("direct plan-execute route should explain multi-file plan-execute dispatch: %#v", event))
 
-	if !ok {
-		t.Fatalf("missing direct plan-execute writer route event in %s", stdout.String())
-	}
-
-	if event["writer_mode"] != "plan_submission" || event["lane"] != "plan-execute" || event["verification_owner"] != "planner_owned" {
-		t.Fatalf("unexpected direct plan-execute route event: %#v", event)
-	}
-
-	if event["task_family"] != string(autonomy.TaskFamilyPlanThenExecutePlanner) {
-		t.Fatalf("direct plan-execute route event should carry task_family, got %#v", event)
-	}
-
-	if event["cost_tier"] != "local_first" || event["review_policy"] != "local_first" {
-		t.Fatalf("route event should carry local-first defaults: %#v", event)
-	}
-
-	if !jsonEventStringSliceContains(event["reason_codes"], "route.multi_file_plan_execute") {
-		t.Fatalf("direct plan-execute route should explain multi-file plan-execute dispatch: %#v", event)
-	}
-}
-
-func TestRunPlanExecuteMainModelOverrideUpdatesWriterRouteDecision(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main model override updates writer route decision", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(gomega.Succeed())
+
 	backendsJSON := `{"profiles":{"local":{"models":[{"alias":"local-planner","model":"local-planner","roles":["planner"]},{"alias":"local-coder","model":"local-coder","roles":["executor"]},{"alias":"local-classifier","model":"local-classifier","roles":["classifier"]}]}}}`
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)).To(gomega.Succeed())
 
 	var stdout, stderr bytes.Buffer
 
@@ -668,50 +562,33 @@ func TestRunPlanExecuteMainModelOverrideUpdatesWriterRouteDecision(t *testing.T)
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventWriterRouteDecision))
-	if !ok {
-		t.Fatalf("missing writer route event in %s", stdout.String())
-	}
-
-	if event["planner_model"] != "deepseek-v4-flash" || event["executor_model"] != "deepseek-v4-flash" || event["classifier_model"] != "deepseek-v4-flash" {
-		t.Fatalf("explicit model override should own writer route event, got %#v", event)
-	}
-	if event["effective_model"] != "deepseek-v4-flash" {
-		t.Fatalf("effective_model = %q, want deepseek-v4-flash; event=%#v", event["effective_model"], event)
-	}
-	if event["user_override"] != true {
-		t.Fatalf("user_override = %v, want true; event=%#v", event["user_override"], event)
-	}
-
-	if strings.Contains(fmt.Sprint(event), "local-planner") || strings.Contains(fmt.Sprint(event), "local-coder") || strings.Contains(fmt.Sprint(event), "local-classifier") {
-		t.Fatalf("explicit model override should not report role aliases in route event, got %#v", event)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing writer route event in %s", stdout.String()))
+	gomega.Expect(event["planner_model"]).To(gomega.Equal("deepseek-v4-flash"), fmt.Sprintf("explicit model override should own writer route event, got %#v", event))
+	gomega.Expect(event["executor_model"]).To(gomega.Equal("deepseek-v4-flash"), fmt.Sprintf("explicit model override should own writer route event, got %#v", event))
+	gomega.Expect(event["classifier_model"]).To(gomega.Equal("deepseek-v4-flash"), fmt.Sprintf("explicit model override should own writer route event, got %#v", event))
+	gomega.Expect(event["effective_model"]).To(gomega.Equal("deepseek-v4-flash"), fmt.Sprintf("effective_model = %q, want deepseek-v4-flash; event=%#v", event["effective_model"], event))
+	gomega.Expect(event["user_override"]).To(gomega.Equal(true), fmt.Sprintf("user_override = %v, want true; event=%#v", event["user_override"], event))
+	gomega.Expect(fmt.Sprint(event)).NotTo(gomega.ContainSubstring("local-planner"), fmt.Sprintf("explicit model override should not report role aliases in route event, got %#v", event))
+	gomega.Expect(fmt.Sprint(event)).NotTo(gomega.ContainSubstring("local-coder"), fmt.Sprintf("explicit model override should not report role aliases in route event, got %#v", event))
+	gomega.Expect(fmt.Sprint(event)).NotTo(gomega.ContainSubstring("local-classifier"), fmt.Sprintf("explicit model override should not report role aliases in route event, got %#v", event))
 
 	if aliases, ok := event["role_aliases"].(map[string]any); ok && len(aliases) > 0 {
-		t.Fatalf("explicit model override should suppress role aliases in route event, got %#v", event)
+		ginkgo.Fail(fmt.Sprintf("explicit model override should suppress role aliases in route event, got %#v", event))
 	}
-}
-
-func TestRunPlanExecuteMainConfigModelBeatsWorkspaceRoleAliasesInWriterRouteDecision(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main config model beats workspace role aliases in writer route decision", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
 	configBody := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q},"llama_server":{"kind":"deepseek","base_url":"https://api.deepseek.com","model":"deepseek-v4-flash"}}`, root, root)
-	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
-	}
+	gomega.Expect(os.WriteFile(configPath, []byte(configBody), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(gomega.Succeed())
+
 	backendsJSON := `{"profiles":{"local":{"models":[{"alias":"local-planner","model":"local-planner","roles":["planner"]},{"alias":"local-coder","model":"local-coder","roles":["executor"]},{"alias":"local-classifier","model":"local-classifier","roles":["classifier"]}]}}}`
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)).To(gomega.Succeed())
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -729,41 +606,29 @@ func TestRunPlanExecuteMainConfigModelBeatsWorkspaceRoleAliasesInWriterRouteDeci
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventWriterRouteDecision))
-	if !ok {
-		t.Fatalf("missing writer route event in %s", stdout.String())
-	}
-	for _, field := range []string{"planner_model", "executor_model", "classifier_model", "effective_model"} {
-		if event[field] != "deepseek-v4-flash" {
-			t.Fatalf("%s = %q, want deepseek-v4-flash; event=%#v", field, event[field], event)
-		}
-	}
-	if event["user_override"] == true {
-		t.Fatalf("config model alone should not be reported as a user override; event=%#v", event)
-	}
-	if gotCfg.LlamaServer.Model != "deepseek-v4-flash" {
-		t.Fatalf("prompt runner cfg model = %q, want deepseek-v4-flash", gotCfg.LlamaServer.Model)
-	}
-	if !gotOpts.UseActiveModel {
-		t.Fatalf("config model should force active model routing so role aliases cannot override execution, got %#v", gotOpts)
-	}
-}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing writer route event in %s", stdout.String()))
 
-func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
+	for _, field := range []string{"planner_model", "executor_model", "classifier_model", "effective_model"} {
+		gomega.Expect(event[field]).To(gomega.Equal("deepseek-v4-flash"), fmt.Sprintf("%s = %q, want deepseek-v4-flash; event=%#v", field, event[field], event))
+
+	}
+	gomega.Expect(event["user_override"]).NotTo(gomega.Equal(true), fmt.Sprintf("config model alone should not be reported as a user override; event=%#v", event))
+	gomega.Expect(gotCfg.LlamaServer.Model).To(gomega.Equal("deepseek-v4-flash"), fmt.Sprintf("prompt runner cfg model = %q, want deepseek-v4-flash", gotCfg.LlamaServer.Model))
+	gomega.Expect(gotOpts.UseActiveModel).To(gomega.BeTrue(), fmt.Sprintf("config model should force active model routing so role aliases cannot override execution, got %#v", gotOpts))
+
+})
+var _ = ginkgo.It("plan execute planner addendum avoids hard read caps", func() {
 	addendum := planexecute.PlanExecutePlannerSystemAddendumWithObligations(nil, nil, nil)
 	for _, forbidden := range []string{
 		"At most one bounded source-read",
 		"Never re-read the same file",
 	} {
-		if strings.Contains(addendum, forbidden) {
-			t.Fatalf("planner addendum still contains hard read-cap wording %q:\n%s", forbidden, addendum)
-		}
+		gomega.Expect(addendum).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("planner addendum still contains hard read-cap wording %q:\n%s", forbidden, addendum))
+
 	}
 
 	for _, want := range []string{
@@ -784,17 +649,13 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 		"needs a large insertion anchored to unchanged source lines",
 		"complete replacement for the inclusive range",
 	} {
-		if !strings.Contains(addendum, want) {
-			t.Fatalf("planner addendum missing readiness-oriented wording %q:\n%s", want, addendum)
-		}
-	}
+		gomega.Expect(addendum).To(gomega.ContainSubstring(want), fmt.Sprintf("planner addendum missing readiness-oriented wording %q:\n%s", want, addendum))
 
-	if strings.Contains(addendum, "path/from/required_edit_paths") {
-		t.Fatalf("planner addendum must not contain copyable placeholder paths:\n%s", addendum)
 	}
-}
+	gomega.Expect(addendum).NotTo(gomega.ContainSubstring("path/from/required_edit_paths"), fmt.Sprintf("planner addendum must not contain copyable placeholder paths:\n%s", addendum))
 
-func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute planner addendum includes required path checklist", func() {
 	addendum := planexecute.PlanExecutePlannerSystemAddendumWithObligations([]string{"a.cpp", "b.cpp", "a.cpp"}, nil, nil)
 
 	for _, want := range []string{
@@ -806,13 +667,11 @@ func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
 		"If every required path already contains the requested final state, do not call `submit_plan`; answer `Decision: source-satisfied`",
 		"Do not submit a partial plan",
 	} {
-		if !strings.Contains(addendum, want) {
-			t.Fatalf("planner addendum missing %q:\n%s", want, addendum)
-		}
-	}
-}
+		gomega.Expect(addendum).To(gomega.ContainSubstring(want), fmt.Sprintf("planner addendum missing %q:\n%s", want, addendum))
 
-func TestPlanExecutePlannerAddendumIncludesAllowedPathChecklist(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("plan execute planner addendum includes allowed path checklist", func() {
 	addendum := planexecute.PlanExecutePlannerSystemAddendumWithObligations(nil, []string{"internal/surfaces/tui/app/rendering.go", "internal/surfaces/tui/app/rendering.go"}, nil)
 
 	for _, want := range []string{
@@ -820,23 +679,15 @@ func TestPlanExecutePlannerAddendumIncludesAllowedPathChecklist(t *testing.T) {
 		"- internal/surfaces/tui/app/rendering.go",
 		"allowlist, not coverage obligations",
 	} {
-		if !strings.Contains(addendum, want) {
-			t.Fatalf("planner addendum missing %q:\n%s", want, addendum)
-		}
-	}
-}
+		gomega.Expect(addendum).To(gomega.ContainSubstring(want), fmt.Sprintf("planner addendum missing %q:\n%s", want, addendum))
 
-func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+	}
+})
+var _ = ginkgo.It("run plan execute main auto exact plan skips planner model", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old a\n"), 0o644); err != nil {
-		t.Fatalf("write a: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("old b\n"), 0o644); err != nil {
-		t.Fatalf("write b: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("old a\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "b.txt"), []byte("old b\n"), 0o644)).To(gomega.Succeed())
 
 	prompt := "## Files To Modify\n\n" +
 		"| File | Change |\n" +
@@ -865,35 +716,23 @@ func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("auto exact plan should execute cleanly, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(modelCalled).To(gomega.BeFalse(), "planner model was called despite complete exact-anchor packet")
 
-	if code != 0 {
-		t.Fatalf("auto exact plan should execute cleanly, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if got := readFileString(filepath.Join(root, "a.txt")); got != "new a\n" {
+		ginkgo.Fail(fmt.Sprintf("a.txt = %q", got))
 	}
 
-	if modelCalled {
-		t.Fatal("planner model was called despite complete exact-anchor packet")
+	if got := readFileString(filepath.Join(root, "b.txt")); got != "new b\n" {
+		ginkgo.Fail(fmt.Sprintf("b.txt = %q", got))
 	}
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring("auto_exact_plan_submitted"), fmt.Sprintf("auto exact plan event missing from stdout=%s", stdout.String()))
 
-	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new a\n" {
-		t.Fatalf("a.txt = %q", got)
-	}
-
-	if got := readFileString(t, filepath.Join(root, "b.txt")); got != "new b\n" {
-		t.Fatalf("b.txt = %q", got)
-	}
-
-	if !strings.Contains(stdout.String(), "auto_exact_plan_submitted") {
-		t.Fatalf("auto exact plan event missing from stdout=%s", stdout.String())
-	}
-}
-
-func TestRunPlanExecuteMainAutoExactPlanSourceSatisfiedSkipsPlannerModel(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main auto exact plan source satisfied skips planner model", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("new a\n"), 0o644); err != nil {
-		t.Fatalf("write a: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("new a\n"), 0o644)).To(gomega.Succeed())
 
 	prompt := "## Files To Modify\n\n" +
 		"| File | Change |\n" +
@@ -918,37 +757,23 @@ func TestRunPlanExecuteMainAutoExactPlanSourceSatisfiedSkipsPlannerModel(t *test
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("source-satisfied exact plan should pass, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(modelCalled).To(gomega.BeFalse(), "planner model was called despite source-satisfied exact-anchor packet")
 
-	if code != 0 {
-		t.Fatalf("source-satisfied exact plan should pass, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	if modelCalled {
-		t.Fatal("planner model was called despite source-satisfied exact-anchor packet")
-	}
-
-	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new a\n" {
-		t.Fatalf("a.txt = %q", got)
+	if got := readFileString(filepath.Join(root, "a.txt")); got != "new a\n" {
+		ginkgo.Fail(fmt.Sprintf("a.txt = %q", got))
 	}
 
 	for _, want := range []string{"writer_route_decision", "auto_exact_plan_source_satisfied", "source_satisfied"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("expected stdout to contain %q, got %s", want, stdout.String())
-		}
-	}
-}
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(want), fmt.Sprintf("expected stdout to contain %q, got %s", want, stdout.String()))
 
-func TestRunPlanExecuteMainAutoExactPlanInfersUnlabeledMultiFileAndNewFile(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+	}
+})
+var _ = ginkgo.It("run plan execute main auto exact plan infers unlabeled multi file and new file", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\nomega\n"), 0o644); err != nil {
-		t.Fatalf("write a: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("ticks row\nfooter\n"), 0o644); err != nil {
-		t.Fatalf("write b: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\nomega\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "b.txt"), []byte("ticks row\nfooter\n"), 0o644)).To(gomega.Succeed())
 
 	prompt := "## Files To Modify\n\n" +
 		"| File | Change |\n" +
@@ -981,39 +806,27 @@ func TestRunPlanExecuteMainAutoExactPlanInfersUnlabeledMultiFileAndNewFile(t *te
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("auto exact plan should infer multi-file paths and new-file body, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(modelCalled).To(gomega.BeFalse(), "planner model was called despite inferable exact-anchor packet")
 
-	if code != 0 {
-		t.Fatalf("auto exact plan should infer multi-file paths and new-file body, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if got := readFileString(filepath.Join(root, "a.txt")); got != "alpha\nseed\nomega\n" {
+		ginkgo.Fail(fmt.Sprintf("a.txt = %q", got))
 	}
 
-	if modelCalled {
-		t.Fatal("planner model was called despite inferable exact-anchor packet")
+	if got := readFileString(filepath.Join(root, "b.txt")); got != "ticks row\nlast result\nfooter\n" {
+		ginkgo.Fail(fmt.Sprintf("b.txt = %q", got))
 	}
 
-	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "alpha\nseed\nomega\n" {
-		t.Fatalf("a.txt = %q", got)
+	if got := readFileString(filepath.Join(root, "c.json")); got != "{\"ok\": true}" {
+		ginkgo.Fail(fmt.Sprintf("c.json = %q", got))
 	}
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring("auto_exact_plan_submitted"), fmt.Sprintf("auto exact plan event missing from stdout=%s", stdout.String()))
 
-	if got := readFileString(t, filepath.Join(root, "b.txt")); got != "ticks row\nlast result\nfooter\n" {
-		t.Fatalf("b.txt = %q", got)
-	}
-
-	if got := readFileString(t, filepath.Join(root, "c.json")); got != "{\"ok\": true}" {
-		t.Fatalf("c.json = %q", got)
-	}
-
-	if !strings.Contains(stdout.String(), "auto_exact_plan_submitted") {
-		t.Fatalf("auto exact plan event missing from stdout=%s", stdout.String())
-	}
-}
-
-func TestRunPlanExecuteMainRequiredEditPathFlagEnablesAutoExactPlan(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main required edit path flag enables auto exact plan", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old a\n"), 0o644); err != nil {
-		t.Fatalf("write a: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("old a\n"), 0o644)).To(gomega.Succeed())
 
 	prompt := "## Required Edits\n\n" +
 		"old_text:\n\n```text\nold a\n```\n\n" +
@@ -1039,31 +852,21 @@ func TestRunPlanExecuteMainRequiredEditPathFlagEnablesAutoExactPlan(t *testing.T
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("auto exact plan should execute cleanly with explicit required path, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(modelCalled).To(gomega.BeFalse(), "planner model was called despite explicit required path and complete exact-anchor packet")
 
-	if code != 0 {
-		t.Fatalf("auto exact plan should execute cleanly with explicit required path, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	if modelCalled {
-		t.Fatal("planner model was called despite explicit required path and complete exact-anchor packet")
-	}
-
-	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new a\n" {
-		t.Fatalf("a.txt = %q", got)
+	if got := readFileString(filepath.Join(root, "a.txt")); got != "new a\n" {
+		ginkgo.Fail(fmt.Sprintf("a.txt = %q", got))
 	}
 
 	out := stdout.String()
-	if !strings.Contains(out, "required_edit_paths_resolved") || !strings.Contains(out, "auto_exact_plan_submitted") {
-		t.Fatalf("expected required-path resolution and auto-plan events, got stdout=%s", out)
-	}
+	gomega.Expect(out).To(gomega.ContainSubstring("required_edit_paths_resolved"), fmt.Sprintf("expected required-path resolution and auto-plan events, got stdout=%s", out))
+	gomega.Expect(out).To(gomega.ContainSubstring("auto_exact_plan_submitted"), fmt.Sprintf("expected required-path resolution and auto-plan events, got stdout=%s", out))
+	gomega.Expect(out).NotTo(gomega.ContainSubstring("no required_edit_paths"), fmt.Sprintf("explicit required path should avoid no-required-path skip, stdout=%s", out))
 
-	if strings.Contains(out, "no required_edit_paths") {
-		t.Fatalf("explicit required path should avoid no-required-path skip, stdout=%s", out)
-	}
-}
-
-func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main treats source satisfied planner answer as clean noop", func() {
+	configPath := writePlanExecuteConfig()
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
 
 	var stdout, stderr bytes.Buffer
@@ -1080,22 +883,13 @@ func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *test
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("source-satisfied planner answer without typed current-state evidence should exit 1, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(stderr.String()).NotTo(gomega.ContainSubstring("plan artifact"), fmt.Sprintf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String()))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring("source-satisfied: executor skipped"), fmt.Sprintf("source-satisfied closeout should be visible, stdout=%s", stdout.String()))
 
-	if code != 1 {
-		t.Fatalf("source-satisfied planner answer without typed current-state evidence should exit 1, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	if strings.Contains(stderr.String(), "plan artifact") {
-		t.Fatalf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String())
-	}
-
-	if !strings.Contains(stdout.String(), "source-satisfied: executor skipped") {
-		t.Fatalf("source-satisfied closeout should be visible, stdout=%s", stdout.String())
-	}
-}
-
-func TestRunPlanExecuteMainTreatsUnscopedSourceSatisfiedPlannerAnswerAsCleanNoop(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main treats unscoped source satisfied planner answer as clean noop", func() {
+	configPath := writePlanExecuteConfig()
 	prompt := "Reject temp symlinks and add regression tests proving no partial mutation."
 
 	var stdout, stderr bytes.Buffer
@@ -1112,22 +906,13 @@ func TestRunPlanExecuteMainTreatsUnscopedSourceSatisfiedPlannerAnswerAsCleanNoop
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("unscoped source-satisfied planner answer without typed current-state evidence should exit 1, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(stderr.String()).NotTo(gomega.ContainSubstring("plan artifact"), fmt.Sprintf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String()))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring("source-satisfied: executor skipped"), fmt.Sprintf("source-satisfied closeout should be visible, stdout=%s", stdout.String()))
 
-	if code != 1 {
-		t.Fatalf("unscoped source-satisfied planner answer without typed current-state evidence should exit 1, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	if strings.Contains(stderr.String(), "plan artifact") {
-		t.Fatalf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String())
-	}
-
-	if !strings.Contains(stdout.String(), "source-satisfied: executor skipped") {
-		t.Fatalf("source-satisfied closeout should be visible, stdout=%s", stdout.String())
-	}
-}
-
-func TestRunPlanExecuteMainDoesNotInferImplementationObligationFromPrompt(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main does not infer implementation obligation from prompt", func() {
+	configPath := writePlanExecuteConfig()
 	prompt := "Implement the feature and add tests."
 
 	var stdout, stderr bytes.Buffer
@@ -1141,19 +926,15 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationFromPrompt(t *tes
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("prompt prose should not create a hidden implementation obligation, but source-satisfied still needs typed evidence; got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
 
-	if code != 1 {
-		t.Fatalf("prompt prose should not create a hidden implementation obligation, but source-satisfied still needs typed evidence; got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventSourceSatisfiedRejected)); ok {
-		t.Fatalf("prompt prose must not produce source_satisfied_rejected, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("prompt prose must not produce source_satisfied_rejected, got %s", stdout.String()))
 	}
-}
-
-func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEvidence(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main still fails missing artifact without source satisfied evidence", func() {
+	configPath := writePlanExecuteConfig()
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
 
 	var stdout, stderr bytes.Buffer
@@ -1167,18 +948,12 @@ func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEviden
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("missing source-satisfied path evidence should still fail missing artifact, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(stderr.String()).To(gomega.ContainSubstring("planner phase did not produce a plan artifact"), fmt.Sprintf("expected normal missing-artifact failure, stderr=%s", stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("missing source-satisfied path evidence should still fail missing artifact, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	if !strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
-		t.Fatalf("expected normal missing-artifact failure, stderr=%s", stderr.String())
-	}
-}
-
-func TestRunPlanExecuteMainFailsMissingArtifactDespiteExplicitFullBodyNewFileBrief(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main fails missing artifact despite explicit full body new file brief", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
 	prompt := "## Files To Modify\n\n" +
 		"| File | Change |\n" +
@@ -1202,30 +977,18 @@ func TestRunPlanExecuteMainFailsMissingArtifactDespiteExplicitFullBodyNewFileBri
 		},
 		nil,
 	)
-
-	if code != 1 {
-		t.Fatalf("missing planner artifact must fail even with inline full body, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	if !strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
-		t.Fatalf("expected missing-artifact failure, stderr=%s", stderr.String())
-	}
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("missing planner artifact must fail even with inline full body, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(stderr.String()).To(gomega.ContainSubstring("planner phase did not produce a plan artifact"), fmt.Sprintf("expected missing-artifact failure, stderr=%s", stderr.String()))
 
 	if _, err := os.Stat(filepath.Join(root, "docs", "generated-note.txt")); !os.IsNotExist(err) {
-		t.Fatalf("host fallback must not create a file from prompt body, stat err=%v", err)
+		ginkgo.Fail(fmt.Sprintf("host fallback must not create a file from prompt body, stat err=%v", err))
 	}
+	gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring(plancontract.PlanExecuteEventPrefix+"auto_submit_full_body_plan"), fmt.Sprintf("host fallback telemetry must not be emitted, stdout=%s", stdout.String()))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlanArtifactMissing)), fmt.Sprintf("expected missing-artifact telemetry event, stdout=%s", stdout.String()))
 
-	if strings.Contains(stdout.String(), plancontract.PlanExecuteEventPrefix+"auto_submit_full_body_plan") {
-		t.Fatalf("host fallback telemetry must not be emitted, stdout=%s", stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlanArtifactMissing)) {
-		t.Fatalf("expected missing-artifact telemetry event, stdout=%s", stdout.String())
-	}
-}
-
-func TestRunPlanExecuteMainDoesNotAutoSubmitRealQuestionBlocker(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main does not auto submit real question blocker", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
 	prompt := "## Files To Modify\n\n" +
 		"| File | Change |\n" +
@@ -1248,41 +1011,25 @@ func TestRunPlanExecuteMainDoesNotAutoSubmitRealQuestionBlocker(t *testing.T) {
 		},
 		nil,
 	)
-
-	if code != 1 {
-		t.Fatalf("real question blockers must not be auto-submitted, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("real question blockers must not be auto-submitted, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
 
 	if _, err := os.Stat(filepath.Join(root, "docs", "generated-note.txt")); !os.IsNotExist(err) {
-		t.Fatalf("auto-submit created a file despite a real blocker, stat err=%v", err)
+		ginkgo.Fail(fmt.Sprintf("auto-submit created a file despite a real blocker, stat err=%v", err))
 	}
-
-	if !strings.Contains(stderr.String(), "planner phase reported a blocker before submitting a plan") {
-		t.Fatalf("explicit blocker should be surfaced as planner_blocked, stderr=%s", stderr.String())
-	}
-
-	if strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
-		t.Fatalf("explicit blocker should not be masked as missing artifact, stderr=%s", stderr.String())
-	}
+	gomega.Expect(stderr.String()).To(gomega.ContainSubstring("planner phase reported a blocker before submitting a plan"), fmt.Sprintf("explicit blocker should be surfaced as planner_blocked, stderr=%s", stderr.String()))
+	gomega.Expect(stderr.String()).NotTo(gomega.ContainSubstring("planner phase did not produce a plan artifact"), fmt.Sprintf("explicit blocker should not be masked as missing artifact, stderr=%s", stderr.String()))
 
 	records, err := filepath.Glob(filepath.Join(root, ".idiom", "recovery", "plan-execute-*", "failure.json"))
-	if err != nil {
-		t.Fatalf("glob recovery records: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("glob recovery records: %v", err))
+	gomega.Expect(records).To(gomega.HaveLen(1), fmt.Sprintf("expected one automatic recovery record, got %d: %v", len(records), records))
 
-	if len(records) != 1 {
-		t.Fatalf("expected one automatic recovery record, got %d: %v", len(records), records)
-	}
-
-	if body := readFileString(t, records[0]); !strings.Contains(body, `"class": "planner_blocked"`) ||
+	if body := readFileString(records[0]); !strings.Contains(body, `"class": "planner_blocked"`) ||
 		!strings.Contains(body, `"next_valid_action": "answer_blocker"`) {
-
-		t.Fatalf("unexpected recovery record:\n%s", body)
+		ginkgo.Fail(fmt.Sprintf("unexpected recovery record:\n%s", body))
 	}
-}
-
-func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedAsCleanNoop(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main does not treat question blocker mentioning source satisfied as clean noop", func() {
+	configPath := writePlanExecuteConfig()
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n"
 
 	var stdout, stderr bytes.Buffer
@@ -1296,43 +1043,23 @@ func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedA
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("blocker that merely mentions source-satisfied must fail typed blocker, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(stderr.String()).To(gomega.ContainSubstring("planner phase reported a blocker before submitting a plan"), fmt.Sprintf("expected typed planner blocker for blocker answer, stderr=%s", stderr.String()))
+	gomega.Expect(stderr.String()).NotTo(gomega.ContainSubstring("planner phase did not produce a plan artifact"), fmt.Sprintf("blocker should not be masked as missing artifact, stderr=%s", stderr.String()))
+	gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("source-satisfied: executor skipped"), fmt.Sprintf("blocker must not be reported as source-satisfied, stdout=%s", stdout.String()))
 
-	if code != 1 {
-		t.Fatalf("blocker that merely mentions source-satisfied must fail typed blocker, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
+})
+var _ = ginkgo.It("run plan execute main inherits pack before executor", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644)).To(gomega.Succeed())
 
-	if !strings.Contains(stderr.String(), "planner phase reported a blocker before submitting a plan") {
-		t.Fatalf("expected typed planner blocker for blocker answer, stderr=%s", stderr.String())
-	}
-
-	if strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
-		t.Fatalf("blocker should not be masked as missing artifact, stderr=%s", stderr.String())
-	}
-
-	if strings.Contains(stdout.String(), "source-satisfied: executor skipped") {
-		t.Fatalf("blocker must not be reported as source-satisfied, stdout=%s", stdout.String())
-	}
-}
-
-func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("seed go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
-		t.Fatalf("seed a.go: %v", err)
-	}
-
-	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	build, err := comprehension.Build(ginkgo.GinkgoT().Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Build: %v", err))
 
 	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "inherit pack", Mode: "plan"}
 	packID := key.ID()
-
-	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+	gomega.Expect(comprehension.SaveView(root, key, comprehension.PackResult{
 		PackID:         packID,
 		IndexID:        build.IndexID,
 		Root:           root,
@@ -1340,16 +1067,11 @@ func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
 		Mode:           "plan",
 		Fresh:          true,
 		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
-	}); err != nil {
-		t.Fatalf("SaveView: %v", err)
-	}
+	})).To(gomega.Succeed())
 
 	configPath := filepath.Join(root, "config.json")
 	body := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q,"enable_writes":true}}`, root, root)
-
-	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(os.WriteFile(configPath, []byte(body), 0o644)).To(gomega.Succeed())
 
 	prompt := "## Context Pack\n\n- Pack: `" + packID + "`\n\nChange a.go from alpha to beta."
 
@@ -1360,7 +1082,7 @@ func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
 		&stdout,
 		&stderr,
 		func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -1374,27 +1096,15 @@ func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("RunMain exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlanArtifactPackInherited)), fmt.Sprintf("expected inherited pack event, got:\n%s", stdout.String()))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorInheritsPack)), fmt.Sprintf("expected executor to inherit pack after prompt inheritance, got:\n%s", stdout.String()))
 
-	if code != 0 {
-		t.Fatalf("RunMain exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlanArtifactPackInherited)) {
-		t.Fatalf("expected inherited pack event, got:\n%s", stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorInheritsPack)) {
-		t.Fatalf("expected executor to inherit pack after prompt inheritance, got:\n%s", stdout.String())
-	}
-}
-
-func TestRunPlanExecuteMainDoesNotInferTestEditObligationBeforeWrites(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main does not infer test edit obligation before writes", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
-		t.Fatalf("seed pkg.go: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644)).To(gomega.Succeed())
 
 	var stdout, stderr bytes.Buffer
 
@@ -1408,11 +1118,9 @@ func TestRunPlanExecuteMainDoesNotInferTestEditObligationBeforeWrites(t *testing
 		&stdout,
 		&stderr,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != string(autonomy.TaskFamilyPlanThenExecutePlanner) {
-				t.Fatalf("unexpected task family %q", opts.TaskFamily)
-			}
+			gomega.Expect(opts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecutePlanner)), fmt.Sprintf("unexpected task family %q", opts.TaskFamily))
 
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -1426,27 +1134,17 @@ func TestRunPlanExecuteMainDoesNotInferTestEditObligationBeforeWrites(t *testing
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("prompt prose should not create a hidden test obligation, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
 
-	if code != 0 {
-		t.Fatalf("prompt prose should not create a hidden test obligation, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	if got := readFileString(filepath.Join(root, "pkg.go")); !strings.Contains(got, "return true") {
+		ginkgo.Fail(fmt.Sprintf("production edit should apply when no typed test obligation exists, got:\n%s", got))
 	}
-
-	if got := readFileString(t, filepath.Join(root, "pkg.go")); !strings.Contains(got, "return true") {
-		t.Fatalf("production edit should apply when no typed test obligation exists, got:\n%s", got)
-	}
-}
-
-func TestRunPlanExecuteMainDoesNotInferImplementationObligationBeforeWrites(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main does not infer implementation obligation before writes", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "feature.go"), []byte("package demo\n\nfunc Enabled() bool { return false }\n"), 0o644); err != nil {
-		t.Fatalf("seed feature.go: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {}\n"), 0o644); err != nil {
-		t.Fatalf("seed feature_test.go: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "feature.go"), []byte("package demo\n\nfunc Enabled() bool { return false }\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {}\n"), 0o644)).To(gomega.Succeed())
 
 	var stdout, stderr bytes.Buffer
 
@@ -1460,11 +1158,9 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationBeforeWrites(t *t
 		&stdout,
 		&stderr,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != string(autonomy.TaskFamilyPlanThenExecutePlanner) {
-				t.Fatalf("unexpected task family %q", opts.TaskFamily)
-			}
+			gomega.Expect(opts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecutePlanner)), fmt.Sprintf("unexpected task family %q", opts.TaskFamily))
 
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -1478,47 +1174,40 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationBeforeWrites(t *t
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("prompt prose should not create a hidden implementation obligation, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
 
-	if code != 0 {
-		t.Fatalf("prompt prose should not create a hidden implementation obligation, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	if got := readFileString(filepath.Join(root, "feature_test.go")); !strings.Contains(got, "t.Fatal") {
+		ginkgo.Fail(fmt.Sprintf("test-only edit should apply when no typed implementation obligation exists, got:\n%s", got))
 	}
+})
 
-	if got := readFileString(t, filepath.Join(root, "feature_test.go")); !strings.Contains(got, "t.Fatal") {
-		t.Fatalf("test-only edit should apply when no typed implementation obligation exists, got:\n%s", got)
-	}
-}
+func writePlanExecuteConfig() string {
 
-func writePlanExecuteConfig(t *testing.T) string {
-	t.Helper()
-
-	root := t.TempDir()
-	startPlanExecuteTestQueue(t, "qwen-35b")
+	root := ginkgo.GinkgoT().TempDir()
+	startPlanExecuteTestQueue("qwen-35b")
 
 	path := filepath.Join(root, "config.json")
 	body := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
-
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(body), 0o644)).To(gomega.Succeed())
 
 	return path
 }
 
-func startPlanExecuteTestQueue(t *testing.T, pool string) {
-	t.Helper()
+func startPlanExecuteTestQueue(pool string) {
 
-	socket := filepath.Join("/tmp", "idiom-"+strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())+".sock")
+	specID := sha256.Sum256([]byte(ginkgo.GinkgoT().Name()))
+	socket := filepath.Join("/tmp", fmt.Sprintf("idiom-%x.sock", specID[:8]))
 	_ = os.Remove(socket)
 	srv := runner.NewServer(runner.Config{Pools: map[string]runner.PoolConfig{pool: {MaxInFlight: 1}}}, socket)
-	if err := srv.Start(); err != nil {
-		t.Fatalf("start queue server: %v", err)
-	}
-	t.Cleanup(func() {
+	gomega.Expect(srv.Start()).To(gomega.Succeed())
+	ginkgo.DeferCleanup(func() {
 		srv.Stop()
 		_ = os.Remove(socket)
 	})
-	t.Setenv("IDIOM_QUEUE_POOL", pool)
-	t.Setenv("IDIOM_QUEUE_SOCKET", socket)
+	ginkgo.GinkgoT().
+		Setenv("IDIOM_QUEUE_POOL", pool)
+	ginkgo.GinkgoT().
+		Setenv("IDIOM_QUEUE_SOCKET", socket)
 }
 
 func scriptedIntentLoopTerminal(sessionID string, cycle int) plancontract.PlanExecuteTerminalCompletionRecord {
@@ -1569,21 +1258,17 @@ func scriptedIntentLoopTerminal(sessionID string, cycle int) plancontract.PlanEx
 	})
 }
 
-func readFileString(t *testing.T, path string) string {
-	t.Helper()
+func readFileString(path string) string {
 
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read %s: %v", path, err))
 
 	return string(data)
 }
 
-func initGitRepoForStaleness(t *testing.T) string {
-	t.Helper()
+func initGitRepoForStaleness() string {
 
-	root := t.TempDir()
+	root := ginkgo.GinkgoT().TempDir()
 
 	for _, args := range [][]string{
 		{"init", "-q"},
@@ -1595,24 +1280,18 @@ func initGitRepoForStaleness(t *testing.T) string {
 		cmd.Dir = root
 
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
+			ginkgo.Fail(fmt.Sprintf("git %v: %v: %s", args, err, out))
 		}
 	}
 
 	return root
 }
 
-func gitCommit(t *testing.T, root, path, content, message string) {
-	t.Helper()
+func gitCommit(root, path, content, message string) {
 
 	full := filepath.Join(root, path)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(full), 0o755)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(full, []byte(content), 0o644)).To(gomega.Succeed())
 
 	for _, args := range [][]string{
 		{"add", path},
@@ -1623,7 +1302,7 @@ func gitCommit(t *testing.T, root, path, content, message string) {
 		cmd.Dir = root
 
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
+			ginkgo.Fail(fmt.Sprintf("git %v: %v: %s", args, err, out))
 		}
 	}
 }
@@ -1660,23 +1339,19 @@ func jsonEventStringSliceContains(value any, want string) bool {
 	return false
 }
 
-func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
-	// When the planner stamps a pack_id and the cache row exists, the
-	// executor phase emits an executor_inherits_pack JSON event so
-	// downstream tooling can attach the planner's ranked context.
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("seed go.mod: %v", err)
-	}
+var _ = ginkgo.It("run executor phase emits executor inherits pack event", func(
 
-	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
-		t.Fatalf("seed a.go: %v", err)
-	}
+// When the planner stamps a pack_id and the cache row exists, the
+// executor phase emits an executor_inherits_pack JSON event so
+// downstream tooling can attach the planner's ranked context.
+) {
 
-	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644)).To(gomega.Succeed())
+
+	build, err := comprehension.Build(ginkgo.GinkgoT().Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Build: %v", err))
 
 	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "exec inherits", Mode: "plan"}
 	cached := comprehension.PackResult{
@@ -1692,10 +1367,7 @@ func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
 		},
 		Tests: []comprehension.PackTest{{Command: "go test ./...", Path: "a.go"}},
 	}
-
-	if err := comprehension.SaveView(root, key, cached); err != nil {
-		t.Fatalf("SaveView: %v", err)
-	}
+	gomega.Expect(comprehension.SaveView(root, key, cached)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -1709,41 +1381,28 @@ func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err != nil {
-		t.Fatalf("executor phase failed: %v", err)
+		ginkgo.Fail(fmt.Sprintf("executor phase failed: %v", err))
 	}
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorInheritsPack)), fmt.Sprintf("expected executor_inherits_pack JSON event in stdout, got: %s", stdout.String()))
 
-	if !strings.Contains(stdout.String(), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorInheritsPack)) {
-		t.Fatalf("expected executor_inherits_pack JSON event in stdout, got: %s", stdout.String())
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected executor_handoff_packet event, got: %s", stdout.String()))
+	gomega.Expect(handoff["packet_state"]).To(gomega.Equal(string(plancontract.ExecutorHandoffStateInherited)), fmt.Sprintf("expected inherited handoff packet, got %#v", handoff))
+	gomega.Expect(handoff["reason"]).To(gomega.Equal("fresh_graph_view"), fmt.Sprintf("expected inherited handoff packet, got %#v", handoff))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"pack_id":"`+key.ID()+`"`), fmt.Sprintf("expected pack_id %s in event, got: %s", key.ID(), stdout.String()))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"candidate_files":1`), fmt.Sprintf("expected candidate_files:1 in event, got: %s", stdout.String()))
 
-	if !ok {
-		t.Fatalf("expected executor_handoff_packet event, got: %s", stdout.String())
-	}
+})
+var _ = ginkgo.It("run executor phase emits executor pack miss on unknown pack id", func
 
-	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateInherited) || handoff["reason"] != "fresh_graph_view" {
-		t.Fatalf("expected inherited handoff packet, got %#v", handoff)
-	}
+// pack_id that doesn't match any graph_views row → executor_pack_miss
+// event so downstream consumers know the planner's context wasn't
+// available (rather than silently degrading).
+() {
 
-	if !strings.Contains(stdout.String(), `"pack_id":"`+key.ID()+`"`) {
-		t.Fatalf("expected pack_id %s in event, got: %s", key.ID(), stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), `"candidate_files":1`) {
-		t.Fatalf("expected candidate_files:1 in event, got: %s", stdout.String())
-	}
-}
-
-func TestRunExecutorPhaseEmitsExecutorPackMissOnUnknownPackID(t *testing.T) {
-	// pack_id that doesn't match any graph_views row → executor_pack_miss
-	// event so downstream consumers know the planner's context wasn't
-	// available (rather than silently degrading).
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -1757,26 +1416,20 @@ func TestRunExecutorPhaseEmitsExecutorPackMissOnUnknownPackID(t *testing.T) {
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err != nil {
-		t.Fatalf("executor phase failed: %v", err)
+		ginkgo.Fail(fmt.Sprintf("executor phase failed: %v", err))
 	}
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPackMiss)), fmt.Sprintf("expected executor_pack_miss JSON event when pack_id is unknown, got: %s", stdout.String()))
 
-	if !strings.Contains(stdout.String(), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPackMiss)) {
-		t.Fatalf("expected executor_pack_miss JSON event when pack_id is unknown, got: %s", stdout.String())
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected missing handoff packet, got %#v in %s", handoff, stdout.String()))
+	gomega.Expect(handoff["packet_state"]).To(gomega.Equal(string(plancontract.ExecutorHandoffStateMissing)), fmt.Sprintf("expected missing handoff packet, got %#v in %s", handoff, stdout.String()))
+	gomega.Expect(handoff["reason"]).To(gomega.Equal("cache_miss"), fmt.Sprintf("expected missing handoff packet, got %#v in %s", handoff, stdout.String()))
 
-	if !ok || handoff["packet_state"] != string(plancontract.ExecutorHandoffStateMissing) || handoff["reason"] != "cache_miss" {
-		t.Fatalf("expected missing handoff packet, got %#v in %s", handoff, stdout.String())
-	}
-}
-
-func TestRunExecutorPhaseEmitsMissingPacketHandoffWithoutPlanPacket(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase emits missing packet handoff without plan packet", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -1789,30 +1442,20 @@ func TestRunExecutorPhaseEmitsMissingPacketHandoffWithoutPlanPacket(t *testing.T
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err != nil {
-		t.Fatalf("executor phase failed: %v", err)
+		ginkgo.Fail(fmt.Sprintf("executor phase failed: %v", err))
 	}
 
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected executor_handoff_packet event, got %s", stdout.String()))
+	gomega.Expect(handoff["packet_state"]).To(gomega.Equal(string(plancontract.ExecutorHandoffStateMissing)), fmt.Sprintf("expected missing packet state, got %#v", handoff))
+	gomega.Expect(handoff["reason"]).To(gomega.Equal("missing_packet_id"), fmt.Sprintf("expected missing packet state, got %#v", handoff))
 
-	if !ok {
-		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
-	}
-
-	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateMissing) || handoff["reason"] != "missing_packet_id" {
-		t.Fatalf("expected missing packet state, got %#v", handoff)
-	}
-}
-
-func TestRunExecutorPhaseBlocksPartialApprovalScopeDrift(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("beta\n"), 0o644); err != nil {
-		t.Fatalf("seed b.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase blocks partial approval scope drift", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "b.txt"), []byte("beta\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -1838,54 +1481,35 @@ func TestRunExecutorPhaseBlocksPartialApprovalScopeDrift(t *testing.T) {
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err == nil {
-		t.Fatalf("executor should block pending partial approval scope")
+		ginkgo.Fail(fmt.Sprintf("executor should block pending partial approval scope"))
 	}
 
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	drift, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlanScopeDrift))
-
-	if !ok {
-		t.Fatalf("expected plan_scope_drift event, got %s", stdout.String())
-	}
-
-	if drift["reason"] != "plan edit path is still pending approval" || drift["path"] != "b.txt" {
-		t.Fatalf("unexpected drift event: %#v", drift)
-	}
-
-	if drift["handoff_id"] == "" || drift["approval_scope_id"] == "" {
-		t.Fatalf("drift event should carry stable governance ids: %#v", drift)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected plan_scope_drift event, got %s", stdout.String()))
+	gomega.Expect(drift["reason"]).To(gomega.Equal("plan edit path is still pending approval"), fmt.Sprintf("unexpected drift event: %#v", drift))
+	gomega.Expect(drift["path"]).To(gomega.Equal("b.txt"), fmt.Sprintf("unexpected drift event: %#v", drift))
+	gomega.Expect(drift["handoff_id"]).NotTo(gomega.Equal(""), fmt.Sprintf("drift event should carry stable governance ids: %#v", drift))
+	gomega.Expect(drift["approval_scope_id"]).NotTo(gomega.Equal(""), fmt.Sprintf("drift event should carry stable governance ids: %#v", drift))
 
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
-	if !ok {
-		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
-	}
-
-	if handoff["approval_execution_permission"] != "execute_approved_scope" || handoff["approved_path_count"] != float64(1) || handoff["pending_path_count"] != float64(1) {
-		t.Fatalf("handoff event should carry partial approval counters, got %#v", handoff)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected executor_handoff_packet event, got %s", stdout.String()))
+	gomega.Expect(handoff["approval_execution_permission"]).To(gomega.Equal("execute_approved_scope"), fmt.Sprintf("handoff event should carry partial approval counters, got %#v", handoff))
+	gomega.Expect(handoff["approved_path_count"]).To(gomega.Equal(float64(1)), fmt.Sprintf("handoff event should carry partial approval counters, got %#v", handoff))
+	gomega.Expect(handoff["pending_path_count"]).To(gomega.Equal(float64(1)), fmt.Sprintf("handoff event should carry partial approval counters, got %#v", handoff))
 
 	body, err := os.ReadFile(filepath.Join(root, "b.txt"))
-	if err != nil {
-		t.Fatalf("read b.txt: %v", err)
-	}
-
-	if string(body) != "beta\n" {
-		t.Fatalf("blocked drift should not mutate pending file, got %q", body)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read b.txt: %v", err))
+	gomega.Expect(string(body)).To(gomega.Equal("beta\n"), fmt.Sprintf("blocked drift should not mutate pending file, got %q", body))
 
 	for _, leaked := range []string{"raw_prompt", "customer-acme", "customer_acme", "token=", "/home/example/private"} {
-		if strings.Contains(stdout.String(), leaked) {
-			t.Fatalf("drift event leaked sensitive marker %q: %s", leaked, stdout.String())
-		}
-	}
-}
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring(leaked), fmt.Sprintf("drift event leaked sensitive marker %q: %s", leaked, stdout.String()))
 
-func TestRunExecutorPhaseIgnoresLegacyPackArtifactWithoutGraphView(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
 	}
+})
+var _ = ginkgo.It("run executor phase ignores legacy pack artifact without graph view", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
 
 	packID := "deadc0decafef00d"
 	legacyPacket := comprehension.PackResult{
@@ -1898,16 +1522,11 @@ func TestRunExecutorPhaseIgnoresLegacyPackArtifactWithoutGraphView(t *testing.T)
 		CandidateFiles: []comprehension.PackFile{{Path: "a.txt", Role: "editable"}},
 	}
 	legacyPath := filepath.Join(root, ".idiom", "comprehension", "views", packID+".json")
-	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
-		t.Fatalf("mkdir legacy packet dir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(legacyPath), 0o755)).To(gomega.Succeed())
+
 	body, err := json.MarshalIndent(legacyPacket, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal legacy packet: %v", err)
-	}
-	if err := os.WriteFile(legacyPath, append(body, '\n'), 0o644); err != nil {
-		t.Fatalf("write legacy packet: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal legacy packet: %v", err))
+	gomega.Expect(os.WriteFile(legacyPath, append(body, '\n'), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -1922,45 +1541,33 @@ func TestRunExecutorPhaseIgnoresLegacyPackArtifactWithoutGraphView(t *testing.T)
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err != nil {
-		t.Fatalf("executor phase failed: %v", err)
+		ginkgo.Fail(fmt.Sprintf("executor phase failed: %v", err))
 	}
 
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
-
-	if !ok {
-		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
-	}
-
-	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateMissing) || handoff["reason"] != "cache_miss" || handoff["fresh"] != false {
-		t.Fatalf("expected graph cache miss despite legacy artifact, got %#v", handoff)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected executor_handoff_packet event, got %s", stdout.String()))
+	gomega.Expect(handoff["packet_state"]).To(gomega.Equal(string(plancontract.ExecutorHandoffStateMissing)), fmt.Sprintf("expected graph cache miss despite legacy artifact, got %#v", handoff))
+	gomega.Expect(handoff["reason"]).To(gomega.Equal("cache_miss"), fmt.Sprintf("expected graph cache miss despite legacy artifact, got %#v", handoff))
+	gomega.Expect(handoff["fresh"]).To(gomega.Equal(false), fmt.Sprintf("expected graph cache miss despite legacy artifact, got %#v", handoff))
 
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPackMiss)); !ok {
-		t.Fatalf("expected executor_pack_miss event, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("expected executor_pack_miss event, got %s", stdout.String()))
 	}
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPacketStale)); ok {
-		t.Fatalf("legacy artifact must not emit stale packet event, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("legacy artifact must not emit stale packet event, got %s", stdout.String()))
 	}
-}
+})
+var _ = ginkgo.It("run executor phase emits stale graph view packet without legacy artifact", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/stalehandoff\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.go"), []byte("package stalehandoff\n\nfunc A() string { return \"alpha\" }\n"), 0o644)).To(gomega.Succeed())
 
-func TestRunExecutorPhaseEmitsStaleGraphViewPacketWithoutLegacyArtifact(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/stalehandoff\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("seed go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package stalehandoff\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
-		t.Fatalf("seed a.go: %v", err)
-	}
-
-	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	build, err := comprehension.Build(ginkgo.GinkgoT().Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Build: %v", err))
 
 	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "stale graph packet", Mode: "plan", Query: comprehension.ViewQueryInputs{Path: "a.go"}}
-	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+	gomega.Expect(comprehension.SaveView(root, key, comprehension.PackResult{
 		PackID:         key.ID(),
 		IndexID:        build.IndexID,
 		Root:           root,
@@ -1968,18 +1575,16 @@ func TestRunExecutorPhaseEmitsStaleGraphViewPacketWithoutLegacyArtifact(t *testi
 		Mode:           "plan",
 		Fresh:          true,
 		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
-	}); err != nil {
-		t.Fatalf("SaveView: %v", err)
-	}
+	})).To(gomega.Succeed())
 
 	if n, err := comprehension.MarkAllViewsStale(root); err != nil || n != 1 {
-		t.Fatalf("MarkAllViewsStale n=%d err=%v", n, err)
+		ginkgo.Fail(fmt.Sprintf("MarkAllViewsStale n=%d err=%v", n, err))
 	}
 
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "comprehension", "views", key.ID()+".json")); err == nil {
-		t.Fatalf("legacy view artifact should not exist for graph-row stale test")
+		ginkgo.Fail(fmt.Sprintf("legacy view artifact should not exist for graph-row stale test"))
 	} else if !os.IsNotExist(err) {
-		t.Fatalf("stat legacy view artifact: %v", err)
+		ginkgo.Fail(fmt.Sprintf("stat legacy view artifact: %v", err))
 	}
 
 	plan := planartifact.PlanArtifact{
@@ -1995,45 +1600,32 @@ func TestRunExecutorPhaseEmitsStaleGraphViewPacketWithoutLegacyArtifact(t *testi
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err != nil {
-		t.Fatalf("executor phase failed: %v", err)
+		ginkgo.Fail(fmt.Sprintf("executor phase failed: %v", err))
 	}
 
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
-
-	if !ok {
-		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
-	}
-
-	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateStale) || handoff["reason"] != "stale_graph_view" || handoff["fresh"] != false {
-		t.Fatalf("expected stale graph-view packet state, got %#v", handoff)
-	}
-
-	if handoff["candidate_files"] != float64(1) {
-		t.Fatalf("expected stale graph row to preserve candidate count, got %#v", handoff)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected executor_handoff_packet event, got %s", stdout.String()))
+	gomega.Expect(handoff["packet_state"]).To(gomega.Equal(string(plancontract.ExecutorHandoffStateStale)), fmt.Sprintf("expected stale graph-view packet state, got %#v", handoff))
+	gomega.Expect(handoff["reason"]).To(gomega.Equal("stale_graph_view"), fmt.Sprintf("expected stale graph-view packet state, got %#v", handoff))
+	gomega.Expect(handoff["fresh"]).To(gomega.Equal(false), fmt.Sprintf("expected stale graph-view packet state, got %#v", handoff))
+	gomega.Expect(handoff["candidate_files"]).To(gomega.Equal(float64(1)), fmt.Sprintf("expected stale graph row to preserve candidate count, got %#v", handoff))
 
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPacketStale)); !ok {
-		t.Fatalf("expected executor_packet_stale compatibility event, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("expected executor_packet_stale compatibility event, got %s", stdout.String()))
 	}
-}
+})
+var _ = ginkgo.It("run executor phase emits stale for non current graph view packet without legacy artifact", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/noncurrenthandoff\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.go"), []byte("package noncurrenthandoff\n\nfunc A() string { return \"alpha\" }\n"), 0o644)).To(gomega.Succeed())
 
-func TestRunExecutorPhaseEmitsStaleForNonCurrentGraphViewPacketWithoutLegacyArtifact(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/noncurrenthandoff\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("seed go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package noncurrenthandoff\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
-		t.Fatalf("seed a.go: %v", err)
-	}
-
-	if _, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"}); err != nil {
-		t.Fatalf("Build: %v", err)
+	if _, err := comprehension.Build(ginkgo.GinkgoT().Context(), comprehension.BuildOptions{Root: root, Language: "go"}); err != nil {
+		ginkgo.Fail(fmt.Sprintf("Build: %v", err))
 	}
 
 	key := comprehension.ViewKey{IndexID: "old-index", Task: "non-current graph packet", Mode: "plan", Query: comprehension.ViewQueryInputs{Path: "a.go"}}
-	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+	gomega.Expect(comprehension.SaveView(root, key, comprehension.PackResult{
 		PackID:         key.ID(),
 		IndexID:        "old-index",
 		Root:           root,
@@ -2041,14 +1633,12 @@ func TestRunExecutorPhaseEmitsStaleForNonCurrentGraphViewPacketWithoutLegacyArti
 		Mode:           "plan",
 		Fresh:          true,
 		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
-	}); err != nil {
-		t.Fatalf("SaveView: %v", err)
-	}
+	})).To(gomega.Succeed())
 
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "comprehension", "views", key.ID()+".json")); err == nil {
-		t.Fatalf("legacy view artifact should not exist for non-current graph-row test")
+		ginkgo.Fail(fmt.Sprintf("legacy view artifact should not exist for non-current graph-row test"))
 	} else if !os.IsNotExist(err) {
-		t.Fatalf("stat legacy view artifact: %v", err)
+		ginkgo.Fail(fmt.Sprintf("stat legacy view artifact: %v", err))
 	}
 
 	plan := planartifact.PlanArtifact{
@@ -2064,48 +1654,32 @@ func TestRunExecutorPhaseEmitsStaleForNonCurrentGraphViewPacketWithoutLegacyArti
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err != nil {
-		t.Fatalf("executor phase failed: %v", err)
+		ginkgo.Fail(fmt.Sprintf("executor phase failed: %v", err))
 	}
 
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
-
-	if !ok {
-		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
-	}
-
-	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateStale) || handoff["reason"] != "stale_graph_view" || handoff["fresh"] != false {
-		t.Fatalf("expected stale non-current graph-view packet state, got %#v", handoff)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected executor_handoff_packet event, got %s", stdout.String()))
+	gomega.Expect(handoff["packet_state"]).To(gomega.Equal(string(plancontract.ExecutorHandoffStateStale)), fmt.Sprintf("expected stale non-current graph-view packet state, got %#v", handoff))
+	gomega.Expect(handoff["reason"]).To(gomega.Equal("stale_graph_view"), fmt.Sprintf("expected stale non-current graph-view packet state, got %#v", handoff))
+	gomega.Expect(handoff["fresh"]).To(gomega.Equal(false), fmt.Sprintf("expected stale non-current graph-view packet state, got %#v", handoff))
 
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPackMiss)); ok {
-		t.Fatalf("non-current graph row should not collapse to executor_pack_miss, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("non-current graph row should not collapse to executor_pack_miss, got %s", stdout.String()))
 	}
-}
+})
+var _ = ginkgo.It("run executor phase emits overridden packet handoff and redacts sensitive i ds", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/override\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package override\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
 
-func TestRunExecutorPhaseEmitsOverriddenPacketHandoffAndRedactsSensitiveIDs(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/override\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("seed go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package override\n"), 0o644); err != nil {
-		t.Fatalf("seed pkg.go: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
-
-	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	build, err := comprehension.Build(ginkgo.GinkgoT().Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Build: %v", err))
 
 	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "override packet", Mode: "plan"}
 	packID := key.ID()
-
-	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+	gomega.Expect(comprehension.SaveView(root, key, comprehension.PackResult{
 		PackID:         packID,
 		IndexID:        build.IndexID,
 		Root:           root,
@@ -2113,9 +1687,7 @@ func TestRunExecutorPhaseEmitsOverriddenPacketHandoffAndRedactsSensitiveIDs(t *t
 		Mode:           "plan",
 		Fresh:          true,
 		CandidateFiles: []comprehension.PackFile{{Path: "a.txt", Role: "editable"}},
-	}); err != nil {
-		t.Fatalf("SaveView: %v", err)
-	}
+	})).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -2130,28 +1702,21 @@ func TestRunExecutorPhaseEmitsOverriddenPacketHandoffAndRedactsSensitiveIDs(t *t
 	var stdout bytes.Buffer
 
 	if _, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout}); err != nil {
-		t.Fatalf("executor phase failed: %v", err)
+		ginkgo.Fail(fmt.Sprintf("executor phase failed: %v", err))
 	}
 
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	handoff, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket))
-
-	if !ok {
-		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
-	}
-
-	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateOverridden) || handoff["reason"] != "packet_id_override" {
-		t.Fatalf("expected overridden packet state, got %#v", handoff)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected executor_handoff_packet event, got %s", stdout.String()))
+	gomega.Expect(handoff["packet_state"]).To(gomega.Equal(string(plancontract.ExecutorHandoffStateOverridden)), fmt.Sprintf("expected overridden packet state, got %#v", handoff))
+	gomega.Expect(handoff["reason"]).To(gomega.Equal("packet_id_override"), fmt.Sprintf("expected overridden packet state, got %#v", handoff))
 
 	for _, leaked := range []string{"raw_prompt", "customer-acme", "customer_acme", "token=", "/home/example/private"} {
-		if strings.Contains(stdout.String(), leaked) {
-			t.Fatalf("handoff event leaked sensitive marker %q: %s", leaked, stdout.String())
-		}
-	}
-}
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring(leaked), fmt.Sprintf("handoff event leaked sensitive marker %q: %s", leaked, stdout.String()))
 
-func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("plan execute review repair prompt requires behavioral checklist", func() {
 	prompt := planexecute.PlanExecuteReviewRepairPrompt(
 		"Implement the required behavior.",
 		planartifact.PlanArtifact{
@@ -2213,13 +1778,11 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 		"pending outside this lane unless Phase Evidence names the exact command as successful",
 		"Do not call `ask`",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("review-repair prompt missing %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(prompt).To(gomega.ContainSubstring(want), fmt.Sprintf("review-repair prompt missing %q:\n%s", want, prompt))
 
-func TestPlanExecuteReviewRepairPromptTreatsFailedSourceSanityAsTerminalEvidence(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("plan execute review repair prompt treats failed source sanity as terminal evidence", func() {
 	prompt := planexecute.PlanExecuteReviewRepairPrompt(
 		"Implement the required behavior.",
 		planartifact.PlanArtifact{
@@ -2251,9 +1814,8 @@ func TestPlanExecuteReviewRepairPromptTreatsFailedSourceSanityAsTerminalEvidence
 		"<<QUESTION>>",
 		"source_sanity_failed:a.go",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("review-repair failed-source-sanity prompt missing %q:\n%s", want, prompt)
-		}
+		gomega.Expect(prompt).To(gomega.ContainSubstring(want), fmt.Sprintf("review-repair failed-source-sanity prompt missing %q:\n%s", want, prompt))
+
 	}
 
 	for _, forbidden := range []string{
@@ -2264,13 +1826,11 @@ func TestPlanExecuteReviewRepairPromptTreatsFailedSourceSanityAsTerminalEvidence
 		"`code_navigate`",
 		"one bounded `read_file` range",
 	} {
-		if strings.Contains(prompt, forbidden) {
-			t.Fatalf("failed-source-sanity prompt must not invite discovery via %q:\n%s", forbidden, prompt)
-		}
-	}
-}
+		gomega.Expect(prompt).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("failed-source-sanity prompt must not invite discovery via %q:\n%s", forbidden, prompt))
 
-func TestPlanExecuteReviewRepairPromptQuotesOriginalSpecAllowlist(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("plan execute review repair prompt quotes original spec allowlist", func() {
 	original := `# Atom
 
 ## Files To Modify
@@ -2293,100 +1853,62 @@ func TestPlanExecuteReviewRepairPromptQuotesOriginalSpecAllowlist(t *testing.T) 
 	)
 
 	if paths := plancontract.RequiredEditPathsFromPrompt(prompt); len(paths) != 0 {
-		t.Fatalf("original spec allowlist should be quoted reference text, got active required paths %#v\nprompt:\n%s", paths, prompt)
+		ginkgo.Fail(fmt.Sprintf("original spec allowlist should be quoted reference text, got active required paths %#v\nprompt:\n%s", paths, prompt))
 	}
+	gomega.Expect(prompt).To(gomega.ContainSubstring("> ## Files To Modify"), fmt.Sprintf("original spec should remain visible as quoted reference text:\n%s", prompt))
 
-	if !strings.Contains(prompt, "> ## Files To Modify") {
-		t.Fatalf("original spec should remain visible as quoted reference text:\n%s", prompt)
-	}
-}
-
-func TestCollectReviewRepairEvidenceUsesExecutorBaselineNotGitHead(t *testing.T) {
-	root := initGitRepoForStaleness(t)
-	gitCommit(t, root, "a.txt", "head\n", "initial")
-
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("dirty-before-lane\n"), 0o644); err != nil {
-		t.Fatalf("seed dirty worktree: %v", err)
-	}
+})
+var _ = ginkgo.It("collect review repair evidence uses executor baseline not git head", func() {
+	root := initGitRepoForStaleness()
+	gitCommit(root, "a.txt", "head\n", "initial")
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("dirty-before-lane\n"), 0o644)).To(gomega.Succeed())
 
 	baseline := planexecute.CaptureReviewRepairBaseline(root, []string{"a.txt"})
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after-executor\n"), 0o644); err != nil {
-		t.Fatalf("seed executor result: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("after-executor\n"), 0o644)).To(gomega.Succeed())
 
 	evidence := planexecute.CollectReviewRepairEvidence(root, []string{"a.txt"}, &baseline)
-	if !strings.Contains(evidence.Diff, "-dirty-before-lane") || !strings.Contains(evidence.Diff, "+after-executor") {
-		t.Fatalf("current-run diff should compare against executor baseline, got:\n%s", evidence.Diff)
-	}
+	gomega.Expect(evidence.Diff).To(gomega.ContainSubstring("-dirty-before-lane"), fmt.Sprintf("current-run diff should compare against executor baseline, got:\n%s", evidence.Diff))
+	gomega.Expect(evidence.Diff).To(gomega.ContainSubstring("+after-executor"), fmt.Sprintf("current-run diff should compare against executor baseline, got:\n%s", evidence.Diff))
+	gomega.Expect(evidence.Diff).NotTo(gomega.ContainSubstring("-head"), fmt.Sprintf("current-run diff must not compare against git HEAD, got:\n%s", evidence.Diff))
 
-	if strings.Contains(evidence.Diff, "-head") {
-		t.Fatalf("current-run diff must not compare against git HEAD, got:\n%s", evidence.Diff)
-	}
-}
-
-func TestCollectReviewRepairEvidenceChecksCurrentRunWhitespace(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\n"), 0o644); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
+})
+var _ = ginkgo.It("collect review repair evidence checks current run whitespace", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\n"), 0o644)).To(gomega.Succeed())
 
 	baseline := planexecute.CaptureReviewRepairBaseline(root, []string{"a.txt"})
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\nbad   \n"), 0o644); err != nil {
-		t.Fatalf("seed executor result: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\nbad   \n"), 0o644)).To(gomega.Succeed())
 
 	evidence := planexecute.CollectReviewRepairEvidence(root, []string{"a.txt"}, &baseline)
-	if evidence.DiffCheckExit != 1 {
-		t.Fatalf("trailing whitespace should fail current-run hygiene, got exit %d diff=%s", evidence.DiffCheckExit, evidence.Diff)
-	}
+	gomega.Expect(evidence.DiffCheckExit).To(gomega.Equal(1), fmt.Sprintf("trailing whitespace should fail current-run hygiene, got exit %d diff=%s", evidence.DiffCheckExit, evidence.Diff))
+	gomega.Expect(evidence.DiffCheck).To(gomega.ContainSubstring("a.txt:2"), fmt.Sprintf("whitespace finding should include current-run path and line, got:\n%s", evidence.DiffCheck))
 
-	if !strings.Contains(evidence.DiffCheck, "a.txt:2") {
-		t.Fatalf("whitespace finding should include current-run path and line, got:\n%s", evidence.DiffCheck)
-	}
-}
-
-func TestAutoRepairReviewPatchHygieneTrimsOnlyCurrentRunLines(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("preexisting   \nclean-before\n"), 0o644); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
+})
+var _ = ginkgo.It("auto repair review patch hygiene trims only current run lines", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("preexisting   \nclean-before\n"), 0o644)).To(gomega.Succeed())
 
 	baseline := planexecute.CaptureReviewRepairBaseline(root, []string{"a.txt"})
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("preexisting   \nclean-before\nbad   \n"), 0o644); err != nil {
-		t.Fatalf("seed executor result: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("preexisting   \nclean-before\nbad   \n"), 0o644)).To(gomega.Succeed())
 
 	evidence := planexecute.CollectReviewRepairEvidence(root, []string{"a.txt"}, &baseline)
 
 	report, err := planexecute.AutoRepairReviewPatchHygiene(root, []string{"a.txt"}, evidence)
-	if err != nil {
-		t.Fatalf("auto repair patch hygiene: %v", err)
-	}
-
-	if !report.Repaired || report.Lines != 1 {
-		t.Fatalf("expected one repaired line, got %#v", report)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("auto repair patch hygiene: %v", err))
+	gomega.Expect(report.Repaired).To(gomega.BeTrue(), fmt.Sprintf("expected one repaired line, got %#v", report))
+	gomega.Expect(report.Lines).To(gomega.Equal(1), fmt.Sprintf("expected one repaired line, got %#v", report))
 
 	got, err := os.ReadFile(filepath.Join(root, "a.txt"))
-	if err != nil {
-		t.Fatalf("read repaired file: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read repaired file: %v", err))
+	gomega.Expect(string(got)).To(gomega.Equal("preexisting   \nclean-before\nbad\n"), fmt.Sprintf("auto repair should trim only current-run trailing whitespace, got %q", string(got)))
 
-	if string(got) != "preexisting   \nclean-before\nbad\n" {
-		t.Fatalf("auto repair should trim only current-run trailing whitespace, got %q", string(got))
-	}
-}
-
-func TestRunReviewRepairPhaseAutoRepairsPatchHygieneBeforePrompt(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase auto repairs patch hygiene before prompt", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\n"), 0o644)).To(gomega.Succeed())
 
 	baseline := planexecute.CaptureReviewRepairBaseline(root, []string{"a.txt"})
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\nbad   \n"), 0o644); err != nil {
-		t.Fatalf("seed executor result: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\nbad   \n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2416,37 +1938,20 @@ func TestRunReviewRepairPhaseAutoRepairsPatchHygieneBeforePrompt(t *testing.T) {
 		},
 		nil,
 	)
-	if err != nil {
-		t.Fatalf("review-repair should accept auto-repaired hygiene: %v", err)
-	}
-
-	if report.AutoRepairs != 1 {
-		t.Fatalf("expected one mechanical repair, got %#v", report)
-	}
-
-	if !strings.Contains(gotPrompt, "patch_hygiene: status=passed") {
-		t.Fatalf("review prompt should receive repaired patch hygiene evidence, got:\n%s", gotPrompt)
-	}
-
-	if strings.Contains(gotPrompt, "submitted_edit_pending") || strings.Contains(gotPrompt, "submitted_edit_unknown") {
-		t.Fatalf("mechanical whitespace repair should not make submitted edit look pending:\n%s", gotPrompt)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("review-repair should accept auto-repaired hygiene: %v", err))
+	gomega.Expect(report.AutoRepairs).To(gomega.Equal(1), fmt.Sprintf("expected one mechanical repair, got %#v", report))
+	gomega.Expect(gotPrompt).To(gomega.ContainSubstring("patch_hygiene: status=passed"), fmt.Sprintf("review prompt should receive repaired patch hygiene evidence, got:\n%s", gotPrompt))
+	gomega.Expect(gotPrompt).NotTo(gomega.ContainSubstring("submitted_edit_pending"), fmt.Sprintf("mechanical whitespace repair should not make submitted edit look pending:\n%s", gotPrompt))
+	gomega.Expect(gotPrompt).NotTo(gomega.ContainSubstring("submitted_edit_unknown"), fmt.Sprintf("mechanical whitespace repair should not make submitted edit look pending:\n%s", gotPrompt))
 
 	got, err := os.ReadFile(filepath.Join(root, "a.txt"))
-	if err != nil {
-		t.Fatalf("read repaired file: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read repaired file: %v", err))
+	gomega.Expect(string(got)).To(gomega.Equal("clean-before\nbad\n"), fmt.Sprintf("expected repaired file, got %q", string(got)))
 
-	if string(got) != "clean-before\nbad\n" {
-		t.Fatalf("expected repaired file, got %q", string(got))
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsPassWithoutChecklist(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects pass without checklist", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2472,20 +1977,13 @@ func TestRunReviewRepairPhaseRejectsPassWithoutChecklist(t *testing.T) {
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected inconclusive review without checklist")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected inconclusive review without checklist"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("Verification Checklist"), fmt.Sprintf("error should require checklist, got %v", err))
 
-	if !strings.Contains(err.Error(), "Verification Checklist") {
-		t.Fatalf("error should require checklist, got %v", err)
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsRecoveryTemplateAsPass(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects recovery template as pass", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2511,20 +2009,14 @@ func TestRunReviewRepairPhaseRejectsRecoveryTemplateAsPass(t *testing.T) {
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected recovery template text not to count as a review pass")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected recovery template text not to count as a review pass"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("Decision: pass"), fmt.Sprintf("error should require an actual terminal pass shape, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("Verification Checklist"), fmt.Sprintf("error should require an actual terminal pass shape, got %v", err))
 
-	if !strings.Contains(err.Error(), "Decision: pass") || !strings.Contains(err.Error(), "Verification Checklist") {
-		t.Fatalf("error should require an actual terminal pass shape, got %v", err)
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsContradictoryPass(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("partial\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects contradictory pass", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("partial\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2561,25 +2053,18 @@ func TestRunReviewRepairPhaseRejectsContradictoryPass(t *testing.T) {
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected contradictory pass rejection")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected contradictory pass rejection"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("contradictory"), fmt.Sprintf("expected contradiction reason, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unresolved_failure_claim"), fmt.Sprintf("expected contradiction reason, got %v", err))
 
-	if !strings.Contains(err.Error(), "contradictory") || !strings.Contains(err.Error(), "unresolved_failure_claim") {
-		t.Fatalf("expected contradiction reason, got %v", err)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairPassRejected)); !ok {
-		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("expected review_repair_pass_rejected event, got %s", stdout.String()))
 	}
-}
-
-func TestRunReviewRepairPhaseRejectsPassThatAdmitsCommandWasNotRun(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects pass that admits command was not run", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("after\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2605,31 +2090,18 @@ func TestRunReviewRepairPhaseRejectsPassThatAdmitsCommandWasNotRun(t *testing.T)
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected missing command evidence admission to reject review pass")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected missing command evidence admission to reject review pass"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing_command_evidence_claim"), fmt.Sprintf("expected missing command evidence rejection, got %v", err))
 
-	if !strings.Contains(err.Error(), "missing_command_evidence_claim") {
-		t.Fatalf("expected missing command evidence rejection, got %v", err)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairPassRejected))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected review_repair_pass_rejected event, got %s", stdout.String()))
+	gomega.Expect(event["reason"]).To(gomega.Equal("missing_command_evidence_claim"), fmt.Sprintf("expected missing_command_evidence_claim reason, got %#v", event))
 
-	if !ok {
-		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
-	}
-
-	if event["reason"] != "missing_command_evidence_claim" {
-		t.Fatalf("expected missing_command_evidence_claim reason, got %#v", event)
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return true }\n"), 0o644); err != nil {
-		t.Fatalf("seed pkg.go: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects pass when requested test edit missing", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return true }\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2665,35 +2137,19 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected missing requested test edit to reject review pass")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected missing requested test edit to reject review pass"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing_requested_test_edit"), fmt.Sprintf("expected missing test edit rejection, got %v", err))
+	gomega.Expect(gotPrompt).To(gomega.ContainSubstring("requested_test_edit_missing"), fmt.Sprintf("review prompt should expose requested test edit obligation, got:\n%s", gotPrompt))
 
-	if !strings.Contains(err.Error(), "missing_requested_test_edit") {
-		t.Fatalf("expected missing test edit rejection, got %v", err)
-	}
-
-	if !strings.Contains(gotPrompt, "requested_test_edit_missing") {
-		t.Fatalf("review prompt should expose requested test edit obligation, got:\n%s", gotPrompt)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairPassRejected))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected review_repair_pass_rejected event, got %s", stdout.String()))
+	gomega.Expect(event["reason"]).To(gomega.Equal("missing_requested_test_edit"), fmt.Sprintf("expected missing_requested_test_edit reason, got %#v", event))
 
-	if !ok {
-		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
-	}
-
-	if event["reason"] != "missing_requested_test_edit" {
-		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n"), 0o644); err != nil {
-		t.Fatalf("seed feature_test.go: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects pass when requested implementation edit missing", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2729,35 +2185,19 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected missing requested implementation edit to reject review pass")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected missing requested implementation edit to reject review pass"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing_requested_implementation_edit"), fmt.Sprintf("expected missing implementation edit rejection, got %v", err))
+	gomega.Expect(gotPrompt).To(gomega.ContainSubstring("requested_implementation_edit_missing"), fmt.Sprintf("review prompt should expose requested implementation edit obligation, got:\n%s", gotPrompt))
 
-	if !strings.Contains(err.Error(), "missing_requested_implementation_edit") {
-		t.Fatalf("expected missing implementation edit rejection, got %v", err)
-	}
-
-	if !strings.Contains(gotPrompt, "requested_implementation_edit_missing") {
-		t.Fatalf("review prompt should expose requested implementation edit obligation, got:\n%s", gotPrompt)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairPassRejected))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected review_repair_pass_rejected event, got %s", stdout.String()))
+	gomega.Expect(event["reason"]).To(gomega.Equal("missing_requested_implementation_edit"), fmt.Sprintf("expected missing_requested_implementation_edit reason, got %#v", event))
 
-	if !ok {
-		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
-	}
-
-	if event["reason"] != "missing_requested_implementation_edit" {
-		t.Fatalf("expected missing_requested_implementation_edit reason, got %#v", event)
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsPassWhenVerificationFailed(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Value() int { return 2 }\n"), 0o644); err != nil {
-		t.Fatalf("seed pkg.go: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects pass when verification failed", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Value() int { return 2 }\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2793,37 +2233,20 @@ func TestRunReviewRepairPhaseRejectsPassWhenVerificationFailed(t *testing.T) {
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected failed requested verification to reject review pass")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected failed requested verification to reject review pass"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("verification_failed"), fmt.Sprintf("expected verification_failed rejection, got %v", err))
+	gomega.Expect(gotPrompt).To(gomega.ContainSubstring("verification_failed:"+command), fmt.Sprintf("review prompt should expose failed verification obligation, got:\n%s", gotPrompt))
 
-	if !strings.Contains(err.Error(), "verification_failed") {
-		t.Fatalf("expected verification_failed rejection, got %v", err)
-	}
-
-	if !strings.Contains(gotPrompt, "verification_failed:"+command) {
-		t.Fatalf("review prompt should expose failed verification obligation, got:\n%s", gotPrompt)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairPassRejected))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected review_repair_pass_rejected event, got %s", stdout.String()))
+	gomega.Expect(event["reason"]).To(gomega.Equal("verification_failed"), fmt.Sprintf("expected verification_failed reason, got %#v", event))
 
-	if !ok {
-		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
-	}
-
-	if event["reason"] != "verification_failed" {
-		t.Fatalf("expected verification_failed reason, got %#v", event)
-	}
-}
-
-func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run review repair phase retries contradictory pass into corrective plan", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	path := filepath.Join(root, "a.txt")
-
-	if err := os.WriteFile(path, []byte("value=bad\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte("value=bad\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2853,24 +2276,17 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 		&stdout,
 		func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			attempts++
-
-			if opts.TaskFamily != string(autonomy.TaskFamilyPlanThenExecuteReview) {
-				t.Fatalf("unexpected task family %q", opts.TaskFamily)
-			}
+			gomega.Expect(opts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecuteReview)), fmt.Sprintf("unexpected task family %q", opts.TaskFamily))
 
 			if attempts == 1 {
-				if !strings.Contains(prompt, "verification_failed:check a.txt") {
-					t.Fatalf("initial prompt should expose failed verification, got:\n%s", prompt)
-				}
+				gomega.Expect(prompt).To(gomega.ContainSubstring("verification_failed:check a.txt"), fmt.Sprintf("initial prompt should expose failed verification, got:\n%s", prompt))
 
 				return "Decision: pass\n\nVerification Checklist:\n- Required behavior: acceptable.\n- Test or command evidence: acceptable.", nil
 			}
+			gomega.Expect(prompt).To(gomega.ContainSubstring("Rejected Previous Review Outcome"), fmt.Sprintf("retry prompt should forbid another pass, got:\n%s", prompt))
+			gomega.Expect(prompt).To(gomega.ContainSubstring("`Decision: pass` is not an allowed terminal outcome"), fmt.Sprintf("retry prompt should forbid another pass, got:\n%s", prompt))
 
-			if !strings.Contains(prompt, "Rejected Previous Review Outcome") || !strings.Contains(prompt, "`Decision: pass` is not an allowed terminal outcome") {
-				t.Fatalf("retry prompt should forbid another pass, got:\n%s", prompt)
-			}
-
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -2884,33 +2300,23 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 		},
 		nil,
 	)
-	if err != nil {
-		t.Fatalf("expected retry corrective plan to repair, got %v", err)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("expected retry corrective plan to repair, got %v", err))
+	gomega.Expect(attempts).To(gomega.Equal(2), fmt.Sprintf("expected one retry after contradictory pass, got %d attempts", attempts))
+	gomega.Expect(report.Status).To(gomega.Equal(plancontract.PlanExecuteReviewStatusRepaired), fmt.Sprintf("expected repaired report, got %#v", report))
+	gomega.Expect(report.Repairs).To(gomega.Equal(1), fmt.Sprintf("expected repaired report, got %#v", report))
+
+	if got := readFileString(path); got != "value=good\n" {
+		ginkgo.Fail(fmt.Sprintf("expected repair to apply, got %q", got))
 	}
 
-	if attempts != 2 {
-		t.Fatalf("expected one retry after contradictory pass, got %d attempts", attempts)
-	}
-
-	if report.Status != "repaired" || report.Repairs != 1 {
-		t.Fatalf("expected repaired report, got %#v", report)
-	}
-
-	if got := readFileString(t, path); got != "value=good\n" {
-		t.Fatalf("expected repair to apply, got %q", got)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairRetry)); !ok {
-		t.Fatalf("expected review_repair_retry event, got %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("expected review_repair_retry event, got %s", stdout.String()))
 	}
-}
-
-func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMissing(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
-		t.Fatalf("seed pkg.go: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects corrective plan when requested test edit still missing", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -2935,11 +2341,9 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 		},
 		&stdout,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != string(autonomy.TaskFamilyPlanThenExecuteReview) {
-				t.Fatalf("unexpected task family %q", opts.TaskFamily)
-			}
+			gomega.Expect(opts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecuteReview)), fmt.Sprintf("unexpected task family %q", opts.TaskFamily))
 
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -2953,31 +2357,20 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected production-only repair plan rejection")
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected production-only repair plan rejection"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing_requested_test_edit"), fmt.Sprintf("expected missing_requested_test_edit, got %v", err))
+
+	if got := readFileString(filepath.Join(root, "pkg.go")); strings.Contains(got, "return true") {
+		ginkgo.Fail(fmt.Sprintf("repair rejection must happen before writes, got:\n%s", got))
 	}
 
-	if !strings.Contains(err.Error(), "missing_requested_test_edit") {
-		t.Fatalf("expected missing_requested_test_edit, got %v", err)
-	}
-
-	if got := readFileString(t, filepath.Join(root, "pkg.go")); strings.Contains(got, "return true") {
-		t.Fatalf("repair rejection must happen before writes, got:\n%s", got)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	event, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairPlanRejected))
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected review_repair_plan_rejected event, got %s", stdout.String()))
+	gomega.Expect(event["reason"]).To(gomega.Equal("missing_requested_test_edit"), fmt.Sprintf("expected missing_requested_test_edit reason, got %#v", event))
 
-	if !ok {
-		t.Fatalf("expected review_repair_plan_rejected event, got %s", stdout.String())
-	}
-
-	if event["reason"] != "missing_requested_test_edit" {
-		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
-	}
-}
-
-func TestReviewAnswerPassContradictionAllowsNegatedMissingCoverage(t *testing.T) {
+})
+var _ = ginkgo.It("review answer pass contradiction allows negated missing coverage", func() {
 	answer := strings.Join([]string{
 		"Verification Checklist",
 		"- Required behavior: implemented.",
@@ -2987,11 +2380,10 @@ func TestReviewAnswerPassContradictionAllowsNegatedMissingCoverage(t *testing.T)
 		"Decision: pass",
 	}, "\n")
 	if reason := planexecute.ReviewAnswerPassContradictionReason(answer); reason != "" {
-		t.Fatalf("clean negated checklist should not be contradictory, got %q", reason)
+		ginkgo.Fail(fmt.Sprintf("clean negated checklist should not be contradictory, got %q", reason))
 	}
-}
-
-func TestReviewAnswerPassContradictionAllowsPlannerOwnedPendingCommand(t *testing.T) {
+})
+var _ = ginkgo.It("review answer pass contradiction allows planner owned pending command", func() {
 	answer := strings.Join([]string{
 		"Verification Checklist",
 		"- [x] Required behavior: implemented from the diff evidence.",
@@ -3000,11 +2392,10 @@ func TestReviewAnswerPassContradictionAllowsPlannerOwnedPendingCommand(t *testin
 		"Decision: pass",
 	}, "\n")
 	if reason := planexecute.ReviewAnswerPassContradictionReason(answer); reason != "" {
-		t.Fatalf("planner-owned pending verification should not make pass contradictory, got %q", reason)
+		ginkgo.Fail(fmt.Sprintf("planner-owned pending verification should not make pass contradictory, got %q", reason))
 	}
-}
-
-func TestReviewAnswerPassContradictionRejectsUnverifiableRequiredEdit(t *testing.T) {
+})
+var _ = ginkgo.It("review answer pass contradiction rejects unverifiable required edit", func() {
 	answer := strings.Join([]string{
 		"Verification Checklist",
 		"- Required behavior: WIRE cap tests were added.",
@@ -3015,11 +2406,10 @@ func TestReviewAnswerPassContradictionRejectsUnverifiableRequiredEdit(t *testing
 		"Decision: pass",
 	}, "\n")
 	if reason := planexecute.ReviewAnswerPassContradictionReason(answer); reason == "" {
-		t.Fatalf("review pass that admits missing evidence must be contradictory")
+		ginkgo.Fail(fmt.Sprintf("review pass that admits missing evidence must be contradictory"))
 	}
-}
-
-func TestReviewAnswerPassContradictionRejectsPlaceholderChecklist(t *testing.T) {
+})
+var _ = ginkgo.It("review answer pass contradiction rejects placeholder checklist", func() {
 	answer := strings.Join([]string{
 		"Decision: pass",
 		"",
@@ -3028,11 +2418,10 @@ func TestReviewAnswerPassContradictionRejectsPlaceholderChecklist(t *testing.T) 
 		"- Scope safety: cite a checked fact from changed paths and allowed repair paths.",
 	}, "\n")
 	if reason := planexecute.ReviewAnswerPassContradictionReason(answer); reason != "placeholder_checklist_item" {
-		t.Fatalf("placeholder checklist should be contradictory, got %q", reason)
+		ginkgo.Fail(fmt.Sprintf("placeholder checklist should be contradictory, got %q", reason))
 	}
-}
-
-func TestReviewAnswerPassContradictionRejectsProjectedVerificationClaims(t *testing.T) {
+})
+var _ = ginkgo.It("review answer pass contradiction rejects projected verification claims", func() {
 	answer := strings.Join([]string{
 		"Verification Checklist",
 		"- Required behavior: the new scenario file matches the requested body.",
@@ -3042,15 +2431,12 @@ func TestReviewAnswerPassContradictionRejectsProjectedVerificationClaims(t *test
 		"Decision: pass",
 	}, "\n")
 	if reason := planexecute.ReviewAnswerPassContradictionReason(answer); reason != "unsupported_verification_projection" {
-		t.Fatalf("projected verification should be contradictory, got %q", reason)
+		ginkgo.Fail(fmt.Sprintf("projected verification should be contradictory, got %q", reason))
 	}
-}
-
-func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase uses review repair task family for pass", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -3087,25 +2473,12 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 		},
 		nil,
 	)
-	if err != nil {
-		t.Fatalf("review-repair pass should be accepted: %v", err)
-	}
-
-	if report.Status != plancontract.PlanExecuteReviewStatusPassed || report.StatusDetail != "no corrective edits" {
-		t.Fatalf("unexpected report: %#v", report)
-	}
-
-	if gotTaskFamily != string(autonomy.TaskFamilyPlanThenExecuteReview) {
-		t.Fatalf("review-repair should use review-repair task family, got %q", gotTaskFamily)
-	}
-
-	if !gotDisableThinking {
-		t.Fatal("review-repair must force visible no-thinking output for its terminal contract")
-	}
-
-	if !gotUseActiveModel {
-		t.Fatal("review-repair must preserve plan-execute active model override")
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("review-repair pass should be accepted: %v", err))
+	gomega.Expect(report.Status).To(gomega.Equal(plancontract.PlanExecuteReviewStatusPassed), fmt.Sprintf("unexpected report: %#v", report))
+	gomega.Expect(report.StatusDetail).To(gomega.Equal("no corrective edits"), fmt.Sprintf("unexpected report: %#v", report))
+	gomega.Expect(gotTaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecuteReview)), fmt.Sprintf("review-repair should use review-repair task family, got %q", gotTaskFamily))
+	gomega.Expect(gotDisableThinking).To(gomega.BeTrue(), "review-repair must force visible no-thinking output for its terminal contract")
+	gomega.Expect(gotUseActiveModel).To(gomega.BeTrue(), "review-repair must preserve plan-execute active model override")
 
 	for _, want := range []string{
 		"## Terminal Output Templates",
@@ -3114,23 +2487,16 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 		"Corrective plan shape:",
 		"Blocker shape:",
 	} {
-		if !strings.Contains(gotPrompt, want) {
-			t.Fatalf("review-repair prompt missing %q:\n%s", want, gotPrompt)
-		}
-	}
+		gomega.Expect(gotPrompt).To(gomega.ContainSubstring(want), fmt.Sprintf("review-repair prompt missing %q:\n%s", want, gotPrompt))
 
-	if strings.Contains(gotPrompt, "The plan-submission capability must cover every brief-required edit once") {
-		t.Fatalf("review-repair prompt must not include planner-phase submit_plan closeout addendum:\n%s", gotPrompt)
 	}
-}
+	gomega.Expect(gotPrompt).NotTo(gomega.ContainSubstring("The plan-submission capability must cover every brief-required edit once"), fmt.Sprintf("review-repair prompt must not include planner-phase submit_plan closeout addendum:\n%s", gotPrompt))
 
-func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main resume reruns review repair only", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644)).To(gomega.Succeed())
 
 	prompt := "Make a.txt say new."
 
@@ -3146,7 +2512,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 			switch opts.TaskFamily {
 			case string(autonomy.TaskFamilyPlanThenExecutePlanner):
 				plannerSessionID = cfg.Workspace.SessionID
-				writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+				writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 					SchemaVersion: planartifact.SchemaVersion,
 					Created:       time.Now().UTC().Format(time.RFC3339Nano),
 					SessionID:     cfg.Workspace.SessionID,
@@ -3160,25 +2526,20 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 			case string(autonomy.TaskFamilyPlanThenExecuteReview):
 				return "Decision: pass\nNo checklist.", nil
 			default:
-				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+				ginkgo.Fail(fmt.Sprintf("unexpected task family %q", opts.TaskFamily))
 
 				return "", nil
 			}
 		},
 		nil,
 	)
-	if code != 1 {
-		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
-	}
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String()))
 
 	state, _, found, err := planexecute.TryLoadProgressState(root, plannerSessionID)
-	if err != nil || !found {
-		t.Fatalf("load progress state: %v", err)
-	}
-
-	if state.Phase != plancontract.PlanExecuteProgressPhaseReviewRepair || state.Status != plancontract.PlanExecuteProgressStatusFailed {
-		t.Fatalf("expected failed review state, got phase=%s status=%s", state.Phase, state.Status)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("load progress state: %v", err))
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("load progress state: %v", err))
+	gomega.Expect(state.Phase).To(gomega.Equal(plancontract.PlanExecuteProgressPhaseReviewRepair), fmt.Sprintf("expected failed review state, got phase=%s status=%s", state.Phase, state.Status))
+	gomega.Expect(state.Status).To(gomega.Equal(plancontract.PlanExecuteProgressStatusFailed), fmt.Sprintf("expected failed review state, got phase=%s status=%s", state.Phase, state.Status))
 
 	var resumedStdout, resumedStderr bytes.Buffer
 
@@ -3190,9 +2551,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 		&resumedStdout,
 		&resumedStderr,
 		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != string(autonomy.TaskFamilyPlanThenExecuteReview) {
-				t.Fatalf("resume should run review-repair only, got task family %q", opts.TaskFamily)
-			}
+			gomega.Expect(opts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecuteReview)), fmt.Sprintf("resume should run review-repair only, got task family %q", opts.TaskFamily))
 
 			reviewCalls++
 
@@ -3202,31 +2561,19 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("resume should pass review, got %d stdout=%s stderr=%s", code, resumedStdout.String(), resumedStderr.String()))
+	gomega.Expect(reviewCalls).To(gomega.Equal(1), fmt.Sprintf("resume should call review once, got %d", reviewCalls))
+	gomega.Expect(resumedPrompt).To(gomega.ContainSubstring("-old"), fmt.Sprintf("resumed review prompt should restore executor baseline diff, got:\n%s", resumedPrompt))
+	gomega.Expect(resumedPrompt).To(gomega.ContainSubstring("+new"), fmt.Sprintf("resumed review prompt should restore executor baseline diff, got:\n%s", resumedPrompt))
 
-	if code != 0 {
-		t.Fatalf("resume should pass review, got %d stdout=%s stderr=%s", code, resumedStdout.String(), resumedStderr.String())
+	if got := readFileString(filepath.Join(root, "a.txt")); got != "new\n" {
+		ginkgo.Fail(fmt.Sprintf("resume should not reapply executor edits, got %q", got))
 	}
-
-	if reviewCalls != 1 {
-		t.Fatalf("resume should call review once, got %d", reviewCalls)
-	}
-
-	if !strings.Contains(resumedPrompt, "-old") || !strings.Contains(resumedPrompt, "+new") {
-		t.Fatalf("resumed review prompt should restore executor baseline diff, got:\n%s", resumedPrompt)
-	}
-
-	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new\n" {
-		t.Fatalf("resume should not reapply executor edits, got %q", got)
-	}
-}
-
-func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main resume uses persisted typed edit set obligations", func() {
+	configPath := writePlanExecuteConfig()
 	root := filepath.Dir(configPath)
-
-	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestFeature(t *testing.T) {}\n"), 0o644); err != nil {
-		t.Fatalf("seed feature_test.go: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestFeature(t *testing.T) {}\n"), 0o644)).To(gomega.Succeed())
 
 	prompt := "Add coverage for existing feature behavior."
 
@@ -3242,7 +2589,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 			switch opts.TaskFamily {
 			case string(autonomy.TaskFamilyPlanThenExecutePlanner):
 				plannerSessionID = cfg.Workspace.SessionID
-				writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+				writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 					SchemaVersion: planartifact.SchemaVersion,
 					Created:       time.Now().UTC().Format(time.RFC3339Nano),
 					SessionID:     cfg.Workspace.SessionID,
@@ -3256,25 +2603,22 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 			case string(autonomy.TaskFamilyPlanThenExecuteReview):
 				return "Decision: pass\nNo checklist.", nil
 			default:
-				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+				ginkgo.Fail(fmt.Sprintf("unexpected task family %q", opts.TaskFamily))
 
 				return "", nil
 			}
 		},
 		nil,
 	)
-	if code != 1 {
-		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
-	}
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String()))
 
 	state, _, found, err := planexecute.TryLoadProgressState(root, plannerSessionID)
-	if err != nil || !found {
-		t.Fatalf("load progress state: %v", err)
-	}
+	gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("load progress state: %v", err))
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("load progress state: %v", err))
 
 	state.EditSetObligations = plancontract.EditSetObligations{}.With(plancontract.EditSetObligationKindImplementationEdit, "persisted_retry")
 	if _, err := planexecute.SaveProgressState(root, &state); err != nil {
-		t.Fatalf("save progress state: %v", err)
+		ginkgo.Fail(fmt.Sprintf("save progress state: %v", err))
 	}
 
 	var resumedStdout, resumedStderr bytes.Buffer
@@ -3286,9 +2630,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 		&resumedStdout,
 		&resumedStderr,
 		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != string(autonomy.TaskFamilyPlanThenExecuteReview) {
-				t.Fatalf("resume should run review-repair only, got task family %q", opts.TaskFamily)
-			}
+			gomega.Expect(opts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyPlanThenExecuteReview)), fmt.Sprintf("resume should run review-repair only, got task family %q", opts.TaskFamily))
 
 			resumedPrompt = prompt
 
@@ -3296,22 +2638,13 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("resume should reject pass against persisted implementation obligation, got %d stdout=%s stderr=%s", code, resumedStdout.String(), resumedStderr.String()))
+	gomega.Expect(resumedStderr.String()).To(gomega.ContainSubstring(string(plancontract.PlanExecuteFailureMissingRequestedImplementationEdit)), fmt.Sprintf("expected persisted implementation obligation rejection, stderr=%s", resumedStderr.String()))
+	gomega.Expect(resumedPrompt).To(gomega.ContainSubstring("requested_implementation_edit_missing"), fmt.Sprintf("review prompt should expose persisted implementation obligation, got:\n%s", resumedPrompt))
 
-	if code != 1 {
-		t.Fatalf("resume should reject pass against persisted implementation obligation, got %d stdout=%s stderr=%s", code, resumedStdout.String(), resumedStderr.String())
-	}
-
-	if !strings.Contains(resumedStderr.String(), string(plancontract.PlanExecuteFailureMissingRequestedImplementationEdit)) {
-		t.Fatalf("expected persisted implementation obligation rejection, stderr=%s", resumedStderr.String())
-	}
-
-	if !strings.Contains(resumedPrompt, "requested_implementation_edit_missing") {
-		t.Fatalf("review prompt should expose persisted implementation obligation, got:\n%s", resumedPrompt)
-	}
-}
-
-func TestRunPlanExecuteMainResumeRejectsMissingSession(t *testing.T) {
-	configPath := writePlanExecuteConfig(t)
+})
+var _ = ginkgo.It("run plan execute main resume rejects missing session", func() {
+	configPath := writePlanExecuteConfig()
 
 	var stdout, stderr bytes.Buffer
 
@@ -3320,27 +2653,19 @@ func TestRunPlanExecuteMainResumeRejectsMissingSession(t *testing.T) {
 		&stdout,
 		&stderr,
 		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not be called for missing resume state")
+			ginkgo.Fail("prompt runner should not be called for missing resume state")
 
 			return "", nil
 		},
 		nil,
 	)
+	gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected missing resume to fail, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
+	gomega.Expect(stderr.String()).To(gomega.ContainSubstring("does not exist"), fmt.Sprintf("stderr should explain missing resume state, got %s", stderr.String()))
 
-	if code != 1 {
-		t.Fatalf("expected missing resume to fail, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	if !strings.Contains(stderr.String(), "does not exist") {
-		t.Fatalf("stderr should explain missing resume state, got %s", stderr.String())
-	}
-}
-
-func TestRunReviewRepairPhaseDegradesWhenReviewModelUnavailable(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase degrades when review model unavailable", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -3366,35 +2691,25 @@ func TestRunReviewRepairPhaseDegradesWhenReviewModelUnavailable(t *testing.T) {
 		},
 		nil,
 	)
-	if err != nil {
-		t.Fatalf("review model transport failure should degrade after executor success, got %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("review model transport failure should degrade after executor success, got %v", err))
+	gomega.Expect(report.Status).To(gomega.Equal(plancontract.PlanExecuteReviewStatusDegraded), fmt.Sprintf("unexpected degraded review report: %#v", report))
+	gomega.Expect(report.StatusDetail).To(gomega.Equal("review unavailable"), fmt.Sprintf("unexpected degraded review report: %#v", report))
+	gomega.Expect(report.ReasonClass).To(gomega.Equal("backend_eof"), fmt.Sprintf("unexpected degraded review report: %#v", report))
 
-	if report.Status != plancontract.PlanExecuteReviewStatusDegraded || report.StatusDetail != "review unavailable" || report.ReasonClass != "backend_eof" {
-		t.Fatalf("unexpected degraded review report: %#v", report)
-	}
-
-	events := jsoneventstest.DecodeLines(t, stdout.String())
+	events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
 	ev, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairDegraded))
-
-	if !ok {
-		t.Fatalf("expected review_repair_degraded event, got %s", stdout.String())
-	}
-
-	if ev["reason_class"] != "backend_eof" || ev["status"] != "degraded" || ev["status_detail"] != "review unavailable" {
-		t.Fatalf("event should carry typed degraded status and bounded unavailable detail, got %#v", ev)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected review_repair_degraded event, got %s", stdout.String()))
+	gomega.Expect(ev["reason_class"]).To(gomega.Equal("backend_eof"), fmt.Sprintf("event should carry typed degraded status and bounded unavailable detail, got %#v", ev))
+	gomega.Expect(ev["status"]).To(gomega.Equal("degraded"), fmt.Sprintf("event should carry typed degraded status and bounded unavailable detail, got %#v", ev))
+	gomega.Expect(ev["status_detail"]).To(gomega.Equal("review unavailable"), fmt.Sprintf("event should carry typed degraded status and bounded unavailable detail, got %#v", ev))
 
 	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairFailed)); ok {
-		t.Fatalf("transport degradation must not be emitted as failed after executor success: %s", stdout.String())
+		ginkgo.Fail(fmt.Sprintf("transport degradation must not be emitted as failed after executor success: %s", stdout.String()))
 	}
-}
-
-func TestRunReviewRepairPhaseAppliesChecklistRepairPlanWithinScope(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase applies checklist repair plan within scope", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -3416,7 +2731,7 @@ func TestRunReviewRepairPhaseAppliesChecklistRepairPlanWithinScope(t *testing.T)
 		planexecute.Options{},
 		&stdout,
 		func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -3430,33 +2745,19 @@ func TestRunReviewRepairPhaseAppliesChecklistRepairPlanWithinScope(t *testing.T)
 		},
 		nil,
 	)
-	if err != nil {
-		t.Fatalf("review-repair should apply scoped repair: %v", err)
-	}
-
-	if report.Status != "repaired" || report.Repairs != 1 {
-		t.Fatalf("unexpected review report: %#v", report)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("review-repair should apply scoped repair: %v", err))
+	gomega.Expect(report.Status).To(gomega.Equal(plancontract.PlanExecuteReviewStatusRepaired), fmt.Sprintf("unexpected review report: %#v", report))
+	gomega.Expect(report.Repairs).To(gomega.Equal(1), fmt.Sprintf("unexpected review report: %#v", report))
 
 	got, err := os.ReadFile(filepath.Join(root, "a.txt"))
-	if err != nil {
-		t.Fatalf("read a.txt: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read a.txt: %v", err))
+	gomega.Expect(string(got)).To(gomega.Equal("good\n"), fmt.Sprintf("repair should update a.txt, got %q", string(got)))
 
-	if string(got) != "good\n" {
-		t.Fatalf("repair should update a.txt, got %q", string(got))
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsOutOfScopeRepairBeforeWrites(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "surprise.txt"), []byte("keep\n"), 0o644); err != nil {
-		t.Fatalf("seed surprise.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run review repair phase rejects out of scope repair before writes", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "surprise.txt"), []byte("keep\n"), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -3478,7 +2779,7 @@ func TestRunReviewRepairPhaseRejectsOutOfScopeRepairBeforeWrites(t *testing.T) {
 		planexecute.Options{},
 		&stdout,
 		func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -3492,31 +2793,18 @@ func TestRunReviewRepairPhaseRejectsOutOfScopeRepairBeforeWrites(t *testing.T) {
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected out-of-scope review repair rejection")
-	}
-
-	if !strings.Contains(err.Error(), "allowed_edit_paths") {
-		t.Fatalf("expected allowed_edit_paths rejection, got %v", err)
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected out-of-scope review repair rejection"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("allowed_edit_paths"), fmt.Sprintf("expected allowed_edit_paths rejection, got %v", err))
 
 	got, err := os.ReadFile(filepath.Join(root, "surprise.txt"))
-	if err != nil {
-		t.Fatalf("read surprise.txt: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read surprise.txt: %v", err))
+	gomega.Expect(string(got)).To(gomega.Equal("keep\n"), fmt.Sprintf("out-of-scope repair must not write surprise.txt, got %q", string(got)))
 
-	if string(got) != "keep\n" {
-		t.Fatalf("out-of-scope repair must not write surprise.txt, got %q", string(got))
-	}
-}
-
-func TestRunReviewRepairPhaseRejectsNoOpAssertionRepairBeforeWrites(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run review repair phase rejects no op assertion repair before writes", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	original := "extends Node\n\nfunc test_case():\n\tpass\n"
-
-	if err := os.WriteFile(filepath.Join(root, "suite.gd"), []byte(original), 0o644); err != nil {
-		t.Fatalf("seed suite.gd: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "suite.gd"), []byte(original), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -3538,7 +2826,7 @@ func TestRunReviewRepairPhaseRejectsNoOpAssertionRepairBeforeWrites(t *testing.T
 		planexecute.Options{},
 		&stdout,
 		func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
+			writePlanExecuteTestArtifact(cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
 				SchemaVersion: planartifact.SchemaVersion,
 				Created:       time.Now().UTC().Format(time.RFC3339Nano),
 				SessionID:     cfg.Workspace.SessionID,
@@ -3552,31 +2840,19 @@ func TestRunReviewRepairPhaseRejectsNoOpAssertionRepairBeforeWrites(t *testing.T
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatalf("expected no-op assertion repair rejection")
-	}
-
-	if !strings.Contains(err.Error(), "no-op assertion") {
-		t.Fatalf("expected no-op assertion rejection, got %v", err)
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected no-op assertion repair rejection"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("no-op assertion"), fmt.Sprintf("expected no-op assertion rejection, got %v", err))
 
 	got, readErr := os.ReadFile(filepath.Join(root, "suite.gd"))
-	if readErr != nil {
-		t.Fatalf("read suite.gd: %v", readErr)
-	}
+	gomega.Expect(readErr).To(gomega.BeNil(), fmt.Sprintf("read suite.gd: %v", readErr))
+	gomega.Expect(string(got)).To(gomega.Equal(original), fmt.Sprintf("review-repair preflight must reject before writes, got %q", string(got)))
 
-	if string(got) != original {
-		t.Fatalf("review-repair preflight must reject before writes, got %q", string(got))
-	}
-}
+})
 
-func writePlanExecuteTestArtifact(t *testing.T, root string, sessionID string, artifact planartifact.PlanArtifact) string {
-	t.Helper()
+func writePlanExecuteTestArtifact(root string, sessionID string, artifact planartifact.PlanArtifact) string {
 
 	dir := filepath.Join(root, ".idiom", "plans")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir plans: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(dir, 0o755)).To(gomega.Succeed())
 
 	if artifact.Created == "" {
 		artifact.Created = time.Now().UTC().Format(time.RFC3339Nano)
@@ -3645,14 +2921,10 @@ func writePlanExecuteTestArtifact(t *testing.T, root string, sessionID string, a
 	artifact.SessionID = sessionID
 
 	body, err := json.MarshalIndent(artifact, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal plan artifact: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal plan artifact: %v", err))
 
 	path := filepath.Join(dir, time.Now().UTC().Format("20060102-150405000")+".plan.json")
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		t.Fatalf("write plan artifact: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, body, 0o644)).To(gomega.Succeed())
 
 	return path
 }
@@ -3710,17 +2982,12 @@ func runExecutorPhaseForTest(cfg config.Config, plan planartifact.PlanArtifact, 
 	return planexecute.RunExecutorPhaseWithDependencies(cfg, plan, opts, planexecuteadapters.Dependencies())
 }
 
-func TestRunExecutorPhaseDispatchesEditsInOrder(t *testing.T) {
+var _ = ginkgo.It("run executor phase dispatches edits in order", func() {
 	// Seed two files, run the executor phase against a plan that
 	// mutates each, and verify both writes landed.
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("beta\n"), 0o644); err != nil {
-		t.Fatalf("seed b.txt: %v", err)
-	}
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "b.txt"), []byte("beta\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -3735,38 +3002,23 @@ func TestRunExecutorPhaseDispatchesEditsInOrder(t *testing.T) {
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: false, Stdout: &stdout})
-	if err != nil {
-		t.Fatalf("executor phase failed: %v", err)
-	}
-
-	if report.Total != 2 || report.Succeeded != 2 || report.Failed != 0 {
-		t.Fatalf("unexpected report: %#v", report)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("executor phase failed: %v", err))
+	gomega.Expect(report.Total).To(gomega.Equal(2), fmt.Sprintf("unexpected report: %#v", report))
+	gomega.Expect(report.Succeeded).To(gomega.Equal(2), fmt.Sprintf("unexpected report: %#v", report))
+	gomega.Expect(report.Failed).To(gomega.Equal(0), fmt.Sprintf("unexpected report: %#v", report))
 
 	got, err := os.ReadFile(filepath.Join(root, "a.txt"))
-	if err != nil {
-		t.Fatalf("read a.txt: %v", err)
-	}
-
-	if !strings.Contains(string(got), "ALPHA") {
-		t.Fatalf("a.txt should contain ALPHA after edit, got %q", string(got))
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read a.txt: %v", err))
+	gomega.Expect(string(got)).To(gomega.ContainSubstring("ALPHA"), fmt.Sprintf("a.txt should contain ALPHA after edit, got %q", string(got)))
 
 	got, err = os.ReadFile(filepath.Join(root, "b.txt"))
-	if err != nil {
-		t.Fatalf("read b.txt: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read b.txt: %v", err))
+	gomega.Expect(string(got)).To(gomega.ContainSubstring("BETA"), fmt.Sprintf("b.txt should contain BETA after edit, got %q", string(got)))
 
-	if !strings.Contains(string(got), "BETA") {
-		t.Fatalf("b.txt should contain BETA after edit, got %q", string(got))
-	}
-}
-
-func TestRunExecutorPhaseRunsSourceSanityAfterSourceEdits(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "suite.gd"), []byte("extends Node\n\nfunc helper():\n\tpass\n"), 0o644); err != nil {
-		t.Fatalf("seed suite.gd: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase runs source sanity after source edits", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "suite.gd"), []byte("extends Node\n\nfunc helper():\n\tpass\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -3779,49 +3031,25 @@ func TestRunExecutorPhaseRunsSourceSanityAfterSourceEdits(t *testing.T) {
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout})
-	if err == nil {
-		t.Fatalf("expected source_sanity failure after source edit")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected source_sanity failure after source edit"))
+	gomega.Expect(report.Succeeded).To(gomega.Equal(1), fmt.Sprintf("source_sanity runs after successful dispatch; unexpected report %#v", report))
+	gomega.Expect(report.Failed).To(gomega.Equal(0), fmt.Sprintf("source_sanity runs after successful dispatch; unexpected report %#v", report))
+	gomega.Expect(report.SourceSanity).To(gomega.HaveLen(1), fmt.Sprintf("executor report should retain failed source_sanity evidence, got %#v", report.SourceSanity))
+	gomega.Expect(report.SourceSanity[0].Path).To(gomega.Equal("suite.gd"), fmt.Sprintf("executor report should retain failed source_sanity evidence, got %#v", report.SourceSanity))
+	gomega.Expect(report.SourceSanity[0].Status).To(gomega.Equal(plancontract.PhaseEvidenceStatusFailed), fmt.Sprintf("executor report should retain failed source_sanity evidence, got %#v", report.SourceSanity))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("source_sanity failed"), fmt.Sprintf("expected source_sanity error, got %v", err))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventSourceSanity)), fmt.Sprintf("expected source_sanity event, got %s", stdout.String()))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"source_sanity_status":"failed"`), fmt.Sprintf("expected failed source_sanity status in executor_complete, got %s", stdout.String()))
 
-	if report.Succeeded != 1 || report.Failed != 0 {
-		t.Fatalf("source_sanity runs after successful dispatch; unexpected report %#v", report)
-	}
-
-	if len(report.SourceSanity) != 1 || report.SourceSanity[0].Path != "suite.gd" || report.SourceSanity[0].Status != "failed" {
-		t.Fatalf("executor report should retain failed source_sanity evidence, got %#v", report.SourceSanity)
-	}
-
-	if !strings.Contains(err.Error(), "source_sanity failed") {
-		t.Fatalf("expected source_sanity error, got %v", err)
-	}
-
-	if !strings.Contains(stdout.String(), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventSourceSanity)) {
-		t.Fatalf("expected source_sanity event, got %s", stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), `"source_sanity_status":"failed"`) {
-		t.Fatalf("expected failed source_sanity status in executor_complete, got %s", stdout.String())
-	}
-}
-
-func TestRunExecutorPhaseRunsInferredTouchedGoPackageTests(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/inferred\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("seed go.mod: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase runs inferred touched go package tests", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/inferred\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
 
 	pkgDir := filepath.Join(root, "pkg", "feature")
-	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
-		t.Fatalf("mkdir package: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(pkgDir, "feature.go"), []byte("package feature\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
-		t.Fatalf("seed feature.go: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(pkgDir, "feature_test.go"), []byte("package feature\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatalf(\"unexpected value\")\n\t}\n}\n"), 0o644); err != nil {
-		t.Fatalf("seed feature_test.go: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(pkgDir, 0o755)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(pkgDir, "feature.go"), []byte("package feature\n\nfunc Value() int { return 1 }\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(pkgDir, "feature_test.go"), []byte("package feature\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatalf(\"unexpected value\")\n\t}\n}\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -3834,45 +3062,23 @@ func TestRunExecutorPhaseRunsInferredTouchedGoPackageTests(t *testing.T) {
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout})
-	if err == nil {
-		t.Fatalf("expected inferred touched-package verification failure")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected inferred touched-package verification failure"))
+	gomega.Expect(report.Verification).To(gomega.HaveLen(1), fmt.Sprintf("expected failed inferred verification evidence, got %#v", report.Verification))
+	gomega.Expect(report.Verification[0].Command).To(gomega.Equal("go test ./pkg/feature"), fmt.Sprintf("expected failed inferred verification evidence, got %#v", report.Verification))
+	gomega.Expect(report.Verification[0].Status).To(gomega.Equal(plancontract.PhaseEvidenceStatusFailed), fmt.Sprintf("expected failed inferred verification evidence, got %#v", report.Verification))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("verification failed for \"go test ./pkg/feature\""), fmt.Sprintf("expected explicit verification failure, got %v", err))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"command":"go test ./pkg/feature"`), fmt.Sprintf("expected verification event for inferred command, got %s", stdout.String()))
 
-	if len(report.Verification) != 1 || report.Verification[0].Command != "go test ./pkg/feature" || report.Verification[0].Status != "failed" {
-		t.Fatalf("expected failed inferred verification evidence, got %#v", report.Verification)
-	}
-
-	if !strings.Contains(err.Error(), "verification failed for \"go test ./pkg/feature\"") {
-		t.Fatalf("expected explicit verification failure, got %v", err)
-	}
-
-	if !strings.Contains(stdout.String(), `"command":"go test ./pkg/feature"`) {
-		t.Fatalf("expected verification event for inferred command, got %s", stdout.String())
-	}
-}
-
-func TestRunExecutorPhaseRunsInferredNestedModulePackageTests(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.work"), []byte("go 1.22\n\nuse ./nested\n"), 0o644); err != nil {
-		t.Fatalf("seed root go.work: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase runs inferred nested module package tests", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "go.work"), []byte("go 1.22\n\nuse ./nested\n"), 0o644)).To(gomega.Succeed())
 
 	moduleDir := filepath.Join(root, "nested")
-	if err := os.MkdirAll(filepath.Join(moduleDir, "pkg", "feature"), 0o755); err != nil {
-		t.Fatalf("mkdir nested package: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example.com/nested\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("seed nested go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(moduleDir, "pkg", "feature", "feature.go"), []byte("package feature\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
-		t.Fatalf("seed feature.go: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(moduleDir, "pkg", "feature", "feature_test.go"), []byte("package feature\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatalf(\"nested module assertion ran: got %d\", Value())\n\t}\n}\n"), 0o644); err != nil {
-		t.Fatalf("seed feature_test.go: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Join(moduleDir, "pkg", "feature"), 0o755)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example.com/nested\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(moduleDir, "pkg", "feature", "feature.go"), []byte("package feature\n\nfunc Value() int { return 1 }\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(moduleDir, "pkg", "feature", "feature_test.go"), []byte("package feature\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatalf(\"nested module assertion ran: got %d\", Value())\n\t}\n}\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -3885,38 +3091,28 @@ func TestRunExecutorPhaseRunsInferredNestedModulePackageTests(t *testing.T) {
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout})
-	if err == nil {
-		t.Fatalf("expected inferred nested-module verification failure")
-	}
-
-	if len(report.Verification) != 1 {
-		t.Fatalf("expected one inferred verification check, got %#v report=%#v err=%v stdout=%s", report.Verification, report, err, stdout.String())
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected inferred nested-module verification failure"))
+	gomega.Expect(report.Verification).To(gomega.HaveLen(1), fmt.Sprintf("expected one inferred verification check, got %#v report=%#v err=%v stdout=%s", report.Verification, report, err, stdout.String()))
 
 	check := report.Verification[0]
-	if check.Command != "go test ./pkg/feature" || check.WorkingDir != "nested" || check.Status != "failed" {
-		t.Fatalf("expected failed nested-module verification evidence, got %#v", check)
-	}
+	gomega.Expect(check.Command).To(gomega.Equal("go test ./pkg/feature"), fmt.Sprintf("expected failed nested-module verification evidence, got %#v", check))
+	gomega.Expect(check.WorkingDir).To(gomega.Equal("nested"), fmt.Sprintf("expected failed nested-module verification evidence, got %#v", check))
+	gomega.Expect(check.Status).To(gomega.Equal(plancontract.PhaseEvidenceStatusFailed), fmt.Sprintf("expected failed nested-module verification evidence, got %#v", check))
+	gomega.Expect(check.Error).To(gomega.ContainSubstring("nested module assertion ran"), fmt.Sprintf("expected nested module test output, got %#v", check))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"working_dir":"nested"`), fmt.Sprintf("expected verification event to include working_dir, got %s", stdout.String()))
 
-	if !strings.Contains(check.Error, "nested module assertion ran") {
-		t.Fatalf("expected nested module test output, got %#v", check)
-	}
+})
+var _ = ginkgo.It("run executor phase aborts at preflight on missing file", func
 
-	if !strings.Contains(stdout.String(), `"working_dir":"nested"`) {
-		t.Fatalf("expected verification event to include working_dir, got %s", stdout.String())
-	}
-}
+// Pre-execute plan validator catches edit 2's missing file before
+// any edit dispatches. This is by-design atomic-preflight: rather
+// than landing edit 1 then failing edit 2 (the old half-applied
+// state), the whole plan is rejected with a single error pointing
+// at the bad edit. Counts remain at 0 because no dispatch ran.
+() {
 
-func TestRunExecutorPhaseAbortsAtPreflightOnMissingFile(t *testing.T) {
-	// Pre-execute plan validator catches edit 2's missing file before
-	// any edit dispatches. This is by-design atomic-preflight: rather
-	// than landing edit 1 then failing edit 2 (the old half-applied
-	// state), the whole plan is rejected with a single error pointing
-	// at the bad edit. Counts remain at 0 because no dispatch ran.
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -3930,35 +3126,21 @@ func TestRunExecutorPhaseAbortsAtPreflightOnMissingFile(t *testing.T) {
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: false, Stdout: &stdout})
-	if err == nil {
-		t.Fatalf("expected preflight abort on missing file, got nil")
-	}
-
-	if report.Succeeded != 0 || report.Failed != 0 {
-		t.Fatalf("preflight aborts before any dispatch — report should be untouched, got %#v", report)
-	}
-
-	if !strings.Contains(err.Error(), "missing.txt") {
-		t.Fatalf("error should name the failing path, got %v", err)
-	}
-
-	if !strings.Contains(err.Error(), "preflight") {
-		t.Fatalf("error should identify the abort layer as preflight, got %v", err)
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected preflight abort on missing file, got nil"))
+	gomega.Expect(report.Succeeded).To(gomega.Equal(0), fmt.Sprintf("preflight aborts before any dispatch — report should be untouched, got %#v", report))
+	gomega.Expect(report.Failed).To(gomega.Equal(0), fmt.Sprintf("preflight aborts before any dispatch — report should be untouched, got %#v", report))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing.txt"), fmt.Sprintf("error should name the failing path, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("preflight"), fmt.Sprintf("error should identify the abort layer as preflight, got %v", err))
 
 	// a.txt must NOT have been modified — atomic preflight means
 	// nothing landed when one edit was bad.
 	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
-	if string(got) != "alpha\n" {
-		t.Fatalf("preflight abort must leave files untouched, got %q", string(got))
-	}
-}
+	gomega.Expect(string(got)).To(gomega.Equal("alpha\n"), fmt.Sprintf("preflight abort must leave files untouched, got %q", string(got)))
 
-func TestRunExecutorPhaseRejectsPlanMissingRequiredEditPathBeforeWrites(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase rejects plan missing required edit path before writes", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -3975,37 +3157,20 @@ func TestRunExecutorPhaseRejectsPlanMissingRequiredEditPathBeforeWrites(t *testi
 		JSONEvents:        true,
 		Stdout:            &stdout,
 	})
-	if err == nil {
-		t.Fatalf("expected required_edit_paths preflight failure")
-	}
-
-	if report.Succeeded != 0 || report.Failed != 0 {
-		t.Fatalf("required path preflight must abort before dispatch, got %#v", report)
-	}
-
-	if !strings.Contains(err.Error(), "b.txt") {
-		t.Fatalf("error should name the missing required path, got %v", err)
-	}
-
-	if !strings.Contains(stdout.String(), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPreflightFailed)) {
-		t.Fatalf("expected preflight_failed event, got %s", stdout.String())
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected required_edit_paths preflight failure"))
+	gomega.Expect(report.Succeeded).To(gomega.Equal(0), fmt.Sprintf("required path preflight must abort before dispatch, got %#v", report))
+	gomega.Expect(report.Failed).To(gomega.Equal(0), fmt.Sprintf("required path preflight must abort before dispatch, got %#v", report))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("b.txt"), fmt.Sprintf("error should name the missing required path, got %v", err))
+	gomega.Expect(stdout.String()).To(gomega.ContainSubstring(plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPreflightFailed)), fmt.Sprintf("expected preflight_failed event, got %s", stdout.String()))
 
 	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
-	if string(got) != "alpha\n" {
-		t.Fatalf("preflight abort must leave files untouched, got %q", string(got))
-	}
-}
+	gomega.Expect(string(got)).To(gomega.Equal("alpha\n"), fmt.Sprintf("preflight abort must leave files untouched, got %q", string(got)))
 
-func TestRunExecutorPhaseRejectsPlanOutsideRequiredEditPathsBeforeWrites(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "surprise.txt"), []byte("surprise\n"), 0o644); err != nil {
-		t.Fatalf("seed surprise.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase rejects plan outside required edit paths before writes", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(root, "surprise.txt"), []byte("surprise\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4019,32 +3184,21 @@ func TestRunExecutorPhaseRejectsPlanOutsideRequiredEditPathsBeforeWrites(t *test
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: []string{"a.txt"}, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout})
-	if err == nil {
-		t.Fatalf("expected outside required_edit_paths preflight failure")
-	}
-
-	if report.Succeeded != 0 || report.Failed != 0 {
-		t.Fatalf("scope preflight must abort before dispatch, got %#v", report)
-	}
-
-	if !strings.Contains(err.Error(), "surprise.txt") {
-		t.Fatalf("error should name the outside path, got %v", err)
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected outside required_edit_paths preflight failure"))
+	gomega.Expect(report.Succeeded).To(gomega.Equal(0), fmt.Sprintf("scope preflight must abort before dispatch, got %#v", report))
+	gomega.Expect(report.Failed).To(gomega.Equal(0), fmt.Sprintf("scope preflight must abort before dispatch, got %#v", report))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("surprise.txt"), fmt.Sprintf("error should name the outside path, got %v", err))
 
 	got, _ := os.ReadFile(filepath.Join(root, "surprise.txt"))
-	if string(got) != "surprise\n" {
-		t.Fatalf("preflight abort must leave outside file untouched, got %q", string(got))
-	}
-}
+	gomega.Expect(string(got)).To(gomega.Equal("surprise\n"), fmt.Sprintf("preflight abort must leave outside file untouched, got %q", string(got)))
 
-func TestPreflightPlanEditsCatchesAnchorMismatch(t *testing.T) {
+})
+var _ = ginkgo.It("preflight plan edits catches anchor mismatch", func() {
 	// The donkey-atom failure mode: plan's old_text spans content
 	// that doesn't appear in the file in that exact form. Preflight
 	// must catch it and name the edit's index + path.
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("line one\nline two\nline three\n"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("line one\nline two\nline three\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4053,29 +3207,15 @@ func TestPreflightPlanEditsCatchesAnchorMismatch(t *testing.T) {
 		},
 	}
 	got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)
+	gomega.Expect(got).NotTo(gomega.BeNil(), fmt.Sprintf("preflight must catch anchor mismatch (combined non-adjacent lines)"))
+	gomega.Expect(got.Index).To(gomega.Equal(0), fmt.Sprintf("mismatch should point at edit 0, got index %d", got.Index))
+	gomega.Expect(got.Path).To(gomega.Equal("x.txt"), fmt.Sprintf("mismatch should name the path, got %q", got.Path))
+	gomega.Expect(strings.ToLower(got.Reason)).To(gomega.ContainSubstring("old_text"), fmt.Sprintf("mismatch reason should mention old_text, got %q", got.Reason))
 
-	if got == nil {
-		t.Fatalf("preflight must catch anchor mismatch (combined non-adjacent lines)")
-	}
-
-	if got.Index != 0 {
-		t.Fatalf("mismatch should point at edit 0, got index %d", got.Index)
-	}
-
-	if got.Path != "x.txt" {
-		t.Fatalf("mismatch should name the path, got %q", got.Path)
-	}
-
-	if !strings.Contains(strings.ToLower(got.Reason), "old_text") {
-		t.Fatalf("mismatch reason should mention old_text, got %q", got.Reason)
-	}
-}
-
-func TestPreflightPlanEditsAcceptsValidPlan(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("preflight plan edits accepts valid plan", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("hello\nworld\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4083,54 +3223,35 @@ func TestPreflightPlanEditsAcceptsValidPlan(t *testing.T) {
 			{Path: "x.txt", OldText: "hello", NewText: "HELLO"},
 		},
 	}
-	if got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight); got != nil {
-		t.Fatalf("preflight must accept a clean plan, got mismatch %#v", got)
-	}
-}
+	gomega.Expect(planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)).To(gomega.BeNil())
 
-func TestPreflightPlanEditsRejectsStaleAnchorProvenance(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("preflight plan edits rejects stale anchor provenance", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("hello\nworld\n"), 0o644)).To(gomega.Succeed())
 
 	edits, err := workspace.AttachPlanEditAnchorProvenance(root, []planartifact.PlanEdit{
 		{Path: "x.txt", OldText: "hello", NewText: "HELLO"},
 	})
-	if err != nil {
-		t.Fatalf("attach anchor provenance: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("prefix\nhello\nworld\n"), 0o644); err != nil {
-		t.Fatalf("mutate x.txt: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("attach anchor provenance: %v", err))
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("prefix\nhello\nworld\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
 		Edits:         edits,
 	}
 	got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)
+	gomega.Expect(got).NotTo(gomega.BeNil(), fmt.Sprintf("preflight must reject stale anchor provenance before writes"))
+	gomega.Expect(got.Index).To(gomega.Equal(0), fmt.Sprintf("mismatch should point at edit 0 in x.txt, got %#v", got))
+	gomega.Expect(got.Path).To(gomega.Equal("x.txt"), fmt.Sprintf("mismatch should point at edit 0 in x.txt, got %#v", got))
+	gomega.Expect(got.Reason).To(gomega.ContainSubstring("anchor provenance stale"), fmt.Sprintf("mismatch should report stale provenance, got %q", got.Reason))
+	gomega.Expect(got.Reason).To(gomega.ContainSubstring("file fingerprint changed"), fmt.Sprintf("mismatch should report stale provenance, got %q", got.Reason))
 
-	if got == nil {
-		t.Fatalf("preflight must reject stale anchor provenance before writes")
-	}
-
-	if got.Index != 0 || got.Path != "x.txt" {
-		t.Fatalf("mismatch should point at edit 0 in x.txt, got %#v", got)
-	}
-
-	if !strings.Contains(got.Reason, "anchor provenance stale") || !strings.Contains(got.Reason, "file fingerprint changed") {
-		t.Fatalf("mismatch should report stale provenance, got %q", got.Reason)
-	}
-}
-
-func TestPreflightPlanEditsRejectsEscapingPathBeforeRead(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("preflight plan edits rejects escaping path before read", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	outside := filepath.Join(filepath.Dir(root), "outside.txt")
-
-	if err := os.WriteFile(outside, []byte("secret\n"), 0o644); err != nil {
-		t.Fatalf("seed outside file: %v", err)
-	}
+	gomega.Expect(os.WriteFile(outside, []byte("secret\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4140,16 +3261,13 @@ func TestPreflightPlanEditsRejectsEscapingPathBeforeRead(t *testing.T) {
 	}
 
 	got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)
-	if got == nil || got.Reason != "edit has invalid path" {
-		t.Fatalf("expected invalid path preflight mismatch, got %#v", got)
-	}
-}
+	gomega.Expect(got).NotTo(gomega.BeNil(), fmt.Sprintf("expected invalid path preflight mismatch, got %#v", got))
+	gomega.Expect(got.Reason).To(gomega.Equal("edit has invalid path"), fmt.Sprintf("expected invalid path preflight mismatch, got %#v", got))
 
-func TestPreflightPlanEditsRejectsAmbiguousOldTextBeforeWrites(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("set_floor(30.0f);\nother();\nset_floor(30.0f);\n"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("preflight plan edits rejects ambiguous old text before writes", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("set_floor(30.0f);\nother();\nset_floor(30.0f);\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4158,25 +3276,15 @@ func TestPreflightPlanEditsRejectsAmbiguousOldTextBeforeWrites(t *testing.T) {
 		},
 	}
 	got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)
+	gomega.Expect(got).NotTo(gomega.BeNil(), fmt.Sprintf("preflight must catch ambiguous old_text before executor dispatch"))
+	gomega.Expect(got.Index).To(gomega.Equal(0), fmt.Sprintf("mismatch should point at edit 0 in x.txt, got %#v", got))
+	gomega.Expect(got.Path).To(gomega.Equal("x.txt"), fmt.Sprintf("mismatch should point at edit 0 in x.txt, got %#v", got))
+	gomega.Expect(got.Reason).To(gomega.ContainSubstring("matched 2 locations"), fmt.Sprintf("mismatch reason should report duplicate matches, got %q", got.Reason))
 
-	if got == nil {
-		t.Fatalf("preflight must catch ambiguous old_text before executor dispatch")
-	}
-
-	if got.Index != 0 || got.Path != "x.txt" {
-		t.Fatalf("mismatch should point at edit 0 in x.txt, got %#v", got)
-	}
-
-	if !strings.Contains(got.Reason, "matched 2 locations") {
-		t.Fatalf("mismatch reason should report duplicate matches, got %q", got.Reason)
-	}
-}
-
-func TestPreflightPlanEditsAllowsReplaceAllRepeatedOldText(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("set_floor(30.0f);\nset_floor(30.0f);\n"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("preflight plan edits allows replace all repeated old text", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("set_floor(30.0f);\nset_floor(30.0f);\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4184,12 +3292,10 @@ func TestPreflightPlanEditsAllowsReplaceAllRepeatedOldText(t *testing.T) {
 			{Path: "x.txt", OldText: "set_floor(30.0f);", NewText: "floor = 30.0f;", ReplaceAll: true},
 		},
 	}
-	if got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight); got != nil {
-		t.Fatalf("replace_all repeated old_text should pass preflight, got %#v", got)
-	}
-}
+	gomega.Expect(planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)).To(gomega.BeNil())
 
-func TestPreflightPlanUnsupportedProofClaimsRejectsNoOpAssertion(t *testing.T) {
+})
+var _ = ginkgo.It("preflight plan unsupported proof claims rejects no op assertion", func() {
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
 		Edits: []planartifact.PlanEdit{
@@ -4200,17 +3306,12 @@ func TestPreflightPlanUnsupportedProofClaimsRejectsNoOpAssertion(t *testing.T) {
 		},
 	}
 	got := planexecute.PreflightPlanUnsupportedProofClaimsWithPolicy(plan, planexecuteadapters.Dependencies().EditPreflight)
+	gomega.Expect(got).NotTo(gomega.BeNil(), fmt.Sprintf("expected unsupported proof preflight to reject no-op assertion"))
+	gomega.Expect(got.Path).To(gomega.Equal("tests/panel_contract.gd"), fmt.Sprintf("unexpected mismatch: %#v", got))
+	gomega.Expect(got.Reason).To(gomega.ContainSubstring("no-op assertion"), fmt.Sprintf("unexpected mismatch: %#v", got))
 
-	if got == nil {
-		t.Fatalf("expected unsupported proof preflight to reject no-op assertion")
-	}
-
-	if got.Path != "tests/panel_contract.gd" || !strings.Contains(got.Reason, "no-op assertion") {
-		t.Fatalf("unexpected mismatch: %#v", got)
-	}
-}
-
-func TestPreflightPlanUnsupportedProofClaimsRejectsSelfDisqualifyingProofComment(t *testing.T) {
+})
+var _ = ginkgo.It("preflight plan unsupported proof claims rejects self disqualifying proof comment", func() {
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
 		Edits: []planartifact.PlanEdit{
@@ -4221,17 +3322,12 @@ func TestPreflightPlanUnsupportedProofClaimsRejectsSelfDisqualifyingProofComment
 		},
 	}
 	got := planexecute.PreflightPlanUnsupportedProofClaimsWithPolicy(plan, planexecuteadapters.Dependencies().EditPreflight)
+	gomega.Expect(got).NotTo(gomega.BeNil(), fmt.Sprintf("expected unsupported proof preflight to reject self-disqualifying proof comment"))
+	gomega.Expect(got.Path).To(gomega.Equal("tests/panel_contract.gd"), fmt.Sprintf("unexpected mismatch: %#v", got))
+	gomega.Expect(got.Reason).To(gomega.ContainSubstring("self-disqualifying"), fmt.Sprintf("unexpected mismatch: %#v", got))
 
-	if got == nil {
-		t.Fatalf("expected unsupported proof preflight to reject self-disqualifying proof comment")
-	}
-
-	if got.Path != "tests/panel_contract.gd" || !strings.Contains(got.Reason, "self-disqualifying") {
-		t.Fatalf("unexpected mismatch: %#v", got)
-	}
-}
-
-func TestPreflightPlanUnsupportedProofClaimsIgnoresProseFiles(t *testing.T) {
+})
+var _ = ginkgo.It("preflight plan unsupported proof claims ignores prose files", func() {
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
 		Edits: []planartifact.PlanEdit{
@@ -4241,19 +3337,18 @@ func TestPreflightPlanUnsupportedProofClaimsIgnoresProseFiles(t *testing.T) {
 			},
 		},
 	}
-	if got := planexecute.PreflightPlanUnsupportedProofClaimsWithPolicy(plan, planexecuteadapters.Dependencies().EditPreflight); got != nil {
-		t.Fatalf("prose files should not trigger source proof preflight, got %#v", got)
-	}
-}
+	gomega.Expect(planexecute.PreflightPlanUnsupportedProofClaimsWithPolicy(plan, planexecuteadapters.Dependencies().EditPreflight)).To(gomega.BeNil())
 
-func TestPreflightPlanEditsSkipsRangeShapedEdits(t *testing.T) {
-	// Range-shaped edits (start_line+end_line+content, no old_text)
-	// don't depend on substring matching; preflight must skip them
-	// and let the executor handle their validation.
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb\nc\n"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("preflight plan edits skips range shaped edits", func(
+
+// Range-shaped edits (start_line+end_line+content, no old_text)
+// don't depend on substring matching; preflight must skip them
+// and let the executor handle their validation.
+) {
+
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb\nc\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4261,16 +3356,12 @@ func TestPreflightPlanEditsSkipsRangeShapedEdits(t *testing.T) {
 			{Path: "x.txt", StartLine: 1, EndLine: 1, Content: "A\n"},
 		},
 	}
-	if got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight); got != nil {
-		t.Fatalf("preflight must skip range-shaped edits, got mismatch %#v", got)
-	}
-}
+	gomega.Expect(planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)).To(gomega.BeNil())
 
-func TestPreflightPlanEditsAcceptsInsertAfterLineShape(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb\n"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("preflight plan edits accepts insert after line shape", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4278,16 +3369,12 @@ func TestPreflightPlanEditsAcceptsInsertAfterLineShape(t *testing.T) {
 			{Path: "x.txt", InsertAfterLine: 1, Content: "inserted"},
 		},
 	}
-	if got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight); got != nil {
-		t.Fatalf("preflight must accept insert_after_line edits, got mismatch %#v", got)
-	}
-}
+	gomega.Expect(planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)).To(gomega.BeNil())
 
-func TestRunExecutorPhaseAppliesInsertAfterLineShape(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb"), 0o644); err != nil {
-		t.Fatalf("seed x.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase applies insert after line shape", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4300,29 +3387,18 @@ func TestRunExecutorPhaseAppliesInsertAfterLineShape(t *testing.T) {
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: []string{"x.txt"}, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: true, Stdout: &stdout})
-	if err != nil {
-		t.Fatalf("executor phase failed: %v\n%s", err, stdout.String())
-	}
-
-	if report.Succeeded != 1 || report.Failed != 0 {
-		t.Fatalf("unexpected report: %#v", report)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("executor phase failed: %v\n%s", err, stdout.String()))
+	gomega.Expect(report.Succeeded).To(gomega.Equal(1), fmt.Sprintf("unexpected report: %#v", report))
+	gomega.Expect(report.Failed).To(gomega.Equal(0), fmt.Sprintf("unexpected report: %#v", report))
 
 	got, err := os.ReadFile(filepath.Join(root, "x.txt"))
-	if err != nil {
-		t.Fatalf("read x.txt: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read x.txt: %v", err))
+	gomega.Expect(string(got)).To(gomega.Equal("a\nb\nc\n"), fmt.Sprintf("insert_after_line executor result mismatch: %q", string(got)))
 
-	if string(got) != "a\nb\nc\n" {
-		t.Fatalf("insert_after_line executor result mismatch: %q", string(got))
-	}
-}
-
-func TestPreflightPlanEditsRejectsAdjacentDuplicateCodeLine(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "sim.cpp"), []byte("void tick() {\n    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n}\n"), 0o644); err != nil {
-		t.Fatalf("seed sim.cpp: %v", err)
-	}
+})
+var _ = ginkgo.It("preflight plan edits rejects adjacent duplicate code line", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "sim.cpp"), []byte("void tick() {\n    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n}\n"), 0o644)).To(gomega.Succeed())
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -4335,35 +3411,21 @@ func TestPreflightPlanEditsRejectsAdjacentDuplicateCodeLine(t *testing.T) {
 		},
 	}
 	got := planexecute.PreflightPlanEditsWithPolicy(root, plan, planexecuteadapters.Dependencies().EditPreflight)
+	gomega.Expect(got).NotTo(gomega.BeNil(), fmt.Sprintf("preflight must reject plans that introduce adjacent duplicate code"))
+	gomega.Expect(got.Index).To(gomega.Equal(0), fmt.Sprintf("mismatch should point at edit 0 in sim.cpp, got %#v", got))
+	gomega.Expect(got.Path).To(gomega.Equal("sim.cpp"), fmt.Sprintf("mismatch should point at edit 0 in sim.cpp, got %#v", got))
+	gomega.Expect(got.Reason).To(gomega.ContainSubstring("adjacent duplicate code line"), fmt.Sprintf("mismatch reason should name adjacent duplicate code, got %q", got.Reason))
 
-	if got == nil {
-		t.Fatalf("preflight must reject plans that introduce adjacent duplicate code")
-	}
-
-	if got.Index != 0 || got.Path != "sim.cpp" {
-		t.Fatalf("mismatch should point at edit 0 in sim.cpp, got %#v", got)
-	}
-
-	if !strings.Contains(got.Reason, "adjacent duplicate code line") {
-		t.Fatalf("mismatch reason should name adjacent duplicate code, got %q", got.Reason)
-	}
-}
-
-func TestRunExecutorPhaseRejectsCompletedArtifactOverwriteBeforeWrites(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
-		t.Fatalf("seed a.txt: %v", err)
-	}
+})
+var _ = ginkgo.It("run executor phase rejects completed artifact overwrite before writes", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	gomega.Expect(os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644)).To(gomega.Succeed())
 
 	specPath := filepath.Join(root, ".planning", "atoms", "done.md")
-	if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
-		t.Fatalf("mkdir spec parent: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(specPath), 0o755)).To(gomega.Succeed())
 
 	originalSpec := "# Done\n\nStatus: complete\n\nAccepted spec.\n"
-	if err := os.WriteFile(specPath, []byte(originalSpec), 0o644); err != nil {
-		t.Fatalf("seed spec: %v", err)
-	}
+	gomega.Expect(os.WriteFile(specPath, []byte(originalSpec), 0o644)).To(gomega.Succeed())
 
 	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
 	plan := planartifact.PlanArtifact{
@@ -4377,41 +3439,31 @@ func TestRunExecutorPhaseRejectsCompletedArtifactOverwriteBeforeWrites(t *testin
 	var stdout bytes.Buffer
 
 	report, err := runExecutorPhaseForTest(cfg, plan, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: false, Stdout: &stdout})
-	if err == nil {
-		t.Fatalf("expected completed artifact overwrite preflight failure")
-	}
-
-	if report.Succeeded != 0 || report.Failed != 0 {
-		t.Fatalf("preflight failure should happen before dispatch, got %#v", report)
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("expected completed artifact overwrite preflight failure"))
+	gomega.Expect(report.Succeeded).To(gomega.Equal(0), fmt.Sprintf("preflight failure should happen before dispatch, got %#v", report))
+	gomega.Expect(report.Failed).To(gomega.Equal(0), fmt.Sprintf("preflight failure should happen before dispatch, got %#v", report))
 
 	if got, _ := os.ReadFile(filepath.Join(root, "a.txt")); string(got) != "before\n" {
-		t.Fatalf("preflight abort must leave earlier files untouched, got %q", string(got))
+		ginkgo.Fail(fmt.Sprintf("preflight abort must leave earlier files untouched, got %q", string(got)))
 	}
 
 	if got, _ := os.ReadFile(specPath); string(got) != originalSpec {
-		t.Fatalf("preflight abort must leave completed spec untouched, got %q", string(got))
+		ginkgo.Fail(fmt.Sprintf("preflight abort must leave completed spec untouched, got %q", string(got)))
 	}
-}
-
-func TestRunExecutorPhaseRejectsEmptyPlan(t *testing.T) {
-	cfg := config.Config{Workspace: config.Workspace{Root: t.TempDir()}}
+})
+var _ = ginkgo.It("run executor phase rejects empty plan", func() {
+	cfg := config.Config{Workspace: config.Workspace{Root: ginkgo.GinkgoT().TempDir()}}
 
 	var stdout bytes.Buffer
 
 	_, err := runExecutorPhaseForTest(cfg, planartifact.PlanArtifact{SchemaVersion: planartifact.SchemaVersion}, planexecute.ExecutorPhaseOptions{RequiredEditPaths: nil, AllowedEditPaths: nil, VerificationCommands: nil, JSONEvents: false, Stdout: &stdout})
-	if err == nil {
-		t.Fatalf("empty plan should be rejected")
-	}
-}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("empty plan should be rejected"))
 
-func TestFindLatestPlanArtifactReturnsMostRecent(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("find latest plan artifact returns most recent", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	dir := filepath.Join(root, ".idiom", "plans")
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(dir, 0o755)).To(gomega.Succeed())
 
 	// Write two stamped plans + the rolling pointer.
 	old := filepath.Join(dir, "20260101-000000000.plan.json")
@@ -4419,115 +3471,73 @@ func TestFindLatestPlanArtifactReturnsMostRecent(t *testing.T) {
 	pointer := filepath.Join(dir, "last.plan.json")
 
 	for _, p := range []string{old, newer, pointer} {
-		if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
-			t.Fatalf("seed %s: %v", p, err)
-		}
-	}
+		gomega.Expect(os.WriteFile(p, []byte("{}"), 0o644)).To(gomega.Succeed())
 
-	// Force the newer one to have a later mtime regardless of write
-	// order.
-	if err := os.Chtimes(newer, mustTime("2026-04-01T00:00:00Z"), mustTime("2026-04-01T00:00:00Z")); err != nil {
-		t.Fatalf("chtimes newer: %v", err)
 	}
+	gomega.
 
-	if err := os.Chtimes(old, mustTime("2026-01-01T00:00:00Z"), mustTime("2026-01-01T00:00:00Z")); err != nil {
-		t.Fatalf("chtimes old: %v", err)
-	}
+		// Force the newer one to have a later mtime regardless of write
+		// order.
+		Expect(os.Chtimes(newer, mustTime("2026-04-01T00:00:00Z"), mustTime("2026-04-01T00:00:00Z"))).To(gomega.Succeed())
+	gomega.Expect(os.Chtimes(old, mustTime("2026-01-01T00:00:00Z"), mustTime("2026-01-01T00:00:00Z"))).To(gomega.Succeed())
 
 	got, err := planexecuteadapters.FindLatestPlanArtifact(root, time.Time{}, "")
-	if err != nil {
-		t.Fatalf("findLatestPlanArtifact: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("findLatestPlanArtifact: %v", err))
+	gomega.Expect(filepath.Base(got)).To(gomega.Equal(filepath.Base(newer)), fmt.Sprintf("expected newer artifact, got %s", got))
 
-	if filepath.Base(got) != filepath.Base(newer) {
-		t.Fatalf("expected newer artifact, got %s", got)
-	}
-}
-
-func TestFindLatestPlanArtifactErrorsWhenNoneExist(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("find latest plan artifact errors when none exist", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	if _, err := planexecuteadapters.FindLatestPlanArtifact(root, time.Time{}, ""); err == nil {
-		t.Fatalf("expected error when plans dir missing")
+		ginkgo.Fail(fmt.Sprintf("expected error when plans dir missing"))
 	}
-}
+})
+var _ = ginkgo.It("find latest plan artifact filters by session id", func
 
-func TestFindLatestPlanArtifactFiltersBySessionID(t *testing.T) {
-	// The headline concurrency-isolation invariant: when a session ID
-	// is supplied, plans from other sessions (even newer ones) must be
-	// invisible. Without this filter, two concurrent plan-execute runs
-	// in the same workspace can load each other's plans and dispatch
-	// the wrong edits.
-	root := t.TempDir()
+// The headline concurrency-isolation invariant: when a session ID
+// is supplied, plans from other sessions (even newer ones) must be
+// invisible. Without this filter, two concurrent plan-execute runs
+// in the same workspace can load each other's plans and dispatch
+// the wrong edits.
+() {
+
+	root := ginkgo.GinkgoT().TempDir()
 	dir := filepath.Join(root, ".idiom", "plans")
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(dir, 0o755)).To(gomega.Succeed())
 
 	mine := filepath.Join(dir, "20260510-180000000.plan.json")
 	otherNewer := filepath.Join(dir, "20260510-180100000.plan.json")
-
-	if err := os.WriteFile(mine, []byte(`{"schema_version":"idiom.plan.v1","session_id":"sid-mine","edits":[{"path":"a","old_text":"x","new_text":"y"}]}`), 0o644); err != nil {
-		t.Fatalf("seed mine: %v", err)
-	}
-
-	if err := os.WriteFile(otherNewer, []byte(`{"schema_version":"idiom.plan.v1","session_id":"sid-other","edits":[{"path":"a","old_text":"x","new_text":"y"}]}`), 0o644); err != nil {
-		t.Fatalf("seed other: %v", err)
-	}
-
-	if err := os.Chtimes(mine, mustTime("2026-05-10T18:00:00Z"), mustTime("2026-05-10T18:00:00Z")); err != nil {
-		t.Fatalf("chtimes mine: %v", err)
-	}
-
-	if err := os.Chtimes(otherNewer, mustTime("2026-05-10T18:01:00Z"), mustTime("2026-05-10T18:01:00Z")); err != nil {
-		t.Fatalf("chtimes other: %v", err)
-	}
+	gomega.Expect(os.WriteFile(mine, []byte(`{"schema_version":"idiom.plan.v1","session_id":"sid-mine","edits":[{"path":"a","old_text":"x","new_text":"y"}]}`), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(otherNewer, []byte(`{"schema_version":"idiom.plan.v1","session_id":"sid-other","edits":[{"path":"a","old_text":"x","new_text":"y"}]}`), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.Chtimes(mine, mustTime("2026-05-10T18:00:00Z"), mustTime("2026-05-10T18:00:00Z"))).To(gomega.Succeed())
+	gomega.Expect(os.Chtimes(otherNewer, mustTime("2026-05-10T18:01:00Z"), mustTime("2026-05-10T18:01:00Z"))).To(gomega.Succeed())
 
 	// With sessionID filter: mine is selected even though other is newer.
 	got, err := planexecuteadapters.FindLatestPlanArtifact(root, time.Time{}, "sid-mine")
-	if err != nil {
-		t.Fatalf("findLatestPlanArtifact: %v", err)
-	}
-
-	if filepath.Base(got) != filepath.Base(mine) {
-		t.Fatalf("expected my session's plan even though other is newer, got %s", got)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("findLatestPlanArtifact: %v", err))
+	gomega.Expect(filepath.Base(got)).To(gomega.Equal(filepath.Base(mine)), fmt.Sprintf("expected my session's plan even though other is newer, got %s", got))
 
 	// Without sessionID (legacy callers): newest wins regardless of attribution.
 	got, err = planexecuteadapters.FindLatestPlanArtifact(root, time.Time{}, "")
-	if err != nil {
-		t.Fatalf("findLatestPlanArtifact (no session): %v", err)
-	}
-
-	if filepath.Base(got) != filepath.Base(otherNewer) {
-		t.Fatalf("legacy lookup should return newest, got %s", got)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("findLatestPlanArtifact (no session): %v", err))
+	gomega.Expect(filepath.Base(got)).To(gomega.Equal(filepath.Base(otherNewer)), fmt.Sprintf("legacy lookup should return newest, got %s", got))
 
 	// Filter for an unknown session: error, even though other plans exist.
 	if _, err := planexecuteadapters.FindLatestPlanArtifact(root, time.Time{}, "sid-nobody"); err == nil {
-		t.Fatalf("expected error when no plan matches the requested session")
+		ginkgo.Fail(fmt.Sprintf("expected error when no plan matches the requested session"))
 	}
-}
-
-func TestFindLatestPlanArtifactSkipsArtifactsBeforeNotBefore(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("find latest plan artifact skips artifacts before not before", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	dir := filepath.Join(root, ".idiom", "plans")
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(dir, 0o755)).To(gomega.Succeed())
 
 	stale := filepath.Join(dir, "20260101-000000000.plan.json")
-	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
-		t.Fatalf("seed stale: %v", err)
-	}
-
-	if err := os.Chtimes(stale, mustTime("2026-01-01T00:00:00Z"), mustTime("2026-01-01T00:00:00Z")); err != nil {
-		t.Fatalf("chtimes stale: %v", err)
-	}
+	gomega.Expect(os.WriteFile(stale, []byte("{}"), 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.Chtimes(stale, mustTime("2026-01-01T00:00:00Z"), mustTime("2026-01-01T00:00:00Z"))).To(gomega.Succeed())
 
 	notBefore := mustTime("2026-04-01T00:00:00Z")
 	if _, err := planexecuteadapters.FindLatestPlanArtifact(root, notBefore, ""); err == nil {
-		t.Fatalf("expected error when only stale artifacts exist before notBefore")
+		ginkgo.Fail(fmt.Sprintf("expected error when only stale artifacts exist before notBefore"))
 	}
-}
+})

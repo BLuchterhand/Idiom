@@ -274,7 +274,6 @@ func implementationStateFromEvent(ev map[string]any) recoverycontract.Implementa
 		RemainingRequiredEditPaths: jsonStringSlice(ev["remaining_required_edit_paths"]),
 		ChangedPaths:               jsonStringSlice(ev["changed_paths"]),
 		SourcedEvidencePaths:       jsonStringSlice(ev["sourced_evidence_paths"]),
-		PendingRedirects:           jsonPendingRedirects(ev["pending_redirects"]),
 		WriteReadyNudgeCount:       jsonInt(ev["write_ready_nudge_count"]),
 	}
 }
@@ -302,33 +301,6 @@ func jsonStringSlice(v any) []string {
 	for _, value := range values {
 		if text := jsonString(value); text != "" {
 			out = append(out, text)
-		}
-	}
-
-	return out
-}
-
-func jsonPendingRedirects(v any) []recoverycontract.ImplementationPendingRedirect {
-	values, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-
-	out := make([]recoverycontract.ImplementationPendingRedirect, 0, len(values))
-	for _, value := range values {
-		fields, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		redirect := recoverycontract.ImplementationPendingRedirect{
-			Path:        jsonString(fields["path"]),
-			PendingTool: jsonString(fields["pending_tool"]),
-			Source:      jsonString(fields["source"]),
-			Detail:      jsonString(fields["detail"]),
-		}
-		if redirect.Path != "" || redirect.PendingTool != "" || redirect.Source != "" || redirect.Detail != "" {
-			out = append(out, redirect)
 		}
 	}
 

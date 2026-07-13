@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -11,7 +12,6 @@ import (
 	"idiom/internal/contracts/taskledger"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/jsonl"
-	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/workflows/featureplanner"
 )
@@ -27,14 +27,17 @@ var featurePlannerStatePathRe = regexp.MustCompile(`\.idiom/feature-planner/([^/
 // the debug logger is re-pointed at that session's JSONL (append mode),
 // chat history is replayed, and plan-panel state is rehydrated from the
 // session's `.planning/<id>.md` plan + `.planning/<id>.diffs.jsonl`
-// diff log. Safe to call at any time; if resume fails, prior state is
-// preserved.
+// diff log. Resume is rejected while an asynchronous operation owns the live
+// transcript; otherwise, if resume fails, prior state is preserved.
 //
 // Callers: --resume CLI flag plumbing in cmd/idiom and the /resume
 // slash command. The TUI ResumeSessionCmd wrapper re-renders panels.
 func (m *Model) ResumeSession(id string) error {
 	if m == nil {
 		return fmt.Errorf("nil model")
+	}
+	if m.streaming {
+		return fmt.Errorf("cannot resume while a response is in progress")
 	}
 
 	id = strings.TrimSpace(id)
@@ -66,13 +69,18 @@ func (m *Model) ResumeSession(id string) error {
 	if err != nil {
 		return fmt.Errorf("restore input history: %w", err)
 	}
+	resumeImplementationState, resumeAudit, err := m.loadMutationStateForResume(path)
+	if err != nil {
+		m.emitMutationStateResumeAudit(resumeAudit)
+		return err
+	}
 
 	// Swap the debug logger to append into the resumed file. Close the
 	// previous one first so we don't leak a file handle on the empty
 	// new-session log that initDebugLogger just created.
 	newLogger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
-		Mode:          transcript.DebugLogMode(textutil.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
+		Mode:          m.cfg.Chat.DebugLogMode,
 		WorkspaceRoot: m.workspace.Root(),
 		ResumePath:    path,
 	})
@@ -83,7 +91,16 @@ func (m *Model) ResumeSession(id string) error {
 	if m.debugLogger != nil {
 		prevPath := m.debugLogger.Path()
 
-		_ = m.debugLogger.Close()
+		if closeErr := m.debugLogger.Close(); closeErr != nil {
+			if cleanupErr := newLogger.Close(); cleanupErr != nil {
+				return errors.Join(
+					fmt.Errorf("close current debug log before resume: %w", closeErr),
+					fmt.Errorf("close pending resumed debug log: %w", cleanupErr),
+				)
+			}
+
+			return fmt.Errorf("close current debug log before resume: %w", closeErr)
+		}
 		// If the previous log was a brand-new startup file with no
 		// activity yet (typical resume-at-boot), remove it so the
 		// conversations dir isn't littered with empties.
@@ -104,17 +121,19 @@ func (m *Model) ResumeSession(id string) error {
 	m.plan.ledgerRenderedIDs = map[string]bool{}
 	m.plan.ledgerHits = map[string]map[string]bool{}
 	m.plan.sessionHeadingWritten = false
-	m.plan.cursor = 0
-	m.plan.overlayID = ""
-	m.plan.overlayBody = ""
+	m.planUI.cursor = 0
+	m.planUI.overlayID = ""
+	m.planUI.overlayBody = ""
 
 	// Replace chat history with the replayed messages. We replace
 	// wholesale rather than append — on /resume mid-session, leftover
 	// messages from the current session would confuse the model.
 	m.messages = replayed.messages
+	m.messagesRevision++
 	m.inputHistory = inputHistory
 	m.resetInputHistoryNavigation()
 	m.history.entries = replayed.history
+	m.history.revision++
 
 	if len(m.history.entries) > 0 {
 		m.history.selected = len(m.history.entries) - 1
@@ -125,6 +144,7 @@ func (m *Model) ResumeSession(id string) error {
 	m.currentTurnHistoryActive = false
 	m.currentTurnHistoryIndex = 0
 	m.currentTurnTools = nil
+	m.resumeImplementationState = resumeImplementationState
 	m.directFeaturePlannerSessionID = ""
 	m.restoreDirectFeaturePlannerSessionFromSessionLog(path)
 	m.renderMessages(false)
@@ -132,6 +152,7 @@ func (m *Model) ResumeSession(id string) error {
 
 	rehydratePlanState(m)
 	m.renderPlanPanelContent()
+	m.emitMutationStateResumeAudit(resumeAudit)
 
 	return nil
 }
@@ -141,7 +162,7 @@ func (m *Model) restoreDirectFeaturePlannerSessionFromSessionLog(path string) bo
 		return false
 	}
 
-	root := strings.TrimSpace(m.projectRoot())
+	root := strings.TrimSpace(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 	if root == "" {
 		return false
 	}
@@ -165,7 +186,7 @@ func (m *Model) restoreDirectFeaturePlannerSessionFromSessionLog(path string) bo
 
 	m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
 	if effortRoot := strings.TrimSpace(state.EffortRoot); effortRoot != "" {
-		m.featurePlannerEffortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
+		m.featurePlannerEffortRoot = resolveFeaturePlannerEffortRoot(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), effortRoot)
 	}
 
 	return true
@@ -288,7 +309,7 @@ func rehydratePlanState(m *Model) {
 
 	// Session heading — if the resumed session's own heading already
 	// exists, suppress re-emission when writes resume.
-	if strings.Contains(plan, "## Session "+m.sessionID()) {
+	if strings.Contains(plan, "## Session "+sessionlog.SessionIDFromPath(m.debugLogPath)) {
 		m.plan.sessionHeadingWritten = true
 	}
 
@@ -368,7 +389,12 @@ func rehydratePlanState(m *Model) {
 	// path each attached diff filled. Falling back to an empty map is
 	// fine: an item stays "partially hit" and the user can see it's
 	// unchecked.
-	diffPaths := loadDiffPathIndex(m.diffsPath())
+	root := ""
+	if m.workspace != nil {
+		root = m.workspace.Root()
+	}
+	diffsPath := planningArtifactPath(root, sessionlog.SessionIDFromPath(m.debugLogPath), ".diffs.jsonl")
+	diffPaths := loadDiffPathIndex(diffsPath)
 
 	for _, lm := range lines {
 		status := taskledger.StatusPending

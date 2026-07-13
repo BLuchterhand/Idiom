@@ -2,46 +2,42 @@ package markdownsection
 
 import (
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestByHeadingReturnsRequestedSection(t *testing.T) {
-	markdown := strings.Join([]string{
-		"# Title",
-		"intro",
-		"## Required Edits",
-		"- one",
-		"### Nested",
-		"- nested",
-		"## Next",
-		"done",
-	}, "\n")
+var _ = ginkgo.Describe("Markdown sections", func() {
+	ginkgo.It("returns the requested section including nested headings", func() {
+		markdown := strings.Join([]string{
+			"# Title",
+			"intro",
+			"## Required Edits",
+			"- one",
+			"### Nested",
+			"- nested",
+			"## Next",
+			"done",
+		}, "\n")
 
-	got := ByHeading(markdown, "required edits")
-	want := "- one\n### Nested\n- nested"
-	if got != want {
-		t.Fatalf("ByHeading() = %q, want %q", got, want)
-	}
-}
+		gomega.Expect(ByHeading(markdown, "required edits")).To(gomega.Equal("- one\n### Nested\n- nested"))
+	})
 
-func TestByHeadingIgnoresHeadingsInsideFences(t *testing.T) {
-	markdown := strings.Join([]string{
-		"```md",
-		"## Required Edits",
-		"ignored",
-		"```",
-		"## Required Edits",
-		"kept",
-	}, "\n")
+	ginkgo.It("ignores heading-like text inside code fences", func() {
+		markdown := strings.Join([]string{
+			"```md",
+			"## Required Edits",
+			"ignored",
+			"```",
+			"## Required Edits",
+			"kept",
+		}, "\n")
 
-	if got := ByHeading(markdown, "required edits"); got != "kept" {
-		t.Fatalf("ByHeading() = %q, want kept", got)
-	}
-}
+		gomega.Expect(ByHeading(markdown, "required edits")).To(gomega.Equal("kept"))
+	})
 
-func TestByHeadingMatchesQualifiedHeadings(t *testing.T) {
-	markdown := "## Required Edits (phase 1)\nbody\n## Other\nnext"
-	if got := ByHeading(markdown, "required edits"); got != "body" {
-		t.Fatalf("ByHeading() = %q, want body", got)
-	}
-}
+	ginkgo.It("matches headings with qualifiers", func() {
+		markdown := "## Required Edits (phase 1)\nbody\n## Other\nnext"
+		gomega.Expect(ByHeading(markdown, "required edits")).To(gomega.Equal("body"))
+	})
+})

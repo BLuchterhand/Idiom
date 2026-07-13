@@ -2,54 +2,42 @@ package planexecute
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	planartifact "idiom/internal/contracts/planartifact"
 )
 
-func TestApprovePlanForExecutionAppliesArtifactApproval(t *testing.T) {
+var _ = ginkgo.It("approve plan for execution applies artifact approval", func() {
 	plan := planartifact.PlanArtifact{
 		Edits: []planartifact.PlanEdit{{Path: "a.go", OldText: "old", NewText: "new"}},
 	}
 
 	got, err := approvePlanForExecution(context.Background(), "plan.json", plan, PlanApprovalPhaseInitial, Options{
 		OnPlanApproval: func(_ context.Context, req PlanApprovalRequest) PlanApprovalDecision {
-			if req.Phase != PlanApprovalPhaseInitial {
-				t.Fatalf("phase = %q, want initial", req.Phase)
-			}
-			if len(req.Paths) != 1 || req.Paths[0] != "a.go" {
-				t.Fatalf("paths = %#v, want a.go", req.Paths)
-			}
+			gomega.Expect(req.Phase != PlanApprovalPhaseInitial).To(gomega.BeFalse(), fmt.Sprintf("phase = %q, want initial", req.Phase))
+			gomega.Expect(req.Paths).To(gomega.HaveLen(1), fmt.Sprintf("paths = %#v, want a.go", req.Paths))
+			gomega.Expect(req.Paths[0]).To(gomega.Equal("a.go"), fmt.Sprintf("paths = %#v, want a.go", req.Paths))
 
 			return PlanApprovalDecision{Approved: true}
 		},
 	}, []string{"a.go"})
-	if err != nil {
-		t.Fatalf("approvePlanForExecution: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("approvePlanForExecution: %v", err))
+	gomega.Expect(got.Approval.Required).To(gomega.BeTrue(), fmt.Sprint("approval should be required after explicit TUI approval"))
+	gomega.Expect(got.Approval.Status != planartifact.ApprovalStatusApproved).To(gomega.BeFalse(), fmt.Sprintf("status = %q, want approved", got.Approval.Status))
+	gomega.Expect(got.Approval.ExecutionPermission != planartifact.ExecutionPermissionExecuteAll).To(gomega.BeFalse(), fmt.Sprintf("permission = %q, want execute_all", got.Approval.ExecutionPermission))
+	gomega.Expect(got.Approval.ApprovedPaths).To(gomega.HaveLen(1), fmt.Sprintf("approved paths = %#v, want a.go", got.Approval.ApprovedPaths))
+	gomega.Expect(got.Approval.ApprovedPaths[0]).To(gomega.Equal("a.go"), fmt.Sprintf("approved paths = %#v, want a.go", got.Approval.ApprovedPaths))
+})
 
-	if !got.Approval.Required {
-		t.Fatal("approval should be required after explicit TUI approval")
-	}
-	if got.Approval.Status != planartifact.ApprovalStatusApproved {
-		t.Fatalf("status = %q, want approved", got.Approval.Status)
-	}
-	if got.Approval.ExecutionPermission != planartifact.ExecutionPermissionExecuteAll {
-		t.Fatalf("permission = %q, want execute_all", got.Approval.ExecutionPermission)
-	}
-	if len(got.Approval.ApprovedPaths) != 1 || got.Approval.ApprovedPaths[0] != "a.go" {
-		t.Fatalf("approved paths = %#v, want a.go", got.Approval.ApprovedPaths)
-	}
-}
-
-func TestApprovedPlanAuthorizedNewFilesAddsOnlyApprovedMissingPaths(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("approved plan authorized new files adds only approved missing paths", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	if err := os.WriteFile(filepath.Join(root, "existing.go"), []byte("package app\n"), 0o644); err != nil {
-		t.Fatalf("seed existing.go: %v", err)
+		ginkgo.Fail(fmt.Sprintf("seed existing.go: %v", err))
 	}
 
 	plan := planartifact.PlanArtifact{
@@ -70,13 +58,11 @@ func TestApprovedPlanAuthorizedNewFilesAddsOnlyApprovedMissingPaths(t *testing.T
 
 	got := approvedPlanAuthorizedNewFiles(root, []string{"already_authorized.go"}, plan)
 	want := []string{"already_authorized.go", "new.go"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("authorized new files = %#v, want %#v", got, want)
-	}
-}
+	gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("authorized new files = %#v, want %#v", got, want))
+})
 
-func TestApprovedPlanAuthorizedNewFilesRequiresSatisfiedApproval(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("approved plan authorized new files requires satisfied approval", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := planartifact.PlanArtifact{
 		Approval: planartifact.PlanArtifactApproval{
 			Required:            true,
@@ -89,12 +75,10 @@ func TestApprovedPlanAuthorizedNewFilesRequiresSatisfiedApproval(t *testing.T) {
 
 	got := approvedPlanAuthorizedNewFiles(root, []string{"already_authorized.go"}, plan)
 	want := []string{"already_authorized.go"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("authorized new files = %#v, want %#v", got, want)
-	}
-}
+	gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("authorized new files = %#v, want %#v", got, want))
+})
 
-func TestApprovePlanForExecutionRejectsDeniedDecision(t *testing.T) {
+var _ = ginkgo.It("approve plan for execution rejects denied decision", func() {
 	_, err := approvePlanForExecution(context.Background(), "plan.json", planartifact.PlanArtifact{
 		Edits: []planartifact.PlanEdit{{Path: "a.go", OldText: "old", NewText: "new"}},
 	}, PlanApprovalPhaseInitial, Options{
@@ -102,13 +86,11 @@ func TestApprovePlanForExecutionRejectsDeniedDecision(t *testing.T) {
 			return PlanApprovalDecision{Reason: "operator denied"}
 		},
 	}, []string{"a.go"})
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("denial error = %v, want operator denied", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("operator denied"), fmt.Sprintf("denial error = %v, want operator denied", err))
+})
 
-	if err == nil || !strings.Contains(err.Error(), "operator denied") {
-		t.Fatalf("denial error = %v, want operator denied", err)
-	}
-}
-
-func TestApprovePlanForExecutionRejectsPartialDecision(t *testing.T) {
+var _ = ginkgo.It("approve plan for execution rejects partial decision", func() {
 	_, err := approvePlanForExecution(context.Background(), "plan.json", planartifact.PlanArtifact{
 		Edits: []planartifact.PlanEdit{
 			{Path: "a.go", OldText: "old", NewText: "new"},
@@ -119,8 +101,6 @@ func TestApprovePlanForExecutionRejectsPartialDecision(t *testing.T) {
 			return PlanApprovalDecision{Approved: true, ApprovedPaths: []string{"a.go"}}
 		},
 	}, []string{"a.go", "b.go"})
-
-	if err == nil || !strings.Contains(err.Error(), "partial plan edit approval is not supported") {
-		t.Fatalf("partial approval error = %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("partial approval error = %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("partial plan edit approval is not supported"), fmt.Sprintf("partial approval error = %v", err))
+})

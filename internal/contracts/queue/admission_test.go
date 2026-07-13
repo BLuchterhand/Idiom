@@ -1,83 +1,59 @@
 package queue
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestAdmissionEventNameMapsStates(t *testing.T) {
-	tests := []struct {
-		state AdmissionState
-		want  AdmissionEventType
-	}{
-		{AdmissionStateAcquired, AdmissionEventQueueAcquired},
-		{AdmissionStateGranted, AdmissionEventQueueAcquired},
-		{AdmissionStateNestedSamePool, AdmissionEventQueueAcquired},
-		{AdmissionStateNestedCrossPool, AdmissionEventQueueDegraded},
-		{AdmissionStateUnavailable, AdmissionEventQueueUnavailable},
-		{AdmissionStateDisabled, AdmissionEventQueueDisabled},
-		{AdmissionStateDegraded, AdmissionEventQueueDegraded},
-		{AdmissionStateError, AdmissionEventQueueError},
-		{AdmissionState("unknown"), AdmissionEventQueueError},
-	}
+var _ = ginkgo.Describe("Queue admission", func() {
+	ginkgo.DescribeTable("maps admission states to event names",
+		func(state AdmissionState, want AdmissionEventType) {
+			gomega.Expect(AdmissionEventName(state)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("acquired", AdmissionStateAcquired, AdmissionEventQueueAcquired),
+		ginkgo.Entry("granted", AdmissionStateGranted, AdmissionEventQueueAcquired),
+		ginkgo.Entry("nested in the same pool", AdmissionStateNestedSamePool, AdmissionEventQueueAcquired),
+		ginkgo.Entry("nested across pools", AdmissionStateNestedCrossPool, AdmissionEventQueueDegraded),
+		ginkgo.Entry("unavailable", AdmissionStateUnavailable, AdmissionEventQueueUnavailable),
+		ginkgo.Entry("disabled", AdmissionStateDisabled, AdmissionEventQueueDisabled),
+		ginkgo.Entry("degraded", AdmissionStateDegraded, AdmissionEventQueueDegraded),
+		ginkgo.Entry("error", AdmissionStateError, AdmissionEventQueueError),
+		ginkgo.Entry("unknown", AdmissionState("unknown"), AdmissionEventQueueError),
+	)
 
-	for _, test := range tests {
-		if got := AdmissionEventName(test.state); got != test.want {
-			t.Fatalf("AdmissionEventName(%q) = %q, want %q", test.state, got, test.want)
-		}
-	}
-}
+	ginkgo.It("dispatches only acquired or same-pool nested work", func() {
+		gomega.Expect(AdmissionStateAllowsDispatch(AdmissionStateAcquired)).To(gomega.BeTrue())
+		gomega.Expect(AdmissionStateAllowsDispatch(AdmissionStateNestedSamePool)).To(gomega.BeTrue())
+		gomega.Expect(AdmissionStateAllowsDispatch(AdmissionStateNestedCrossPool)).To(gomega.BeFalse())
+		gomega.Expect(AdmissionStateAllowsDispatch(AdmissionStateDegraded)).To(gomega.BeFalse())
+	})
 
-func TestAdmissionStateAllowsOnlyAcquiredOrSamePoolNestedDispatch(t *testing.T) {
-	if !AdmissionStateAllowsDispatch(AdmissionStateNestedSamePool) {
-		t.Fatalf("%s should remain dispatchable as an explicit same-pool nested no-op", AdmissionStateNestedSamePool)
-	}
+	ginkgo.DescribeTable("classifies admission failure reasons",
+		func(reason string, want ReasonClass) {
+			gomega.Expect(ClassifyReason(reason)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("empty", "", ReasonClass("")),
+		ginkgo.Entry("queue unavailable", "queue_unavailable: no daemon", ReasonClassQueueUnavailable),
+		ginkgo.Entry("nested lease", "lease already held by parent", ReasonClassNestedLease),
+		ginkgo.Entry("pool disabled", "pool_disabled by config", ReasonClassPoolDisabled),
+		ginkgo.Entry("same-pool nesting", "nested_same_pool request", ReasonClassNestedSamePool),
+		ginkgo.Entry("cross-pool nesting", "nested_cross_pool request", ReasonClassNestedCrossPool),
+		ginkgo.Entry("unknown pool", "unknown pool qwen", ReasonClassUnknownPool),
+		ginkgo.Entry("daemon unreachable", "daemon_unreachable: connection refused", ReasonClassDaemonUnreachable),
+		ginkgo.Entry("canceled", "context canceled", ReasonClassTimeoutOrCanceled),
+		ginkgo.Entry("fallback queue error", "unexpected queue failure", ReasonClassQueueError),
+	)
 
-	for _, state := range []AdmissionState{AdmissionStateNestedCrossPool, AdmissionStateDegraded} {
-		if AdmissionStateAllowsDispatch(state) {
-			t.Fatalf("%s must not dispatch under required mode without the requested pool lease", state)
-		}
-	}
-}
-
-func TestClassifyReason(t *testing.T) {
-	tests := []struct {
-		reason string
-		want   ReasonClass
-	}{
-		{"", ""},
-		{"queue_unavailable: no daemon", ReasonClassQueueUnavailable},
-		{"lease already held by parent", ReasonClassNestedLease},
-		{"pool_disabled by config", ReasonClassPoolDisabled},
-		{"nested_same_pool request", ReasonClassNestedSamePool},
-		{"nested_cross_pool request", ReasonClassNestedCrossPool},
-		{"unknown pool qwen", ReasonClassUnknownPool},
-		{"daemon_unreachable: connection refused", ReasonClassDaemonUnreachable},
-		{"context canceled", ReasonClassTimeoutOrCanceled},
-		{"unexpected queue failure", ReasonClassQueueError},
-	}
-
-	for _, test := range tests {
-		if got := ClassifyReason(test.reason); got != test.want {
-			t.Fatalf("ClassifyReason(%q) = %q, want %q", test.reason, got, test.want)
-		}
-	}
-}
-
-func TestClassifyFailureCode(t *testing.T) {
-	tests := []struct {
-		code string
-		want ReasonClass
-	}{
-		{"unavailable", ReasonClassQueueUnavailable},
-		{"deadline_exceeded", ReasonClassTimeoutOrCanceled},
-		{"canceled", ReasonClassTimeoutOrCanceled},
-		{"invalid_argument", ReasonClassUnknownPool},
-		{"failed_precondition", ReasonClassQueueError},
-		{"unknown", ""},
-		{"", ""},
-	}
-
-	for _, test := range tests {
-		if got := ClassifyFailureCode(test.code); got != test.want {
-			t.Fatalf("ClassifyFailureCode(%q) = %q, want %q", test.code, got, test.want)
-		}
-	}
-}
+	ginkgo.DescribeTable("classifies structured failure codes",
+		func(code string, want ReasonClass) {
+			gomega.Expect(ClassifyFailureCode(code)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("unavailable", "unavailable", ReasonClassQueueUnavailable),
+		ginkgo.Entry("deadline exceeded", "deadline_exceeded", ReasonClassTimeoutOrCanceled),
+		ginkgo.Entry("canceled", "canceled", ReasonClassTimeoutOrCanceled),
+		ginkgo.Entry("invalid argument", "invalid_argument", ReasonClassUnknownPool),
+		ginkgo.Entry("failed precondition", "failed_precondition", ReasonClassQueueError),
+		ginkgo.Entry("unknown", "unknown", ReasonClass("")),
+		ginkgo.Entry("empty", "", ReasonClass("")),
+	)
+})

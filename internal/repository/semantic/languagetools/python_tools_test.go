@@ -2,175 +2,86 @@ package languagetools_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestPythonWorkspaceTools(t *testing.T) {
-	root := t.TempDir()
-	writePythonToolFixture(t, filepath.Join(root, "pyproject.toml"), `
-[project]
-name = "demo"
-version = "0.1.0"
-`)
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "__init__.py"), "")
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "engine.py"), `
-class Engine:
-    def __init__(self, name):
-        self.name = name
+var _ = Describe("Python workspace tools", func() {
+	It("provides syntax-index discovery and navigation", func() {
+		root := buildPythonWorkspace()
+		manager := newLanguageWorkspaceManager(root, 30)
+		Expect(languageDetects(root, "python")).To(BeTrue())
 
-    def tick(self):
-        return self.name
+		overview := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_overview"})
+		expectToolSuccess(overview, "Indexed", "Python files")
+		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_entrypoints"}), "engine.py")
+		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_find_symbol", Pattern: "tick"}), "engine.py")
+		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_find_symbol", Pattern: "class Engine"}), "Engine")
+		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_read_symbol", Pattern: "Engine.tick"}), "return self.name")
+		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_read_symbol", Pattern: "class Engine"}), "class Engine")
+		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_related_files", Pattern: "engine"}), "engine.py")
 
-def helper():
-    return Engine("h").tick()
+		callsFrom := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_calls_from", Pattern: "helper"})
+		if callsFrom.Error != "" {
+			Expect(callsFrom.Error).To(ContainSubstring("no Python LSP"))
+		} else {
+			Expect(callsFrom.Output).To(Or(ContainSubstring("tick"), ContainSubstring("Engine")))
+		}
 
-if __name__ == "__main__":
-    helper()
-`)
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "runner.py"), `
-from .engine import Engine, helper
+		references := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "python_references", Pattern: "helper", Path: "."})
+		if references.Error == "" {
+			Expect(references.Output).To(ContainSubstring("helper"))
+		} else {
+			fmt.Fprintf(GinkgoWriter, "python references unavailable: %s\n", references.Error)
+		}
 
-def run():
-    e = Engine("runner")
-    return e.tick() + "|" + helper()
-`)
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "base_system.py"), `
-class SystemBase:
-    def process_cycle(self):
-        return None
-`)
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "worker_system.py"), `
-from .base_system import SystemBase
-
-class WorkerSystem(SystemBase):
-    def process_cycle(self):
-        return "work"
-`)
-	writePythonToolFixture(t, filepath.Join(root, "tests", "test_engine.py"), `
-from demo.engine import Engine
-
-def test_tick():
-    assert Engine("x").tick() == "x"
-`)
-
-	mgr := workspace.NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		EnableShell:           true,
-		EnableWrites:          true,
-		CommandTimeoutSeconds: 30,
-		MaxFileBytes:          65536,
-		MaxDirectoryEntries:   50,
+		outline := manager.Execute(context.Background(), workspace.ToolRequest{
+			Tool: "python_file_outline", Path: filepath.Join("src", "demo", "engine.py"),
+		})
+		expectToolSuccess(outline, "file: src/demo/engine.py", "Engine", "tick")
+		Expect(outline.Summary).To(ContainSubstring("Outlined"))
 	})
 
-	if !languageDetects(root, "python") {
-		t.Fatal("expected temp fixture to count as Python workspace")
-	}
-
-	overview := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_overview"})
-	if overview.Error != "" || !strings.Contains(overview.Output, "Indexed") {
-		t.Fatalf("unexpected pythonOverview result: %#v", overview)
-	}
-
-	if !strings.Contains(overview.Output, "Python files") {
-		t.Fatalf("pythonOverview output missing Python files header: %s", overview.Output)
-	}
-
-	entry := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_entrypoints"})
-	if entry.Error != "" || !strings.Contains(entry.Output, "engine.py") {
-		t.Fatalf("unexpected pythonEntrypoints result: %#v", entry)
-	}
-
-	find := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_find_symbol", Pattern: "tick"})
-	if find.Error != "" || !strings.Contains(find.Output, "engine.py") {
-		t.Fatalf("unexpected pythonFindSymbol result: %#v", find)
-	}
-
-	findDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_find_symbol", Pattern: "class Engine"})
-	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Engine") {
-		t.Fatalf("expected declaration-shaped pythonFindSymbol query to find Engine, got %#v", findDecl)
-	}
-
-	read := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_read_symbol", Pattern: "Engine.tick"})
-	if read.Error != "" || !strings.Contains(read.Output, "return self.name") {
-		t.Fatalf("unexpected pythonReadSymbol result: %#v", read)
-	}
-
-	readDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_read_symbol", Pattern: "class Engine"})
-	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "class Engine") {
-		t.Fatalf("expected declaration-shaped pythonReadSymbol to return class Engine snippet, got %#v", readDecl)
-	}
-
-	related := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_related_files", Pattern: "engine"})
-	if related.Error != "" || !strings.Contains(related.Output, "engine.py") {
-		t.Fatalf("unexpected pythonRelatedFiles result: %#v", related)
-	}
-
-	callsFrom := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_calls_from", Pattern: "helper"})
-	if callsFrom.Error != "" {
-		if !strings.Contains(callsFrom.Error, "no Python LSP") {
-			t.Fatalf("unexpected pythonCallsFrom error: %#v", callsFrom)
+	It("uses an installed Python LSP for precise operations", func() {
+		if _, err := exec.LookPath("pyright-langserver"); err != nil {
+			if _, err := exec.LookPath("pylsp"); err != nil {
+				Skip("no Python LSP installed")
+			}
 		}
-	} else if !strings.Contains(callsFrom.Output, "tick") && !strings.Contains(callsFrom.Output, "Engine") {
-		t.Fatalf("unexpected pythonCallsFrom result (index fallback expected to mention tick/Engine): %#v", callsFrom)
-	}
 
-	callsInto := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_calls_into", Pattern: "tick"})
-	if callsInto.Error == "" && !strings.Contains(callsInto.Output, "helper") && !strings.Contains(callsInto.Output, "run") {
-		// Semantic index may or may not match depending on call text; don't fail hard.
-		t.Logf("pythonCallsInto output: %s", callsInto.Output)
-	}
+		root := buildPythonWorkspace()
+		manager := newLanguageWorkspaceManager(root, 30)
+		Expect(manager.Execute(context.Background(), workspace.ToolRequest{
+			Tool: "python_workspace_symbol", Pattern: "Engine",
+		}).Error).To(BeEmpty())
+		Expect(manager.Execute(context.Background(), workspace.ToolRequest{
+			Tool: "python_definition", Pattern: "tick",
+		}).Error).To(BeEmpty())
 
-	// References: falls back to rg-based search which should find helper
-	// across .py files in the workspace.
-	refs := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_references", Pattern: "helper", Path: "."})
-	if refs.Error != "" {
-		// rg may not be installed in all test envs; log and continue.
-		t.Logf("pythonReferences error (likely rg missing): %s", refs.Error)
-	} else if !strings.Contains(refs.Output, "helper") {
-		t.Fatalf("pythonReferences output missing helper: %#v", refs)
-	}
-
-	outline := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_file_outline", Path: filepath.Join("src", "demo", "engine.py")})
-	if outline.Error != "" {
-		t.Fatalf("unexpected pythonFileOutline error: %#v", outline)
-	}
-
-	if !strings.Contains(outline.Output, "file: src/demo/engine.py") {
-		t.Fatalf("pythonFileOutline missing file header: %#v", outline)
-	}
-
-	if !strings.Contains(outline.Output, "Engine") || !strings.Contains(outline.Output, "tick") {
-		t.Fatalf("pythonFileOutline missing symbols: %#v", outline)
-	}
-
-	if !strings.Contains(outline.Summary, "Outlined") {
-		t.Fatalf("pythonFileOutline summary: %#v", outline)
-	}
-}
-
-func TestPythonWorkspaceToolsWithLSP(t *testing.T) {
-	if _, err := exec.LookPath("pyright-langserver"); err != nil {
-		if _, err := exec.LookPath("pylsp"); err != nil {
-			t.Skip("no Python LSP installed (pyright-langserver or pylsp required)")
+		diagnostics := manager.Execute(context.Background(), workspace.ToolRequest{
+			Tool: "python_diagnostics", Path: filepath.Join("src", "demo", "engine.py"),
+		})
+		if diagnostics.Error != "" {
+			fmt.Fprintf(GinkgoWriter, "python diagnostics unavailable while LSP starts: %s\n", diagnostics.Error)
 		}
-	}
+	})
+})
 
-	root := t.TempDir()
-	writePythonToolFixture(t, filepath.Join(root, "pyproject.toml"), `
-[project]
-name = "demo"
-version = "0.1.0"
-`)
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "__init__.py"), "")
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "engine.py"), `
+func buildPythonWorkspace() string {
+	GinkgoHelper()
+	root := GinkgoT().TempDir()
+	writePythonToolFixture(filepath.Join(root, "pyproject.toml"), "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n")
+	writePythonToolFixture(filepath.Join(root, "src", "demo", "__init__.py"), "")
+	writePythonToolFixture(filepath.Join(root, "src", "demo", "engine.py"), `
 class Engine:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -180,51 +91,32 @@ class Engine:
 
 def helper() -> str:
     return Engine("h").tick()
+
+if __name__ == "__main__":
+    helper()
 `)
-	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "runner.py"), `
+	writePythonToolFixture(filepath.Join(root, "src", "demo", "runner.py"), `
 from .engine import Engine, helper
 
 def run() -> str:
     e = Engine("runner")
     return e.tick() + "|" + helper()
 `)
-
-	mgr := workspace.NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		EnableShell:           true,
-		EnableWrites:          true,
-		CommandTimeoutSeconds: 30,
-		MaxFileBytes:          65536,
-		MaxDirectoryEntries:   50,
-	})
-
-	ws := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_workspace_symbol", Pattern: "Engine"})
-	if ws.Error != "" {
-		t.Fatalf("pythonWorkspaceSymbol error: %v", ws.Error)
-	}
-
-	def := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_definition", Pattern: "tick"})
-	if def.Error != "" {
-		t.Fatalf("pythonDefinition error: %v", def.Error)
-	}
-
-	diag := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_diagnostics", Path: filepath.Join("src", "demo", "engine.py")})
-	if diag.Error != "" {
-		t.Logf("pythonDiagnostics error (LSP may be starting): %v", diag.Error)
-	}
+	writePythonToolFixture(filepath.Join(root, "src", "demo", "base_system.py"), "class SystemBase:\n    def process_cycle(self):\n        return None\n")
+	writePythonToolFixture(filepath.Join(root, "src", "demo", "worker_system.py"), "from .base_system import SystemBase\n\nclass WorkerSystem(SystemBase):\n    def process_cycle(self):\n        return \"work\"\n")
+	writePythonToolFixture(filepath.Join(root, "tests", "test_engine.py"), "from demo.engine import Engine\n\ndef test_tick():\n    assert Engine(\"x\").tick() == \"x\"\n")
+	return root
 }
 
-func writePythonToolFixture(t *testing.T, path string, content string) {
-	t.Helper()
+func newLanguageWorkspaceManager(root string, commandTimeoutSeconds int) *workspace.Manager {
+	return workspace.NewManager(config.Workspace{
+		Root: root, CWD: root, EnableShell: true, EnableWrites: true,
+		CommandTimeoutSeconds: commandTimeoutSeconds, MaxFileBytes: 65536, MaxDirectoryEntries: 50,
+	})
+}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", path, err)
-	}
-
-	// Python indentation is semantic; trimming trailing whitespace only.
-	trimmed := strings.TrimLeft(content, "\n")
-	if err := os.WriteFile(path, []byte(trimmed), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+func writePythonToolFixture(path string, content string) {
+	GinkgoHelper()
+	Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(Succeed())
+	Expect(os.WriteFile(path, []byte(strings.TrimLeft(content, "\n")), 0o644)).To(Succeed())
 }

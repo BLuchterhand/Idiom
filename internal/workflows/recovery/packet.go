@@ -130,7 +130,11 @@ func WriteDecompositionPacket(root string, packet recoverycontract.Decomposition
 		return "", "", fmt.Errorf("write recovery decomposition packet: %w", err)
 	}
 
-	if existing, _, found, err := TryLoadDecompositionPacket(fullPath); err == nil && found && strings.TrimSpace(existing.CreatedAt) != "" {
+	existing, _, found, err := TryLoadDecompositionPacket(fullPath)
+	if err != nil {
+		return fullPath, relPath, fmt.Errorf("load existing recovery decomposition packet: %w", err)
+	}
+	if found && strings.TrimSpace(existing.CreatedAt) != "" {
 		packet.CreatedAt = existing.CreatedAt
 	}
 

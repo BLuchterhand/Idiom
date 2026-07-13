@@ -2,12 +2,14 @@ package plan
 
 import (
 	"encoding/json"
-	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestRequiredEditSnippetsFromPromptSkipsCurrentStateAndBindsSinglePath(t *testing.T) {
-	prompt := `
+var _ = Describe("Required edit snippets", func() {
+	It("skips current-state snippets and binds required edits to a single path", func() {
+		prompt := `
 # IMPLEMENTATION REQUEST
 
 ## Verified Current State
@@ -30,32 +32,19 @@ TEST_CASE("demand pressure caps production") {
 }
 ` + "```" + `
 `
-	snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/tests/test_production_graph.cpp"})
+		snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/tests/test_production_graph.cpp"})
+		Expect(snippets).To(HaveLen(2))
+		for _, snippet := range snippets {
+			Expect(snippet.ID).NotTo(BeEmpty())
+			Expect(snippet.Path).To(Equal("native/tests/test_production_graph.cpp"))
+			Expect(snippet.Content).NotTo(ContainSubstring("old behavior"))
+		}
+		Expect(snippets[0].Content).To(ContainSubstring(`#include "core/constants/logistics.h"`))
+		Expect(snippets[1].Content).To(ContainSubstring("demand pressure caps production"))
+	})
 
-	if got := len(snippets); got != 2 {
-		t.Fatalf("expected two required edit snippets, got %d: %#v", got, snippets)
-	}
-	for i, snippet := range snippets {
-		if snippet.ID == "" {
-			t.Fatalf("snippet %d missing id: %#v", i, snippet)
-		}
-		if snippet.Path != "native/tests/test_production_graph.cpp" {
-			t.Fatalf("snippet %d path = %q, want test file", i, snippet.Path)
-		}
-		if strings.Contains(snippet.Content, "old behavior") {
-			t.Fatalf("verified-current-state snippet should not be captured: %#v", snippet)
-		}
-	}
-	if !strings.Contains(snippets[0].Content, `#include "core/constants/logistics.h"`) {
-		t.Fatalf("missing include snippet: %#v", snippets)
-	}
-	if !strings.Contains(snippets[1].Content, "demand pressure caps production") {
-		t.Fatalf("missing regression snippet: %#v", snippets)
-	}
-}
-
-func TestRequiredEditSnippetsFromPromptAssignsMultiFilePaths(t *testing.T) {
-	prompt := `
+	It("assigns snippets to their corresponding files", func() {
+		prompt := `
 ## Required Edits
 
 In ` + "`native/src/a.cpp`" + `, replace the source line.
@@ -86,26 +75,18 @@ new_text:
 TEST_CASE("after") {}
 ` + "```" + `
 `
-	snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp", "native/tests/test_a.cpp"})
+		snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp", "native/tests/test_a.cpp"})
+		Expect(snippets).To(HaveLen(2))
+		contentByPath := map[string]string{}
+		for _, snippet := range snippets {
+			contentByPath[snippet.Path] = snippet.Content
+		}
+		Expect(contentByPath).To(HaveKeyWithValue("native/src/a.cpp", ContainSubstring("int after();")))
+		Expect(contentByPath).To(HaveKeyWithValue("native/tests/test_a.cpp", ContainSubstring(`TEST_CASE("after")`)))
+	})
 
-	if got := len(snippets); got != 2 {
-		t.Fatalf("expected two new snippets, got %d: %#v", got, snippets)
-	}
-
-	got := map[string]string{}
-	for _, snippet := range snippets {
-		got[snippet.Path] = snippet.Content
-	}
-	if !strings.Contains(got["native/src/a.cpp"], "int after();") {
-		t.Fatalf("source snippet path/content not captured correctly: %#v", snippets)
-	}
-	if !strings.Contains(got["native/tests/test_a.cpp"], `TEST_CASE("after")`) {
-		t.Fatalf("test snippet path/content not captured correctly: %#v", snippets)
-	}
-}
-
-func TestRequiredEditSnippetsFromPromptCarriesOldTextAnchor(t *testing.T) {
-	prompt := `
+	It("carries an old-text anchor without serializing it", func() {
+		prompt := `
 ## Required Edits
 
 In ` + "`native/src/a.cpp`" + `, replace the source line.
@@ -122,32 +103,19 @@ new_text:
 int after();
 ` + "```" + `
 `
-	snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp"})
+		snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp"})
+		Expect(snippets).To(HaveLen(1))
+		Expect(snippets[0].Path).To(Equal("native/src/a.cpp"))
+		Expect(snippets[0].Content).NotTo(ContainSubstring("before"))
+		Expect(snippets[0].Anchor).To(ContainSubstring("int before();"))
 
-	if got := len(snippets); got != 1 {
-		t.Fatalf("expected one new snippet, got %d: %#v", got, snippets)
-	}
-	if snippets[0].Path != "native/src/a.cpp" {
-		t.Fatalf("snippet path = %q, want native/src/a.cpp", snippets[0].Path)
-	}
-	if strings.Contains(snippets[0].Content, "before") {
-		t.Fatalf("old_text should not be captured as required content: %#v", snippets[0])
-	}
-	if !strings.Contains(snippets[0].Anchor, "int before();") {
-		t.Fatalf("old_text anchor not carried: %#v", snippets[0])
-	}
+		data, err := json.Marshal(snippets[0])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(data)).NotTo(Or(ContainSubstring("Anchor"), ContainSubstring("before")))
+	})
 
-	data, err := json.Marshal(snippets[0])
-	if err != nil {
-		t.Fatalf("marshal snippet: %v", err)
-	}
-	if strings.Contains(string(data), "Anchor") || strings.Contains(string(data), "before") {
-		t.Fatalf("internal anchor leaked into JSON: %s", data)
-	}
-}
-
-func TestRequiredEditSnippetsFromPromptNormalizesBackslashLabels(t *testing.T) {
-	prompt := `
+	It("normalizes backslash path labels", func() {
+		prompt := `
 ## Required Edits
 
 In ` + "`native\\src\\a.cpp`" + `, replace the source line.
@@ -158,18 +126,13 @@ new_text:
 int after();
 ` + "```" + `
 `
-	snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp"})
+		snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp"})
+		Expect(snippets).To(HaveLen(1))
+		Expect(snippets[0].Path).To(Equal("native/src/a.cpp"))
+	})
 
-	if got := len(snippets); got != 1 {
-		t.Fatalf("expected one snippet, got %d: %#v", got, snippets)
-	}
-	if snippets[0].Path != "native/src/a.cpp" {
-		t.Fatalf("snippet path = %q, want normalized required path", snippets[0].Path)
-	}
-}
-
-func TestRequiredEditSnippetsFromPromptDuplicatesSharedBasenameSnippetPaths(t *testing.T) {
-	prompt := `
+	It("duplicates a shared-basename snippet across matching paths", func() {
+		prompt := `
 ## Required Edits
 
 Update the ` + "`a.h`" + ` and ` + "`a.cpp`" + ` comments.
@@ -186,15 +149,12 @@ new_text:
 // new shared comment
 ` + "```" + `
 `
-	snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.h", "native/src/a.cpp"})
-
-	got := map[string]string{}
-	for _, snippet := range snippets {
-		got[snippet.Path] = snippet.Content
-	}
-	for _, path := range []string{"native/src/a.h", "native/src/a.cpp"} {
-		if !strings.Contains(got[path], "// new shared comment") {
-			t.Fatalf("shared snippet was not duplicated for %s: %#v", path, snippets)
+		snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.h", "native/src/a.cpp"})
+		contentByPath := map[string]string{}
+		for _, snippet := range snippets {
+			contentByPath[snippet.Path] = snippet.Content
 		}
-	}
-}
+		Expect(contentByPath).To(HaveKeyWithValue("native/src/a.h", ContainSubstring("// new shared comment")))
+		Expect(contentByPath).To(HaveKeyWithValue("native/src/a.cpp", ContainSubstring("// new shared comment")))
+	})
+})

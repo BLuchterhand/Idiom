@@ -4,73 +4,46 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestWriteJSONAndReadJSON(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "sub", "test.json")
-	input := map[string]any{"key": "value", "num": 42}
+var _ = ginkgo.Describe("JSON files", func() {
+	ginkgo.It("writes formatted JSON with a trailing newline and reads it back", func() {
+		path := filepath.Join(ginkgo.GinkgoT().TempDir(), "sub", "test.json")
+		input := map[string]any{"key": "value", "num": 42}
 
-	if err := WriteJSON(path, input); err != nil {
-		t.Fatalf("WriteJSON: %v", err)
-	}
+		gomega.Expect(WriteJSON(path, input)).To(gomega.Succeed())
+		data, err := os.ReadFile(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(data).NotTo(gomega.BeEmpty())
+		gomega.Expect(data).To(gomega.HaveSuffix("\n"))
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+		var got map[string]any
+		gomega.Expect(ReadJSON(path, &got)).To(gomega.Succeed())
+		gomega.Expect(got).To(gomega.HaveKeyWithValue("key", "value"))
+		gomega.Expect(got).To(gomega.HaveKeyWithValue("num", float64(42)))
+	})
 
-	if len(data) == 0 {
-		t.Fatal("empty file")
-	}
+	ginkgo.It("rejects an empty file", func() {
+		path := filepath.Join(ginkgo.GinkgoT().TempDir(), "empty.json")
+		gomega.Expect(os.WriteFile(path, nil, 0o644)).To(gomega.Succeed())
 
-	if data[len(data)-1] != '\n' {
-		t.Error("no trailing newline")
-	}
+		var value any
+		gomega.Expect(ReadJSON(path, &value)).NotTo(gomega.Succeed())
+	})
 
-	var got map[string]any
+	ginkgo.It("rejects values that cannot be marshaled", func() {
+		path := filepath.Join(ginkgo.GinkgoT().TempDir(), "invalid.json")
+		gomega.Expect(WriteJSON(path, make(chan int))).NotTo(gomega.Succeed())
+	})
 
-	if err := ReadJSON(path, &got); err != nil {
-		t.Fatalf("ReadJSON: %v", err)
-	}
+	ginkgo.It("rejects invalid JSON", func() {
+		path := filepath.Join(ginkgo.GinkgoT().TempDir(), "invalid.json")
+		gomega.Expect(os.WriteFile(path, []byte("not json"), 0o644)).To(gomega.Succeed())
 
-	if got["key"] != "value" || int(got["num"].(float64)) != 42 {
-		t.Errorf("unexpected content: %v", got)
-	}
-}
-
-func TestReadJSON_EmptyFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "empty.json")
-	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var v any
-
-	if err := ReadJSON(path, &v); err == nil {
-		t.Error("expected error for empty file")
-	}
-}
-
-func TestWriteJSON_InvalidJSON(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "invalid.json")
-	ch := make(chan int)
-
-	if err := WriteJSON(path, ch); err == nil {
-		t.Error("expected error for non-marshalable value")
-	}
-}
-
-func TestReadJSON_InvalidJSON(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "invalid.json")
-	if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var v json.RawMessage
-
-	if err := ReadJSON(path, &v); err == nil {
-		t.Error("expected error for invalid JSON")
-	}
-}
+		var value json.RawMessage
+		gomega.Expect(ReadJSON(path, &value)).NotTo(gomega.Succeed())
+	})
+})

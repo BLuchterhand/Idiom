@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 	semanticrust "idiom/internal/repository/semantic/rust"
@@ -268,15 +267,11 @@ func (m *Manager) rustReadSymbol(req ToolRequest) ToolResult {
 	displayPath := m.displayPath(abs)
 
 	return ToolResult{
-		Tool:    "rust_read_symbol",
-		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", rustDisplayName(match.Qualified, match.Name), displayPath, start, end),
-		Output:  snippet,
-		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:      displayPath,
-			StartLine: start,
-			EndLine:   end,
-		}),
+		Tool:          "rust_read_symbol",
+		Summary:       fmt.Sprintf("Read %s in %s lines %d-%d", rustDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:        snippet,
+		Paths:         []string{displayPath},
+		SourceWindows: []SourceWindowPlan{{Path: displayPath, StartLine: start, EndLine: end}},
 	}
 }
 

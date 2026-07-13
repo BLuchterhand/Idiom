@@ -3,29 +3,34 @@ package comprehension
 import (
 	"os"
 	"path/filepath"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestNormalizeTracePathRejectsTraversalAndNormalizesBackslashes(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
-		t.Fatal(err)
+var _ = It("normalize trace path rejects traversal and normalizes backslashes", func() {
+	root := GinkgoT().TempDir()
+	{
+		err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755)
+		Expect(err).NotTo(HaveOccurred(), err)
 	}
-
-	if err := os.WriteFile(filepath.Join(root, "pkg", "runner.go"), []byte("package pkg\n"), 0o644); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(filepath.Join(root, "pkg", "runner.go"), []byte("package pkg\n"), 0o644)
+		Expect(err).NotTo(HaveOccurred(), err)
 	}
 
 	outside := filepath.Join(filepath.Dir(root), "outside.go")
-	if err := os.WriteFile(outside, []byte("package outside\n"), 0o644); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(outside, []byte("package outside\n"), 0o644)
+		Expect(err).NotTo(HaveOccurred(), err)
 	}
-
-	if got, ok := normalizeTracePath(root, `pkg\runner.go`); !ok || got != "pkg/runner.go" {
-		t.Fatalf("normalizeTracePath(backslash path) = %q, %v; want pkg/runner.go, true", got, ok)
+	{
+		got, ok := normalizeTracePath(root, `pkg\runner.go`)
+		Expect(ok).To(BeTrue(), "normalizeTracePath(backslash path) = %q, %v; want pkg/runner.go, true", got, ok)
+		Expect(got).To(BeEquivalentTo("pkg/runner.go"), "normalizeTracePath(backslash path) = %q, %v; want pkg/runner.go, true", got, ok)
 	}
-
-	if got, ok := normalizeTracePath(root, "../outside.go"); ok {
-		t.Fatalf("normalizeTracePath(traversal) = %q, true; want rejection", got)
+	{
+		got, ok := normalizeTracePath(root, "../outside.go")
+		Expect(ok).To(BeFalse(), "normalizeTracePath(traversal) = %q, true; want rejection", got)
 	}
-}
+})

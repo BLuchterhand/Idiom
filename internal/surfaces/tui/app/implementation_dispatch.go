@@ -240,25 +240,6 @@ func implementationDispatchFileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func implementationDispatchEditScopeFromPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config, planDocuments []implementationdispatch.PlanDocument) ([]string, []string) {
-	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, cfg)
-	requiredPaths := appendUniqueBriefStrings(nil, intake.RequiredTargets...)
-
-	allowedPaths := appendUniqueBriefStrings(nil, intake.AllowedTargets...)
-	root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
-
-	for _, doc := range planDocuments {
-		if implementationdispatch.PlanDocumentScopeIsRequired(doc, root) {
-			requiredPaths = appendUniqueBriefStrings(requiredPaths, doc.EditPaths...)
-			continue
-		}
-
-		allowedPaths = appendUniqueBriefStrings(allowedPaths, doc.EditPaths...)
-	}
-
-	return requiredPaths, allowedPaths
-}
-
 func implementationDispatchEditScopePlanDocumentsAndResolution(prompt string, plan promptExecutionPlan, cfg config.Config) ([]string, []string, []implementationdispatch.PlanDocument, []implementationdispatch.ResolutionBlocker) {
 	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, cfg)
 	root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)

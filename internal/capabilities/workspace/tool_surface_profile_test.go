@@ -1,229 +1,200 @@
 package workspace
 
 import (
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"slices"
-	"testing"
 )
 
-func TestToolSurfaceProfilesExposeContractInvariants(t *testing.T) {
-	if got := ManifestToolsForSurfaceProfile(ToolSurfaceProfileArtifactDistiller); len(got) != 0 {
-		t.Fatalf("artifact distiller profile must be tool-free, got %#v", got)
-	}
-
-	conversation := ManifestToolsForSurfaceProfile(ToolSurfaceProfileConversationReadOnly)
-	for _, want := range []string{
-		ToolNameTask,
-		ToolNameReadFile,
-		ToolNameSearchContent,
-		ToolNameCodeNavigate,
-		ToolNameReadOnlyCapability,
-		ToolNameHarnessAudit,
-		ToolNameContextStatus,
-		ToolNameContextQuery,
-		ToolNameContextZoom,
-		ToolNameHistoryRange,
-		ToolNameHistorySymbol,
-		ToolNameBlameRange,
-	} {
-		if !slices.Contains(conversation, want) {
-			t.Fatalf("conversation read-only profile missing %q in %#v", want, conversation)
+var _ = ginkgo.Describe("tool surface profile", func() {
+	ginkgo.It("tool surface profiles expose contract invariants", func() {
+		if got := ManifestToolsForSurfaceProfile(ToolSurfaceProfileArtifactDistiller); len(got) != 0 {
+			ginkgo.Fail(fmt.Sprintf("artifact distiller profile must be tool-free, got %#v", got))
 		}
-	}
 
-	for _, forbidden := range []string{
-		ToolNameEditFile,
-		ToolNameApplyPatch,
-		ToolNameShell,
-		ToolNameContextPack,
-		ToolNameContextImpact,
-		ToolNameContextTracePack,
-		ToolNameDiscoveryQuery,
-	} {
-		if slices.Contains(conversation, forbidden) {
-			t.Fatalf("conversation read-only profile must not expose %q in %#v", forbidden, conversation)
-		}
-	}
+		conversation := ManifestToolsForSurfaceProfile(ToolSurfaceProfileConversationReadOnly)
+		for _, want := range []string{
+			ToolNameTask,
+			ToolNameReadFile,
+			ToolNameSearchContent,
+			ToolNameCodeNavigate,
+			ToolNameReadOnlyCapability,
+			ToolNameHarnessAudit,
+			ToolNameContextStatus,
+			ToolNameContextQuery,
+			ToolNameContextZoom,
+			ToolNameHistoryRange,
+			ToolNameHistorySymbol,
+			ToolNameBlameRange,
+		} {
+			gomega.Expect(slices.Contains(conversation, want)).To(gomega.BeTrue(), fmt.Sprintf("conversation read-only profile missing %q in %#v", want, conversation))
 
-	delegated := ManifestToolsForSurfaceProfile(ToolSurfaceProfileDelegatedReadOnly)
-	for _, forbidden := range []string{ToolNameTask, ToolNameListFiles, ToolNameEditFile, ToolNameApplyPatch} {
-		if slices.Contains(delegated, forbidden) {
-			t.Fatalf("delegated read-only profile must not expose %q in %#v", forbidden, delegated)
 		}
-	}
-	for _, want := range []string{ToolNameReadFile, ToolNameSearchContent, ToolNameCodeNavigate, ToolNameDiscoveryQuery} {
-		if !slices.Contains(delegated, want) {
-			t.Fatalf("delegated read-only profile missing %q in %#v", want, delegated)
-		}
-	}
 
-	verification := ManifestToolsForSurfaceProfile(ToolSurfaceProfileVerificationOnly)
-	for _, forbidden := range []string{ToolNameReadOnlyCapability, ToolNameEditFile, ToolNameApplyPatch, ToolNameSubmitPlan} {
-		if slices.Contains(verification, forbidden) {
-			t.Fatalf("verification-only profile must not expose %q in %#v", forbidden, verification)
-		}
-	}
-	for _, want := range []string{ToolNameSourceSanity, ToolNameShell, ToolNameReadFile, ToolNameSearchContent} {
-		if !slices.Contains(verification, want) {
-			t.Fatalf("verification-only profile missing %q in %#v", want, verification)
-		}
-	}
+		for _, forbidden := range []string{
+			ToolNameEditFile,
+			ToolNameApplyPatch,
+			ToolNameShell,
+			ToolNameContextPack,
+			ToolNameContextImpact,
+			ToolNameContextTracePack,
+			ToolNameDiscoveryQuery,
+		} {
+			gomega.Expect(slices.Contains(conversation, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("conversation read-only profile must not expose %q in %#v", forbidden, conversation))
 
-	guardedWrite := ManifestToolsForSurfaceProfile(ToolSurfaceProfileGuardedWrite)
-	for _, want := range []string{ToolNameTask, ToolNameTaskLedger, ToolNameEditFile, ToolNameApplyPatch, ToolNameSourceSanity} {
-		if !slices.Contains(guardedWrite, want) {
-			t.Fatalf("guarded write profile missing %q in %#v", want, guardedWrite)
 		}
-	}
-}
 
-func TestSurfaceProfilesOwnExternalToolPolicy(t *testing.T) {
-	available := []string{
-		ToolNameReadFile,
-		ToolNameSubmitPlan,
-		ToolNameEditFile,
-		"mcp:question/ask",
-		"project_trace",
-	}
+		delegated := ManifestToolsForSurfaceProfile(ToolSurfaceProfileDelegatedReadOnly)
+		for _, forbidden := range []string{ToolNameTask, ToolNameListFiles, ToolNameEditFile, ToolNameApplyPatch} {
+			gomega.Expect(slices.Contains(delegated, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("delegated read-only profile must not expose %q in %#v", forbidden, delegated))
 
-	planner := AllowedToolsForSurfaceProfile(available, ToolSurfaceProfilePlanSubmissionPlanner)
-	for _, want := range []string{ToolNameReadFile, ToolNameSubmitPlan, "mcp:question/ask", "project_trace"} {
-		if !slices.Contains(planner, want) {
-			t.Fatalf("planner profile should preserve allowed external/read tool %q in %#v", want, planner)
 		}
-	}
-	if slices.Contains(planner, ToolNameEditFile) {
-		t.Fatalf("planner profile must not expose per-edit writes: %#v", planner)
-	}
+		for _, want := range []string{ToolNameReadFile, ToolNameSearchContent, ToolNameCodeNavigate, ToolNameDiscoveryQuery} {
+			gomega.Expect(slices.Contains(delegated, want)).To(gomega.BeTrue(), fmt.Sprintf("delegated read-only profile missing %q in %#v", want, delegated))
 
-	review := AllowedToolsForSurfaceProfile(available, ToolSurfaceProfilePlanSubmissionReview)
-	for _, forbidden := range []string{ToolNameEditFile, "mcp:question/ask", "project_trace"} {
-		if slices.Contains(review, forbidden) {
-			t.Fatalf("review profile must not expose %q in %#v", forbidden, review)
 		}
-	}
-	if !slices.Contains(review, ToolNameSubmitPlan) {
-		t.Fatalf("review profile must keep submit_plan for corrective plans: %#v", review)
-	}
-}
 
-func TestToolSurfaceSnapshotAdvertisedAllowedToolsOwnsRuntimeFiltering(t *testing.T) {
-	surface := ToolSurfaceSnapshot{}
-	got := surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
-		BaseTools:    []string{ToolNameTask, ToolNameListFiles, ToolNameStructuralSearch, ToolNameDependencyGraph, ToolNameReadFile},
-		RuntimeTools: []string{ToolNameStructuralSearch, ToolNameDependencyGraph, ToolNameTask, ToolNameListFiles},
+		verification := ManifestToolsForSurfaceProfile(ToolSurfaceProfileVerificationOnly)
+		for _, forbidden := range []string{ToolNameReadOnlyCapability, ToolNameEditFile, ToolNameApplyPatch, ToolNameSubmitPlan} {
+			gomega.Expect(slices.Contains(verification, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("verification-only profile must not expose %q in %#v", forbidden, verification))
+
+		}
+		for _, want := range []string{ToolNameSourceSanity, ToolNameShell, ToolNameReadFile, ToolNameSearchContent} {
+			gomega.Expect(slices.Contains(verification, want)).To(gomega.BeTrue(), fmt.Sprintf("verification-only profile missing %q in %#v", want, verification))
+
+		}
+
+		guardedWrite := ManifestToolsForSurfaceProfile(ToolSurfaceProfileGuardedWrite)
+		for _, want := range []string{ToolNameTask, ToolNameTaskLedger, ToolNameEditFile, ToolNameApplyPatch, ToolNameSourceSanity} {
+			gomega.Expect(slices.Contains(guardedWrite, want)).To(gomega.BeTrue(), fmt.Sprintf("guarded write profile missing %q in %#v", want, guardedWrite))
+
+		}
 	})
-	want := []string{ToolNameStructuralSearch, ToolNameDependencyGraph, ToolNameTask, ToolNameListFiles}
-	if !slices.Equal(got, want) {
-		t.Fatalf("advertised runtime tools = %#v, want %#v", got, want)
-	}
+	ginkgo.It("surface profiles own external tool policy", func() {
+		available := []string{
+			ToolNameReadFile,
+			ToolNameSubmitPlan,
+			ToolNameEditFile,
+			"mcp:question/ask",
+			"project_trace",
+		}
 
-	got = surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
-		BaseTools:       []string{ToolNameTask, ToolNameReadFile, ToolNameSearchContent},
-		DisableTaskTool: true,
+		planner := AllowedToolsForSurfaceProfile(available, ToolSurfaceProfilePlanSubmissionPlanner)
+		for _, want := range []string{ToolNameReadFile, ToolNameSubmitPlan, "mcp:question/ask", "project_trace"} {
+			gomega.Expect(slices.Contains(planner, want)).To(gomega.BeTrue(), fmt.Sprintf("planner profile should preserve allowed external/read tool %q in %#v", want, planner))
+
+		}
+		gomega.Expect(slices.Contains(planner, ToolNameEditFile)).To(gomega.BeFalse(), fmt.Sprintf("planner profile must not expose per-edit writes: %#v", planner))
+
+		review := AllowedToolsForSurfaceProfile(available, ToolSurfaceProfilePlanSubmissionReview)
+		for _, forbidden := range []string{ToolNameEditFile, "mcp:question/ask", "project_trace"} {
+			gomega.Expect(slices.Contains(review, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("review profile must not expose %q in %#v", forbidden, review))
+
+		}
+		gomega.Expect(slices.Contains(review, ToolNameSubmitPlan)).To(gomega.BeTrue(), fmt.Sprintf("review profile must keep submit_plan for corrective plans: %#v", review))
+
 	})
-	want = []string{ToolNameReadFile, ToolNameSearchContent}
-	if !slices.Equal(got, want) {
-		t.Fatalf("task-disabled advertised tools = %#v, want %#v", got, want)
-	}
-}
+	ginkgo.It("tool surface snapshot advertised allowed tools owns runtime filtering", func() {
+		surface := ToolSurfaceSnapshot{}
+		got := surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
+			BaseTools:    []string{ToolNameTask, ToolNameListFiles, ToolNameStructuralSearch, ToolNameDependencyGraph, ToolNameReadFile},
+			RuntimeTools: []string{ToolNameStructuralSearch, ToolNameDependencyGraph, ToolNameTask, ToolNameListFiles},
+		})
+		want := []string{ToolNameStructuralSearch, ToolNameDependencyGraph, ToolNameTask, ToolNameListFiles}
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("advertised runtime tools = %#v, want %#v", got, want))
 
-func TestToolSurfaceSnapshotAdvertisedAllowedToolsOwnsConversationExternalPolicy(t *testing.T) {
-	surface := ToolSurfaceSnapshot{
-		externalToolNames: []string{"project_lookup", "trace_code"},
-	}
+		got = surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
+			BaseTools:       []string{ToolNameTask, ToolNameReadFile, ToolNameSearchContent},
+			DisableTaskTool: true,
+		})
+		want = []string{ToolNameReadFile, ToolNameSearchContent}
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("task-disabled advertised tools = %#v, want %#v", got, want))
 
-	got := surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
-		BaseTools:        []string{ToolNameReadFile, "trace_code", "project_lookup"},
-		ConversationOnly: true,
 	})
-	want := []string{"trace_code", "project_lookup"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("conversation-only advertised externals = %#v, want %#v", got, want)
-	}
+	ginkgo.It("tool surface snapshot advertised allowed tools owns conversation external policy", func() {
+		surface := ToolSurfaceSnapshot{
+			externalToolNames: []string{"project_lookup", "trace_code"},
+		}
 
-	got = surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
-		ConversationOnly: true,
+		got := surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
+			BaseTools:        []string{ToolNameReadFile, "trace_code", "project_lookup"},
+			ConversationOnly: true,
+		})
+		want := []string{"trace_code", "project_lookup"}
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("conversation-only advertised externals = %#v, want %#v", got, want))
+
+		got = surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
+			ConversationOnly: true,
+		})
+		want = []string{"project_lookup", "trace_code"}
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("conversation-only fallback externals = %#v, want %#v", got, want))
+
+		got = surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
+			BaseTools:        []string{"project_lookup"},
+			ConversationOnly: true,
+			SuppressAll:      true,
+		})
+		gomega.Expect(got).To(gomega.BeEmpty(), fmt.Sprintf("suppressed advertised tools = %#v, want none", got))
+
 	})
-	want = []string{"project_lookup", "trace_code"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("conversation-only fallback externals = %#v, want %#v", got, want)
-	}
+	ginkgo.It("plan submission profiles own required tool completion", func() {
+		for _, profile := range []ToolSurfaceProfile{
+			ToolSurfaceProfilePlanSubmissionPlanner,
+			ToolSurfaceProfilePlanSubmissionReview,
+		} {
+			got := AllowedToolsForSurfaceProfile([]string{ToolNameReadFile, ToolNameSearchContent}, profile)
+			gomega.Expect(slices.Contains(got, ToolNameSubmitPlan)).To(gomega.BeTrue(), fmt.Sprintf("%s profile must complete missing submit_plan: %#v", profile, got))
 
-	got = surface.AdvertisedAllowedTools(AdvertisedToolSurfaceInput{
-		BaseTools:        []string{"project_lookup"},
-		ConversationOnly: true,
-		SuppressAll:      true,
+		}
 	})
-	if len(got) != 0 {
-		t.Fatalf("suppressed advertised tools = %#v, want none", got)
-	}
-}
+	ginkgo.It("direct answer surface tool names own read only inventory", func() {
+		tools := DirectAnswerSurfaceToolNames()
+		seen := make(map[string]struct{}, len(tools))
+		for _, tool := range tools {
+			gomega.Expect(tool).NotTo(gomega.Equal(""), fmt.Sprintf("direct-answer surface contains blank tool: %#v", tools))
 
-func TestPlanSubmissionProfilesOwnRequiredToolCompletion(t *testing.T) {
-	for _, profile := range []ToolSurfaceProfile{
-		ToolSurfaceProfilePlanSubmissionPlanner,
-		ToolSurfaceProfilePlanSubmissionReview,
-	} {
-		got := AllowedToolsForSurfaceProfile([]string{ToolNameReadFile, ToolNameSearchContent}, profile)
-		if !slices.Contains(got, ToolNameSubmitPlan) {
-			t.Fatalf("%s profile must complete missing submit_plan: %#v", profile, got)
+			if _, ok := seen[tool]; ok {
+				ginkgo.Fail(fmt.Sprintf("direct-answer surface contains duplicate tool %q: %#v", tool, tools))
+			}
+			seen[tool] = struct{}{}
 		}
-	}
-}
 
-func TestDirectAnswerSurfaceToolNamesOwnReadOnlyInventory(t *testing.T) {
-	tools := DirectAnswerSurfaceToolNames()
-	seen := make(map[string]struct{}, len(tools))
-	for _, tool := range tools {
-		if tool == "" {
-			t.Fatalf("direct-answer surface contains blank tool: %#v", tools)
-		}
-		if _, ok := seen[tool]; ok {
-			t.Fatalf("direct-answer surface contains duplicate tool %q: %#v", tool, tools)
-		}
-		seen[tool] = struct{}{}
-	}
+		for _, tool := range []string{
+			ToolNameReadFile,
+			ToolNameSearchContent,
+			ToolNameContextQuery,
+			ToolNameContextZoom,
+			ToolNameCodeNavigate,
+			ToolNameTask,
+			ToolNameSystemSearchAccess,
+		} {
+			gomega.Expect(slices.Contains(tools, tool)).To(gomega.BeTrue(), fmt.Sprintf("direct-answer surface missing read-only investigation tool %q: %#v", tool, tools))
 
-	for _, tool := range []string{
-		ToolNameReadFile,
-		ToolNameSearchContent,
-		ToolNameContextQuery,
-		ToolNameContextZoom,
-		ToolNameCodeNavigate,
-		ToolNameTask,
-		ToolNameSystemSearchAccess,
-	} {
-		if !slices.Contains(tools, tool) {
-			t.Fatalf("direct-answer surface missing read-only investigation tool %q: %#v", tool, tools)
 		}
-	}
 
-	for _, tool := range WorkspaceWriteToolNames() {
-		if slices.Contains(tools, tool) {
-			t.Fatalf("direct-answer surface must not expose write tool %q: %#v", tool, tools)
-		}
-	}
-	for _, tool := range []string{ToolNameSubmitPlan, ToolNameTaskLedger, ToolNameNote, ToolNameShell} {
-		if slices.Contains(tools, tool) {
-			t.Fatalf("direct-answer surface must not expose protocol/mutation tool %q: %#v", tool, tools)
-		}
-	}
-}
+		for _, tool := range WorkspaceWriteToolNames() {
+			gomega.Expect(slices.Contains(tools, tool)).To(gomega.BeFalse(), fmt.Sprintf("direct-answer surface must not expose write tool %q: %#v", tool, tools))
 
-func TestBuiltInToolNamesDoNotLookExternal(t *testing.T) {
-	for _, tool := range []string{
-		ToolNameCodeNavigate,
-		ToolNameReadOnlyCapability,
-		ToolNameSourceSanity,
-		ToolNameHarnessFeedback,
-		ToolNameContextImpact,
-		ToolNameSubmitPlan,
-		ToolNameDelegateEdit,
-		ToolNameRg,
-		ToolNameNote,
-	} {
-		if IsExternalToolName(tool) {
-			t.Fatalf("built-in tool %q must not be classified as a project external", tool)
 		}
-	}
-}
+		for _, tool := range []string{ToolNameSubmitPlan, ToolNameTaskLedger, ToolNameNote, ToolNameShell} {
+			gomega.Expect(slices.Contains(tools, tool)).To(gomega.BeFalse(), fmt.Sprintf("direct-answer surface must not expose protocol/mutation tool %q: %#v", tool, tools))
+
+		}
+	})
+	ginkgo.It("built in tool names do not look external", func() {
+		for _, tool := range []string{
+			ToolNameCodeNavigate,
+			ToolNameReadOnlyCapability,
+			ToolNameSourceSanity,
+			ToolNameHarnessFeedback,
+			ToolNameContextImpact,
+			ToolNameSubmitPlan,
+			ToolNameRg,
+			ToolNameNote,
+		} {
+			gomega.Expect(IsExternalToolName(tool)).To(gomega.BeFalse(), fmt.Sprintf("built-in tool %q must not be classified as a project external", tool))
+
+		}
+	})
+})

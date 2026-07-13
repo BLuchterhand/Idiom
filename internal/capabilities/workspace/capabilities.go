@@ -26,6 +26,7 @@ const (
 
 const (
 	CapabilityClassRouted               = "routed"
+	CapabilityClassDirect               = "direct"
 	CapabilityClassCompatibilityAdapter = "compatibility_adapter"
 	CapabilityClassDeferred             = "deferred"
 	CapabilityClassFallback             = "fallback"
@@ -85,7 +86,7 @@ var readOnlyLanguageCapabilityCatalog = []readOnlyLanguageCapabilityEntry{
 	{
 		ID:           ReadOnlyCapabilityInspectSymbol,
 		Description:  "Read a symbol body or exact symbol range after anchoring.",
-		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapReadSymbol},
+		Capabilities: []semanticlanguage.Capability{semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody},
 	},
 	{
 		ID:           ReadOnlyCapabilitySymbolLookup,
@@ -154,6 +155,16 @@ type ReadOnlyCapabilityUnsafeAdapterSpec struct {
 	Reason              string                     `json:"reason"`
 	DeclaredSideEffects []autonomy.SideEffectClass `json:"declared_side_effects,omitempty"`
 	SchemaSideEffects   []autonomy.SideEffectClass `json:"schema_side_effects,omitempty"`
+}
+
+// ReadOnlyCapabilityDirectAdapterSpec explains why a read-only tool remains a
+// direct contract instead of being presented as an adapter for a stable
+// read-only capability. These rows make deliberate direct surfaces distinct
+// from genuinely unexplained registry gaps.
+type ReadOnlyCapabilityDirectAdapterSpec struct {
+	Tool           string `json:"tool"`
+	Classification string `json:"classification"`
+	Reason         string `json:"reason"`
 }
 
 type ReadOnlyCapabilityRouteState struct {
@@ -285,6 +296,10 @@ type ReadOnlyCapabilityCoverage struct {
 	ReadOnlyAdapterCount       int                                   `json:"read_only_adapter_count"`
 	MappedReadOnlyAdapterCount int                                   `json:"mapped_read_only_adapter_count"`
 	Coverage                   float64                               `json:"coverage"`
+	DirectOnlyAdapterCount     int                                   `json:"direct_only_adapter_count"`
+	DirectOnlyAdapters         []ReadOnlyCapabilityDirectAdapterSpec `json:"direct_only_adapters,omitempty"`
+	ExplainedAdapterCount      int                                   `json:"explained_adapter_count"`
+	ExplainedCoverage          float64                               `json:"explained_coverage"`
 	UnmappedAdapterCount       int                                   `json:"unmapped_adapter_count"`
 	UnmappedAdapters           []string                              `json:"unmapped_adapters,omitempty"`
 	UnsafeMappedAdapterCount   int                                   `json:"unsafe_mapped_adapter_count"`
@@ -431,6 +446,42 @@ func CapabilityClassificationForTool(tool string) string {
 	return ""
 }
 
+var directReadOnlyLanguageCapabilityReasons = map[semanticlanguage.Capability]string{
+	semanticlanguage.CapOverview:    "language overview is a workspace-orientation read, not an exact stable capability route",
+	semanticlanguage.CapEntrypoints: "entrypoint discovery is a specialized direct query, not an exact stable capability route",
+}
+
+func directReadOnlyCapabilityAdapter(tool string) (ReadOnlyCapabilityDirectAdapterSpec, bool) {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return ReadOnlyCapabilityDirectAdapterSpec{}, false
+	}
+
+	reason := ""
+	if metadata, ok := builtInToolSurfaceCatalog().lookup(tool); ok {
+		reason = strings.TrimSpace(metadata.DirectReadOnlyCapabilityReason)
+	}
+	if reason == "" {
+		if spec, ok := languagetools.ToolSpecForTool(tool); ok {
+			reason = directReadOnlyLanguageCapabilityReasons[spec.Capability]
+		}
+	}
+	if reason == "" {
+		return ReadOnlyCapabilityDirectAdapterSpec{}, false
+	}
+
+	classification := CapabilityClassificationForTool(tool)
+	if classification == "" {
+		classification = CapabilityClassDirect
+	}
+
+	return ReadOnlyCapabilityDirectAdapterSpec{
+		Tool:           tool,
+		Classification: classification,
+		Reason:         reason,
+	}, true
+}
+
 func evidenceCapabilityForLanguageCapability(capability semanticlanguage.Capability) string {
 	switch capability {
 	case semanticlanguage.CapFileOutline:
@@ -510,13 +561,24 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 		}
 	}
 
+	directOnly := make([]ReadOnlyCapabilityDirectAdapterSpec, 0)
 	unmapped := make([]string, 0)
 
 	for _, tool := range readOnlyAdapters {
-		if _, ok := mappedSet[tool]; !ok {
-			unmapped = append(unmapped, tool)
+		if _, ok := mappedSet[tool]; ok {
+			continue
 		}
+
+		if direct, ok := directReadOnlyCapabilityAdapter(tool); ok {
+			directOnly = append(directOnly, direct)
+			continue
+		}
+
+		unmapped = append(unmapped, tool)
 	}
+	slices.SortFunc(directOnly, func(a, b ReadOnlyCapabilityDirectAdapterSpec) int {
+		return cmp.Compare(a.Tool, b.Tool)
+	})
 
 	unsafe := unsafeReadOnlyCapabilityMappingsForTools(registry, tools)
 	routeStates := readOnlyCapabilityRouteStates(registry, tools)
@@ -526,8 +588,11 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 	fallbackStates := readOnlyCapabilityFallbackStates()
 
 	coverage := 0.0
+	explainedCoverage := 0.0
+	explainedAdapters := mappedReadOnly + len(directOnly)
 	if len(readOnlyAdapters) > 0 {
 		coverage = float64(mappedReadOnly) / float64(len(readOnlyAdapters))
+		explainedCoverage = float64(explainedAdapters) / float64(len(readOnlyAdapters))
 	}
 
 	return ReadOnlyCapabilityCoverage{
@@ -551,6 +616,10 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 		ReadOnlyAdapterCount:       len(readOnlyAdapters),
 		MappedReadOnlyAdapterCount: mappedReadOnly,
 		Coverage:                   coverage,
+		DirectOnlyAdapterCount:     len(directOnly),
+		DirectOnlyAdapters:         directOnly,
+		ExplainedAdapterCount:      explainedAdapters,
+		ExplainedCoverage:          explainedCoverage,
 		UnmappedAdapterCount:       len(unmapped),
 		UnmappedAdapters:           unmapped,
 		UnsafeMappedAdapterCount:   len(unsafe),
@@ -1502,6 +1571,7 @@ func readOnlyLanguageCapabilityAdapters(capabilities []semanticlanguage.Capabili
 	}
 	for _, capability := range capabilities {
 		adapters = append(adapters, languageCapabilityAdapters(capability)...)
+		adapters = append(adapters, genericCapabilityAdapters(capability)...)
 	}
 
 	return adapters
@@ -1510,16 +1580,30 @@ func readOnlyLanguageCapabilityAdapters(capabilities []semanticlanguage.Capabili
 func languageCapabilityAdapters(cap semanticlanguage.Capability) []ReadOnlyCapabilityAdapterSpec {
 	var adapters []ReadOnlyCapabilityAdapterSpec
 
-	for _, lang := range semanticlanguage.LanguageRegistry() {
-		tool := strings.TrimSpace(lang.Tool(cap))
-		if tool == "" {
+	for _, spec := range languagetools.ToolCatalog() {
+		if spec.Capability != cap {
 			continue
 		}
 
-		adapters = append(adapters, readOnlyAdapter(tool, string(cap), lang.Name, "language_registry"))
+		adapters = append(adapters, readOnlyAdapter(spec.Tool, string(cap), spec.Language, "language_tool_catalog"))
 	}
 
 	return adapters
+}
+
+func genericCapabilityAdapters(cap semanticlanguage.Capability) []ReadOnlyCapabilityAdapterSpec {
+	switch cap {
+	case semanticlanguage.CapFindSymbol:
+		return []ReadOnlyCapabilityAdapterSpec{
+			readOnlyAdapter(ToolNameCtagsSymbols, string(cap), "", "workspace_tool_catalog"),
+		}
+	case semanticlanguage.CapRelatedFiles:
+		return []ReadOnlyCapabilityAdapterSpec{
+			readOnlyAdapter(ToolNameDependencyGraph, string(cap), "", "workspace_tool_catalog"),
+		}
+	default:
+		return nil
+	}
 }
 
 func readOnlyAdapter(tool string, capability string, language string, source string) ReadOnlyCapabilityAdapterSpec {

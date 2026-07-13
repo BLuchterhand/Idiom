@@ -2,10 +2,12 @@ package comprehension
 
 import (
 	"math"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestDetectIntentMapsCommonPhrasings(t *testing.T) {
+var _ = It("detect intent maps common phrasings", func() {
 	cases := []struct {
 		query string
 		want  Intent
@@ -21,59 +23,43 @@ func TestDetectIntentMapsCommonPhrasings(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := DetectIntent(tc.query)
-		if got != tc.want {
-			t.Fatalf("DetectIntent(%q) = %q, want %q", tc.query, got, tc.want)
-		}
+		Expect(got).To(BeEquivalentTo(tc.want), "DetectIntent(%q) = %q, want %q", tc.query, got, tc.want)
 	}
-}
-
-func TestPathPenaltyHardZerosVendoredPaths(t *testing.T) {
+})
+var _ = It("path penalty hard zeros vendored paths", func() {
 	w := DefaultRankerWeights()
-	if got := PathPenalty("node_modules/foo/index.js", w); got != 0 {
-		t.Fatalf("vendored path penalty = %v, want 0", got)
+	{
+		got := PathPenalty("node_modules/foo/index.js", w)
+		Expect(got).To(BeEquivalentTo(0), "vendored path penalty = %v, want 0", got)
 	}
-
-	if got := PathPenalty("internal/runtime/agent/runner.go", w); got != 1.0 {
-		t.Fatalf("plain path penalty = %v, want 1.0", got)
+	{
+		got := PathPenalty("internal/runtime/agent/runner.go", w)
+		Expect(got).To(BeEquivalentTo(1.0), "plain path penalty = %v, want 1.0", got)
 	}
-
-	if got := PathPenalty("docs/architect-packets.md", w); got != w.PenaltyDocs {
-		t.Fatalf("docs penalty = %v, want %v", got, w.PenaltyDocs)
+	{
+		got := PathPenalty("docs/architect-packets.md", w)
+		Expect(got).To(BeEquivalentTo(w.PenaltyDocs), "docs penalty = %v, want %v", got, w.PenaltyDocs)
 	}
-
-	if got := PathPenalty("internal/evidence/eval/swe_suite_test.go", w); got != w.PenaltyTest {
-		t.Fatalf("test penalty = %v, want %v", got, w.PenaltyTest)
+	{
+		got := PathPenalty("internal/evidence/eval/swe_suite_test.go", w)
+		Expect(got).To(BeEquivalentTo(w.PenaltyTest), "test penalty = %v, want %v", got, w.PenaltyTest)
 	}
-
-	if got := PathPenalty("dist/bundle.js", w); got != w.PenaltyGenerated {
-		t.Fatalf("generated penalty = %v, want %v", got, w.PenaltyGenerated)
+	{
+		got := PathPenalty("dist/bundle.js", w)
+		Expect(got).To(BeEquivalentTo(w.PenaltyGenerated), "generated penalty = %v, want %v", got, w.PenaltyGenerated)
 	}
-}
-
-func TestIntentTestRelaxesTestPathPenalty(t *testing.T) {
+})
+var _ = It("intent test relaxes test path penalty", func() {
 	w := WeightsForIntent(IntentTest)
 	got := PathPenalty("internal/evidence/eval/swe_suite_test.go", w)
-
-	if got != 1.0 {
-		t.Fatalf("test-intent test path penalty = %v, want 1.0 (no demotion)", got)
-	}
-}
-
-func TestIsNameHubFlagsConventionalUtilityFiles(t *testing.T) {
-	if !IsNameHub("src/utils.ts") {
-		t.Fatalf("utils.ts should be a name hub")
-	}
-
-	if !IsNameHub("packages/core/src/index.ts") {
-		t.Fatalf("index.ts should be a name hub")
-	}
-
-	if IsNameHub("internal/runtime/agent/runner.go") {
-		t.Fatalf("runner.go should not be a name hub")
-	}
-}
-
-func TestBuildFileGraphProjectsSymbolEdgesOntoFiles(t *testing.T) {
+	Expect(got).To(BeEquivalentTo(1.0), "test-intent test path penalty = %v, want 1.0 (no demotion)", got)
+})
+var _ = It("is name hub flags conventional utility files", func() {
+	Expect(IsNameHub("src/utils.ts")).To(BeTrue(), "utils.ts should be a name hub")
+	Expect(IsNameHub("packages/core/src/index.ts")).To(BeTrue(), "index.ts should be a name hub")
+	Expect(IsNameHub("internal/runtime/agent/runner.go")).To(BeFalse(), "runner.go should not be a name hub")
+})
+var _ = It("build file graph projects symbol edges onto files", func() {
 	g := &Graph{
 		Nodes: []Node{
 			{ID: "n1", Path: "a.go"},
@@ -88,21 +74,17 @@ func TestBuildFileGraphProjectsSymbolEdgesOntoFiles(t *testing.T) {
 		},
 	}
 	fg := BuildFileGraph(g)
-
-	if len(fg.Forward["a.go"]) != 2 {
-		t.Fatalf("a.go forward = %v, want b.go and c.go", fg.Forward["a.go"])
+	Expect(len(fg.Forward["a.go"])).To(BeEquivalentTo(2), "a.go forward = %v, want b.go and c.go", fg.Forward["a.go"])
+	{
+		_, ok := fg.Reverse["b.go"]["a.go"]
+		Expect(ok).To(BeTrue(), "reverse edge a.go -> b.go missing")
 	}
-
-	if _, ok := fg.Reverse["b.go"]["a.go"]; !ok {
-		t.Fatalf("reverse edge a.go -> b.go missing")
+	{
+		_, ok := fg.Forward["a.go"]["a.go"]
+		Expect(ok).To(BeFalse(), "self-loop should have been dropped")
 	}
-
-	if _, ok := fg.Forward["a.go"]["a.go"]; ok {
-		t.Fatalf("self-loop should have been dropped")
-	}
-}
-
-func TestFanoutHubsThresholdsAtFraction(t *testing.T) {
+})
+var _ = It("fanout hubs thresholds at fraction", func() {
 	fg := FileGraph{
 		Files:   map[string]struct{}{"a": {}, "b": {}, "c": {}, "d": {}, "e": {}, "f": {}, "g": {}, "h": {}, "i": {}, "j": {}},
 		Reverse: map[string]map[string]struct{}{},
@@ -113,17 +95,16 @@ func TestFanoutHubsThresholdsAtFraction(t *testing.T) {
 	fg.Reverse["minor"] = map[string]struct{}{"a": {}}
 
 	hubs := FanoutHubs(fg, 0.2)
-
-	if _, ok := hubs["hub"]; !ok {
-		t.Fatalf("hub missing from fanout result: %v", hubs)
+	{
+		_, ok := hubs["hub"]
+		Expect(ok).To(BeTrue(), "hub missing from fanout result: %v", hubs)
 	}
-
-	if _, ok := hubs["minor"]; ok {
-		t.Fatalf("minor should not be flagged as hub")
+	{
+		_, ok := hubs["minor"]
+		Expect(ok).To(BeFalse(), "minor should not be flagged as hub")
 	}
-}
-
-func TestHopBoostPrefersOneHopOverTwoHop(t *testing.T) {
+})
+var _ = It("hop boost prefers one hop over two hop", func() {
 	fg := FileGraph{
 		Forward: map[string]map[string]struct{}{
 			"caller.go":    {"helper.go": {}},
@@ -140,25 +121,24 @@ func TestHopBoostPrefersOneHopOverTwoHop(t *testing.T) {
 	}
 	matched := map[string]struct{}{"target.go": {}}
 	w := DefaultRankerWeights()
-
-	if got := HopBoost("helper.go", fg, matched, w); got != w.Hop1Boost {
-		t.Fatalf("helper.go boost = %v, want %v", got, w.Hop1Boost)
+	{
+		got := HopBoost("helper.go", fg, matched, w)
+		Expect(got).To(BeEquivalentTo(w.Hop1Boost), "helper.go boost = %v, want %v", got, w.Hop1Boost)
 	}
-
-	if got := HopBoost("caller.go", fg, matched, w); got != w.Hop2Boost {
-		t.Fatalf("caller.go boost = %v, want %v", got, w.Hop2Boost)
+	{
+		got := HopBoost("caller.go", fg, matched, w)
+		Expect(got).To(BeEquivalentTo(w.Hop2Boost), "caller.go boost = %v, want %v", got, w.Hop2Boost)
 	}
-
-	if got := HopBoost("unrelated.go", fg, matched, w); got != 0 {
-		t.Fatalf("unrelated.go boost = %v, want 0", got)
+	{
+		got := HopBoost("unrelated.go", fg, matched, w)
+		Expect(got).To(BeEquivalentTo(0), "unrelated.go boost = %v, want 0", got)
 	}
-
-	if got := HopBoost("target.go", fg, matched, w); got != 0 {
-		t.Fatalf("matched file should not boost itself, got %v", got)
+	{
+		got := HopBoost("target.go", fg, matched, w)
+		Expect(got).To(BeEquivalentTo(0), "matched file should not boost itself, got %v", got)
 	}
-}
-
-func TestRankPackFilesAppliesAllSignals(t *testing.T) {
+})
+var _ = It("rank pack files applies all signals", func() {
 	graph := &Graph{
 		Nodes: []Node{
 			{ID: "core", Path: "internal/runtime/agent/runner.go"},
@@ -184,24 +164,17 @@ func TestRankPackFilesAppliesAllSignals(t *testing.T) {
 		Intent:      IntentDebug,
 		QueryTokens: []string{"runner"},
 	})
-
-	if ranked[0].Path != "internal/runtime/agent/runner.go" {
-		t.Fatalf("expected runner.go top-ranked, got %v", ranked[0])
-	}
-
-	if ranked[1].Path != "internal/helper.go" {
-		t.Fatalf("expected helper.go second (1-hop neighbor), got %v", ranked[1])
-	}
+	Expect(ranked[0].Path).To(BeEquivalentTo("internal/runtime/agent/runner.go"), "expected runner.go top-ranked, got %v", ranked[0])
+	Expect(ranked[1].Path).To(BeEquivalentTo("internal/helper.go"), "expected helper.go second (1-hop neighbor), got %v", ranked[1])
 
 	// Vendored file must have a zero score so it cannot be surfaced.
 	for _, file := range ranked {
-		if file.Path == "node_modules/lib/index.js" && file.Score != 0 {
-			t.Fatalf("vendored file score = %v, want 0", file.Score)
+		if file.Path == "node_modules/lib/index.js" {
+			Expect(file.Score).To(BeZero(), "vendored file score = %v, want 0", file.Score)
 		}
 	}
-}
-
-func TestRankPackFilesAppliesLearnedWeights(t *testing.T) {
+})
+var _ = It("rank pack files applies learned weights", func() {
 	files := []PackFile{
 		{Path: "a.go", Role: "editable"},
 		{Path: "b.go", Role: "editable"},
@@ -212,12 +185,6 @@ func TestRankPackFilesAppliesLearnedWeights(t *testing.T) {
 		Intent:         IntentSearch,
 		LearnedWeights: map[string]float64{"b.go": 2.5},
 	})
-
-	if ranked[0].Path != "b.go" {
-		t.Fatalf("expected boosted b.go on top, got %v", ranked[0])
-	}
-
-	if math.Abs(ranked[0].Score-ranked[1].Score*2.5) > 0.01 {
-		t.Fatalf("learned multiplier did not scale score: %v vs %v", ranked[0].Score, ranked[1].Score)
-	}
-}
+	Expect(ranked[0].Path).To(BeEquivalentTo("b.go"), "expected boosted b.go on top, got %v", ranked[0])
+	Expect(math.Abs(ranked[0].Score-ranked[1].Score*2.5) > 0.01).To(BeFalse(), "learned multiplier did not scale score: %v vs %v", ranked[0].Score, ranked[1].Score)
+})

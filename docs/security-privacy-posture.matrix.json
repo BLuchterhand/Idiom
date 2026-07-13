@@ -18,19 +18,19 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "command": "go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p79 security privacy controls execute generic evidence' -ginkgo.fail-on-empty -count=1",
           "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-protected-path-role-denial"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/contracts/autonomy -run TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect",
+          "command": "go test ./internal/contracts/autonomy -ginkgo.focus='Path-role resolution covers every supported first-class path role' -ginkgo.fail-on-empty -count=1",
           "path": "internal/contracts/autonomy/path_roles_test.go",
           "check_id": "p14-path-role-resolver"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/surfaces/cli/tool -run TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput",
+          "command": "go test ./internal/surfaces/cli/tool -ginkgo.focus='p7 5 containment p75 discovery profile denies private path mutation without leaking input' -ginkgo.fail-on-empty -count=1",
           "path": "internal/surfaces/cli/tool/p7_5_containment_test.go",
           "check_id": "p75-private-path-mutation-denial"
         }
@@ -43,19 +43,19 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "command": "go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p79 security privacy controls execute generic evidence' -ginkgo.fail-on-empty -count=1",
           "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-no-raw-prompt-or-file-body"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/evidence/sidecarvalidation -run TestP76CLIClassificationExamplesUseGenericPrimitives",
+          "command": "go test ./internal/evidence/sidecarvalidation -ginkgo.focus='P7\\.6 CLI classification examples' -ginkgo.fail-on-empty -count=1",
           "path": "internal/evidence/sidecarvalidation/classification_examples_test.go",
           "check_id": "p76-forbidden-example-leakage"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/evidence/telemetry -run TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs",
+          "command": "go test ./internal/evidence/telemetry -ginkgo.focus='Telemetry recording writes lifecycle records and redacts sensitive process arguments' -ginkgo.fail-on-empty -count=1",
           "path": "internal/evidence/telemetry/recorder_test.go",
           "check_id": "telemetry-arg-redaction"
         }
@@ -68,13 +68,13 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "command": "go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p79 security privacy controls execute generic evidence' -ginkgo.fail-on-empty -count=1",
           "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-local-artifact-scope"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/surfaces/cli/localops -run TestLocalOpsBenchmarkQuickstartSmokeRecordsP010ActivationEvidence",
+          "command": "go test ./internal/surfaces/cli/localops -ginkgo.focus='local ops benchmark quickstart smoke records p010 activation evidence' -ginkgo.fail-on-empty -count=1",
           "path": "internal/surfaces/cli/localops/local_ops_test.go",
           "check_id": "p010-quickstart-cleanup-evidence"
         }
@@ -87,19 +87,19 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "command": "go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p79 security privacy controls execute generic evidence' -ginkgo.fail-on-empty -count=1",
           "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-no-hosted-telemetry-default"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/surfaces/cli/localops -run TestLocalOpsBenchmarkReportsSmokeCapacityReplayBlockers",
+          "command": "go test ./internal/surfaces/cli/localops -ginkgo.focus='local ops benchmark reports smoke capacity replay blockers' -ginkgo.fail-on-empty -count=1",
           "path": "internal/surfaces/cli/localops/local_ops_test.go",
           "check_id": "local-ops-metadata-only-privacy"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/surfaces/cli/root -run TestRunMainWritesTelemetryForRejectedDirectToolInput",
+          "command": "go test ./internal/surfaces/cli/root -ginkgo.focus='Direct tool routing writes telemetry for rejected direct-tool input' -ginkgo.fail-on-empty -count=1",
           "path": "internal/surfaces/cli/root/root_test.go",
           "check_id": "direct-tool-telemetry-redaction"
         }
@@ -112,19 +112,19 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "command": "go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p79 security privacy controls execute generic evidence' -ginkgo.fail-on-empty -count=1",
           "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-read-only-discovery-policy"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/capabilities/workspace -run TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects",
+          "command": "go test ./internal/capabilities/workspace -ginkgo.focus='tool profile policy tool allowed for discovery profile denies mutation shell and unknown effects' -ginkgo.fail-on-empty -count=1",
           "path": "internal/capabilities/workspace/tool_profile_policy_test.go",
           "check_id": "workspace-discovery-profile-denials"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/surfaces/cli/tool -run TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect",
+          "command": "go test ./internal/surfaces/cli/tool -ginkgo.focus='p7 5 containment p75 discovery profile denies shell before external side effect' -ginkgo.fail-on-empty -count=1",
           "path": "internal/surfaces/cli/tool/p7_5_containment_test.go",
           "check_id": "p75-shell-side-effect-denial"
         }
@@ -137,13 +137,13 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./internal/surfaces/cli/mcp -run TestP86MCPStdioIntegrationProofReplay",
+          "command": "go test ./internal/surfaces/cli/mcp -ginkgo.focus='P8\\.6 MCP stdio proof replays the release proof without leaking protected evidence' -ginkgo.fail-on-empty -count=1",
           "path": "internal/surfaces/cli/mcp/p8_6_integration_proof_test.go",
           "check_id": "p86-mcp-stdio-resource-containment"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/surfaces/cli/mcp -run TestP85MCPClassificationParity",
+          "command": "go test ./internal/surfaces/cli/mcp -ginkgo.focus='p85 mcp classification parity (report|examples use generic primitives)' -ginkgo.fail-on-empty -count=1",
           "path": "internal/surfaces/cli/mcp/p8_5_classification_parity_test.go",
           "check_id": "p85-mcp-classification-parity"
         }
@@ -156,25 +156,25 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./internal/capabilities/mcp -run '^TestHTTPNetworkPolicy'",
+          "command": "go test ./internal/capabilities/mcp -ginkgo.focus='HTTP network policy' -ginkgo.fail-on-empty -count=1",
           "path": "internal/capabilities/mcp/ssrf_test.go",
           "check_id": "mcp-http-private-network-dial-containment"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/capabilities/mcp -run '^TestHTTPTransport_(RedirectPolicy|CrossOriginRedirect|PublicPolicy|DoesNotDepend)'",
+          "command": "go test ./internal/capabilities/mcp -ginkgo.focus='MCP HTTP transport (blocks a redirect from a public endpoint to a private target|strips endpoint credentials from a cross-origin public redirect|disables environment proxies and HTTPS dial bypasses for public endpoints|owns its transport instead of depending on mutable http\\.DefaultTransport)' -ginkgo.fail-on-empty -count=1",
           "path": "internal/capabilities/mcp/http_test.go",
           "check_id": "mcp-http-redirect-proxy-containment"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/capabilities/mcp -run 'TestClient(CanceledCalls|ReaderTermination|CloseFailsPendingCall)'",
+          "command": "go test ./internal/capabilities/mcp -ginkgo.focus='MCP client (removes canceled calls from pending state|fails and removes a pending call when the response reader terminates|fails a pending call when the client closes)' -ginkgo.fail-on-empty -count=1",
           "path": "internal/capabilities/mcp/client_test.go",
           "check_id": "mcp-client-pending-lifecycle-containment"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/capabilities/mcp -run '^TestHTTPTransport_(EmptyExpectedEventStream|OversizedEventStream|StreamFailure|JSONResponseSizeLimit|CloseCancelsRequest)'",
+          "command": "go test ./internal/capabilities/mcp -ginkgo.focus='MCP HTTP transport (returns a request-scoped EOF when an expected event stream has no response|returns a request-scoped error for an oversized event stream|keeps an event-stream failure scoped to its request|enforces the JSON response frame limit|cancels a request that is waiting for response headers when closed)' -ginkgo.fail-on-empty -count=1",
           "path": "internal/capabilities/mcp/http_test.go",
           "check_id": "mcp-http-stream-failure-containment"
         }

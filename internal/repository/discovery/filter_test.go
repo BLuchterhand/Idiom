@@ -2,35 +2,27 @@ package discovery
 
 import (
 	"path/filepath"
-	"slices"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestShouldSkipDirNameIncludesIdiom(t *testing.T) {
-	if !ShouldSkipDirName(".idiom") {
-		t.Fatal("expected .idiom to be skipped by default discovery")
-	}
-}
+var _ = Describe("Discovery filtering", func() {
+	It("skips the .idiom directory by name", func() {
+		Expect(ShouldSkipDirName(".idiom")).To(BeTrue())
+	})
 
-func TestShouldSkipPathSkipsIdiomAndAllowsRoot(t *testing.T) {
-	root := t.TempDir()
-	if ShouldSkipPath(root, root, true) {
-		t.Fatal("workspace root itself must never be skipped")
-	}
+	It("never skips the workspace root but skips its .idiom child", func() {
+		root := GinkgoT().TempDir()
+		Expect(ShouldSkipPath(root, root, true)).To(BeFalse())
+		Expect(ShouldSkipPath(root, filepath.Join(root, ".idiom"), true)).To(BeTrue())
+	})
 
-	if !ShouldSkipPath(root, filepath.Join(root, ".idiom"), true) {
-		t.Fatal("expected .idiom directory to be skipped")
-	}
-}
+	It("recognizes explicit targets inside .idiom as noisy", func() {
+		Expect(RelTargetsNoisyDir(".idiom/discovery/context.md")).To(BeTrue())
+	})
 
-func TestRelTargetsNoisyDirRecognizesIdiom(t *testing.T) {
-	if !RelTargetsNoisyDir(".idiom/discovery/context.md") {
-		t.Fatal("expected explicit target inside .idiom to be recognized as noisy dir")
-	}
-}
-
-func TestRipgrepExcludeGlobsIncludesIdiom(t *testing.T) {
-	if !slices.Contains(RipgrepExcludeGlobs(), "!**/.idiom/**") {
-		t.Fatalf("expected ripgrep excludes to contain .idiom, got %#v", RipgrepExcludeGlobs())
-	}
-}
+	It("excludes .idiom content from ripgrep discovery", func() {
+		Expect(RipgrepExcludeGlobs()).To(ContainElement("!**/.idiom/**"))
+	})
+})

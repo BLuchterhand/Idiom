@@ -24,30 +24,59 @@ func exploreModeWriteBlocked(tool string, mode Mode) (string, bool) {
 // wall-clock timeout so a misbehaving backend cannot stall the lane
 // indefinitely.
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResult) {
+	ctx = m.snapshotExecutionSession(ctx)
+	ctx = m.snapshotSystemSearchAccessApprover(ctx)
+	ctx = m.snapshotMutationApprover(ctx)
+	req.executionSessionIdentity, _ = executionSessionIdentityFromContext(ctx)
+
 	defer func() {
 		result = annotateToolFailure(result)
 		result = annotateLanguagePrecisionTier(result)
 		result = annotateLanguageRelationships(result)
 	}()
 
-	if m.EvaluateConfiguredToolRule(req) == toolpolicy.Deny {
-		return m.toolRuleDeniedResult(req)
+	if decision := m.EvaluateConfiguredToolRule(req); decision.Decision == toolpolicy.Deny {
+		return m.toolRuleDeniedResult(req, decision.Target)
+	}
+	var authorizationFailure *ToolResult
+	ctx, authorizationFailure = m.authorizeMutationRequest(ctx, req)
+	if authorizationFailure != nil {
+		return *authorizationFailure
 	}
 
 	timeout := m.ToolTimeoutForRequest(req)
 	if timeout <= 0 {
-		return m.executeDispatch(ctx, req)
+		result = m.executeDispatch(ctx, req)
+	} else if identityBoundMutationTool(req.Tool) {
+		// These handlers own commit accounting and context checks. Running
+		// them with the same deadline in the caller goroutine ensures a
+		// cancellation cannot replace an exact partial-commit result with
+		// the generic timeout wrapper's synthetic response.
+		timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+		result = m.executeDispatch(timeoutCtx, req)
+		cancel()
+	} else {
+		result = m.executeWithTimeout(ctx, req, timeout)
 	}
+	m.commitAcceptedSystemSearchGrant(req.executionSessionIdentity, &result)
 
-	return m.executeWithTimeout(ctx, req, timeout)
+	return result
 }
 
-func (m *Manager) toolRuleDeniedResult(req ToolRequest) ToolResult {
-	tool := strings.TrimSpace(req.Tool)
-	target := extractToolRuleTarget(tool, req)
+func identityBoundMutationTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case ToolNameMkdir, ToolNameWriteFile, ToolNameAppendFile, ToolNameEditFile, ToolNameApplyPatch, ToolNameGoMoveDeclarations:
+		return true
+	default:
+		return false
+	}
+}
 
+func (m *Manager) toolRuleDeniedResult(req ToolRequest, target string) ToolResult {
+	tool := strings.TrimSpace(req.Tool)
+	target = strings.TrimSpace(target)
 	if target == "" {
-		target = "<request>"
+		target = toolPolicyDisplayTarget(req)
 	}
 
 	return toolPermissionPolicyResult(tool, "Tool request denied by workspace tool_rules", fmt.Sprintf("workspace tool_rules deny %s on %s", tool, target))

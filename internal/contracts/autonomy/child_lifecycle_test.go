@@ -1,337 +1,244 @@
 package autonomy
 
 import (
-	"strings"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestChildContractRequiresParentAndLanePhaseScope(t *testing.T) {
-	contract, err := NewContract(ContractInput{
-		ParentID: "contract-parent",
-		Scope: ContractScope{
-			InvocationKind: InvocationChild,
-			Lane:           "architecture",
-			Phase:          "read_only_evidence",
-			TaskFamily:     "delegated_read_only",
-		},
-		Capabilities: CapabilityPolicy{
-			Allowed:        []Capability{CapabilitySemanticDiscovery, CapabilityBoundedRead},
-			AllowedEffects: []SideEffectClass{SideEffectReadOnly},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewContract returned error: %v", err)
-	}
-
-	if contract.Scope.InvocationKind != InvocationChild || contract.ParentID != "contract-parent" {
-		t.Fatalf("child contract identity mismatch: %#v", contract)
-	}
-
-	_, err = NewContract(ContractInput{
-		Scope: ContractScope{
-			InvocationKind: InvocationChild,
-			Lane:           "architecture",
-			Phase:          "read_only_evidence",
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "parent_id is required for child contracts") {
-		t.Fatalf("expected missing parent_id error, got %v", err)
-	}
-}
-
-func TestParentChildInvocationRecordValidatesRuntimeEnvelopeAndCapacity(t *testing.T) {
-	record := parentChildInvocationFixture()
-
-	if err := record.Validate(); err != nil {
-		t.Fatalf("valid invocation record rejected: %v", err)
-	}
-
-	record.RuntimeEnvelope.CapacityAdmission.State = CapacityAdmissionUnavailable
-	err := record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "state must be acquired or degraded for blocking dispatch") {
-		t.Fatalf("expected blocking capacity validation error, got %v", err)
-	}
-
-	record = parentChildInvocationFixture()
-	record.RuntimeEnvelope.RoleResolution.OK = false
-	record.RuntimeEnvelope.RoleResolution.Source = RoleResolutionSourceRoleTag
-	err = record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "source must be unresolved when ok is false") {
-		t.Fatalf("expected unresolved role validation error, got %v", err)
-	}
-}
-
-func TestChildLifecycleEnumValidators(t *testing.T) {
-	tests := []struct {
-		name string
-		ok   bool
-	}{
-		{name: "workspace main", ok: validChildWorkspaceMode(ChildWorkspaceMain)},
-		{name: "workspace invalid", ok: !validChildWorkspaceMode(ChildWorkspaceMode("sidecar"))},
-		{name: "role source proxy", ok: validRoleResolutionSource(RoleResolutionSourceProxyDefault)},
-		{name: "role source invalid", ok: !validRoleResolutionSource(RoleResolutionSource("manual"))},
-		{name: "capacity state acquired", ok: validCapacityAdmissionState(CapacityAdmissionAcquired)},
-		{name: "capacity state invalid", ok: !validCapacityAdmissionState(CapacityAdmissionState("pending"))},
-		{name: "capacity enforcement blocking", ok: validCapacityAdmissionEnforcement(CapacityAdmissionBlocking)},
-		{name: "capacity enforcement invalid", ok: !validCapacityAdmissionEnforcement(CapacityAdmissionEnforcement("manual"))},
-		{name: "transport native", ok: validChildTransportMode(ChildTransportNative)},
-		{name: "transport invalid", ok: !validChildTransportMode(ChildTransportMode("email"))},
-		{name: "observed deterministic", ok: validChildObservedTransport(ChildObservedTransportDeterministic)},
-		{name: "observed invalid", ok: !validChildObservedTransport(ChildObservedTransport("proxy"))},
-		{name: "normalizer normalized", ok: validChildNormalizerStatus(ChildNormalizerNormalized)},
-		{name: "normalizer invalid", ok: !validChildNormalizerStatus(ChildNormalizerStatus("skipped"))},
-		{name: "result candidate patch", ok: validChildResultKind(ChildResultCandidatePatch)},
-		{name: "result invalid", ok: !validChildResultKind(ChildResultKind("summary"))},
-		{name: "terminal completed", ok: validChildTerminalStatus(ChildTerminalCompleted)},
-		{name: "terminal invalid", ok: !validChildTerminalStatus(ChildTerminalStatus("queued"))},
-		{name: "objective accepted", ok: validChildObjectiveAlignment(ChildObjectiveAccepted)},
-		{name: "objective invalid", ok: !validChildObjectiveAlignment(ChildObjectiveAlignment("partial"))},
-		{name: "execution route child", ok: validChildExecutionRoute(ChildRouteChildModel)},
-		{name: "execution route invalid", ok: !validChildExecutionRoute(ChildExecutionRoute("worker"))},
-		{name: "path gate allow", ok: validChildPathGateDecision(ChildPathGateAllow)},
-		{name: "path gate invalid", ok: !validChildPathGateDecision(ChildPathGateDecision("ask"))},
-		{name: "acceptance accepted", ok: validChildAcceptanceDecision(ChildAcceptanceAccepted)},
-		{name: "acceptance invalid", ok: !validChildAcceptanceDecision(ChildAcceptanceDecision("deferred"))},
-		{name: "alignment evaluator host", ok: validAlignmentEvaluator(AlignmentEvaluatorHostContract)},
-		{name: "alignment evaluator invalid", ok: !validAlignmentEvaluator(AlignmentEvaluator("parent"))},
-		{name: "verification accepted", ok: validVerificationAcceptanceDecision(VerificationAcceptanceAccepted)},
-		{name: "verification invalid", ok: !validVerificationAcceptanceDecision(VerificationAcceptanceDecision("deferred"))},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !tt.ok {
-				t.Fatal("validator result changed")
-			}
+var _ = Describe("Child lifecycle contracts", func() {
+	It("requires child contracts to name their parent and lane-phase scope", func() {
+		contract, err := NewContract(ContractInput{
+			ParentID: "contract-parent",
+			Scope: ContractScope{
+				InvocationKind: InvocationChild,
+				Lane:           "architecture",
+				Phase:          "read_only_evidence",
+				TaskFamily:     "delegated_read_only",
+			},
+			Capabilities: CapabilityPolicy{
+				Allowed:        []Capability{CapabilitySemanticDiscovery, CapabilityBoundedRead},
+				AllowedEffects: []SideEffectClass{SideEffectReadOnly},
+			},
 		})
-	}
-}
+		Expect(err).NotTo(HaveOccurred())
+		Expect(contract.Scope.InvocationKind).To(Equal(InvocationChild))
+		Expect(contract.ParentID).To(Equal("contract-parent"))
 
-func TestChildTerminalRequiresCandidatePatchArtifactRef(t *testing.T) {
-	record := ChildTerminalRecord{
-		TerminalID:         "terminal-1",
-		InvocationID:       "child-1",
-		ChildContractID:    "contract-child",
-		ResultKind:         ChildResultCandidatePatch,
-		Status:             ChildTerminalCompleted,
-		ObjectiveAlignment: ChildObjectiveNotApplicable,
-		ParseStatus: ChildParseStatus{
-			TransportObserved: ChildObservedTransportTextual,
-			NormalizerStatus:  ChildNormalizerNormalized,
+		_, err = NewContract(ContractInput{
+			Scope: ContractScope{
+				InvocationKind: InvocationChild,
+				Lane:           "architecture",
+				Phase:          "read_only_evidence",
+			},
+		})
+		Expect(err).To(MatchError(ContainSubstring("parent_id is required for child contracts")))
+	})
+
+	It("validates the parent-child runtime envelope and blocking capacity", func() {
+		record := parentChildInvocationFixture()
+		Expect(record.Validate()).To(Succeed())
+
+		record.RuntimeEnvelope.CapacityAdmission.State = CapacityAdmissionUnavailable
+		Expect(record.Validate()).To(MatchError(ContainSubstring("state must be acquired or degraded for blocking dispatch")))
+
+		record = parentChildInvocationFixture()
+		record.RuntimeEnvelope.RoleResolution.OK = false
+		record.RuntimeEnvelope.RoleResolution.Source = RoleResolutionSourceRoleTag
+		Expect(record.Validate()).To(MatchError(ContainSubstring("source must be unresolved when ok is false")))
+	})
+
+	DescribeTable("validates child lifecycle enum values",
+		func(valid bool) {
+			Expect(valid).To(BeTrue())
 		},
-	}
+		Entry("workspace main", validChildWorkspaceMode(ChildWorkspaceMain)),
+		Entry("workspace invalid", !validChildWorkspaceMode(ChildWorkspaceMode("sidecar"))),
+		Entry("role source proxy", validRoleResolutionSource(RoleResolutionSourceProxyDefault)),
+		Entry("role source invalid", !validRoleResolutionSource(RoleResolutionSource("manual"))),
+		Entry("capacity state acquired", validCapacityAdmissionState(CapacityAdmissionAcquired)),
+		Entry("capacity state invalid", !validCapacityAdmissionState(CapacityAdmissionState("pending"))),
+		Entry("capacity enforcement blocking", validCapacityAdmissionEnforcement(CapacityAdmissionBlocking)),
+		Entry("capacity enforcement invalid", !validCapacityAdmissionEnforcement(CapacityAdmissionEnforcement("manual"))),
+		Entry("transport native", validChildTransportMode(ChildTransportNative)),
+		Entry("transport invalid", !validChildTransportMode(ChildTransportMode("email"))),
+		Entry("observed deterministic", validChildObservedTransport(ChildObservedTransportDeterministic)),
+		Entry("observed invalid", !validChildObservedTransport(ChildObservedTransport("proxy"))),
+		Entry("normalizer normalized", validChildNormalizerStatus(ChildNormalizerNormalized)),
+		Entry("normalizer invalid", !validChildNormalizerStatus(ChildNormalizerStatus("skipped"))),
+		Entry("result candidate patch", validChildResultKind(ChildResultCandidatePatch)),
+		Entry("result invalid", !validChildResultKind(ChildResultKind("summary"))),
+		Entry("terminal completed", validChildTerminalStatus(ChildTerminalCompleted)),
+		Entry("terminal invalid", !validChildTerminalStatus(ChildTerminalStatus("queued"))),
+		Entry("objective accepted", validChildObjectiveAlignment(ChildObjectiveAccepted)),
+		Entry("objective invalid", !validChildObjectiveAlignment(ChildObjectiveAlignment("partial"))),
+		Entry("execution route child", validChildExecutionRoute(ChildRouteChildModel)),
+		Entry("execution route invalid", !validChildExecutionRoute(ChildExecutionRoute("worker"))),
+		Entry("path gate allow", validChildPathGateDecision(ChildPathGateAllow)),
+		Entry("path gate invalid", !validChildPathGateDecision(ChildPathGateDecision("ask"))),
+		Entry("acceptance accepted", validChildAcceptanceDecision(ChildAcceptanceAccepted)),
+		Entry("acceptance invalid", !validChildAcceptanceDecision(ChildAcceptanceDecision("deferred"))),
+		Entry("alignment evaluator host", validAlignmentEvaluator(AlignmentEvaluatorHostContract)),
+		Entry("alignment evaluator invalid", !validAlignmentEvaluator(AlignmentEvaluator("parent"))),
+		Entry("verification accepted", validVerificationAcceptanceDecision(VerificationAcceptanceAccepted)),
+		Entry("verification invalid", !validVerificationAcceptanceDecision(VerificationAcceptanceDecision("deferred"))),
+	)
 
-	err := record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "artifact_refs are required") {
-		t.Fatalf("expected missing artifact ref error, got %v", err)
-	}
+	It("requires candidate-patch terminals to reference a patch artifact", func() {
+		record := ChildTerminalRecord{
+			TerminalID:         "terminal-1",
+			InvocationID:       "child-1",
+			ChildContractID:    "contract-child",
+			ResultKind:         ChildResultCandidatePatch,
+			Status:             ChildTerminalCompleted,
+			ObjectiveAlignment: ChildObjectiveNotApplicable,
+			ParseStatus: ChildParseStatus{
+				TransportObserved: ChildObservedTransportTextual,
+				NormalizerStatus:  ChildNormalizerNormalized,
+			},
+		}
 
-	record.ArtifactRefs = []string{"patch://patch-1"}
-	if err := record.Validate(); err != nil {
-		t.Fatalf("terminal with patch artifact ref rejected: %v", err)
-	}
-}
+		Expect(record.Validate()).To(MatchError(ContainSubstring("artifact_refs are required")))
+		record.ArtifactRefs = []string{"patch://patch-1"}
+		Expect(record.Validate()).To(Succeed())
+	})
 
-func TestCandidatePatchArtifactRequiresDigestAndChangedPaths(t *testing.T) {
-	artifact := CandidatePatchArtifact{
-		PatchID:         "patch-1",
-		InvocationID:    "child-1",
-		ChildContractID: "contract-child",
-		BaseSHA:         "abc123",
-		ChangedPaths:    []string{"internal/contracts/autonomy/child_lifecycle.go"},
-		DiffStat:        PatchDiffStat{Files: 1, Insertions: 12},
-		PatchPath:       ".idiom/patches/patch-1.diff",
-		PatchDigest:     "sha256:abcd",
-		CreatedAt:       time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC),
-	}
+	It("requires candidate patches to carry a digest and changed paths", func() {
+		artifact := CandidatePatchArtifact{
+			PatchID:         "patch-1",
+			InvocationID:    "child-1",
+			ChildContractID: "contract-child",
+			BaseSHA:         "abc123",
+			ChangedPaths:    []string{"internal/contracts/autonomy/child_lifecycle.go"},
+			DiffStat:        PatchDiffStat{Files: 1, Insertions: 12},
+			PatchPath:       ".idiom/patches/patch-1.diff",
+			PatchDigest:     "sha256:abcd",
+			CreatedAt:       time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC),
+		}
 
-	if err := artifact.Validate(); err != nil {
-		t.Fatalf("valid candidate patch artifact rejected: %v", err)
-	}
+		Expect(artifact.Validate()).To(Succeed())
+		artifact.PatchDigest = ""
+		Expect(artifact.Validate()).To(MatchError(ContainSubstring("patch_digest is required")))
+	})
 
-	artifact.PatchDigest = ""
-	err := artifact.Validate()
-	if err == nil || !strings.Contains(err.Error(), "patch_digest is required") {
-		t.Fatalf("expected missing patch_digest error, got %v", err)
-	}
-}
+	It("requires applied-parent-edit terminals to carry execution metadata", func() {
+		record := ChildTerminalRecord{
+			TerminalID:         "terminal-1",
+			InvocationID:       "child-1",
+			ChildContractID:    "contract-child",
+			ResultKind:         ChildResultAppliedParentEdit,
+			Status:             ChildTerminalCompleted,
+			ObjectiveAlignment: ChildObjectiveNotApplicable,
+			ParseStatus: ChildParseStatus{
+				TransportObserved: ChildObservedTransportDeterministic,
+				NormalizerStatus:  ChildNormalizerNotRequired,
+			},
+		}
 
-func TestAppliedParentEditTerminalRequiresExecutionMetadata(t *testing.T) {
-	record := ChildTerminalRecord{
-		TerminalID:         "terminal-1",
-		InvocationID:       "child-1",
-		ChildContractID:    "contract-child",
-		ResultKind:         ChildResultAppliedParentEdit,
-		Status:             ChildTerminalCompleted,
-		ObjectiveAlignment: ChildObjectiveNotApplicable,
-		ParseStatus: ChildParseStatus{
+		Expect(record.Validate()).To(MatchError(ContainSubstring("execution_metadata requires route")))
+		record.ExecutionMetadata = ChildExecutionMetadata{
+			Route:                      ChildRouteDeterministicDirect,
+			ParentPlanAuthorityRef:     "plan://accepted-plan",
+			PathGateRef:                "event://path-gate",
+			PathGateDecision:           ChildPathGateAllow,
+			VerificationObligationRefs: []string{"obl-verify"},
+		}
+		Expect(record.Validate()).To(Succeed())
+
+		record.ParseStatus = ChildParseStatus{}
+		Expect(record.Validate()).To(MatchError(ContainSubstring("parse_status.transport_observed is required for applied_parent_edit")))
+		record.ParseStatus = ChildParseStatus{
 			TransportObserved: ChildObservedTransportDeterministic,
 			NormalizerStatus:  ChildNormalizerNotRequired,
-		},
-	}
+		}
+		record.ExecutionMetadata.PathGateDecision = ChildPathGateDecision("ask")
+		Expect(record.Validate()).To(MatchError(ContainSubstring("path_gate_decision is invalid")))
+	})
 
-	err := record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "execution_metadata requires route") {
-		t.Fatalf("expected execution metadata error, got %v", err)
-	}
+	It("requires parse-failed terminals to describe the parse failure", func() {
+		record := ChildTerminalRecord{
+			TerminalID:         "terminal-parse",
+			InvocationID:       "child-1",
+			ChildContractID:    "contract-child",
+			ResultKind:         ChildResultEvidencePacket,
+			Status:             ChildTerminalParseFailed,
+			ObjectiveAlignment: ChildObjectiveWeak,
+		}
 
-	record.ExecutionMetadata = ChildExecutionMetadata{
-		Route:                      ChildRouteDeterministicDirect,
-		ParentPlanAuthorityRef:     "plan://accepted-plan",
-		PathGateRef:                "event://path-gate",
-		PathGateDecision:           ChildPathGateAllow,
-		VerificationObligationRefs: []string{"obl-verify"},
-	}
+		Expect(record.Validate()).To(MatchError(ContainSubstring("parser_failure_class is required")))
+		record.ParseStatus = ChildParseStatus{
+			TransportObserved:  ChildObservedTransportTextual,
+			NormalizerStatus:   ChildNormalizerFailed,
+			ParserFailureClass: "invalid_json",
+			RawOutputRedacted:  true,
+		}
+		Expect(record.Validate()).To(Succeed())
+	})
 
-	if err := record.Validate(); err != nil {
-		t.Fatalf("applied parent edit terminal rejected: %v", err)
-	}
+	It("requires accepted output alignment while allowing non-authoritative records", func() {
+		accepted := childAcceptanceFixture()
+		Expect(accepted.Validate()).To(Succeed())
 
-	record.ParseStatus = ChildParseStatus{}
-	err = record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "parse_status.transport_observed is required for applied_parent_edit") {
-		t.Fatalf("expected applied parent edit parse status error, got %v", err)
-	}
+		accepted.AlignmentBasis.AcceptedSourceBodyRefs = nil
+		Expect(accepted.Validate()).To(MatchError(ContainSubstring("accepted_source_body_refs are required")))
 
-	record.ParseStatus = ChildParseStatus{
-		TransportObserved: ChildObservedTransportDeterministic,
-		NormalizerStatus:  ChildNormalizerNotRequired,
-	}
+		accepted = childAcceptanceFixture()
+		accepted.ReasonCode = "accepted_evidence"
+		accepted.AlignmentBasis = ChildAlignmentBasis{}
+		Expect(accepted.Validate()).To(MatchError(ContainSubstring("delegated_objective_ref is required")))
 
-	record.ExecutionMetadata.PathGateDecision = ChildPathGateDecision("ask")
-	err = record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "path_gate_decision is invalid") {
-		t.Fatalf("expected invalid path gate decision error, got %v", err)
-	}
-}
+		accepted = childAcceptanceFixture()
+		accepted.ReasonCode = "non_authoritative"
+		accepted.AlignmentBasis = ChildAlignmentBasis{}
+		Expect(accepted.Validate()).To(Succeed())
 
-func TestParseFailedTerminalRequiresParseFailureDetails(t *testing.T) {
-	record := ChildTerminalRecord{
-		TerminalID:         "terminal-parse",
-		InvocationID:       "child-1",
-		ChildContractID:    "contract-child",
-		ResultKind:         ChildResultEvidencePacket,
-		Status:             ChildTerminalParseFailed,
-		ObjectiveAlignment: ChildObjectiveWeak,
-	}
+		appliedEdit := ChildAcceptanceRecord{
+			AcceptanceID:     "accept-delegate",
+			ParentContractID: "contract-parent",
+			ChildContractID:  "contract-child",
+			InvocationID:     "child-1",
+			TerminalID:       "terminal-1",
+			ResultKind:       ChildResultAppliedParentEdit,
+			Decision:         ChildAcceptanceRecordedOnly,
+			ReasonCode:       "direct_dispatch",
+		}
+		Expect(appliedEdit.Validate()).To(MatchError(ContainSubstring("applied_parent_edit acceptance requires route")))
+	})
 
-	err := record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "parser_failure_class is required") {
-		t.Fatalf("expected parse failure detail error, got %v", err)
-	}
+	It("requires accepted child output to retain replayable references", func() {
+		accepted := childAcceptanceFixture()
+		accepted.AcceptedEvidenceRefs = nil
+		accepted.AcceptedPatchRefs = nil
+		accepted.VerificationObligationRefs = nil
+		Expect(accepted.Validate()).To(MatchError(ContainSubstring("accepted child output requires")))
+	})
 
-	record.ParseStatus = ChildParseStatus{
-		TransportObserved:  ChildObservedTransportTextual,
-		NormalizerStatus:   ChildNormalizerFailed,
-		ParserFailureClass: "invalid_json",
-		RawOutputRedacted:  true,
-	}
-	if err := record.Validate(); err != nil {
-		t.Fatalf("parse_failed terminal with details rejected: %v", err)
-	}
-}
+	It("requires verification acceptance to reference obligations and a successful command", func() {
+		record := VerificationAcceptanceRecord{
+			VerificationAcceptanceID: "verify-accept-1",
+			ParentContractID:         "contract-parent",
+			ObligationRefs:           []string{"obl-verify"},
+			CommandRef:               "command://go-test-runtime-agent",
+			CommandFingerprint:       "sha256:cmd",
+			WorkspaceRef:             "workspace://main",
+			BaseSHA:                  "abc123",
+			HeadSHA:                  "def456",
+			ExitStatus:               0,
+			ResultRef:                "result://go-test-runtime-agent",
+			Decision:                 VerificationAcceptanceAccepted,
+			ReasonCode:               "obligation_matched",
+		}
 
-func TestChildAcceptanceRequiresObjectiveAlignmentBasisAndDelegateEditRefs(t *testing.T) {
-	accepted := childAcceptanceFixture()
-	if err := accepted.Validate(); err != nil {
-		t.Fatalf("valid child acceptance rejected: %v", err)
-	}
+		Expect(record.Validate()).To(Succeed())
+		record.ObligationRefs = nil
+		Expect(record.Validate()).To(MatchError(ContainSubstring("obligation_refs are required")))
 
-	accepted.AlignmentBasis.AcceptedSourceBodyRefs = nil
-	err := accepted.Validate()
-	if err == nil || !strings.Contains(err.Error(), "accepted_source_body_refs are required") {
-		t.Fatalf("expected missing source-body alignment basis error, got %v", err)
-	}
-
-	accepted = childAcceptanceFixture()
-	accepted.ReasonCode = "accepted_evidence"
-	accepted.AlignmentBasis = ChildAlignmentBasis{}
-	err = accepted.Validate()
-	if err == nil || !strings.Contains(err.Error(), "delegated_objective_ref is required") {
-		t.Fatalf("expected accepted evidence alignment basis error, got %v", err)
-	}
-
-	accepted = childAcceptanceFixture()
-	accepted.ReasonCode = "non_authoritative"
-	accepted.AlignmentBasis = ChildAlignmentBasis{}
-	if err := accepted.Validate(); err != nil {
-		t.Fatalf("non-authoritative accepted record should not require objective alignment basis: %v", err)
-	}
-
-	delegateEdit := ChildAcceptanceRecord{
-		AcceptanceID:     "accept-delegate",
-		ParentContractID: "contract-parent",
-		ChildContractID:  "contract-child",
-		InvocationID:     "child-1",
-		TerminalID:       "terminal-1",
-		ResultKind:       ChildResultAppliedParentEdit,
-		Decision:         ChildAcceptanceRecordedOnly,
-		ReasonCode:       "direct_dispatch",
-	}
-	err = delegateEdit.Validate()
-	if err == nil || !strings.Contains(err.Error(), "applied_parent_edit acceptance requires route") {
-		t.Fatalf("expected delegate_edit metadata error, got %v", err)
-	}
-}
-
-func TestAcceptedChildAcceptanceRequiresReplayableRefs(t *testing.T) {
-	accepted := childAcceptanceFixture()
-	accepted.AcceptedEvidenceRefs = nil
-	accepted.AcceptedPatchRefs = nil
-	accepted.VerificationObligationRefs = nil
-
-	err := accepted.Validate()
-	if err == nil || !strings.Contains(err.Error(), "accepted child output requires") {
-		t.Fatalf("expected accepted refs validation error, got %v", err)
-	}
-}
-
-func TestVerificationAcceptanceRecordRequiresCommandAndObligationRefs(t *testing.T) {
-	record := VerificationAcceptanceRecord{
-		VerificationAcceptanceID: "verify-accept-1",
-		ParentContractID:         "contract-parent",
-		ObligationRefs:           []string{"obl-verify"},
-		CommandRef:               "command://go-test-runtime-agent",
-		CommandFingerprint:       "sha256:cmd",
-		WorkspaceRef:             "workspace://main",
-		BaseSHA:                  "abc123",
-		HeadSHA:                  "def456",
-		ExitStatus:               0,
-		ResultRef:                "result://go-test-runtime-agent",
-		Decision:                 VerificationAcceptanceAccepted,
-		ReasonCode:               "obligation_matched",
-	}
-
-	if err := record.Validate(); err != nil {
-		t.Fatalf("valid verification acceptance rejected: %v", err)
-	}
-
-	record.ObligationRefs = nil
-	err := record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "obligation_refs are required") {
-		t.Fatalf("expected missing obligation refs error, got %v", err)
-	}
-
-	record = VerificationAcceptanceRecord{
-		VerificationAcceptanceID: "verify-accept-1",
-		ParentContractID:         "contract-parent",
-		ObligationRefs:           []string{"obl-verify"},
-		CommandRef:               "command://go-test-runtime-agent",
-		CommandFingerprint:       "sha256:cmd",
-		WorkspaceRef:             "workspace://main",
-		BaseSHA:                  "abc123",
-		HeadSHA:                  "def456",
-		ExitStatus:               1,
-		ResultRef:                "result://go-test-runtime-agent",
-		Decision:                 VerificationAcceptanceAccepted,
-		ReasonCode:               "obligation_matched",
-	}
-	err = record.Validate()
-	if err == nil || !strings.Contains(err.Error(), "accepted verification requires exit_status 0") {
-		t.Fatalf("expected accepted failed-exit validation error, got %v", err)
-	}
-}
+		record.ObligationRefs = []string{"obl-verify"}
+		record.ExitStatus = 1
+		Expect(record.Validate()).To(MatchError(ContainSubstring("accepted verification requires exit_status 0")))
+	})
+})
 
 func parentChildInvocationFixture() ParentChildInvocationRecord {
 	return ParentChildInvocationRecord{

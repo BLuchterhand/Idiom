@@ -2,57 +2,35 @@ package implementationdispatch
 
 import (
 	"context"
-	"reflect"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestPreflightPlanDocumentsSkipsEmptyAndReferenceOnlyDocuments(t *testing.T) {
-	var visited []string
-	docs := []PlanDocument{
-		{Path: ""},
-		{Path: "docs/reference.md", ReferenceOnly: true},
-		{Path: "docs/dispatch.md"},
-	}
-
-	blocked := PreflightPlanDocuments(context.Background(), PlanDocumentsPreflightInput{
-		PlanDocuments: docs,
-		Runner: func(_ context.Context, input PlanDocumentPreflightInput) PlanDocumentPreflightResult {
-			visited = append(visited, input.Document.Path)
-			return PlanDocumentPreflightResult{Path: input.Document.Path, OK: true}
-		},
+var _ = ginkgo.Describe("Plan document preflight aggregation", func() {
+	ginkgo.It("skips empty and reference-only documents", func() {
+		var visited []string
+		blocked := PreflightPlanDocuments(context.Background(), PlanDocumentsPreflightInput{
+			PlanDocuments: []PlanDocument{{Path: ""}, {Path: "docs/reference.md", ReferenceOnly: true}, {Path: "docs/dispatch.md"}},
+			Runner: func(_ context.Context, input PlanDocumentPreflightInput) PlanDocumentPreflightResult {
+				visited = append(visited, input.Document.Path)
+				return PlanDocumentPreflightResult{Path: input.Document.Path, OK: true}
+			},
+		})
+		gomega.Expect(blocked).To(gomega.BeEmpty())
+		gomega.Expect(visited).To(gomega.Equal([]string{"docs/dispatch.md"}))
 	})
 
-	if len(blocked) != 0 {
-		t.Fatalf("dispatchable documents should not block: %#v", blocked)
-	}
-
-	if !reflect.DeepEqual(visited, []string{"docs/dispatch.md"}) {
-		t.Fatalf("visited documents = %#v", visited)
-	}
-}
-
-func TestPreflightPlanDocumentsReportsBlockedResultsAndBackfillsPath(t *testing.T) {
-	docs := []PlanDocument{{Path: "docs/dispatch.md"}}
-
-	blocked := PreflightPlanDocuments(context.Background(), PlanDocumentsPreflightInput{
-		PlanDocuments: docs,
-		Runner: func(_ context.Context, _ PlanDocumentPreflightInput) PlanDocumentPreflightResult {
-			return PlanDocumentPreflightResult{
-				OK:       true,
-				Blockers: []string{"brief lint: missing exact anchor"},
-			}
-		},
+	ginkgo.It("reports blocking results and backfills the document path", func() {
+		blocked := PreflightPlanDocuments(context.Background(), PlanDocumentsPreflightInput{
+			PlanDocuments: []PlanDocument{{Path: "docs/dispatch.md"}},
+			Runner: func(_ context.Context, _ PlanDocumentPreflightInput) PlanDocumentPreflightResult {
+				return PlanDocumentPreflightResult{OK: true, Blockers: []string{"brief lint: missing exact anchor"}}
+			},
+		})
+		gomega.Expect(blocked).To(gomega.ConsistOf(gomega.And(
+			gomega.HaveField("Path", "docs/dispatch.md"),
+			gomega.HaveField("Blockers", []string{"brief lint: missing exact anchor"}),
+		)))
 	})
-
-	if len(blocked) != 1 {
-		t.Fatalf("blocked results = %#v, want one blocker", blocked)
-	}
-
-	if blocked[0].Path != "docs/dispatch.md" {
-		t.Fatalf("blocked path = %q", blocked[0].Path)
-	}
-
-	if !reflect.DeepEqual(blocked[0].Blockers, []string{"brief lint: missing exact anchor"}) {
-		t.Fatalf("blockers = %#v", blocked[0].Blockers)
-	}
-}
+})

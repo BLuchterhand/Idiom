@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"hash/fnv"
 	"strings"
@@ -33,7 +32,7 @@ func (m *Model) View() string {
 	}
 
 	leftTitle := titleStyle.Render("◆ " + m.cfg.AppName)
-	rightInfo := statusStyle.Render(serverState + "  " + textutil.Fallback(m.activeModelDisplayID(), "unknown"))
+	rightInfo := statusStyle.Render(serverState + "  " + textutil.Fallback(activeModelDisplayID(m.modelDisplayID, m.modelID), "unknown"))
 	headerGap := w - lipgloss.Width(leftTitle) - lipgloss.Width(rightInfo)
 
 	if headerGap < 0 {
@@ -156,62 +155,6 @@ func (m *Model) operatorHintText() string {
 	}
 
 	return "/help commands · Ctrl+B panel · Ctrl+Y copy · Ctrl+O select"
-}
-
-func (m *Model) requestMessages() []llama.ChatMessage {
-	var messages []llama.ChatMessage
-
-	if prompt := strings.TrimSpace(m.systemPrompt()); prompt != "" {
-		messages = append(messages, llama.ChatMessage{Role: "system", Content: prompt})
-	}
-
-	// OpenCode-aligned: no static workspace-overview injection. The model
-	// discovers the layout by calling list_files / glob / search tools on
-	// demand, exactly like it does in OpenCode. Injecting a static tree
-	// every turn inflated prompt tokens and taught the model that the
-	// harness always pre-answers orientation questions — which trained it
-	// to skip real discovery.
-	history := m.messages
-	if m.requestHistoryOverride != nil {
-		history = *m.requestHistoryOverride
-	}
-	if len(history) > 0 {
-		last := history[len(history)-1]
-		if last.Role == "assistant" && last.Content == "" {
-			history = history[:len(history)-1]
-		}
-	}
-
-	history = modelPayloadHistory(history)
-	// Fix 5 (context compaction) — fold the oldest model-visible messages into
-	// a session digest before the hard-truncation below kicks in. Operator
-	// messages are intentionally filtered first so human-only status surfaces
-	// cannot be summarized back into model context.
-	history = m.MaybeCompactHistory(context.Background(), history)
-	history = modelPayloadHistory(history)
-
-	// Pinned-file reference snapshot — keep recently-read files visible even
-	// after their raw tool results have been compacted out of history.
-	if m.workspace != nil && m.pinnedFiles != nil {
-		if snapshot := m.pinnedFiles.BuildSnapshot(m.workspace.Root()); snapshot != "" {
-			messages = append(messages, llama.ChatMessage{Role: "system", Content: snapshot})
-			m.logMessage("pinned_files_snapshot", fmt.Sprintf("injected %d chars across %d files", len(snapshot), len(m.pinnedFiles.Pins())))
-		}
-	}
-
-	start := 0
-	if limit := m.cfg.Chat.MaxHistory; limit > 0 && len(history) > limit {
-		start = len(history) - limit
-	}
-
-	for _, msg := range history[start:] {
-		messages = append(messages, llama.ChatMessage{
-			Role:    normalizeHistoryRole(msg.Role),
-			Content: msg.Content,
-		})
-	}
-
-	return messages
 }
 
 func modelPayloadHistory(history []llama.ChatMessage) []llama.ChatMessage {
@@ -603,7 +546,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 		}
 
 		if m.streaming {
-			label := assistantLabelStyle.Render("Qwen")
+			label := assistantLabelStyle.Render("Idiom")
 			content := m.spinner.View() + " " + m.streamingBusyText()
 
 			if b.Len() > 0 {
@@ -673,9 +616,9 @@ func (m *Model) renderMessages(forceBottom bool) {
 	// Streaming spinner below everything, unless the live evidence container
 	// already has the turn's current progress. Keeping the extra assistant
 	// block below tool rows makes sticky-bottom scrolling hide the useful
-	// tool target behind generic "Qwen is..." text.
+	// tool target behind generic "Idiom is..." text.
 	if m.streaming && !m.activeEvidenceContainerVisible() {
-		label := assistantLabelStyle.Render("Qwen")
+		label := assistantLabelStyle.Render("Idiom")
 		content := m.spinner.View() + " " + m.streamingBusyText()
 
 		if b.Len() > 0 {
@@ -814,7 +757,7 @@ func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss
 	case "user":
 		label = userLabelStyle.Render("You")
 	case "assistant":
-		label = assistantLabelStyle.Render("Qwen")
+		label = assistantLabelStyle.Render("Idiom")
 
 		if content != "" {
 			useGlamour = true

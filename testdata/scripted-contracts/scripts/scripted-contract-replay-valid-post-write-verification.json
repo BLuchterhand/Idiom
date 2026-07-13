@@ -1,5 +1,8 @@
 [
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"inspect the target before the required edit\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\"}",
   "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the required label implementation\"}",
   "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"refresh the changed target after verification\"}",
   "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
 ]

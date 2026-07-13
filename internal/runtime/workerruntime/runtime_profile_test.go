@@ -1,12 +1,14 @@
 package workerruntime
 
 import (
-	"testing"
+	"fmt"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/contracts/autonomy"
 )
 
-func TestRuntimeProfileForTaskFamilyCharacterizesRouteSemantics(t *testing.T) {
+var _ = ginkgo.Describe("runtime profile route semantics", func() {
 	cases := []struct {
 		name                  string
 		family                string
@@ -41,34 +43,31 @@ func TestRuntimeProfileForTaskFamilyCharacterizesRouteSemantics(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		tc := tc
+		ginkgo.It(tc.name, func() {
 			profile, ok := RuntimeProfileForTaskFamily(tc.family)
-			if !ok {
-				t.Fatalf("RuntimeProfileForTaskFamily(%q) returned !ok", tc.family)
-			}
-			if profile.TaskFamily != tc.wantFamily ||
-				profile.InitialLane != tc.wantInitialLane ||
-				profile.FollowupLane != tc.wantFollowupLane ||
-				profile.Contract != tc.wantContract ||
-				profile.DefaultReason != tc.wantReason ||
-				profile.MutationCapable != tc.wantMutationCapable ||
-				profile.EvidenceFirstMutation != tc.wantEvidenceFirst ||
-				profile.PlanSubmission != tc.wantPlanSubmission ||
-				profile.DirectAnswerReadOnly != tc.wantDirectAnswer ||
-				profile.VerificationOwner != tc.wantVerificationOwner {
-				t.Fatalf("profile = %#v", profile)
-			}
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("RuntimeProfileForTaskFamily(%q) returned !ok", tc.family))
+			gomega.Expect(profile.TaskFamily).To(gomega.Equal(tc.wantFamily), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.InitialLane).To(gomega.Equal(tc.wantInitialLane), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.FollowupLane).To(gomega.Equal(tc.wantFollowupLane), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.Contract).To(gomega.Equal(tc.wantContract), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.DefaultReason).To(gomega.Equal(tc.wantReason), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.MutationCapable).To(gomega.Equal(tc.wantMutationCapable), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.EvidenceFirstMutation).To(gomega.Equal(tc.wantEvidenceFirst), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.PlanSubmission).To(gomega.Equal(tc.wantPlanSubmission), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.DirectAnswerReadOnly).To(gomega.Equal(tc.wantDirectAnswer), fmt.Sprintf("profile = %#v", profile))
+			gomega.Expect(profile.VerificationOwner).To(gomega.Equal(tc.wantVerificationOwner), fmt.Sprintf("profile = %#v", profile))
 		})
 	}
-}
+})
 
-func TestRuntimeProfileRejectsUnknownTaskFamily(t *testing.T) {
+var _ = ginkgo.It("runtime profile rejects unknown task family", func() {
 	if profile, ok := RuntimeProfileForTaskFamily("unknown_family"); ok {
-		t.Fatalf("unknown family returned profile: %#v", profile)
+		ginkgo.Fail(fmt.Sprintf("unknown family returned profile: %#v", profile))
 	}
-}
+})
 
-func TestRuntimeProfileProjectsFromCanonicalContractCatalog(t *testing.T) {
+var _ = ginkgo.Describe("runtime profile projection from the canonical contract catalog", func() {
 	for _, family := range []string{
 		ArtifactFinalAnswerTaskFamily,
 		string(autonomy.TaskFamilyConversation),
@@ -99,31 +98,28 @@ func TestRuntimeProfileProjectsFromCanonicalContractCatalog(t *testing.T) {
 		string(autonomy.TaskFamilyPlanThenExecuteReview),
 		"multi_turn_state",
 	} {
-		t.Run(family, func(t *testing.T) {
+		family := family
+		ginkgo.It(family, func() {
 			profile, ok := RuntimeProfileForTaskFamily(family)
-			if !ok {
-				t.Fatalf("RuntimeProfileForTaskFamily(%q) returned !ok", family)
-			}
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("RuntimeProfileForTaskFamily(%q) returned !ok", family))
 
 			spec := RuntimeContractForTaskFamily(profile.TaskFamily)
-			if profile.Contract != spec.Contract {
-				t.Fatalf("profile contract = %q, catalog contract for canonical family %q = %q", profile.Contract, profile.TaskFamily, spec.Contract)
-			}
+			gomega.Expect(profile.Contract != spec.Contract).To(gomega.BeFalse(), fmt.Sprintf("profile contract = %q, catalog contract for canonical family %q = %q", profile.Contract, profile.TaskFamily, spec.Contract))
 		})
 	}
-}
+})
 
-func TestRuntimeProfileRouteOnlyAliasesDoNotBroadenContractLookup(t *testing.T) {
+var _ = ginkgo.Describe("route-only runtime profile aliases", func() {
 	for _, alias := range []string{"plan_execute", "plan_execute_planner", "plan_then_execute", "multi_turn_state"} {
-		t.Run(alias, func(t *testing.T) {
+		alias := alias
+		ginkgo.It(alias+" does not broaden contract lookup", func() {
 			if _, ok := RuntimeProfileForTaskFamily(alias); !ok {
-				t.Fatalf("route alias %q should remain accepted by RuntimeProfileForTaskFamily", alias)
+				ginkgo.Fail(fmt.Sprintf("route alias %q should remain accepted by RuntimeProfileForTaskFamily", alias))
 			}
 
 			spec := RuntimeContractForTaskFamily(alias)
-			if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer {
-				t.Fatalf("RuntimeContractForTaskFamily(%q) = %#v, want conversation fallback", alias, spec)
-			}
+			gomega.Expect(spec.TaskFamily).To(gomega.Equal(autonomy.TaskFamilyConversation), fmt.Sprintf("RuntimeContractForTaskFamily(%q) = %#v, want conversation fallback", alias, spec))
+			gomega.Expect(spec.Contract).To(gomega.Equal(ContractDirectAnswer), fmt.Sprintf("RuntimeContractForTaskFamily(%q) = %#v, want conversation fallback", alias, spec))
 		})
 	}
-}
+})

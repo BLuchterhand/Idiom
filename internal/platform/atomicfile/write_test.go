@@ -6,102 +6,57 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestWriteFilePreservesExistingPrivateMode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private.txt")
-	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
+var _ = ginkgo.Describe("Atomic file writes", func() {
+	ginkgo.It("preserves an existing private mode", func() {
+		path := filepath.Join(ginkgo.GinkgoT().TempDir(), "private.txt")
+		gomega.Expect(os.WriteFile(path, []byte("old"), 0o600)).To(gomega.Succeed())
+		gomega.Expect(WriteFile(path, []byte("new"), 0o644)).To(gomega.Succeed())
+		expectFileMode(path, 0o600)
+	})
 
-	if err := WriteFile(path, []byte("new"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	ginkgo.It("preserves an existing executable mode", func() {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("Windows does not preserve POSIX execute bits")
+		}
 
-	assertFileMode(t, path, 0o600)
-}
+		path := filepath.Join(ginkgo.GinkgoT().TempDir(), "script.sh")
+		gomega.Expect(os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755)).To(gomega.Succeed())
+		gomega.Expect(os.Chmod(path, 0o755)).To(gomega.Succeed())
+		gomega.Expect(WriteFile(path, []byte("#!/bin/sh\necho ok\n"), 0o644)).To(gomega.Succeed())
+		expectFileMode(path, 0o755)
+	})
 
-func TestWriteFilePreservesExistingExecutableMode(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows does not preserve POSIX execute bits")
-	}
+	ginkgo.It("uses the requested mode for a new file", func() {
+		path := filepath.Join(ginkgo.GinkgoT().TempDir(), "new.txt")
+		gomega.Expect(WriteFile(path, []byte("new"), 0o640)).To(gomega.Succeed())
+		expectFileMode(path, 0o640)
+	})
 
-	path := filepath.Join(t.TempDir(), "script.sh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
-	if err := os.Chmod(path, 0o755); err != nil {
-		t.Fatalf("chmod seed file: %v", err)
-	}
+	ginkgo.It("treats an unsupported committed-directory sync as successful", func() {
+		gomega.Expect(syncCommittedDirectory("unused", func(string) error {
+			return syscall.EINVAL
+		})).To(gomega.Succeed())
+	})
 
-	if err := WriteFile(path, []byte("#!/bin/sh\necho ok\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	ginkgo.It("returns operational committed-directory sync failures as post-commit errors", func() {
+		cause := errors.New("disk disappeared")
+		err := syncCommittedDirectory("unused", func(string) error { return cause })
+		gomega.Expect(err).To(gomega.HaveOccurred())
+		gomega.Expect(errors.Is(err, cause)).To(gomega.BeTrue())
 
-	assertFileMode(t, path, 0o755)
-}
+		var postCommitErr *PostCommitError
+		gomega.Expect(errors.As(err, &postCommitErr)).To(gomega.BeTrue())
+		gomega.Expect(postCommitErr.Committed()).To(gomega.BeTrue())
+	})
+})
 
-func TestWriteFileUsesPermForNewFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "new.txt")
-	if err := WriteFile(path, []byte("new"), 0o640); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	assertFileMode(t, path, 0o640)
-}
-
-func TestWriteFileTreatsUnsupportedDirectorySyncAsSuccessfulAfterRename(t *testing.T) {
-	old := syncDirFunc
-	syncDirFunc = func(string) error { return syscall.EINVAL }
-	t.Cleanup(func() { syncDirFunc = old })
-
-	path := filepath.Join(t.TempDir(), "state.json")
-	if err := WriteFile(path, []byte("ok"), 0o644); err != nil {
-		t.Fatalf("WriteFile should ignore unsupported dir sync after rename: %v", err)
-	}
-
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-	if string(body) != "ok" {
-		t.Fatalf("body = %q, want ok", body)
-	}
-}
-
-func TestWriteFileReturnsDirectorySyncOperationalErrors(t *testing.T) {
-	old := syncDirFunc
-	syncDirFunc = func(string) error { return errors.New("disk disappeared") }
-	t.Cleanup(func() { syncDirFunc = old })
-
-	path := filepath.Join(t.TempDir(), "state.json")
-	err := WriteFile(path, []byte("ok"), 0o644)
-	if err == nil {
-		t.Fatal("WriteFile should return operational dir sync errors as post-commit errors")
-	}
-	var postCommitErr *PostCommitError
-	if !errors.As(err, &postCommitErr) || !postCommitErr.Committed() {
-		t.Fatalf("WriteFile error should expose committed post-rename state, got %T %[1]v", err)
-	}
-
-	body, readErr := os.ReadFile(path)
-	if readErr != nil {
-		t.Fatalf("committed file should remain readable after dir sync error: %v", readErr)
-	}
-	if string(body) != "ok" {
-		t.Fatalf("body = %q, want ok", body)
-	}
-}
-
-func assertFileMode(t *testing.T, path string, want os.FileMode) {
-	t.Helper()
-
+func expectFileMode(path string, want os.FileMode) {
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat %s: %v", path, err)
-	}
-	if got := info.Mode().Perm(); got != want {
-		t.Fatalf("mode = %#o, want %#o", got, want)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(info.Mode().Perm()).To(gomega.Equal(want))
 }

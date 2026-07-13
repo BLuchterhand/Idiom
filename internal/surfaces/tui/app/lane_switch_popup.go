@@ -162,10 +162,10 @@ func (m *Model) handleLaneSwitchPopupMouse(msg tea.MouseMsg) bool {
 // async helpers the slash-command handlers use, then closes the popup. The
 // "no" option simply closes the popup so the user can continue read-only.
 //
-// Dispatch is guarded on a non-nil client/runner pair so the popup remains
-// safe in stub test contexts; the chosen key is always recorded on
-// lastLaneSwitchSelection for assertions and telemetry regardless of
-// whether the dispatch actually fires.
+// Dispatch is guarded on the concrete dependencies shared by every prompt
+// execution lane so the popup remains safe in incomplete host contexts. The
+// chosen key is always recorded on lastLaneSwitchSelection for telemetry
+// regardless of whether the dispatch actually fires.
 func (m *Model) applyLaneSwitchSelection(idx int) {
 	p := &m.laneSwitchPopup
 	if idx < 0 || idx >= len(p.options) {
@@ -189,9 +189,9 @@ func (m *Model) applyLaneSwitchSelection(idx int) {
 		return
 	}
 
-	if m.client == nil || m.runner == nil {
+	if m.client == nil || m.workspace == nil || m.events == nil {
 		// Stub context (tests, dry-run helpers): record the selection and
-		// skip the async dispatch so we never panic on a nil server.
+		// skip async dispatch when prompt execution cannot be constructed.
 		m.status = "Lane switch selected: " + opt.label
 		return
 	}

@@ -108,6 +108,7 @@ type FeatureState struct {
 	ReleaseContractPath     string                    `json:"release_contract_path,omitempty"`
 	PlannerRevision         int                       `json:"planner_revision,omitempty"`
 	EffortID                string                    `json:"effort_id,omitempty"`
+	TaskID                  string                    `json:"task_id,omitempty"`
 	EffortRoot              string                    `json:"effort_root,omitempty"`
 	SessionID               string                    `json:"session_id"`
 	CreatedAt               string                    `json:"created_at"`
@@ -1105,26 +1106,27 @@ func VerificationClosureStatusAllowed(status VerificationClosureStatus) bool {
 }
 
 type VerificationClosure struct {
-	EventID                      string                      `json:"event_id"`
-	AtomID                       string                      `json:"atom_id"`
-	Status                       VerificationClosureStatus   `json:"status"`
-	Outcome                      string                      `json:"outcome,omitempty"`
-	PlanArtifactID               string                      `json:"plan_artifact_id,omitempty"`
-	PlanRevision                 int                         `json:"plan_revision,omitempty"`
-	PlanDigest                   string                      `json:"plan_digest,omitempty"`
-	ApprovalEventID              string                      `json:"approval_event_id,omitempty"`
-	WorkspaceFingerprint         string                      `json:"workspace_fingerprint,omitempty"`
-	ContractID                   string                      `json:"contract_id,omitempty"`
-	ContractHash                 string                      `json:"contract_hash,omitempty"`
-	ScopeContractID              string                      `json:"scope_contract_id,omitempty"`
-	ScopeContractHash            string                      `json:"scope_contract_hash,omitempty"`
-	ChangedPaths                 []string                    `json:"changed_paths,omitempty"`
-	SourceSatisfiedEvidencePaths []string                    `json:"source_satisfied_evidence_paths,omitempty"`
-	RequiredTestResults          []VerificationCommandResult `json:"required_test_results,omitempty"`
-	TDDCommandResults            []VerificationCommandResult `json:"tdd_command_results,omitempty"`
-	SourceSanity                 []VerificationCheckResult   `json:"source_sanity,omitempty"`
-	Verification                 []VerificationCheckResult   `json:"verification,omitempty"`
-	CreatedAt                    string                      `json:"created_at,omitempty"`
+	EventID                      string                                    `json:"event_id"`
+	AtomID                       string                                    `json:"atom_id"`
+	Status                       VerificationClosureStatus                 `json:"status"`
+	Outcome                      string                                    `json:"outcome,omitempty"`
+	PlanArtifactID               string                                    `json:"plan_artifact_id,omitempty"`
+	PlanRevision                 int                                       `json:"plan_revision,omitempty"`
+	PlanDigest                   string                                    `json:"plan_digest,omitempty"`
+	ApprovalEventID              string                                    `json:"approval_event_id,omitempty"`
+	WorkspaceFingerprint         string                                    `json:"workspace_fingerprint,omitempty"`
+	ContractID                   string                                    `json:"contract_id,omitempty"`
+	ContractHash                 string                                    `json:"contract_hash,omitempty"`
+	ScopeContractID              string                                    `json:"scope_contract_id,omitempty"`
+	ScopeContractHash            string                                    `json:"scope_contract_hash,omitempty"`
+	ChangedPaths                 []string                                  `json:"changed_paths,omitempty"`
+	SourceSatisfiedEvidencePaths []string                                  `json:"source_satisfied_evidence_paths,omitempty"`
+	SourceSatisfiedEvidence      []plancontract.SourceSatisfiedEvidenceRef `json:"source_satisfied_evidence,omitempty"`
+	RequiredTestResults          []VerificationCommandResult               `json:"required_test_results,omitempty"`
+	TDDCommandResults            []VerificationCommandResult               `json:"tdd_command_results,omitempty"`
+	SourceSanity                 []VerificationCheckResult                 `json:"source_sanity,omitempty"`
+	Verification                 []VerificationCheckResult                 `json:"verification,omitempty"`
+	CreatedAt                    string                                    `json:"created_at,omitempty"`
 }
 
 type VerificationCommandResult struct {

@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/repository/discovery"
 	semanticjava "idiom/internal/repository/semantic/java"
 )
@@ -361,15 +360,11 @@ func (m *Manager) javaReadSymbol(req ToolRequest) ToolResult {
 	displayPath := m.displayPath(abs)
 
 	return ToolResult{
-		Tool:    "java_read_symbol",
-		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", javaDisplayName(match.Qualified, match.Name), displayPath, start, end),
-		Output:  snippet,
-		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:      displayPath,
-			StartLine: start,
-			EndLine:   end,
-		}),
+		Tool:          "java_read_symbol",
+		Summary:       fmt.Sprintf("Read %s in %s lines %d-%d", javaDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:        snippet,
+		Paths:         []string{displayPath},
+		SourceWindows: []SourceWindowPlan{{Path: displayPath, StartLine: start, EndLine: end}},
 	}
 }
 

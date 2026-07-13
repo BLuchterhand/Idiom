@@ -12,24 +12,42 @@ import (
 )
 
 func ResolveScope(input ScopeInput) ScopeResolution {
-	requiredPaths := appendUniqueStrings(nil, input.RequiredTargets...)
-	allowedPaths := appendUniqueStrings(nil, input.AllowedTargets...)
 	planDocuments, blockers := PlanDocumentsAndResolutionBlockers(input)
+	editScope := ResolvePlanDocumentEditScope(PlanDocumentEditScopeInput{
+		WorkspaceRoot: input.WorkspaceRoot,
+		RequiredPaths: input.RequiredTargets,
+		AllowedPaths:  input.AllowedTargets,
+		PlanDocuments: planDocuments,
+	})
 
-	for _, doc := range planDocuments {
+	return ScopeResolution{
+		RequiredPaths: editScope.RequiredPaths,
+		AllowedPaths:  editScope.AllowedPaths,
+		PlanDocuments: planDocuments,
+		Blockers:      blockers,
+	}
+}
+
+// ResolvePlanDocumentEditScope classifies edit paths from already-resolved
+// plan documents and enforces the required-versus-candidate authority
+// invariant. This is the owning operation for both initial dispatch and scope
+// recomputation after a document is refined or recovered.
+func ResolvePlanDocumentEditScope(input PlanDocumentEditScopeInput) PlanDocumentEditScope {
+	requiredPaths := plancontract.UniqueScopePaths(input.RequiredPaths)
+	allowedPaths := plancontract.UniqueScopePaths(input.AllowedPaths)
+
+	for _, doc := range input.PlanDocuments {
 		if PlanDocumentScopeIsRequired(doc, input.WorkspaceRoot) {
-			requiredPaths = appendUniqueStrings(requiredPaths, doc.EditPaths...)
+			requiredPaths = plancontract.UniqueScopePaths(append(requiredPaths, doc.EditPaths...))
 			continue
 		}
 
-		allowedPaths = appendUniqueStrings(allowedPaths, doc.EditPaths...)
+		allowedPaths = plancontract.UniqueScopePaths(append(allowedPaths, doc.EditPaths...))
 	}
 
-	return ScopeResolution{
+	return PlanDocumentEditScope{
 		RequiredPaths: requiredPaths,
-		AllowedPaths:  allowedPaths,
-		PlanDocuments: planDocuments,
-		Blockers:      blockers,
+		AllowedPaths:  plancontract.AllowedScopePathsExcludingRequired(allowedPaths, requiredPaths),
 	}
 }
 

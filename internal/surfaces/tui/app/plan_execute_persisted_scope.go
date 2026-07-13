@@ -7,7 +7,7 @@ import (
 	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
 )
 
-func (m *Model) persistedPlanExecuteScopeForContinuation(input string) (planexecute.ContinuationScope, bool) {
+func (m *promptExecutionSession) persistedPlanExecuteScopeForContinuation(input string) (planexecute.ContinuationScope, bool) {
 	if m == nil || strings.TrimSpace(m.cfg.Workspace.Root) == "" {
 		return planexecute.ContinuationScope{}, false
 	}

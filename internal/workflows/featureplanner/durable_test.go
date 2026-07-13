@@ -2,81 +2,70 @@ package featureplanner
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	featureplannercontract "idiom/internal/contracts/featureplanner"
 	plancontract "idiom/internal/contracts/plan"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
+var _ = ginkgo.It("validate durable plan requires pre dispatch baseline", func() {
 	plan := durablePlan()
 
 	plan.Atoms[0].TestFirst.PreExecutionEventIDs = nil
 
 	err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected validation error"))
+	gomega.Expect(strings.Contains(err.Error(), "test_first.pre_execution_event_ids")).To(gomega.BeTrue(), fmt.Sprintf("expected pre-execution event error, got %v", err))
 
-	if !strings.Contains(err.Error(), "test_first.pre_execution_event_ids") {
-		t.Fatalf("expected pre-execution event error, got %v", err)
-	}
-}
+})
 
-func mustParseFeaturePlannerTime(t *testing.T, value string) time.Time {
-	t.Helper()
+func mustParseFeaturePlannerTime(value string) time.Time {
+	ginkgo.GinkgoHelper()
 	parsed, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		t.Fatalf("parse time %q: %v", value, err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("parse time %q: %v", value, err))
+
 	return parsed
 }
 
-func TestValidateDurablePlanRejectsMismatchedTDDSnapshot(t *testing.T) {
+var _ = ginkgo.It("validate durable plan rejects mismatched TDD snapshot", func() {
 	plan := durablePlan()
 
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"go test ./wrong"}
 
 	err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected validation error"))
+	gomega.Expect(strings.Contains(err.Error(), "planned_tdd_snapshot.test_commands")).To(gomega.BeTrue(), fmt.Sprintf("expected snapshot command mismatch, got %v", err))
 
-	if !strings.Contains(err.Error(), "planned_tdd_snapshot.test_commands") {
-		t.Fatalf("expected snapshot command mismatch, got %v", err)
-	}
-}
-
-func TestApplyPlannerOutputStampsCanonicalPlanArtifactAndApproval(t *testing.T) {
-	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
+})
+var _ = ginkgo.It("apply planner output stamps canonical plan artifact and approval", func() {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime("2026-06-22T19:00:00Z"))
 	plan := durablePlan()
 	plan.Artifact = FeaturePlanArtifact{}
 	plan.Approval = FeaturePlanApproval{}
 
-	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime("2026-06-22T19:01:00Z"))
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateDispatching), fmt.Sprintf("state status = %q, want dispatching; blockers=%v events=%+v", state.Status, state.Blockers, events))
+	gomega.Expect(state.PlannerRevision).To(gomega.Equal(1), fmt.Sprintf("planner revision not stamped: state=%d artifact=%d", state.PlannerRevision, state.Plan.Artifact.Revision))
+	gomega.Expect(state.Plan.Artifact.Revision).To(gomega.Equal(1), fmt.Sprintf("planner revision not stamped: state=%d artifact=%d", state.PlannerRevision, state.Plan.Artifact.Revision))
+	gomega.Expect(state.Plan.Artifact.ArtifactID).NotTo(gomega.Equal(""), fmt.Sprintf("artifact metadata incomplete: %+v", state.Plan.Artifact))
+	gomega.Expect(state.Plan.Artifact.Digest).NotTo(gomega.Equal(""), fmt.Sprintf("artifact metadata incomplete: %+v", state.Plan.Artifact))
+	gomega.Expect(state.Plan.Artifact.WorkspaceFingerprint).NotTo(gomega.Equal(""), fmt.Sprintf("artifact metadata incomplete: %+v", state.Plan.Artifact))
+	gomega.Expect(state.Plan.Approval.Status).To(gomega.Equal("approved"), fmt.Sprintf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact))
+	gomega.Expect(state.Plan.Approval.Mode).To(gomega.Equal("harness_policy"), fmt.Sprintf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact))
+	gomega.Expect(state.Plan.Approval.PlanDigest).To(gomega.Equal(state.Plan.Artifact.Digest), fmt.Sprintf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact))
+	gomega.Expect(state.Plan.Approval.PlanRevision).To(gomega.Equal(state.Plan.Artifact.Revision), fmt.Sprintf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact))
+	gomega.Expect(state.Plan.Approval.WorkspaceFingerprint).To(gomega.Equal(state.Plan.Artifact.WorkspaceFingerprint), fmt.Sprintf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact))
+	{
 
-	if state.Status != FeatureStateDispatching {
-		t.Fatalf("state status = %q, want dispatching; blockers=%v events=%+v", state.Status, state.Blockers, events)
-	}
-	if state.PlannerRevision != 1 || state.Plan.Artifact.Revision != 1 {
-		t.Fatalf("planner revision not stamped: state=%d artifact=%d", state.PlannerRevision, state.Plan.Artifact.Revision)
-	}
-	if state.Plan.Artifact.ArtifactID == "" || state.Plan.Artifact.Digest == "" || state.Plan.Artifact.WorkspaceFingerprint == "" {
-		t.Fatalf("artifact metadata incomplete: %+v", state.Plan.Artifact)
-	}
-	if state.Plan.Approval.Status != "approved" ||
-		state.Plan.Approval.Mode != "harness_policy" ||
-		state.Plan.Approval.PlanDigest != state.Plan.Artifact.Digest ||
-		state.Plan.Approval.PlanRevision != state.Plan.Artifact.Revision ||
-		state.Plan.Approval.WorkspaceFingerprint != state.Plan.Artifact.WorkspaceFingerprint {
-		t.Fatalf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact)
-	}
-	if err := ValidateDurablePlanWithContract(state.Plan, plancontract.PlanExecutionContract{}); err != nil {
-		t.Fatalf("stamped plan should validate: %v", err)
+		err := ValidateDurablePlanWithContract(state.Plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("stamped plan should validate: %v", err))
 	}
 
 	var approved Event
@@ -86,58 +75,48 @@ func TestApplyPlannerOutputStampsCanonicalPlanArtifactAndApproval(t *testing.T) 
 			break
 		}
 	}
-	if approved.EventID != state.Plan.Approval.EventID {
-		t.Fatalf("approval event id = %q, want %q", approved.EventID, state.Plan.Approval.EventID)
-	}
-	if approved.Fields[featureplannercontract.EventFieldPlanDigest] != state.Plan.Artifact.Digest ||
-		approved.Fields[featureplannercontract.EventFieldPlanRevision] != state.Plan.Artifact.Revision ||
-		approved.Fields[featureplannercontract.EventFieldWorkspaceFingerprint] != state.Plan.Artifact.WorkspaceFingerprint {
-		t.Fatalf("approval event does not carry artifact binding: %+v", approved.Fields)
-	}
-}
+	gomega.Expect(approved.EventID).To(gomega.Equal(state.Plan.Approval.EventID), fmt.Sprintf("approval event id = %q, want %q", approved.EventID, state.Plan.Approval.EventID))
+	gomega.Expect(approved.Fields[featureplannercontract.EventFieldPlanDigest]).To(gomega.Equal(state.Plan.Artifact.Digest), fmt.Sprintf("approval event does not carry artifact binding: %+v", approved.Fields))
+	gomega.Expect(approved.Fields[featureplannercontract.EventFieldPlanRevision]).To(gomega.Equal(state.Plan.Artifact.Revision), fmt.Sprintf("approval event does not carry artifact binding: %+v", approved.Fields))
+	gomega.Expect(approved.Fields[featureplannercontract.EventFieldWorkspaceFingerprint]).To(gomega.Equal(state.Plan.Artifact.WorkspaceFingerprint), fmt.Sprintf("approval event does not carry artifact binding: %+v", approved.Fields))
 
-func TestValidateDurablePlanRejectsApprovalAfterPlanDigestDrift(t *testing.T) {
-	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
+})
+var _ = ginkgo.It("validate durable plan rejects approval after plan digest drift", func() {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime("2026-06-22T19:00:00Z"))
 	plan := durablePlan()
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime("2026-06-22T19:01:00Z"))
 
 	state.Plan.TopLevelScope.SuccessCriteria = append(state.Plan.TopLevelScope.SuccessCriteria, "unapproved new criterion")
 
 	err := ValidateDurablePlanWithContract(state.Plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "does not match canonical digest") {
-		t.Fatalf("expected digest drift rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected digest drift rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("does not match canonical digest"), fmt.Sprintf("expected digest drift rejection, got %v", err))
 
-func TestValidateDurableStateRequiresVerificationClosureForApprovedTerminalAtom(t *testing.T) {
-	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+})
+var _ = ginkgo.It("validate durable state requires verification closure for approved terminal atom", func() {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime("2026-06-22T19:00:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime("2026-06-22T19:01:00Z"))
 	state.Atoms[0].State = AtomStateComplete
 	state.Status = FeatureStateComplete
 	state.ActiveRuns = nil
 	state.VerificationClosures = nil
 
 	err := ValidateDurableState(state)
-	if err == nil {
-		t.Fatal("expected durable state validation error")
-	}
-	if !strings.Contains(err.Error(), "without verification closure") {
-		t.Fatalf("expected missing verification closure error, got %v", err)
-	}
-}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected durable state validation error"))
+	gomega.Expect(strings.Contains(err.Error(), "without verification closure")).To(gomega.BeTrue(), fmt.Sprintf("expected missing verification closure error, got %v", err))
 
-func TestEvaluateReleaseReadinessBlocksOpenVerificationObligations(t *testing.T) {
-	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+})
+var _ = ginkgo.It("evaluate release readiness blocks open verification obligations", func() {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime("2026-06-22T19:00:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime("2026-06-22T19:01:00Z"))
 	state.Status = FeatureStateComplete
 	state.Atoms[0].State = AtomStateComplete
 	state.ActiveRuns = nil
 	state.VerificationClosures = nil
 
 	decision := EvaluateReleaseReadiness(state, "2026-06-22T19:02:00Z")
-	if decision.Status != "blocked" || !containsString(decision.Blockers, "verification closure missing for atom: atom-1") {
-		t.Fatalf("release readiness should block missing closure, got %+v", decision)
-	}
+	gomega.Expect(decision.Status).To(gomega.Equal(ReleaseReadinessStatusBlocked), fmt.Sprintf("release readiness should block missing closure, got %+v", decision))
+	gomega.Expect(containsString(decision.Blockers, "verification closure missing for atom: atom-1")).To(gomega.BeTrue(), fmt.Sprintf("release readiness should block missing closure, got %+v", decision))
 
 	state.ReleaseReadiness = ReleaseReadinessDecision{
 		Status:               "ready",
@@ -150,14 +129,13 @@ func TestEvaluateReleaseReadinessBlocksOpenVerificationObligations(t *testing.T)
 		Blockers:             []string{"verification closure missing for atom: atom-1"},
 	}
 	err := ValidateDurableState(state)
-	if err == nil || !strings.Contains(err.Error(), "release readiness cannot be ready with blockers") {
-		t.Fatalf("expected impossible release readiness rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected impossible release readiness rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("release readiness cannot be ready with blockers"), fmt.Sprintf("expected impossible release readiness rejection, got %v", err))
 
-func TestValidateDurableStateRequiresReleaseDecisionForCompleteState(t *testing.T) {
-	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+})
+var _ = ginkgo.It("validate durable state requires release decision for complete state", func() {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime("2026-06-22T19:00:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime("2026-06-22T19:01:00Z"))
 	state.Status = FeatureStateComplete
 	state.Atoms[0].State = AtomStateComplete
 	state.ActiveRuns = nil
@@ -175,9 +153,8 @@ func TestValidateDurableStateRequiresReleaseDecisionForCompleteState(t *testing.
 	}}
 
 	err := ValidateDurableState(state)
-	if err == nil || !strings.Contains(err.Error(), "missing release readiness decision") {
-		t.Fatalf("expected missing release readiness rejection, got %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected missing release readiness rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing release readiness decision"), fmt.Sprintf("expected missing release readiness rejection, got %v", err))
 
 	state.ReleaseReadiness = ReleaseReadinessDecision{
 		Status:                      "ready",
@@ -190,141 +167,134 @@ func TestValidateDurableStateRequiresReleaseDecisionForCompleteState(t *testing.
 		VerificationClosureEventIDs: []string{"unknown-closure"},
 	}
 	err = ValidateDurableState(state)
-	if err == nil || !strings.Contains(err.Error(), "unknown verification closure") {
-		t.Fatalf("expected unknown release closure rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected unknown release closure rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unknown verification closure"), fmt.Sprintf("expected unknown release closure rejection, got %v", err))
 
-func TestValidateDurableStateRejectsUnknownStatus(t *testing.T) {
+})
+var _ = ginkgo.It("validate durable state rejects unknown status", func() {
 	state := durableState()
 
 	state.Status = "invented"
 
 	err := ValidateDurableState(state)
-	if err == nil || !strings.Contains(err.Error(), "unknown status") {
-		t.Fatalf("expected unknown status validation error, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected unknown status validation error, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unknown status"), fmt.Sprintf("expected unknown status validation error, got %v", err))
 
-func TestSaveStateAndAppendEventsRoundTripDurablePaths(t *testing.T) {
+})
+var _ = ginkgo.It("save state and append events round trip durable paths", func() {
 	state := durableState()
 
 	state.SchemaVersion = SchemaVersion
 	state.FeatureID = ""
 	state.Status = FeatureStatePlanning
 
-	dir := t.TempDir()
+	dir := ginkgo.GinkgoT().TempDir()
 
 	eventsPath, err := AppendEvents(dir, state.SessionID, []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventStart), SessionID: state.SessionID}})
-	if err != nil {
-		t.Fatalf("append events: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("append events: %v", err))
 
 	state.EventsPath = eventsPath
 
 	statePath, err := SaveState(dir, &state)
-	if err != nil {
-		t.Fatalf("save state: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("save state: %v", err))
+	gomega.Expect(statePath).NotTo(gomega.Equal(""), fmt.Sprintf("expected durable paths, state=%q events=%q", statePath, eventsPath))
+	gomega.Expect(eventsPath).NotTo(gomega.Equal(""), fmt.Sprintf("expected durable paths, state=%q events=%q", statePath, eventsPath))
+	{
 
-	if statePath == "" || eventsPath == "" {
-		t.Fatalf("expected durable paths, state=%q events=%q", statePath, eventsPath)
-	}
-	if _, err := os.Stat(filepath.Join(dir, statePath+".tmp")); err == nil || !os.IsNotExist(err) {
-		t.Fatalf("SaveState should not leave predictable temp file, stat err=%v", err)
+		_, err := os.Stat(filepath.Join(dir, statePath+".tmp"))
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("SaveState should not leave predictable temp file, stat err=%v", err))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("SaveState should not leave predictable temp file, stat err=%v", err))
 	}
 
 	body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(eventsPath)))
-	if err != nil {
-		t.Fatalf("read events: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read events: %v", err))
 
 	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("unexpected event log body: %q", string(body))
-	}
+	gomega.Expect(len(lines)).To(gomega.Equal(1), fmt.Sprintf("unexpected event log body: %q", string(body)))
+
 	var event Event
-	if err := json.Unmarshal([]byte(lines[0]), &event); err != nil {
-		t.Fatalf("decode event log line: %v", err)
+	{
+		err := json.Unmarshal([]byte(lines[0]), &event)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode event log line: %v", err))
 	}
-	if event.Type != featureplannercontract.EventName(featureplannercontract.EventStart) || event.SessionID != state.SessionID {
-		t.Fatalf("unexpected stored event: %+v", event)
-	}
-}
+	gomega.Expect(event.Type).To(gomega.Equal(featureplannercontract.EventName(featureplannercontract.EventStart)), fmt.Sprintf("unexpected stored event: %+v", event))
+	gomega.Expect(event.SessionID).To(gomega.Equal(state.SessionID), fmt.Sprintf("unexpected stored event: %+v", event))
 
-func TestFeaturePlannerStatePathsRejectDotSessionIDs(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("feature planner state paths reject dot session i ds", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	for _, sessionID := range []string{".", "..", "nested/session", `nested\session`, "a/../b"} {
-		if _, _, err := statePath(root, sessionID); err == nil {
-			t.Fatalf("statePath accepted invalid session id %q", sessionID)
+		{
+			_, _, err := statePath(root, sessionID)
+			gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("statePath accepted invalid session id %q", sessionID))
 		}
-		if _, _, err := EventLogPath(root, sessionID); err == nil {
-			t.Fatalf("EventLogPath accepted invalid session id %q", sessionID)
-		}
-	}
-}
+		{
 
-func TestLoadStateRejectsInvalidDurableStatus(t *testing.T) {
+			_, _, err := EventLogPath(root, sessionID)
+			gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("EventLogPath accepted invalid session id %q", sessionID))
+		}
+
+	}
+})
+var _ = ginkgo.It("load state rejects invalid durable status", func() {
 	state := durableState()
 
 	state.SchemaVersion = SchemaVersion
 	state.FeatureID = ""
 	state.Status = "invented"
 
-	dir := t.TempDir()
+	dir := ginkgo.GinkgoT().TempDir()
 
 	fullPath, _, err := statePath(dir, state.SessionID)
-	if err != nil {
-		t.Fatalf("state path: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("state path: %v", err))
+	{
 
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir state dir: %v", err)
+		err := os.MkdirAll(filepath.Dir(fullPath), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir state dir: %v", err))
 	}
 
 	body, err := json.Marshal(state)
-	if err != nil {
-		t.Fatalf("marshal state: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal state: %v", err))
+	{
 
-	if err := os.WriteFile(fullPath, body, 0o600); err != nil {
-		t.Fatalf("write state: %v", err)
+		err := os.WriteFile(fullPath, body, 0o600)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write state: %v", err))
 	}
 
 	_, _, err = LoadState(dir, state.SessionID)
-	if err == nil || !strings.Contains(err.Error(), "unknown status") {
-		t.Fatalf("expected invalid status load error, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected invalid status load error, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unknown status"), fmt.Sprintf("expected invalid status load error, got %v", err))
 
-func TestLoadStateRejectsEmbeddedSessionMismatch(t *testing.T) {
+})
+var _ = ginkgo.It("load state rejects embedded session mismatch", func() {
 	state := durableState()
 	state.SchemaVersion = SchemaVersion
 	requestedSessionID := state.SessionID
 	state.SessionID = "other-session"
 
-	dir := t.TempDir()
+	dir := ginkgo.GinkgoT().TempDir()
 
 	fullPath, _, err := statePath(dir, requestedSessionID)
-	if err != nil {
-		t.Fatalf("state path: %v", err)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("state path: %v", err))
+	{
+
+		err := os.MkdirAll(filepath.Dir(fullPath), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir state dir: %v", err))
 	}
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir state dir: %v", err)
-	}
+
 	body, err := json.Marshal(state)
-	if err != nil {
-		t.Fatalf("marshal state: %v", err)
-	}
-	if err := os.WriteFile(fullPath, body, 0o600); err != nil {
-		t.Fatalf("write state: %v", err)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal state: %v", err))
+	{
+
+		err := os.WriteFile(fullPath, body, 0o600)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write state: %v", err))
 	}
 
 	_, _, err = LoadState(dir, requestedSessionID)
-	if err == nil || !strings.Contains(err.Error(), "does not match requested session") {
-		t.Fatalf("expected session mismatch load error, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected session mismatch load error, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("does not match requested session"), fmt.Sprintf("expected session mismatch load error, got %v", err))
+
+})
 
 func durableState() FeatureState {
 	return FeatureState{

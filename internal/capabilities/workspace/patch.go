@@ -3,16 +3,29 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"idiom/internal/capabilities/workspace/patching"
-	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/failures"
 )
 
-func (m *Manager) applyPatch(_ context.Context, req ToolRequest) ToolResult {
+type plannedPatchMutationKind uint8
+
+const (
+	plannedPatchReplace plannedPatchMutationKind = iota
+	plannedPatchRemove
+)
+
+type plannedPatchMutation struct {
+	kind           plannedPatchMutationKind
+	operationIndex int
+	description    string
+	target         workspaceMutationTarget
+	preimage       workspaceMutationPreimage
+	contents       []byte
+}
+
+func (m *Manager) applyPatch(ctx context.Context, req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return toolWriteDisabledResult(ToolNameApplyPatch, "Patch request rejected", "workspace writes are disabled")
 	}
@@ -27,126 +40,204 @@ func (m *Manager) applyPatch(_ context.Context, req ToolRequest) ToolResult {
 		return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch parse failed", err, failures.InvalidArgument, reasonToolInvalidArgument)
 	}
 
-	type plannedWrite struct {
-		path     string
-		contents []byte
-		remove   bool
+	mutation, err := m.pathAccess.beginWorkspaceMutation(ctx, req)
+	if err != nil {
+		return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve path", err, failures.InvalidArgument, reasonToolPathResolutionFailed)
 	}
+	defer mutation.Close()
 
-	planned := make([]plannedWrite, 0, len(ops))
+	planned := make([]plannedPatchMutation, 0, len(ops)*2)
 	summaries := make([]string, 0, len(ops))
 	var changedPaths []string
 
 	for opIdx, op := range ops {
-		path, err := m.pathAccess.ResolveWritePath(op.Path, req.Workdir)
+		operationIndex := opIdx + 1
+		target, err := mutation.Resolve(op.Path)
 		if err != nil {
-			return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve path", fmt.Errorf("op %d (%s %s): %w", opIdx+1, op.Kind, op.Path, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
+			return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve path", fmt.Errorf("op %d (%s %s): %w", operationIndex, op.Kind, op.Path, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
+		}
+		preimage, err := mutation.Observe(target)
+		if err != nil {
+			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch request rejected", fmt.Errorf("inspect %s: %w", target.display, err), failures.FailedPrecondition, reasonPlanSubmissionRejected)
 		}
 
 		switch op.Kind {
 		case patching.OpAdd:
-			if _, statErr := os.Stat(path); statErr == nil {
-				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Add File target %s already exists", m.pathAccess.DisplayPath(path)), failures.AlreadyExists, reasonPlanSubmissionRejected)
+			if preimage.exists {
+				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Add File target %s already exists", target.display), failures.AlreadyExists, reasonPlanSubmissionRejected)
 			}
 
-			body := op.NewBody
-			if body != "" && !strings.HasSuffix(body, "\n") {
-				body += "\n"
+			newBody := op.NewBody
+			if newBody != "" && !strings.HasSuffix(newBody, "\n") {
+				newBody += "\n"
 			}
+			planned = append(planned, plannedPatchMutation{
+				kind:           plannedPatchReplace,
+				operationIndex: operationIndex,
+				description:    fmt.Sprintf("add %s", target.display),
+				target:         target,
+				preimage:       preimage,
+				contents:       []byte(newBody),
+			})
+			summaries = append(summaries, fmt.Sprintf("add %s (%d bytes)", target.display, len(newBody)))
+			changedPaths = appendUniqueWorkspaceStrings(changedPaths, target.display)
 
-			planned = append(planned, plannedWrite{path: path, contents: []byte(body)})
-			summaries = append(summaries, fmt.Sprintf("add %s (%d bytes)", m.pathAccess.DisplayPath(path), len(body)))
-			changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path))
 		case patching.OpDelete:
-			info, statErr := os.Stat(path)
-			if statErr != nil {
-				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Delete File target %s not found", m.pathAccess.DisplayPath(path)), failures.NotFound, reasonPlanSubmissionRejected)
+			if !preimage.exists {
+				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Delete File target %s not found", target.display), failures.NotFound, reasonPlanSubmissionRejected)
 			}
 
-			if info.IsDir() {
-				return toolInvalidArgumentResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Delete File target %s is a directory", m.pathAccess.DisplayPath(path)))
-			}
+			planned = append(planned, plannedPatchMutation{
+				kind:           plannedPatchRemove,
+				operationIndex: operationIndex,
+				description:    fmt.Sprintf("delete %s", target.display),
+				target:         target,
+				preimage:       preimage,
+			})
+			summaries = append(summaries, fmt.Sprintf("delete %s", target.display))
+			changedPaths = appendUniqueWorkspaceStrings(changedPaths, target.display)
 
-			planned = append(planned, plannedWrite{path: path, remove: true})
-			summaries = append(summaries, fmt.Sprintf("delete %s", m.pathAccess.DisplayPath(path)))
-			changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path))
 		case patching.OpUpdate:
-			current, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch request rejected", fmt.Errorf("Update File target %s: %w", m.pathAccess.DisplayPath(path), readErr), failures.NotFound, reasonPlanSubmissionRejected)
+			if !preimage.exists {
+				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("update file target %s not found", target.display), failures.NotFound, reasonPlanSubmissionRejected)
 			}
 
-			updated, applyErr := patching.ApplyUpdateHunks(string(current), op.Hunks)
+			updated, applyErr := patching.ApplyUpdateHunks(string(preimage.body), op.Hunks)
 			if applyErr != nil {
-				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch hunk did not apply", fmt.Errorf("Update File %s: %w", m.pathAccess.DisplayPath(path), applyErr), failures.FailedPrecondition, reasonPlanSubmissionRejected)
+				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch hunk did not apply", fmt.Errorf("update file %s: %w", target.display, applyErr), failures.FailedPrecondition, reasonPlanSubmissionRejected)
 			}
 
-			destPath := path
-			summary := fmt.Sprintf("update %s", m.pathAccess.DisplayPath(path))
-
-			if op.MoveTo != "" {
-				destPath, err = m.pathAccess.ResolveWritePath(op.MoveTo, req.Workdir)
+			destination := target
+			destinationPreimage := preimage
+			summary := fmt.Sprintf("update %s", target.display)
+			moved := false
+			if strings.TrimSpace(op.MoveTo) != "" {
+				destination, err = mutation.Resolve(op.MoveTo)
 				if err != nil {
-					return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve move destination", fmt.Errorf("Move to %s: %w", op.MoveTo, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
+					return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve move destination", fmt.Errorf("move to %s: %w", op.MoveTo, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
 				}
-
-				if _, statErr := os.Stat(destPath); statErr == nil && filepath.Clean(destPath) != filepath.Clean(path) {
-					return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Move to destination %s already exists", m.pathAccess.DisplayPath(destPath)), failures.AlreadyExists, reasonPlanSubmissionRejected)
+				moved = destination.relative != target.relative
+				if moved {
+					destinationPreimage, err = mutation.Observe(destination)
+					if err != nil {
+						return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch request rejected", fmt.Errorf("inspect move destination %s: %w", destination.display, err), failures.FailedPrecondition, reasonPlanSubmissionRejected)
+					}
+					if destinationPreimage.exists {
+						return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Move to destination %s already exists", destination.display), failures.AlreadyExists, reasonPlanSubmissionRejected)
+					}
+					summary = fmt.Sprintf("update+move %s -> %s", target.display, destination.display)
+					changedPaths = appendUniqueWorkspaceStrings(changedPaths, target.display, destination.display)
 				}
-
-				if filepath.Clean(destPath) != filepath.Clean(path) {
-					planned = append(planned, plannedWrite{path: path, remove: true})
-				}
-				summary = fmt.Sprintf("update+move %s -> %s", m.pathAccess.DisplayPath(path), m.pathAccess.DisplayPath(destPath))
-				changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path), m.pathAccess.DisplayPath(destPath))
-			} else {
-				changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path))
+			}
+			if !moved {
+				changedPaths = appendUniqueWorkspaceStrings(changedPaths, target.display)
 			}
 
-			planned = append(planned, plannedWrite{path: destPath, contents: []byte(updated)})
+			planned = append(planned, plannedPatchMutation{
+				kind:           plannedPatchReplace,
+				operationIndex: operationIndex,
+				description:    summary,
+				target:         destination,
+				preimage:       destinationPreimage,
+				contents:       []byte(updated),
+			})
+			if moved {
+				planned = append(planned, plannedPatchMutation{
+					kind:           plannedPatchRemove,
+					operationIndex: operationIndex,
+					description:    fmt.Sprintf("remove moved source %s", target.display),
+					target:         target,
+					preimage:       preimage,
+				})
+			}
 			summaries = append(summaries, summary)
 		}
 	}
 
-	for _, write := range planned {
-		if write.remove {
+	for _, action := range planned {
+		if action.kind != plannedPatchReplace {
 			continue
 		}
-
-		if rejected := m.writeGuard.RejectInvalidPlannedWrite(ToolNameApplyPatch, "Patch request rejected", write.path, write.contents, m.pathAccess.DisplayPath); rejected != nil {
+		if rejected := m.writeGuard.RejectPlannedWrite(ToolNameApplyPatch, "Patch request rejected", action.target.absolute, action.preimage.body, action.contents, m.pathAccess.DisplayPath); rejected != nil {
 			return *rejected
 		}
 	}
 
-	for _, write := range planned {
-		if write.remove {
+	ordered := orderPlannedPatchMutations(planned)
+	for actionIndex, action := range ordered {
+		mutation.reachCheckpoint(workspaceMutationAfterPreflight, action.target, action.operationIndex)
+		var mutationErr error
+		switch action.kind {
+		case plannedPatchReplace:
+			mutationErr = mutation.Replace(action.target, action.preimage, action.contents, 0o644, action.operationIndex)
+		case plannedPatchRemove:
+			mutationErr = mutation.Remove(action.target, action.preimage, action.operationIndex)
+		}
+		if mutationErr == nil {
 			continue
 		}
+		remainingTargets := make([]workspaceMutationTarget, 0, len(ordered)-actionIndex-1)
+		for _, unattempted := range ordered[actionIndex+1:] {
+			remainingTargets = append(remainingTargets, unattempted.target)
+		}
+		mutation.setFailureIntent(action.target, remainingTargets)
 
-		if err := os.MkdirAll(filepath.Dir(write.path), 0o755); err != nil {
-			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("mkdir %s: %w", m.pathAccess.DisplayPath(filepath.Dir(write.path)), err), failures.Internal, reasonToolWriteFailed)
+		remaining := make([]string, 0, len(ordered)-actionIndex-1)
+		for _, unattempted := range ordered[actionIndex+1:] {
+			remaining = append(remaining, unattempted.description)
 		}
-
-		if err := atomicfile.WriteFile(write.path, write.contents, 0o644); err != nil {
-			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("write %s: %w", m.pathAccess.DisplayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
-		}
-	}
-
-	for _, write := range planned {
-		if !write.remove {
-			continue
-		}
-		if err := os.Remove(write.path); err != nil && !os.IsNotExist(err) {
-			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("delete %s: %w", m.pathAccess.DisplayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
-		}
+		return m.workspaceMutationFailureResult(
+			ToolNameApplyPatch,
+			"Patch apply failed",
+			"Patch partially applied",
+			fmt.Errorf("%s: %w", action.description, mutationErr),
+			mutation,
+			failures.Internal,
+			reasonToolWriteFailed,
+			remaining,
+		)
 	}
 
 	m.resetLanguageTools()
 
-	return ToolResult{
-		Tool:         ToolNameApplyPatch,
-		Summary:      fmt.Sprintf("Applied patch with %d op(s)", len(ops)),
-		Output:       strings.Join(summaries, "\n"),
-		ChangedPaths: changedPaths,
+	result := ToolResult{
+		Tool:    ToolNameApplyPatch,
+		Summary: fmt.Sprintf("Applied patch with %d op(s)", len(ops)),
+		Output:  strings.Join(summaries, "\n"),
 	}
+	mutation.attachCommitReceipt(ToolNameApplyPatch, &result)
+	return result
+}
+
+func orderPlannedPatchMutations(planned []plannedPatchMutation) []plannedPatchMutation {
+	ordered := make([]plannedPatchMutation, 0, len(planned))
+	for _, action := range planned {
+		if action.kind == plannedPatchReplace {
+			ordered = append(ordered, action)
+		}
+	}
+	for _, action := range planned {
+		if action.kind == plannedPatchRemove {
+			ordered = append(ordered, action)
+		}
+	}
+
+	return ordered
+}
+
+func appendUniqueWorkspaceStrings(values []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	out := make([]string, 0, len(values)+len(additions))
+	for _, value := range append(append([]string(nil), values...), additions...) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }

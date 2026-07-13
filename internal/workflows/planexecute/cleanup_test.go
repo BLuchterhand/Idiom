@@ -2,79 +2,67 @@ package planexecute
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
 	"time"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestCleanupStalePlanArtifacts(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("cleanup stale plan artifacts", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	dir := filepath.Join(root, ".idiom", "plans")
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(dir, 0o755)).To(gomega.Succeed(), "mkdir plan directory")
 
 	stale := filepath.Join(dir, "stale.plan.json")
 	recent := filepath.Join(dir, "recent.plan.json")
 	pointer := filepath.Join(dir, "last.plan.json")
 
 	for _, path := range []string{stale, recent, pointer} {
-		if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
-			t.Fatalf("seed %s: %v", path, err)
-		}
+		gomega.Expect(os.WriteFile(path, []byte("{}"), 0o644)).To(gomega.Succeed(), "seed %s", path)
 	}
 
 	old := time.Now().Add(-10 * 24 * time.Hour)
 	young := time.Now().Add(-1 * time.Hour)
 	ancient := time.Now().Add(-365 * 24 * time.Hour)
 
-	if err := os.Chtimes(stale, old, old); err != nil {
-		t.Fatalf("chtimes stale: %v", err)
-	}
-
-	if err := os.Chtimes(recent, young, young); err != nil {
-		t.Fatalf("chtimes recent: %v", err)
-	}
-
-	if err := os.Chtimes(pointer, ancient, ancient); err != nil {
-		t.Fatalf("chtimes pointer: %v", err)
-	}
+	gomega.Expect(os.Chtimes(stale, old, old)).To(gomega.Succeed(), "age stale plan")
+	gomega.Expect(os.Chtimes(recent, young, young)).To(gomega.Succeed(), "age recent plan")
+	gomega.Expect(os.Chtimes(pointer, ancient, ancient)).To(gomega.Succeed(), "age plan pointer")
 
 	var logBuf bytes.Buffer
 
 	cleanupStalePlanArtifacts(root, 7*24*time.Hour, &logBuf)
 
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatalf("stale plan should have been removed; stat err=%v", err)
-	}
+	_, err := os.Stat(stale)
+	gomega.Expect(err).To(gomega.MatchError(os.ErrNotExist), "stale plan should have been removed")
 
-	if _, err := os.Stat(recent); err != nil {
-		t.Fatalf("recent plan should have survived; stat err=%v", err)
-	}
+	_, err = os.Stat(recent)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "recent plan should have survived")
 
-	if _, err := os.Stat(pointer); err != nil {
-		t.Fatalf("last.plan.json must survive regardless of mtime; stat err=%v", err)
-	}
-}
+	_, err = os.Stat(pointer)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "last.plan.json must survive regardless of mtime")
+})
 
-func TestFindLatestPlanArtifactRejectsSymlinkedPlanDir(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
+var _ = ginkgo.It("find latest plan artifact rejects symlinked plan dir", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	outside := ginkgo.GinkgoT().TempDir()
 
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(outside, "latest.plan.json"), []byte(`{"session_id":"s1"}`), 0o644); err != nil {
-		t.Fatalf("seed outside plan: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(gomega.Succeed(), "mkdir .idiom")
+	gomega.Expect(os.WriteFile(filepath.Join(outside, "latest.plan.json"), []byte(`{"session_id":"s1"}`), 0o644)).To(
+		gomega.Succeed(),
+		"seed outside plan",
+	)
 	if err := os.Symlink(outside, filepath.Join(root, ".idiom", "plans")); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
+		ginkgo.Skip(fmt.Sprintf("symlink unavailable: %v", err))
 	}
 
-	if _, err := findLatestPlanArtifactForTest(root, time.Time{}, "s1"); err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("FindLatestPlanArtifact should reject symlinked plan dir, got %v", err)
-	}
-}
+	_, err := findLatestPlanArtifactForTest(root, time.Time{}, "s1")
+	gomega.Expect(err).To(
+		gomega.MatchError(gomega.ContainSubstring("symlink")),
+		"FindLatestPlanArtifact should reject symlinked plan dir",
+	)
+})

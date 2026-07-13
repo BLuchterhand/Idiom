@@ -10,7 +10,9 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 type goPackage struct {
@@ -19,19 +21,19 @@ type goPackage struct {
 	Deps       []string
 }
 
-func TestCoreContractPackagesKeepNarrowDirectImports(t *testing.T) {
-	packages := loadPackages(t)
-	assertAllDirectContractPackagesCovered(t, packages, coreContractPackageDirectImports())
+var _ = It("keeps every core contract package under an explicit narrow import policy", func() {
+	packages := loadPackages()
+	assertAllDirectContractPackagesCovered(packages, coreContractPackageDirectImports())
 
 	for importPath, allowed := range coreContractPackageDirectImports() {
-		assertDirectInternalImports(t, packages, importPath, allowed)
+		assertDirectInternalImports(packages, importPath, allowed)
 	}
-}
+})
 
-func TestCoreContractPackagesDoNotImportIOOrFrameworkDetails(t *testing.T) {
-	packages := loadPackages(t)
+var _ = It("keeps core contract packages independent of IO and framework details", func() {
+	packages := loadPackages()
 	for importPath := range coreContractPackageDirectImports() {
-		assertNoDirectImports(t, packages, importPath, []string{
+		assertNoDirectImports(packages, importPath, []string{
 			"database/sql",
 			"net/http",
 			"os",
@@ -40,15 +42,15 @@ func TestCoreContractPackagesDoNotImportIOOrFrameworkDetails(t *testing.T) {
 			"idiom/internal/capabilities/mcp",
 		})
 	}
-}
+})
 
-func TestCoreContractPackagesDoNotDependOnOuterLayers(t *testing.T) {
-	packages := loadPackages(t)
+var _ = It("keeps core contract packages independent of outer layers", func() {
+	packages := loadPackages()
 
 	for importPath := range coreContractPackageDirectImports() {
-		assertNoDependencyOn(t, packages, importPath, coreContractForbiddenOuterPackages())
+		assertNoDependencyOn(packages, importPath, coreContractForbiddenOuterPackages())
 	}
-}
+})
 
 func coreContractPackageDirectImports() map[string][]string {
 	return map[string][]string{
@@ -66,20 +68,19 @@ func coreContractPackageDirectImports() map[string][]string {
 		"idiom/internal/contracts/planartifact":   {"idiom/internal/contracts/plan", "idiom/internal/contracts/sensitivity"},
 		"idiom/internal/contracts/queue":          {},
 		"idiom/internal/contracts/readapproval":   {},
-		"idiom/internal/contracts/recovery":       {"idiom/internal/contracts/lane", "idiom/internal/contracts/workflowstate"},
+		"idiom/internal/contracts/recovery":       {"idiom/internal/contracts/lane", "idiom/internal/contracts/toolfacts", "idiom/internal/contracts/workflowstate"},
+		"idiom/internal/contracts/runprofile":     {},
 		"idiom/internal/contracts/sensitivity":    {},
 		"idiom/internal/contracts/sourcekind":     {},
 		"idiom/internal/contracts/taskledger":     {},
-		"idiom/internal/contracts/toolfacts":      {},
+		"idiom/internal/contracts/toolfacts":      {"idiom/internal/contracts/toolpolicy"},
 		"idiom/internal/contracts/toolpolicy":     {},
 		"idiom/internal/contracts/workflowstate":  {},
 		"idiom/internal/contracts/writerroute":    {},
 	}
 }
 
-func assertAllDirectContractPackagesCovered(t *testing.T, packages map[string]goPackage, allowed map[string][]string) {
-	t.Helper()
-
+func assertAllDirectContractPackagesCovered(packages map[string]goPackage, allowed map[string][]string) {
 	var missing []string
 	for importPath := range packages {
 		if !strings.HasPrefix(importPath, "idiom/internal/contracts/") {
@@ -94,9 +95,7 @@ func assertAllDirectContractPackagesCovered(t *testing.T, packages map[string]go
 		}
 	}
 	sort.Strings(missing)
-	if len(missing) > 0 {
-		t.Fatalf("direct contract packages missing explicit import policy: %s", strings.Join(missing, ", "))
-	}
+	Expect(missing).To(BeEmpty(), "direct contract packages missing explicit import policy: %s", strings.Join(missing, ", "))
 }
 
 func coreContractForbiddenOuterPackages() []string {
@@ -117,8 +116,8 @@ func coreContractForbiddenOuterPackages() []string {
 	}
 }
 
-func TestLegacyContractRootsAreRetired(t *testing.T) {
-	packages := loadPackages(t)
+var _ = It("keeps legacy contract roots retired", func() {
+	packages := loadPackages()
 
 	for _, importPath := range []string{
 		"idiom/internal/autonomy",
@@ -127,14 +126,12 @@ func TestLegacyContractRootsAreRetired(t *testing.T) {
 		"idiom/internal/plancontract",
 		"idiom/internal/writerroute",
 	} {
-		if _, ok := packages[importPath]; ok {
-			t.Fatalf("legacy contract package %s still exists; move it under idiom/internal/contracts", importPath)
-		}
+		Expect(packages).NotTo(HaveKey(importPath), "legacy contract package %s must remain under idiom/internal/contracts", importPath)
 	}
-}
+})
 
-func TestMovedInternalRootsAreRetired(t *testing.T) {
-	packages := loadPackages(t)
+var _ = It("keeps moved internal package roots retired", func() {
+	packages := loadPackages()
 
 	for _, importPath := range []string{
 		"idiom/internal/agent",
@@ -175,31 +172,29 @@ func TestMovedInternalRootsAreRetired(t *testing.T) {
 		"idiom/internal/util",
 		"idiom/internal/workspace",
 	} {
-		if _, ok := packages[importPath]; ok {
-			t.Fatalf("retired package root %s still exists; keep it under its architecture parent", importPath)
-		}
+		Expect(packages).NotTo(HaveKey(importPath), "retired package root %s must remain under its architecture parent", importPath)
 	}
-}
+})
 
-func TestRuntimeAndCapabilitiesDoNotDependOnSurfaces(t *testing.T) {
-	packages := loadPackages(t)
+var _ = It("keeps runtime and capability packages independent of delivery surfaces", func() {
+	packages := loadPackages()
 
-	assertNoDependencyOn(t, packages, "idiom/internal/runtime/agent", []string{
+	assertNoDependencyOn(packages, "idiom/internal/runtime/agent", []string{
 		"idiom/cmd/",
 		"idiom/internal/surfaces/tui/app",
 		"idiom/internal/workflows/planexecute",
 	})
 
-	assertNoDependencyOn(t, packages, "idiom/internal/capabilities/workspace", []string{
+	assertNoDependencyOn(packages, "idiom/internal/capabilities/workspace", []string{
 		"idiom/cmd/",
 		"idiom/internal/runtime/agent",
 		"idiom/internal/surfaces/tui/app",
 		"idiom/internal/workflows/planexecute",
 	})
-}
+})
 
-func TestWorkflowAndEvidencePackagesDoNotDependOnSurfacesInProductionImports(t *testing.T) {
-	packages := loadPackages(t)
+var _ = It("keeps workflow and evidence production imports independent of surfaces", func() {
+	packages := loadPackages()
 
 	for importPath := range packages {
 		if !strings.HasPrefix(importPath, "idiom/internal/workflows/") &&
@@ -207,14 +202,33 @@ func TestWorkflowAndEvidencePackagesDoNotDependOnSurfacesInProductionImports(t *
 			continue
 		}
 
-		assertNoDependencyOn(t, packages, importPath, []string{
+		assertNoDependencyOn(packages, importPath, []string{
 			"idiom/internal/surfaces/",
 		})
 	}
-}
+})
 
-func TestContractAuthorityVocabularyIsNotRedefinedOutsideAutonomy(t *testing.T) {
-	root := repoRoot(t)
+var _ = It("keeps project-artifact workflow policy independent of workspace capabilities", func() {
+	packages := loadPackages()
+
+	assertNoDependencyOn(packages, "idiom/internal/workflows/projectartifacts", []string{
+		"idiom/internal/capabilities/workspace",
+	})
+})
+
+var _ = It("keeps headless session boundaries independent of the TUI surface", func() {
+	packages := loadPackages()
+
+	assertNoDependencyOn(packages, "idiom/internal/runtime/session", []string{
+		"idiom/internal/surfaces/",
+	})
+	assertNoDependencyOn(packages, "idiom/internal/surfaces/cli/runtime", []string{
+		"idiom/internal/surfaces/tui/app",
+	})
+})
+
+var _ = It("keeps contract authority vocabulary owned by autonomy", func() {
+	root := repoRoot()
 	allowed := filepath.Join(root, "internal", "contracts", "autonomy")
 	authorityTypes := []string{
 		"ActionClass",
@@ -263,70 +277,26 @@ func TestContractAuthorityVocabularyIsNotRedefinedOutsideAutonomy(t *testing.T) 
 
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("scan internal for duplicate authority vocabulary: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred(), "scan internal packages for duplicate authority vocabulary")
+	violations = uniqueSortedStrings(violations)
+	Expect(violations).To(BeEmpty(),
+		"authority vocabulary must be owned by internal/contracts/autonomy; duplicate declarations: %s",
+		strings.Join(violations, ", "))
+})
 
-	if len(violations) > 0 {
-		t.Fatalf("authority vocabulary must be owned by internal/contracts/autonomy; duplicate declarations: %s", strings.Join(uniqueSortedStrings(violations), ", "))
-	}
-}
+var _ = DescribeTable("matches forbidden dependency roots without matching siblings",
+	func(dependency string, forbiddenPrefix string, want bool) {
+		Expect(dependencyMatchesPrefix(dependency, forbiddenPrefix)).To(Equal(want))
+	},
+	Entry("exact match", "idiom/internal/capabilities/workspace", "idiom/internal/capabilities/workspace", true),
+	Entry("child match", "idiom/internal/capabilities/workspace/subpkg", "idiom/internal/capabilities/workspace", true),
+	Entry("trailing-slash prefix", "idiom/cmd/idiom", "idiom/cmd/", true),
+	Entry("package sibling is not a child", "idiom/internal/capabilities/workspaceextra", "idiom/internal/capabilities/workspace", false),
+	Entry("standard-library child match", "net/http/httptest", "net/http", true),
+	Entry("standard-library sibling is not a child", "net/http2", "net/http", false),
+)
 
-func TestDependencyPrefixMatcherDistinguishesChildrenFromSiblings(t *testing.T) {
-	cases := []struct {
-		name            string
-		dependency      string
-		forbiddenPrefix string
-		want            bool
-	}{
-		{
-			name:            "exact match",
-			dependency:      "idiom/internal/capabilities/workspace",
-			forbiddenPrefix: "idiom/internal/capabilities/workspace",
-			want:            true,
-		},
-		{
-			name:            "child match",
-			dependency:      "idiom/internal/capabilities/workspace/subpkg",
-			forbiddenPrefix: "idiom/internal/capabilities/workspace",
-			want:            true,
-		},
-		{
-			name:            "trailing slash prefix",
-			dependency:      "idiom/cmd/idiom",
-			forbiddenPrefix: "idiom/cmd/",
-			want:            true,
-		},
-		{
-			name:            "sibling is not child",
-			dependency:      "idiom/internal/capabilities/workspaceextra",
-			forbiddenPrefix: "idiom/internal/capabilities/workspace",
-			want:            false,
-		},
-		{
-			name:            "stdlib child match",
-			dependency:      "net/http/httptest",
-			forbiddenPrefix: "net/http",
-			want:            true,
-		},
-		{
-			name:            "stdlib sibling is not child",
-			dependency:      "net/http2",
-			forbiddenPrefix: "net/http",
-			want:            false,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := dependencyMatchesPrefix(tc.dependency, tc.forbiddenPrefix); got != tc.want {
-				t.Fatalf("dependencyMatchesPrefix(%q, %q) = %v, want %v", tc.dependency, tc.forbiddenPrefix, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestArchitectureAssertionsCatchExpectedViolations(t *testing.T) {
+var _ = It("reports exact dependency paths for representative architecture violations", func() {
 	packages := map[string]goPackage{
 		"idiom/internal/contracts/autonomy": {
 			ImportPath: "idiom/internal/contracts/autonomy",
@@ -348,24 +318,17 @@ func TestArchitectureAssertionsCatchExpectedViolations(t *testing.T) {
 		},
 	}
 
-	if got := directInternalImportViolations(packages["idiom/internal/contracts/autonomy"], nil); !containsString(got, "idiom/internal/capabilities/workspace") {
-		t.Fatalf("directInternalImportViolations = %#v, want workspace violation", got)
-	}
+	Expect(directInternalImportViolations(packages["idiom/internal/contracts/autonomy"], nil)).To(
+		ContainElement("idiom/internal/capabilities/workspace"))
+	Expect(directImportViolations(packages["idiom/internal/contracts/autonomy"], []string{"net/http"})).To(
+		ContainElement("net/http/httptest"))
+	Expect(transitiveDependencyViolations(packages["idiom/internal/contracts/autonomy"], []string{"idiom/internal/capabilities/workspace"})).To(
+		ContainElement("idiom/internal/capabilities/workspace"))
+	Expect(transitiveDependencyViolationDetails(packages, "idiom/internal/runtime/agent", []string{"idiom/internal/capabilities/workspace"})).To(
+		ContainElement("idiom/internal/capabilities/workspace via idiom/internal/runtime/agent -> idiom/internal/capabilities/workspace"))
+})
 
-	if got := directImportViolations(packages["idiom/internal/contracts/autonomy"], []string{"net/http"}); !containsString(got, "net/http/httptest") {
-		t.Fatalf("directImportViolations = %#v, want net/http/httptest violation", got)
-	}
-
-	if got := transitiveDependencyViolations(packages["idiom/internal/contracts/autonomy"], []string{"idiom/internal/capabilities/workspace"}); !containsString(got, "idiom/internal/capabilities/workspace") {
-		t.Fatalf("transitiveDependencyViolations = %#v, want workspace violation", got)
-	}
-
-	if got := transitiveDependencyViolationDetails(packages, "idiom/internal/runtime/agent", []string{"idiom/internal/capabilities/workspace"}); !containsString(got, "idiom/internal/capabilities/workspace via idiom/internal/runtime/agent -> idiom/internal/capabilities/workspace") {
-		t.Fatalf("transitiveDependencyViolationDetails = %#v, want import path detail", got)
-	}
-}
-
-func TestViolationCollectorsReturnDeduplicatedSortedResults(t *testing.T) {
+var _ = It("returns deterministic deduplicated architecture violations", func() {
 	pkg := goPackage{
 		ImportPath: "idiom/internal/example",
 		Imports: []string{
@@ -381,31 +344,20 @@ func TestViolationCollectorsReturnDeduplicatedSortedResults(t *testing.T) {
 		},
 	}
 
-	if got, want := directImportViolations(pkg, []string{"os", "os/exec", "net/http"}), []string{"net/http/httptest", "os/exec"}; !equalStrings(got, want) {
-		t.Fatalf("directImportViolations = %#v, want %#v", got, want)
-	}
+	Expect(directImportViolations(pkg, []string{"os", "os/exec", "net/http"})).To(Equal(
+		[]string{"net/http/httptest", "os/exec"}))
+	Expect(transitiveDependencyViolations(pkg, []string{"idiom/internal/capabilities/workspace"})).To(Equal(
+		[]string{"idiom/internal/capabilities/workspace", "idiom/internal/capabilities/workspace/subpkg"}))
+})
 
-	if got, want := transitiveDependencyViolations(pkg, []string{"idiom/internal/capabilities/workspace"}), []string{"idiom/internal/capabilities/workspace", "idiom/internal/capabilities/workspace/subpkg"}; !equalStrings(got, want) {
-		t.Fatalf("transitiveDependencyViolations = %#v, want %#v", got, want)
-	}
-}
-
-func loadPackages(t *testing.T) map[string]goPackage {
-	t.Helper()
-
-	root := repoRoot(t)
+func loadPackages() map[string]goPackage {
+	root := repoRoot()
 	cmd := exec.Command("go", "list", "-json", "./...")
 
 	cmd.Dir = root
 
-	out, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			t.Fatalf("go list failed: %v\n%s", err, string(exitErr.Stderr))
-		}
-
-		t.Fatalf("go list failed: %v", err)
-	}
+	out, err := cmd.CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), "go list -json ./... failed:\n%s", string(out))
 
 	decoder := json.NewDecoder(strings.NewReader(string(out)))
 	packages := make(map[string]goPackage)
@@ -418,7 +370,7 @@ func loadPackages(t *testing.T) map[string]goPackage {
 				break
 			}
 
-			t.Fatalf("decode go list package: %v", err)
+			Expect(err).NotTo(HaveOccurred(), "decode go list package metadata")
 		}
 
 		packages[pkg.ImportPath] = pkg
@@ -427,18 +379,12 @@ func loadPackages(t *testing.T) map[string]goPackage {
 	return packages
 }
 
-func assertDirectInternalImports(t *testing.T, packages map[string]goPackage, importPath string, allowed []string) {
-	t.Helper()
-
+func assertDirectInternalImports(packages map[string]goPackage, importPath string, allowed []string) {
 	pkg, ok := packages[importPath]
-	if !ok {
-		t.Fatalf("package %s not found in go list output", importPath)
-	}
+	Expect(ok).To(BeTrue(), "package %s not found in go list output", importPath)
 
 	violations := directInternalImportViolations(pkg, allowed)
-	if len(violations) > 0 {
-		t.Fatalf("%s imports unapproved internal package(s): %s", importPath, strings.Join(uniqueStrings(violations), ", "))
-	}
+	Expect(violations).To(BeEmpty(), "%s imports unapproved internal package(s): %s", importPath, strings.Join(violations, ", "))
 }
 
 func directInternalImportViolations(pkg goPackage, allowed []string) []string {
@@ -464,18 +410,12 @@ func directInternalImportViolations(pkg goPackage, allowed []string) []string {
 	return uniqueSortedStrings(violations)
 }
 
-func assertNoDirectImports(t *testing.T, packages map[string]goPackage, importPath string, forbidden []string) {
-	t.Helper()
-
+func assertNoDirectImports(packages map[string]goPackage, importPath string, forbidden []string) {
 	pkg, ok := packages[importPath]
-	if !ok {
-		t.Fatalf("package %s not found in go list output", importPath)
-	}
+	Expect(ok).To(BeTrue(), "package %s not found in go list output", importPath)
 
 	violations := directImportViolations(pkg, forbidden)
-	if len(violations) > 0 {
-		t.Fatalf("%s imports forbidden detail package(s): %s", importPath, strings.Join(uniqueStrings(violations), ", "))
-	}
+	Expect(violations).To(BeEmpty(), "%s imports forbidden detail package(s): %s", importPath, strings.Join(violations, ", "))
 }
 
 func directImportViolations(pkg goPackage, forbidden []string) []string {
@@ -497,17 +437,12 @@ func directImportViolations(pkg goPackage, forbidden []string) []string {
 	return uniqueSortedStrings(violations)
 }
 
-func assertNoDependencyOn(t *testing.T, packages map[string]goPackage, importPath string, forbiddenPrefixes []string) {
-	t.Helper()
-
-	if _, ok := packages[importPath]; !ok {
-		t.Fatalf("package %s not found in go list output", importPath)
-	}
+func assertNoDependencyOn(packages map[string]goPackage, importPath string, forbiddenPrefixes []string) {
+	_, ok := packages[importPath]
+	Expect(ok).To(BeTrue(), "package %s not found in go list output", importPath)
 
 	violations := transitiveDependencyViolationDetails(packages, importPath, forbiddenPrefixes)
-	if len(violations) > 0 {
-		t.Fatalf("%s depends on forbidden outer package(s): %s", importPath, strings.Join(uniqueStrings(violations), ", "))
-	}
+	Expect(violations).To(BeEmpty(), "%s depends on forbidden outer package(s): %s", importPath, strings.Join(violations, ", "))
 }
 
 func transitiveDependencyViolations(pkg goPackage, forbiddenPrefixes []string) []string {
@@ -597,13 +532,9 @@ func dependencyMatchesPrefix(dep string, forbiddenPrefix string) bool {
 	return strings.HasPrefix(dep, forbiddenPrefix+"/")
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-
+func repoRoot() string {
 	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
+	Expect(ok).To(BeTrue(), "runtime.Caller should locate the architecture test source")
 
 	dir := filepath.Dir(file)
 	for {
@@ -612,9 +543,7 @@ func repoRoot(t *testing.T) string {
 		}
 
 		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repo root not found from %s", file)
-		}
+		Expect(parent).NotTo(Equal(dir), "repo root not found from %s", file)
 
 		dir = parent
 	}
@@ -636,32 +565,4 @@ func uniqueSortedStrings(values []string) []string {
 	sort.Strings(out)
 
 	return out
-}
-
-func uniqueStrings(values []string) []string {
-	return uniqueSortedStrings(values)
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-
-	return false
-}
-
-func equalStrings(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-
-	return true
 }

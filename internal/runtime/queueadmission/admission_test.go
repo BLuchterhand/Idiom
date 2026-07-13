@@ -3,132 +3,99 @@ package queueadmission
 import (
 	"bytes"
 	"path/filepath"
-	"strings"
-	"testing"
 	"time"
 
 	queuecontract "idiom/internal/contracts/queue"
 	"idiom/internal/platform/config"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestAcquireReportsDisabledWhenNoPoolResolves(t *testing.T) {
-	t.Setenv("IDIOM_QUEUE_POOL", "")
-	t.Setenv("IDIOM_QUEUE_SOCKET", "")
+var _ = Describe("Queue admission", func() {
+	BeforeEach(func() {
+		GinkgoT().Setenv("IDIOM_QUEUE_HELD_POOLS", "")
+	})
 
-	var stdout, stderr bytes.Buffer
+	It("allows dispatch and reports disabled when no pool resolves", func() {
+		GinkgoT().Setenv("IDIOM_QUEUE_POOL", "")
+		GinkgoT().Setenv("IDIOM_QUEUE_SOCKET", "")
+		var stdout, stderr bytes.Buffer
 
-	result := Acquire(config.Config{}, Options{
-		Command:        "plan_execute",
-		EventPrefix:    queuecontract.CommandEventPrefixPlanExecute,
-		TelemetryEvent: "plan_execute_queue",
-		Label:          "plan-execute:session",
-		JSONEvents:     true,
-	}, nil, &stdout, &stderr)
-	result.Release()
+		result := Acquire(config.Config{}, Options{
+			Command:        "plan_execute",
+			EventPrefix:    queuecontract.CommandEventPrefixPlanExecute,
+			TelemetryEvent: "plan_execute_queue",
+			Label:          "plan-execute:session",
+			JSONEvents:     true,
+		}, nil, &stdout, &stderr)
+		result.Release()
 
-	if !result.Allowed {
-		t.Fatalf("disabled queue admission should allow dispatch: %#v", result)
-	}
-	if result.State != queuecontract.AdmissionStateDisabled {
-		t.Fatalf("state = %q, want disabled", result.State)
-	}
+		Expect(result.Allowed).To(BeTrue())
+		Expect(result.State).To(Equal(queuecontract.AdmissionStateDisabled))
+		Expect(stdout.String()).To(ContainSubstring(`"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueDisabled) + `"`))
+		Expect(stdout.String()).To(ContainSubstring(`"reason_class":"pool_disabled"`))
+		Expect(stderr.String()).To(BeEmpty())
+	})
 
-	out := stdout.String()
-	if !strings.Contains(out, `"type":"`+queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueDisabled)+`"`) {
-		t.Fatalf("disabled queue event missing, got %q", out)
-	}
+	It("blocks a required queue when its daemon is unavailable", func() {
+		GinkgoT().Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
+		GinkgoT().Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(GinkgoT().TempDir(), "missing.sock"))
+		var stdout, stderr bytes.Buffer
 
-	if !strings.Contains(out, `"reason_class":"pool_disabled"`) {
-		t.Fatalf("disabled queue event should classify reason, got %q", out)
-	}
+		result := Acquire(config.Config{}, Options{
+			Command:     "plan_execute",
+			EventPrefix: queuecontract.CommandEventPrefixPlanExecute,
+			JSONEvents:  true,
+			Mode:        queuecontract.AdmissionModeRequired,
+		}, nil, &stdout, &stderr)
+		result.Release()
 
-	if stderr.Len() != 0 {
-		t.Fatalf("disabled queue should not emit stderr, got %q", stderr.String())
-	}
-}
+		Expect(result.Allowed).To(BeFalse())
+		Expect(result.State).To(Equal(queuecontract.AdmissionStateUnavailable))
+		Expect(stdout.String()).To(ContainSubstring(`"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueUnavailable) + `"`))
+	})
 
-func TestAcquireRequiredModeBlocksUnavailableQueue(t *testing.T) {
-	t.Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
-	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	It("blocks nested cross-pool bypass and emits a degraded event", func() {
+		GinkgoT().Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
+		GinkgoT().Setenv("IDIOM_QUEUE_HELD_POOLS", "qwen-35b")
+		GinkgoT().Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(GinkgoT().TempDir(), "missing.sock"))
+		var stdout, stderr bytes.Buffer
 
-	var stdout, stderr bytes.Buffer
-	result := Acquire(config.Config{}, Options{
-		Command:     "plan_execute",
-		EventPrefix: queuecontract.CommandEventPrefixPlanExecute,
-		JSONEvents:  true,
-		Mode:        queuecontract.AdmissionModeRequired,
-	}, nil, &stdout, &stderr)
-	result.Release()
+		result := Acquire(config.Config{}, Options{
+			Command:     "plan_execute",
+			EventPrefix: queuecontract.CommandEventPrefixPlanExecute,
+			JSONEvents:  true,
+			Mode:        queuecontract.AdmissionModeRequired,
+		}, nil, &stdout, &stderr)
+		result.Release()
 
-	if result.Allowed {
-		t.Fatalf("required queue admission should block unavailable queue: %#v", result)
-	}
-	if result.State != queuecontract.AdmissionStateUnavailable {
-		t.Fatalf("state = %q, want unavailable", result.State)
-	}
-	if !strings.Contains(stdout.String(), `"type":"`+queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueUnavailable)+`"`) {
-		t.Fatalf("missing unavailable JSON event: %q", stdout.String())
-	}
-}
+		Expect(result.Allowed).To(BeFalse())
+		Expect(result.State).To(Equal(queuecontract.AdmissionStateNestedCrossPool))
+		Expect(stdout.String()).NotTo(ContainSubstring(`"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired) + `"`))
+		Expect(stdout.String()).To(ContainSubstring(`"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueDegraded) + `"`))
+		Expect(stdout.String()).To(ContainSubstring(`"degraded":true`))
+	})
 
-func TestAcquireRequiredModeBlocksNestedCrossPool(t *testing.T) {
-	t.Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
-	t.Setenv("IDIOM_QUEUE_HELD_POOLS", "qwen-35b")
-	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	DescribeTable("normalizes shared queue reasons",
+		func(reason string, expected queuecontract.ReasonClass) {
+			Expect(queuecontract.ClassifyReason(reason)).To(Equal(expected))
+		},
+		Entry("nested same pool", "nested_same_pool", queuecontract.ReasonClassNestedSamePool),
+		Entry("nested cross pool", "nested_cross_pool", queuecontract.ReasonClassNestedCrossPool),
+		Entry("unknown pool", "unknown pool qwen-35b", queuecontract.ReasonClassUnknownPool),
+		Entry("daemon unreachable", "daemon_unreachable", queuecontract.ReasonClassDaemonUnreachable),
+		Entry("connection refused", "connection refused", queuecontract.ReasonClassDaemonUnreachable),
+		Entry("deadline exceeded", "context deadline exceeded", queuecontract.ReasonClassTimeoutOrCanceled),
+		Entry("queue error", "unexpected queue daemon error", queuecontract.ReasonClassQueueError),
+	)
 
-	var stdout, stderr bytes.Buffer
-	result := Acquire(config.Config{}, Options{
-		Command:     "plan_execute",
-		EventPrefix: queuecontract.CommandEventPrefixPlanExecute,
-		JSONEvents:  true,
-		Mode:        queuecontract.AdmissionModeRequired,
-	}, nil, &stdout, &stderr)
-	result.Release()
-
-	if result.Allowed {
-		t.Fatalf("required queue admission should block nested cross-pool bypass: %#v", result)
-	}
-	if result.State != queuecontract.AdmissionStateNestedCrossPool {
-		t.Fatalf("state = %q, want %q", result.State, queuecontract.AdmissionStateNestedCrossPool)
-	}
-	out := stdout.String()
-	if strings.Contains(out, `"type":"`+queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired)+`"`) ||
-		!strings.Contains(out, `"type":"`+queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueDegraded)+`"`) {
-		t.Fatalf("nested cross-pool admission must emit degraded, not acquired: %q", out)
-	}
-	if !strings.Contains(out, `"degraded":true`) {
-		t.Fatalf("nested cross-pool admission should mark degraded: %q", out)
-	}
-}
-
-func TestReasonClassNormalizesSharedQueueReasons(t *testing.T) {
-	cases := map[string]queuecontract.ReasonClass{
-		"nested_same_pool":              queuecontract.ReasonClassNestedSamePool,
-		"nested_cross_pool":             queuecontract.ReasonClassNestedCrossPool,
-		"unknown pool qwen-35b":         queuecontract.ReasonClassUnknownPool,
-		"daemon_unreachable":            queuecontract.ReasonClassDaemonUnreachable,
-		"connection refused":            queuecontract.ReasonClassDaemonUnreachable,
-		"context deadline exceeded":     queuecontract.ReasonClassTimeoutOrCanceled,
-		"unexpected queue daemon error": queuecontract.ReasonClassQueueError,
-	}
-	for reason, want := range cases {
-		if got := queuecontract.ClassifyReason(reason); got != want {
-			t.Fatalf("ClassifyReason(%q) = %q, want %q", reason, got, want)
-		}
-	}
-}
-
-func TestQueueAdmissionWaitTimeoutDefaultsAndHonorsOverride(t *testing.T) {
-	if got := queueAdmissionWaitTimeout(Options{}); got != defaultQueueAdmissionWaitTimeout {
-		t.Fatalf("queueAdmissionWaitTimeout default = %s, want %s", got, defaultQueueAdmissionWaitTimeout)
-	}
-
-	custom := 2 * time.Second
-	if got := queueAdmissionWaitTimeout(Options{WaitTimeout: custom}); got != custom {
-		t.Fatalf("queueAdmissionWaitTimeout override = %s, want %s", got, custom)
-	}
-
-	if got := queueAdmissionWaitTimeout(Options{WaitTimeout: -time.Second}); got != defaultQueueAdmissionWaitTimeout {
-		t.Fatalf("queueAdmissionWaitTimeout negative override = %s, want default %s", got, defaultQueueAdmissionWaitTimeout)
-	}
-}
+	DescribeTable("resolves the queue wait timeout",
+		func(options Options, expected time.Duration) {
+			Expect(queueAdmissionWaitTimeout(options)).To(Equal(expected))
+		},
+		Entry("uses the default", Options{}, defaultQueueAdmissionWaitTimeout),
+		Entry("honors a positive override", Options{WaitTimeout: 2 * time.Second}, 2*time.Second),
+		Entry("ignores a negative override", Options{WaitTimeout: -time.Second}, defaultQueueAdmissionWaitTimeout),
+	)
+})

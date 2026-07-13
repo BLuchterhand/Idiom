@@ -1,12 +1,14 @@
 package eval
 
 import (
-	"testing"
+	"fmt"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/contracts/autonomy"
 )
 
-func TestWriteToolFromSummary(t *testing.T) {
+var _ = ginkgo.Describe("write tool inference from summaries", func() {
 	cases := []struct {
 		summary string
 		want    string
@@ -17,64 +19,56 @@ func TestWriteToolFromSummary(t *testing.T) {
 		{summary: "Read README.md", want: ""},
 	}
 	for _, tt := range cases {
-		t.Run(tt.summary, func(t *testing.T) {
-			if got := writeToolFromSummary(tt.summary); got != tt.want {
-				t.Fatalf("writeToolFromSummary(%q) = %q, want %q", tt.summary, got, tt.want)
+		tt := tt
+		ginkgo.It(tt.summary, func() {
+			{
+				got := writeToolFromSummary(tt.summary)
+				gomega.Expect(got).To(gomega.BeEquivalentTo(tt.want), fmt.Sprintf("writeToolFromSummary(%q) = %q, want %q", tt.summary, got, tt.want))
 			}
 		})
 	}
-}
-
-func TestAutonomyEventFromDataNormalizesStructuredEvent(t *testing.T) {
+})
+var _ = ginkgo.It("autonomy event from data normalizes structured event", func() {
 	event, ok := autonomyEventFromData(map[string]any{
 		"type":        string(autonomy.EventContractCompiled),
 		"event_id":    "event-1",
 		"contract_id": "contract-1",
 	})
-	if !ok {
-		t.Fatal("expected structured autonomy event")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected structured autonomy event"))
 
-	if event.Type != autonomy.EventContractCompiled || event.SchemaVersion != autonomy.EventSchemaVersion {
-		t.Fatalf("unexpected normalized event: %#v", event)
-	}
+	gomega.Expect(event.Type).To(gomega.BeEquivalentTo(autonomy.EventContractCompiled), fmt.Sprintf("unexpected normalized event: %#v", event))
+	gomega.Expect(event.SchemaVersion).To(gomega.BeEquivalentTo(autonomy.EventSchemaVersion), fmt.Sprintf("unexpected normalized event: %#v", event))
 
-	if _, ok := autonomyEventFromData(map[string]any{"event_id": "missing-type"}); ok {
-		t.Fatal("event without type should not be accepted")
+	{
+		_, ok := autonomyEventFromData(map[string]any{"event_id": "missing-type"})
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprint("event without type should not be accepted"))
 	}
-}
-
-func TestMergeStringIntMapsTrimsAndSumsPositiveCounts(t *testing.T) {
+})
+var _ = ginkgo.It("merge string int maps trims and sums positive counts", func() {
 	got := mergeStringIntMaps(
 		map[string]int{" pack-a ": 1, "ignored": 0},
 		map[string]int{"pack-a": 2, "pack-b": 3, "negative": -1},
 	)
-	if got["pack-a"] != 3 || got["pack-b"] != 3 || len(got) != 2 {
-		t.Fatalf("unexpected merged map: %#v", got)
-	}
-}
-
-func TestPlanExecutionPacketNotUsedDetection(t *testing.T) {
+	gomega.Expect(got["pack-a"]).To(gomega.BeEquivalentTo(3), fmt.Sprintf("unexpected merged map: %#v", got))
+	gomega.Expect(got["pack-b"]).To(gomega.BeEquivalentTo(3), fmt.Sprintf("unexpected merged map: %#v", got))
+	gomega.Expect(got).To(gomega.HaveLen(2), fmt.Sprintf("unexpected merged map: %#v", got))
+})
+var _ = ginkgo.It("plan execution packet not used detection", func() {
 	handoffs := []PlanExecutionHandoffSnapshot{
 		{PacketFreshness: " stale "},
 		{PacketFreshness: " not_used_by_design "},
 	}
-	if !planExecutionHasPacketNotUsed(handoffs) {
-		t.Fatalf("expected normalized not-used packet freshness to count: %#v", handoffs)
-	}
+	gomega.Expect(planExecutionHasPacketNotUsed(handoffs)).To(gomega.BeTrue(), fmt.Sprintf("expected normalized not-used packet freshness to count: %#v", handoffs))
 
-	if !planExecutionHasPacketNotUsed([]PlanExecutionHandoffSnapshot{{PacketNotUsed: true}}) {
-		t.Fatal("expected explicit PacketNotUsed flag to count")
+	gomega.Expect(planExecutionHasPacketNotUsed([]PlanExecutionHandoffSnapshot{{PacketNotUsed: true}})).To(gomega.BeTrue(), fmt.Sprint("expected explicit PacketNotUsed flag to count"))
+})
+var _ = ginkgo.It("route plan reason from writer route reason", func() {
+	{
+		got := routePlanReasonFromWriterRouteReason(" route.multi-file-plan-execute ")
+		gomega.Expect(got).To(gomega.BeEquivalentTo("multi_file_plan_execute"), fmt.Sprintf("routePlanReasonFromWriterRouteReason = %q, want multi_file_plan_execute", got))
 	}
-}
-
-func TestRoutePlanReasonFromWriterRouteReason(t *testing.T) {
-	if got := routePlanReasonFromWriterRouteReason(" route.multi-file-plan-execute "); got != "multi_file_plan_execute" {
-		t.Fatalf("routePlanReasonFromWriterRouteReason = %q, want multi_file_plan_execute", got)
-	}
-}
-
-func TestWorkflowStateMatchesExpectedFields(t *testing.T) {
+})
+var _ = ginkgo.It("workflow state matches expected fields", func() {
 	actual := WorkflowStateSnapshot{
 		Action:              "persist",
 		Kind:                "feature",
@@ -91,7 +85,7 @@ func TestWorkflowStateMatchesExpectedFields(t *testing.T) {
 	}
 	resumable := true
 
-	if !workflowStateMatches(actual, WorkflowStateExpectation{
+	gomega.Expect(workflowStateMatches(actual, WorkflowStateExpectation{
 		Action:              "persist",
 		Kind:                "feature",
 		Phase:               "awaiting_approval",
@@ -104,12 +98,7 @@ func TestWorkflowStateMatchesExpectedFields(t *testing.T) {
 		RequireVerification: []string{"go test ./internal/evidence/eval"},
 		RequireNextActions:  []string{"wait for approval"},
 		Resumable:           &resumable,
-	}) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected workflow state to match"))
 
-		t.Fatalf("expected workflow state to match")
-	}
-
-	if workflowStateMatches(actual, WorkflowStateExpectation{RequireEditable: []string{"missing.go"}}) {
-		t.Fatal("workflow state should reject missing required editable target")
-	}
-}
+	gomega.Expect(workflowStateMatches(actual, WorkflowStateExpectation{RequireEditable: []string{"missing.go"}})).To(gomega.BeFalse(), fmt.Sprint("workflow state should reject missing required editable target"))
+})

@@ -2,6 +2,7 @@ package comprehension
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -210,7 +211,10 @@ func FreshnessHealthStats() FreshnessStats {
 
 func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessDecision, err error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return FreshnessDecision{}, errors.New("freshness context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return FreshnessDecision{}, err
 	}
 
 	root, err := normalizeRoot(req.Root)
@@ -250,6 +254,9 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 		if err != nil {
 			return decision, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return decision, err
 	}
 
 	decision.GlobalFresh = status.Fresh
@@ -323,6 +330,9 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 		}
 
 		return decision, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return decision, err
 	}
 
 	decision.GlobalFresh = after.Fresh

@@ -1,90 +1,74 @@
 package recovery
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestRecoveryFailureVocabularyIsKnown(t *testing.T) {
-	for _, lane := range []SourceLane{SourceLanePlanExecute, SourceLaneImplement} {
-		if !KnownSourceLane(lane) {
-			t.Fatalf("KnownSourceLane(%q) = false", lane)
+var _ = ginkgo.Describe("Recovery failure vocabulary", func() {
+	ginkgo.It("recognizes declared lanes, classes, and statuses", func() {
+		for _, lane := range []SourceLane{SourceLanePlanExecute, SourceLaneImplement} {
+			gomega.Expect(KnownSourceLane(lane)).To(gomega.BeTrue())
 		}
-	}
-	for _, class := range FailureClasses() {
-		if !KnownFailureClass(class) {
-			t.Fatalf("KnownFailureClass(%q) = false", class)
+		for _, class := range FailureClasses() {
+			gomega.Expect(KnownFailureClass(class)).To(gomega.BeTrue())
 		}
-	}
-	for _, status := range DirtyStatuses() {
-		if got, ok := ParseDirtyStatus(string(status)); !ok || got != status {
-			t.Fatalf("ParseDirtyStatus(%q) = %q %v, want %q true", status, got, ok, status)
+		for _, status := range DirtyStatuses() {
+			parsed, ok := ParseDirtyStatus(string(status))
+			gomega.Expect(ok).To(gomega.BeTrue())
+			gomega.Expect(parsed).To(gomega.Equal(status))
 		}
-	}
-	for _, status := range ScopeStatuses() {
-		if got, ok := ParseScopeStatus(string(status)); !ok || got != status {
-			t.Fatalf("ParseScopeStatus(%q) = %q %v, want %q true", status, got, ok, status)
+		for _, status := range ScopeStatuses() {
+			parsed, ok := ParseScopeStatus(string(status))
+			gomega.Expect(ok).To(gomega.BeTrue())
+			gomega.Expect(parsed).To(gomega.Equal(status))
 		}
-	}
 
-	if KnownSourceLane(SourceLane("typo")) {
-		t.Fatal("KnownSourceLane accepted unknown lane")
-	}
-	if KnownFailureClass(FailureClass("typo")) {
-		t.Fatal("KnownFailureClass accepted unknown class")
-	}
-	if _, ok := ParseDirtyStatus("typo"); ok {
-		t.Fatal("ParseDirtyStatus accepted unknown status")
-	}
-	if _, ok := ParseScopeStatus("typo"); ok {
-		t.Fatal("ParseScopeStatus accepted unknown status")
-	}
-}
+		gomega.Expect(KnownSourceLane(SourceLane("typo"))).To(gomega.BeFalse())
+		gomega.Expect(KnownFailureClass(FailureClass("typo"))).To(gomega.BeFalse())
+		_, ok := ParseDirtyStatus("typo")
+		gomega.Expect(ok).To(gomega.BeFalse())
+		_, ok = ParseScopeStatus("typo")
+		gomega.Expect(ok).To(gomega.BeFalse())
+	})
 
-func TestRecoveryFailureVocabularyIncludesCanonicalConstants(t *testing.T) {
-	classes := map[FailureClass]bool{}
-	for _, class := range FailureClasses() {
-		classes[class] = true
-	}
-	for _, class := range []FailureClass{
-		FailureClassPlannerFailed,
-		FailureClassPlannerBlocked,
-		FailureClassPlanMissing,
-		FailureClassPlanInvalid,
-		FailureClassScopeTooLarge,
-		FailureClassExecutorEdit,
-		FailureClassVerification,
-		FailureClassReviewRepair,
-		FailureClassStaleContext,
-		FailureClassBudgetExhausted,
-		FailureClassDirtyWorkspace,
-		FailureClassNeedsHumanAnswer,
-		FailureClassUnsafePolicyBlock,
-		FailureClassUnknown,
-	} {
-		if !classes[class] {
-			t.Fatalf("FailureClasses() missing %q: %#v", class, FailureClasses())
-		}
-	}
-}
+	ginkgo.It("includes every canonical failure class", func() {
+		gomega.Expect(FailureClasses()).To(gomega.ContainElements(
+			FailureClassPlannerFailed,
+			FailureClassPlannerBlocked,
+			FailureClassPlanMissing,
+			FailureClassPlanInvalid,
+			FailureClassScopeTooLarge,
+			FailureClassExecutorEdit,
+			FailureClassVerification,
+			FailureClassReviewRepair,
+			FailureClassStaleContext,
+			FailureClassBudgetExhausted,
+			FailureClassDirtyWorkspace,
+			FailureClassNeedsHumanAnswer,
+			FailureClassUnsafePolicyBlock,
+			FailureClassUnknown,
+		))
+	})
 
-func TestRecoveryFailureVocabularyParsersTrimButRemainCaseSensitive(t *testing.T) {
-	if got, ok := ParseFailureClass(" \t" + string(FailureClassPlannerFailed) + "\n"); !ok || got != FailureClassPlannerFailed {
-		t.Fatalf("ParseFailureClass trimmed planner_failed = %q %v", got, ok)
-	}
-	if got, ok := ParseDirtyStatus(" \t" + string(DirtyStatusDirtyInScope) + "\n"); !ok || got != DirtyStatusDirtyInScope {
-		t.Fatalf("ParseDirtyStatus trimmed dirty_in_scope = %q %v", got, ok)
-	}
-	if got, ok := ParseScopeStatus(" \t" + string(ScopeStatusOutOfScope) + "\n"); !ok || got != ScopeStatusOutOfScope {
-		t.Fatalf("ParseScopeStatus trimmed out_of_scope = %q %v", got, ok)
-	}
+	ginkgo.It("trims canonical inputs while remaining case-sensitive", func() {
+		class, ok := ParseFailureClass(" \t" + string(FailureClassPlannerFailed) + "\n")
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(class).To(gomega.Equal(FailureClassPlannerFailed))
+		dirty, ok := ParseDirtyStatus(" \t" + string(DirtyStatusDirtyInScope) + "\n")
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(dirty).To(gomega.Equal(DirtyStatusDirtyInScope))
+		scope, ok := ParseScopeStatus(" \t" + string(ScopeStatusOutOfScope) + "\n")
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(scope).To(gomega.Equal(ScopeStatusOutOfScope))
 
-	for _, raw := range []string{"PLANNER_FAILED", "DIRTY_IN_SCOPE", "OUT_OF_SCOPE"} {
-		if class, ok := ParseFailureClass(raw); ok {
-			t.Fatalf("ParseFailureClass(%q) = %q, true", raw, class)
+		for _, raw := range []string{"PLANNER_FAILED", "DIRTY_IN_SCOPE", "OUT_OF_SCOPE"} {
+			_, ok = ParseFailureClass(raw)
+			gomega.Expect(ok).To(gomega.BeFalse())
+			_, ok = ParseDirtyStatus(raw)
+			gomega.Expect(ok).To(gomega.BeFalse())
+			_, ok = ParseScopeStatus(raw)
+			gomega.Expect(ok).To(gomega.BeFalse())
 		}
-		if status, ok := ParseDirtyStatus(raw); ok {
-			t.Fatalf("ParseDirtyStatus(%q) = %q, true", raw, status)
-		}
-		if status, ok := ParseScopeStatus(raw); ok {
-			t.Fatalf("ParseScopeStatus(%q) = %q, true", raw, status)
-		}
-	}
-}
+	})
+})

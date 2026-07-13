@@ -1,7 +1,9 @@
 [
   "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read the label implementation target before editing\",\"why_not_answering\":\"need source-body evidence for the edit\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\"}",
   "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\"}",
   "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"Change the short label text from Save changes to Save.\"}",
   "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"refresh the changed target after verification\"}",
   "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
 ]

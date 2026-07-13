@@ -16,6 +16,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/shortid"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -32,7 +33,7 @@ func mutatePlanLines(path string, fn func(lines []string) []string) error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
-func (m *Model) mutatePlanLines(path string, fn func(lines []string) []string) error {
+func (m *promptExecutionSession) mutatePlanLines(path string, fn func(lines []string) []string) error {
 	err := mutatePlanLines(path, fn)
 	if err == nil {
 		m.invalidatePlanCache()
@@ -41,19 +42,13 @@ func (m *Model) mutatePlanLines(path string, fn func(lines []string) []string) e
 	return err
 }
 
-// planWriteSnapshot captures file content before a write for diff tracking
-// in the plan overlay. Unlike rollbackEntry (which powers /undo), this type
-// is consumed by recordWriteSuccess to compute unified diffs that appear in
-// the plan markdown and diffs.jsonl.
-//
-// existed is tracked so create-new-file writes render as all-add hunks rather
-// than a diff against an empty baseline that would be indistinguishable from
-// a truly-empty file.
-type planWriteSnapshot struct {
-	Path    string
-	Before  string
-	Existed bool
-	Request workspace.ToolRequest
+func (m *Model) mutatePlanLines(path string, fn func(lines []string) []string) error {
+	err := mutatePlanLines(path, fn)
+	if err == nil {
+		m.invalidatePlanCache()
+	}
+
+	return err
 }
 
 // maxFailureArgsLen caps how much of the serialized ToolRequest is stored
@@ -88,23 +83,6 @@ type failureRecord struct {
 	Args        string `json:"args,omitempty"`
 }
 
-// diffsPath returns the absolute path of the session's diff log, a
-// JSONL file whose records carry the per-write unified diff alongside
-// its plan-entry id. Mirrors failuresPath's layout under .planning/.
-func (m *Model) diffsPath() string {
-	id := m.sessionID()
-	if id == "" {
-		return ""
-	}
-
-	dir := planDirName
-	if root := m.workspace.Root(); root != "" {
-		dir = filepath.Join(root, planDirName)
-	}
-
-	return filepath.Join(dir, id+".diffs.jsonl")
-}
-
 // planDiffEntry is one record in <session-id>.diffs.jsonl. The id is
 // the stable handle the plan markdown line points to; Diff carries
 // the unified-diff text used by the clickable overlay in the UI.
@@ -122,8 +100,8 @@ type planDiffEntry struct {
 // failuresPath returns the absolute path of the session's failures log.
 // It mirrors ensurePlanPath: both files live under .planning/<session-id>.*
 // so a resumed session finds both attached artifacts without bookkeeping.
-func (m *Model) failuresPath() string {
-	id := m.sessionID()
+func (m *promptExecutionSession) failuresPath() string {
+	id := sessionlog.SessionIDFromPath(m.debugLogPath)
 	if id == "" {
 		return ""
 	}
@@ -145,7 +123,7 @@ func (m *Model) failuresPath() string {
 // missing and silently drops the write if the session id isn't resolvable
 // yet (very first turn edge case). A failed write-of-a-failure must not
 // break the agent loop.
-func (m *Model) recordWriteFailure(step int, req workspace.ToolRequest, result workspace.ToolResult) {
+func (m *promptExecutionSession) recordWriteFailure(step int, req workspace.ToolRequest, result workspace.ToolResult) {
 	if m == nil {
 		return
 	}
@@ -196,76 +174,14 @@ func (m *Model) recordWriteFailure(step int, req workspace.ToolRequest, result w
 	}
 }
 
-// capturePlanSnapshot records the pre-write state of every file a
-// write-class tool is about to mutate. Called from PreExecute after
-// the permission decision resolves to Allow. Snapshots are keyed by
-// step number so the matching ToolResult can pair them up.
-//
-// Non-write tools and read-only failures produce no snapshots. Errors
-// reading a file (most commonly "does not exist yet" for a brand-new
-// file) are captured as an empty baseline with Existed=false so the
-// diff renders as pure additions.
-func (m *Model) capturePlanSnapshot(step int, req workspace.ToolRequest) {
-	if m == nil || m.workspace == nil {
-		return
-	}
-
-	paths := rollbackPathsForRequest(req)
-	if len(paths) == 0 {
-		return
-	}
-
-	root := m.workspace.CWD()
-
-	var snaps []planWriteSnapshot
-
-	for _, p := range paths {
-		abs := p
-		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(root, abs)
-		}
-
-		snap := planWriteSnapshot{Path: p, Request: req}
-		if data, err := os.ReadFile(abs); err == nil {
-			snap.Before = string(data)
-			snap.Existed = true
-		} else if os.IsNotExist(err) {
-			snap.Existed = false
-		} else {
-			// Any other read error (permissions, I/O) means we cannot
-			// reliably diff this call; skip it rather than claim empty
-			// baseline.
-			continue
-		}
-
-		snaps = append(snaps, snap)
-	}
-
-	if len(snaps) == 0 {
-		return
-	}
-
-	if m.plan.writeSnapshots == nil {
-		m.plan.writeSnapshots = map[int][]planWriteSnapshot{}
-	}
-
-	m.plan.writeSnapshots[step] = snaps
-}
-
 // recordWriteSuccess lands a successful write into the plan: for each
-// snapshot from the matching PreExecute, it reads the new content from
-// disk, computes a unified diff, appends a record to <id>.diffs.jsonl,
-// and adds a checked-off line to the plan markdown. The snapshot map
-// entry for the step is always cleared so a later failed write doesn't
-// re-bind to stale baselines.
-func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result workspace.ToolResult) {
+// exact file change attached by the rooted workspace transaction, it computes
+// a unified diff, appends a record to <id>.diffs.jsonl, and adds a checked-off
+// line to the plan markdown. It never reconstructs commit evidence with a
+// later host filesystem read.
+func (m *promptExecutionSession) recordWriteSuccess(step int, req workspace.ToolRequest, result workspace.ToolResult) {
 	if m == nil || m.workspace == nil {
 		return
-	}
-
-	snaps, ok := m.plan.writeSnapshots[step]
-	if ok {
-		delete(m.plan.writeSnapshots, step)
 	}
 
 	// Only land success cases; failures are captured by recordWriteFailure.
@@ -277,17 +193,21 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 		return
 	}
 
-	if m.sessionID() == "" {
+	if sessionlog.SessionIDFromPath(m.debugLogPath) == "" {
 		return
 	}
 
 	// Write the session heading once per live session.
 	m.ensurePlanSessionHeading()
 
-	// mkdir and go_move_declarations don't produce meaningful file-level
-	// diffs; record the plan-entry without a diff payload so the user
-	// still sees the action in the plan.
-	if len(snaps) == 0 {
+	var changes []workspace.MutationFileChange
+	if receipt := result.CommitReceipt(); receipt != nil {
+		changes = receipt.FileChanges()
+	}
+
+	// Directory-only mutations and results without exact private commit bodies
+	// still receive a plan entry, but never a fabricated file diff.
+	if len(changes) == 0 {
 		id := newPlanEntryID()
 		m.appendPlanDiffEntry(planDiffEntry{
 			ID:          id,
@@ -309,37 +229,27 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 		return
 	}
 
-	root := m.workspace.CWD()
-
-	for _, snap := range snaps {
-		abs := snap.Path
-		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(root, abs)
-		}
-
-		var after string
-
-		if data, err := os.ReadFile(abs); err == nil {
-			after = string(data)
-		}
-
-		diff := planexecute.UnifiedDiff(snap.Path, snap.Before, after)
+	for _, change := range changes {
+		before, _ := change.BeforeBody()
+		after, _ := change.AfterBody()
+		path := change.CanonicalID()
+		diff := planexecute.UnifiedDiff(path, string(before), string(after))
 		id := newPlanEntryID()
 		m.appendPlanDiffEntry(planDiffEntry{
 			ID:          id,
 			Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
 			Step:        step,
 			Tool:        req.Tool,
-			Path:        snap.Path,
+			Path:        path,
 			Description: req.Description,
 			Summary:     result.Summary,
 			Diff:        diff,
 		})
 
-		if !m.attachWriteToPlannedItem(req, snap.Path, id) &&
-			!m.attachWriteToSubmittedEdit(snap.Path, id) {
+		if !m.attachWriteToPlannedItem(req, path, id) &&
+			!m.attachWriteToSubmittedEdit(path, id) {
 
-			m.appendUnplannedCheckedLine(planLineLabel(req, snap.Path), id)
+			m.appendUnplannedCheckedLine(planLineLabel(req, path), id)
 		}
 	}
 }
@@ -350,7 +260,7 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 // dedicated subsection keeps ledger-covered work visually separated
 // from drive-by edits, so a reviewer can see at a glance which writes
 // exceeded the triage plan.
-func (m *Model) appendUnplannedCheckedLine(label, id string) {
+func (m *promptExecutionSession) appendUnplannedCheckedLine(label, id string) {
 	path := m.ensurePlanPath()
 	if path == "" {
 		return
@@ -417,7 +327,7 @@ func planLineLabel(req workspace.ToolRequest, path string) string {
 // plan file the first time the autodoc lands a record in this live
 // session. If the plan file is empty or missing the heading also
 // includes a top-level title so fresh sessions get a usable document.
-func (m *Model) ensurePlanSessionHeading() {
+func (m *promptExecutionSession) ensurePlanSessionHeading() {
 	if m == nil || m.plan.sessionHeadingWritten {
 		return
 	}
@@ -434,9 +344,9 @@ func (m *Model) ensurePlanSessionHeading() {
 	// Read existing content so we don't duplicate the heading across
 	// process restarts that resumed into the same session id.
 	existing, _ := os.ReadFile(path)
-	heading := fmt.Sprintf("## Session %s — %s\n\n", m.sessionID(), time.Now().UTC().Format("2006-01-02 15:04"))
+	heading := fmt.Sprintf("## Session %s — %s\n\n", sessionlog.SessionIDFromPath(m.debugLogPath), time.Now().UTC().Format("2006-01-02 15:04"))
 
-	if strings.Contains(string(existing), "## Session "+m.sessionID()) {
+	if strings.Contains(string(existing), "## Session "+sessionlog.SessionIDFromPath(m.debugLogPath)) {
 		m.plan.sessionHeadingWritten = true
 		return
 	}
@@ -444,7 +354,7 @@ func (m *Model) ensurePlanSessionHeading() {
 	var prelude string
 
 	if len(existing) == 0 {
-		prelude = fmt.Sprintf("# Plan — %s\n\n", m.sessionID())
+		prelude = fmt.Sprintf("# Plan — %s\n\n", sessionlog.SessionIDFromPath(m.debugLogPath))
 	} else if !strings.HasSuffix(string(existing), "\n") {
 		prelude = "\n"
 	}
@@ -465,8 +375,12 @@ func (m *Model) ensurePlanSessionHeading() {
 // appendPlanDiffEntry writes one JSONL record to <id>.diffs.jsonl.
 // Silently drops on any I/O error — a failed diff-log write must not
 // break the agent loop, the same invariant recordWriteFailure honors.
-func (m *Model) appendPlanDiffEntry(entry planDiffEntry) {
-	path := m.diffsPath()
+func (m *promptExecutionSession) appendPlanDiffEntry(entry planDiffEntry) {
+	root := ""
+	if m.workspace != nil {
+		root = m.workspace.Root()
+	}
+	path := planningArtifactPath(root, sessionlog.SessionIDFromPath(m.debugLogPath), ".diffs.jsonl")
 	if path == "" {
 		return
 	}
@@ -506,7 +420,7 @@ func newPlanEntryID() string {
 //
 // Called from the onToolResult handler for any task_ledger event with
 // no error. Safe to call with a nil receiver or missing session id.
-func (m *Model) recordTaskLedger(req workspace.ToolRequest, result workspace.ToolResult) {
+func (m *promptExecutionSession) recordTaskLedger(req workspace.ToolRequest, result workspace.ToolResult) {
 	if m == nil {
 		return
 	}
@@ -519,7 +433,7 @@ func (m *Model) recordTaskLedger(req workspace.ToolRequest, result workspace.Too
 		return
 	}
 
-	if m.sessionID() == "" {
+	if sessionlog.SessionIDFromPath(m.debugLogPath) == "" {
 		return
 	}
 
@@ -577,7 +491,7 @@ func (m *Model) recordTaskLedger(req workspace.ToolRequest, result workspace.Too
 // The subsection header is added only if the plan doesn't already
 // contain one under the current session, so resumed sessions stay
 // coherent.
-func (m *Model) appendPlannedItems(items []workspace.TaskLedgerItem) {
+func (m *promptExecutionSession) appendPlannedItems(items []workspace.TaskLedgerItem) {
 	path := m.ensurePlanPath()
 	if path == "" {
 		return
@@ -605,7 +519,7 @@ func (m *Model) appendPlannedItems(items []workspace.TaskLedgerItem) {
 
 // renderedLedgerSnapshot returns a copy of the currently-rendered ledger items
 // for use as a dedup baseline within a single recordTaskLedger call.
-func (m *Model) renderedLedgerSnapshot() map[string]workspace.TaskLedgerItem {
+func (m *promptExecutionSession) renderedLedgerSnapshot() map[string]workspace.TaskLedgerItem {
 	if len(m.plan.ledgerRenderedIDs) == 0 {
 		return nil
 	}
@@ -632,7 +546,7 @@ const ledgerDedupTimeout = 10 * time.Second
 // cheap normalized-content comparison first; on a miss it asks the model via
 // completeChatWithFallback with a short timeout so the synchronous call never
 // blocks a turn for more than ledgerDedupTimeout.
-func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string]workspace.TaskLedgerItem) string {
+func (m *promptExecutionSession) findDuplicateLedgerItemID(newContent string, rendered map[string]workspace.TaskLedgerItem) string {
 	if len(rendered) == 0 {
 		return ""
 	}
@@ -743,7 +657,7 @@ func plannedItemLine(item workspace.TaskLedgerItem) string {
 // The replacement preserves everything on the existing line (content,
 // paths annotation, indent) so a user hand-editing the plan doesn't
 // lose their notes.
-func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID string) bool {
+func (m *promptExecutionSession) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID string) bool {
 	if m == nil || len(m.plan.ledgerItems) == 0 {
 		return false
 	}
@@ -930,7 +844,7 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 // attachWriteToSubmittedEdit matches a successful write against a
 // submit_plan checklist entry by path, flipping [ ] → [x] and
 // appending the diff anchor. Returns true on a successful match.
-func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
+func (m *promptExecutionSession) attachWriteToSubmittedEdit(path, diffID string) bool {
 	if m == nil || len(m.plan.submittedEdits) == 0 {
 		return false
 	}
@@ -1012,7 +926,7 @@ func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
 // ledger item when its status changes (e.g. pending → in_progress).
 // The rewrite is in-place in the plan file, preserving all anchors and
 // the item text. No-op when the item has not been rendered yet.
-func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
+func (m *promptExecutionSession) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 	if m == nil {
 		return
 	}
@@ -1078,7 +992,7 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 //
 // On a second submit_plan (correction round), the existing "### Plan"
 // section is replaced entirely with the latest artifact.
-func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.ToolResult) {
+func (m *promptExecutionSession) recordSubmittedPlan(req workspace.ToolRequest, result workspace.ToolResult) {
 	if m == nil {
 		return
 	}
@@ -1095,7 +1009,7 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 		return
 	}
 
-	if m.sessionID() == "" {
+	if sessionlog.SessionIDFromPath(m.debugLogPath) == "" {
 		return
 	}
 

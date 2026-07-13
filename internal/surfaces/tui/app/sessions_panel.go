@@ -121,7 +121,7 @@ func (m *Model) refreshSessionsList() {
 	// Filter out the live session's own log: resuming into yourself
 	// adds nothing and invites confusion. Empty debugLogPath (pre-init
 	// race) falls through harmlessly.
-	currentID := m.sessionID()
+	currentID := sessionlog.SessionIDFromPath(m.debugLogPath)
 	filtered := make([]sessionlog.SessionInfo, 0, len(sessions))
 
 	for _, s := range sessions {

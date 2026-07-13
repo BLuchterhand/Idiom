@@ -19,7 +19,8 @@
     "traceability_matrix": "evidence/traceability_matrix.json",
     "implementation_ledger": "implementation_ledger.jsonl",
     "briefs": "briefs/",
-    "reports": "reports/"
+    "reports": "reports/",
+    "events": "events.jsonl"
   },
   "context": {
     "context_pack_id": "scripted-adr-pack",

@@ -1,192 +1,159 @@
 package recovery
 
 import (
-	"testing"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	"github.com/onsi/gomega/gstruct"
 
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/contracts/workflowstate"
 )
 
-func TestProjectPacketStatusReportsBasePacketState(t *testing.T) {
-	packet := recoveryStatusProjectionTestPacket()
+var _ = ginkgo.Describe("Recovery packet status projection", func() {
+	ginkgo.It("reports the base packet as nonterminal decomposition work", func() {
+		projection := ProjectPacketStatus(recoveryStatusProjectionTestPacket(), nil)
 
-	projection := ProjectPacketStatus(packet, nil)
-
-	if projection.Status != recoverycontract.PacketStatusReady || projection.NextAction != recoverycontract.NextActionReviewDecomposition {
-		t.Fatalf("unexpected projection: %#v", projection)
-	}
-
-	if projection.WorkflowID != workflowstate.WorkflowRecovery ||
-		projection.WorkflowState != workflowstate.StateDecomposing ||
-		projection.WorkflowTerminalState != "" ||
-		projection.Dispatchable {
-
-		t.Fatalf("ready packet should be a nonterminal decomposing workflow state, got %#v", projection)
-	}
-
-	if len(projection.Blockers) != 0 {
-		t.Fatalf("ready packet should not have blockers: %#v", projection.Blockers)
-	}
-
-	if len(projection.CandidateAtoms) != 2 || len(projection.ResidualWork) != 2 {
-		t.Fatalf("projection dropped packet work: %#v", projection)
-	}
-}
-
-func TestProjectPacketStatusAppliesPartialReconciliationRemainingWork(t *testing.T) {
-	packet := recoveryStatusProjectionTestPacket()
-
-	reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
-		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recoverycontract.ReconciliationVerification{
-			Status: recoverycontract.ReconciliationVerificationPass,
-			Commands: []recoverycontract.ReconciliationCommandResult{{
-				Command:  "go test ./internal/workflows/recovery",
-				Status:   recoverycontract.ReconciliationVerificationPass,
-				ExitCode: 0,
-			}},
-		},
+		gomega.Expect(projection).To(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"Status":                gomega.Equal(recoverycontract.PacketStatusReady),
+			"NextAction":            gomega.Equal(recoverycontract.NextActionReviewDecomposition),
+			"WorkflowID":            gomega.Equal(workflowstate.WorkflowRecovery),
+			"WorkflowState":         gomega.Equal(workflowstate.StateDecomposing),
+			"WorkflowTerminalState": gomega.BeEmpty(),
+			"Dispatchable":          gomega.BeFalse(),
+			"Blockers":              gomega.BeEmpty(),
+			"CandidateAtoms":        gomega.HaveLen(2),
+			"ResidualWork":          gomega.HaveLen(2),
+		}))
 	})
-	if err != nil {
-		t.Fatalf("BuildReconciliation: %v", err)
-	}
 
-	projection := ProjectPacketStatus(packet, &reconciliation)
+	ginkgo.It("projects only work remaining after a partial reconciliation", func() {
+		packet := recoveryStatusProjectionTestPacket()
+		reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
+			CompletedAtomIDs: []string{"recovery-001"},
+			Verification: recoverycontract.ReconciliationVerification{
+				Status: recoverycontract.ReconciliationVerificationPass,
+				Commands: []recoverycontract.ReconciliationCommandResult{{
+					Command:  "go test ./internal/workflows/recovery",
+					Status:   recoverycontract.ReconciliationVerificationPass,
+					ExitCode: 0,
+				}},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if projection.Status != recoverycontract.PacketStatusPartial || projection.NextAction != recoverycontract.NextActionReviewDecomposition {
-		t.Fatalf("unexpected reconciled projection: %#v", projection)
-	}
-
-	if len(projection.CandidateAtoms) != 1 || projection.CandidateAtoms[0].ID != "recovery-002" {
-		t.Fatalf("expected only remaining atom, got %#v", projection.CandidateAtoms)
-	}
-
-	if projection.WorkflowState != workflowstate.StateReconciling || projection.WorkflowTerminalState != "" || projection.Dispatchable {
-		t.Fatalf("partial recovery should remain nonterminal reconciling, got %#v", projection)
-	}
-
-	if len(projection.ResidualWork) != 1 || projection.ResidualWork[0].ID != "residual-002" {
-		t.Fatalf("expected only remaining residual, got %#v", projection.ResidualWork)
-	}
-
-	if len(projection.ReconciliationFindings) != 0 || len(projection.Blockers) != 0 {
-		t.Fatalf("valid partial reconciliation should not add findings/blockers: %#v", projection)
-	}
-}
-
-func TestProjectPacketStatusBlocksInvalidReconciliation(t *testing.T) {
-	packet := recoveryStatusProjectionTestPacket()
-
-	reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
-		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recoverycontract.ReconciliationVerification{
-			Status: recoverycontract.ReconciliationVerificationPass,
-			Commands: []recoverycontract.ReconciliationCommandResult{{
-				Command:  "go test ./internal/workflows/recovery",
-				Status:   recoverycontract.ReconciliationVerificationPass,
-				ExitCode: 0,
-			}},
-		},
+		projection := ProjectPacketStatus(packet, &reconciliation)
+		gomega.Expect(projection).To(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"Status":                 gomega.Equal(recoverycontract.PacketStatusPartial),
+			"NextAction":             gomega.Equal(recoverycontract.NextActionReviewDecomposition),
+			"WorkflowState":          gomega.Equal(workflowstate.StateReconciling),
+			"WorkflowTerminalState":  gomega.BeEmpty(),
+			"Dispatchable":           gomega.BeFalse(),
+			"ReconciliationFindings": gomega.BeEmpty(),
+			"Blockers":               gomega.BeEmpty(),
+		}))
+		gomega.Expect(projection.CandidateAtoms).To(gomega.ConsistOf(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"ID": gomega.Equal("recovery-002"),
+		})))
+		gomega.Expect(projection.ResidualWork).To(gomega.ConsistOf(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"ID": gomega.Equal("residual-002"),
+		})))
 	})
-	if err != nil {
-		t.Fatalf("BuildReconciliation: %v", err)
-	}
 
-	reconciliation.PacketDigest = "sha256:stale"
-	reconciliation.Blockers = []string{"operator review required"}
+	ginkgo.It("blocks an invalid reconciliation and exposes its findings", func() {
+		packet := recoveryStatusProjectionTestPacket()
+		reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
+			CompletedAtomIDs: []string{"recovery-001"},
+			Verification: recoverycontract.ReconciliationVerification{
+				Status: recoverycontract.ReconciliationVerificationPass,
+				Commands: []recoverycontract.ReconciliationCommandResult{{
+					Command:  "go test ./internal/workflows/recovery",
+					Status:   recoverycontract.ReconciliationVerificationPass,
+					ExitCode: 0,
+				}},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		reconciliation.PacketDigest = "sha256:stale"
+		reconciliation.Blockers = []string{"operator review required"}
 
-	projection := ProjectPacketStatus(packet, &reconciliation)
-
-	if projection.Status != recoverycontract.PacketStatusBlocked || projection.NextAction != recoverycontract.NextActionInspectFailure {
-		t.Fatalf("invalid reconciliation should block inspection, got %#v", projection)
-	}
-
-	if projection.WorkflowState != workflowstate.StateTerminal || projection.WorkflowTerminalState != workflowstate.TerminalStateBlocked || projection.Dispatchable {
-		t.Fatalf("invalid reconciliation should not be dispatchable, got %#v", projection)
-	}
-
-	if len(projection.ReconciliationFindings) == 0 {
-		t.Fatalf("expected reconciliation validation findings")
-	}
-
-	if !statusProjectionBlockersContain(projection.Blockers, "recovery_reconciliation_packet_digest_mismatch:") ||
-		!statusProjectionBlockersContain(projection.Blockers, "operator review required") {
-
-		t.Fatalf("expected validation and reconciliation blockers, got %#v", projection.Blockers)
-	}
-}
-
-func TestProjectPacketStatusClearsRecoveredBlockers(t *testing.T) {
-	packet := recoveryStatusProjectionTestPacket()
-
-	packet.PartialState.DirtyStatus = recoverycontract.DirtyStatusDirtyOutScope
-
-	reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
-		CompletedAtomIDs: []string{"recovery-001", "recovery-002"},
-		Verification: recoverycontract.ReconciliationVerification{
-			Status: recoverycontract.ReconciliationVerificationPass,
-			Commands: []recoverycontract.ReconciliationCommandResult{{
-				Command:  "go test ./internal/workflows/recovery",
-				Status:   recoverycontract.ReconciliationVerificationPass,
-				ExitCode: 0,
-			}, {
-				Command:  "go test ./internal/workflows/recoverstatus",
-				Status:   recoverycontract.ReconciliationVerificationPass,
-				ExitCode: 0,
-			}},
-		},
+		projection := ProjectPacketStatus(packet, &reconciliation)
+		gomega.Expect(projection).To(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"Status":                 gomega.Equal(recoverycontract.PacketStatusBlocked),
+			"NextAction":             gomega.Equal(recoverycontract.NextActionInspectFailure),
+			"WorkflowState":          gomega.Equal(workflowstate.StateTerminal),
+			"WorkflowTerminalState":  gomega.Equal(workflowstate.TerminalStateBlocked),
+			"Dispatchable":           gomega.BeFalse(),
+			"ReconciliationFindings": gomega.Not(gomega.BeEmpty()),
+		}))
+		gomega.Expect(projection.Blockers).To(gomega.And(
+			gomega.ContainElement(gomega.HavePrefix("recovery_reconciliation_packet_digest_mismatch:")),
+			gomega.ContainElement("operator review required"),
+		))
 	})
-	if err != nil {
-		t.Fatalf("BuildReconciliation: %v", err)
-	}
 
-	projection := ProjectPacketStatus(packet, &reconciliation)
+	ginkgo.It("clears recovered work and prior packet blockers", func() {
+		packet := recoveryStatusProjectionTestPacket()
+		packet.PartialState.DirtyStatus = recoverycontract.DirtyStatusDirtyOutScope
+		reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
+			CompletedAtomIDs: []string{"recovery-001", "recovery-002"},
+			Verification: recoverycontract.ReconciliationVerification{
+				Status: recoverycontract.ReconciliationVerificationPass,
+				Commands: []recoverycontract.ReconciliationCommandResult{{
+					Command:  "go test ./internal/workflows/recovery",
+					Status:   recoverycontract.ReconciliationVerificationPass,
+					ExitCode: 0,
+				}, {
+					Command:  "go test ./internal/workflows/recoverstatus",
+					Status:   recoverycontract.ReconciliationVerificationPass,
+					ExitCode: 0,
+				}},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if projection.Status != recoverycontract.PacketStatusRecovered || projection.NextAction != recoverycontract.NextActionNone {
-		t.Fatalf("expected recovered projection, got %#v", projection)
-	}
+		projection := ProjectPacketStatus(packet, &reconciliation)
+		gomega.Expect(projection).To(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"Status":                gomega.Equal(recoverycontract.PacketStatusRecovered),
+			"NextAction":            gomega.Equal(recoverycontract.NextActionNone),
+			"WorkflowState":         gomega.Equal(workflowstate.StateTerminal),
+			"WorkflowTerminalState": gomega.Equal(workflowstate.TerminalStateComplete),
+			"Dispatchable":          gomega.BeFalse(),
+			"CandidateAtoms":        gomega.BeEmpty(),
+			"ResidualWork":          gomega.BeEmpty(),
+			"Blockers":              gomega.BeEmpty(),
+		}))
+	})
 
-	if projection.WorkflowState != workflowstate.StateTerminal || projection.WorkflowTerminalState != workflowstate.TerminalStateComplete || projection.Dispatchable {
-		t.Fatalf("recovered packet should be complete and not dispatchable, got %#v", projection)
-	}
+	ginkgo.It("reports dirty out-of-scope work as a terminal dirty-scope state", func() {
+		packet := recoveryStatusProjectionTestPacket()
+		packet.PartialState.DirtyStatus = recoverycontract.DirtyStatusDirtyOutScope
 
-	if len(projection.CandidateAtoms) != 0 || len(projection.ResidualWork) != 0 || len(projection.Blockers) != 0 {
-		t.Fatalf("recovered projection should clear remaining work and blockers: %#v", projection)
-	}
-}
+		projection := ProjectPacketStatus(packet, nil)
+		gomega.Expect(projection).To(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"WorkflowState":         gomega.Equal(workflowstate.StateTerminal),
+			"WorkflowTerminalState": gomega.Equal(workflowstate.TerminalStateDirtyScope),
+			"Dispatchable":          gomega.BeFalse(),
+		}))
+	})
 
-func TestProjectPacketStatusReportsDirtyScope(t *testing.T) {
-	packet := recoveryStatusProjectionTestPacket()
-	packet.PartialState.DirtyStatus = recoverycontract.DirtyStatusDirtyOutScope
+	ginkgo.It("records a workflow projection validation error in a blocked projection", func() {
+		projection := blockedPacketStatusProjection(recoverycontract.PacketStatusProjection{
+			Status:        recoverycontract.PacketStatusReady,
+			WorkflowID:    workflowstate.WorkflowRecovery,
+			WorkflowState: workflowstate.StateDecomposing,
+			Dispatchable:  true,
+		}, workflowstate.ValidateStateProjection(workflowstate.WorkflowRecovery, workflowstate.StateDecomposing, "", true))
 
-	projection := ProjectPacketStatus(packet, nil)
-
-	if projection.WorkflowState != workflowstate.StateTerminal || projection.WorkflowTerminalState != workflowstate.TerminalStateDirtyScope || projection.Dispatchable {
-		t.Fatalf("dirty out-of-scope packet should be dirty-scope and not dispatchable, got %#v", projection)
-	}
-}
-
-func TestBlockedPacketStatusProjectionRecordsProjectionValidationError(t *testing.T) {
-	projection := blockedPacketStatusProjection(recoverycontract.PacketStatusProjection{
-		Status:        recoverycontract.PacketStatusReady,
-		WorkflowID:    workflowstate.WorkflowRecovery,
-		WorkflowState: workflowstate.StateDecomposing,
-		Dispatchable:  true,
-	}, workflowstate.ValidateStateProjection(workflowstate.WorkflowRecovery, workflowstate.StateDecomposing, "", true))
-
-	if projection.Status != recoverycontract.PacketStatusBlocked ||
-		projection.WorkflowState != workflowstate.StateTerminal ||
-		projection.WorkflowTerminalState != workflowstate.TerminalStateBlocked ||
-		projection.Dispatchable ||
-		projection.NextAction != recoverycontract.NextActionInspectFailure {
-
-		t.Fatalf("invalid projection should become blocked inspect projection, got %#v", projection)
-	}
-
-	if !statusProjectionBlockersContain(projection.Blockers, "workflow projection invalid:") {
-		t.Fatalf("projection validation error missing from blockers: %#v", projection.Blockers)
-	}
-}
+		gomega.Expect(projection).To(gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+			"Status":                gomega.Equal(recoverycontract.PacketStatusBlocked),
+			"WorkflowState":         gomega.Equal(workflowstate.StateTerminal),
+			"WorkflowTerminalState": gomega.Equal(workflowstate.TerminalStateBlocked),
+			"Dispatchable":          gomega.BeFalse(),
+			"NextAction":            gomega.Equal(recoverycontract.NextActionInspectFailure),
+		}))
+		gomega.Expect(projection.Blockers).To(gomega.ContainElement(gomega.HavePrefix("workflow projection invalid:")))
+	})
+})
 
 func recoveryStatusProjectionTestPacket() recoverycontract.DecompositionPacket {
 	return recoverycontract.DecompositionPacket{
@@ -221,14 +188,4 @@ func recoveryStatusProjectionTestPacket() recoverycontract.DecompositionPacket {
 		}},
 		NextAction: recoverycontract.NextActionReviewDecomposition,
 	}
-}
-
-func statusProjectionBlockersContain(blockers []string, want string) bool {
-	for _, blocker := range blockers {
-		if len(blocker) >= len(want) && blocker[:len(want)] == want {
-			return true
-		}
-	}
-
-	return false
 }

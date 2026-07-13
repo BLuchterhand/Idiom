@@ -320,18 +320,7 @@ func executionFeedbackPassingStatus(status string) bool {
 }
 
 func executionFeedbackContainsPrivacyMarker(value string) bool {
-	v := strings.ToLower(strings.TrimSpace(value))
-	if v == "" {
-		return false
-	}
-
-	for _, marker := range executionFeedbackPrivacyMarkers {
-		if strings.Contains(v, marker) {
-			return true
-		}
-	}
-
-	return false
+	return executionFeedbackPrivacyMarker(value) != ""
 }
 
 func executionFeedbackUnsupportedAuthorityMarker(value string) string {

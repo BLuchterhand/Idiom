@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -18,6 +19,8 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
+	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
@@ -27,6 +30,7 @@ import (
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
 	"idiom/internal/workflows/planexecute"
+	"idiom/internal/workflows/productworkflow"
 
 	"cmp"
 	"encoding/json"
@@ -162,6 +166,149 @@ func discoveryAggregates(counts map[string]int) []transcript.DiscoveryAggregate 
 	return out
 }
 
+// promptRuntimeState is the complete non-UI state boundary for one detached
+// prompt turn. Snapshot state is private working context that is projected
+// incrementally (for example transcript messages) or restored by the turn.
+// Completion state is the durable result transferred back to Update as one
+// value, so adding execution state cannot silently miss a parallel delta.
+type promptRuntimeState struct {
+	promptRuntimeSnapshotState
+	promptRuntimeCompletionState
+}
+
+type promptRuntimeSnapshotState struct {
+	activeProfiles                     []string
+	sessionSummaryWritten              bool
+	forcedTaskFamily                   string
+	suppressPromptTranscript           bool
+	requestHistoryOverride             *[]llama.ChatMessage
+	nonInteractive                     bool
+	plannerOwnedVerification           bool
+	maxTokensOverride                  int
+	disableThinkingOverride            bool
+	forcedReadinessOpenObligations     []string
+	suppressGreenfieldConfirmation     bool
+	planExecuteActive                  bool
+	planExecuteScopeContract           plancontract.PlanScopeContract
+	planExecuteAuthorizedNewFiles      []string
+	planExecuteWriteEnvelope           []string
+	planExecuteWriteEnvelopeExplicit   bool
+	planExecuteSourceSatisfiedObserver func([]string)
+}
+
+type promptRuntimeCompletionState struct {
+	promptStack            promptstack.Stack
+	composedPrompt         string
+	composedPromptSources  []promptstack.Source
+	composedPromptCacheKey string
+	contextError           string
+	sessionAgg             sessionAggregate
+
+	lastAssistantReasoningContent string
+	lastTurnSourceResults         []workspace.ToolResult
+	lastTurnSourceObjective       string
+	lastPlanExecuteRunResult      *planexecute.RunResult
+	resumeImplementationState     *recoverycontract.ImplementationState
+
+	plan            planRuntimeState
+	planPath        string
+	rollbackHistory []rollbackEntry
+
+	planExecuteApproveAllEdits bool
+
+	featurePlannerEffortRoot      string
+	featurePlannerPhase           productworkflow.CreationPhase
+	directFeaturePlannerSessionID string
+}
+
+// SetLastTurnSourceResults stores source-body tool results from the completed
+// agent turn so a continuing follow-up can seed evidence grounding without
+// re-reading files.
+func (s *promptRuntimeCompletionState) SetLastTurnSourceResults(objective string, results []workspace.ToolResult) {
+	const resultCap = 32
+	if len(results) > resultCap {
+		results = results[len(results)-resultCap:]
+	}
+
+	s.lastTurnSourceResults = append([]workspace.ToolResult(nil), results...)
+	s.lastTurnSourceObjective = strings.TrimSpace(objective)
+}
+
+// LastTurnSourceResultsForObjective returns previous-turn source-body results
+// only when the current objective is plausibly continuing that prior turn.
+func (s *promptRuntimeCompletionState) LastTurnSourceResultsForObjective(objective string) []workspace.ToolResult {
+	if len(s.lastTurnSourceResults) == 0 || !turnObjectiveContinuesSourceEvidence(s.lastTurnSourceObjective, objective) {
+		return nil
+	}
+
+	return append([]workspace.ToolResult(nil), s.lastTurnSourceResults...)
+}
+
+// ClearLastTurnSourceResults resets the cross-turn seed results.
+func (s *promptRuntimeCompletionState) ClearLastTurnSourceResults() {
+	s.lastTurnSourceResults = nil
+	s.lastTurnSourceObjective = ""
+}
+
+// backendRuntimeState is owned by the live Bubble Tea model. Detached prompt
+// workers receive a value snapshot for turn execution, but their completion
+// projection never writes these fields back: server status and /model can
+// change them on Update while a turn is active.
+type backendRuntimeState struct {
+	backendRevision    uint64
+	serverUp           bool
+	managedServer      bool
+	modelID            string
+	modelDisplayID     string
+	modelThinkingFloor bool
+	modelSwapped       bool
+}
+
+// promptExecutionSession owns the complete non-UI state and dependencies for
+// one prompt turn. Execution methods use this concrete type so adding
+// a dependency on Bubble Tea presentation state fails at compile time instead
+// of silently reading a zero field from a partially initialized Model clone.
+type promptExecutionSession struct {
+	cfg               config.Config
+	client            llama.LLMClient
+	controller        *llama.ServerController
+	plannerSpec       config.LlamaServer
+	executorSpec      config.LlamaServer
+	implementerClient llama.LLMClient
+	backendRuntimeState
+	managedServers         *managedServerRegistry
+	workspace              *workspace.Manager
+	rollbackRegistry       *rollbackRegistry
+	events                 chan tea.Msg
+	eventsMu               sync.Mutex
+	eventsClosed           bool
+	promptExecutionContext context.Context
+	promptRuntimeState
+
+	messages                []llama.ChatMessage
+	messagesRevision        uint64
+	projectTranscriptEvents bool
+	// promptConfigurationRevisionBase identifies the live /system and
+	// /profile state this turn snapped. Completion projection uses it to avoid
+	// restoring a prompt stack that the operator replaced while the turn ran.
+	promptConfigurationRevisionBase uint64
+	contextErrorRevisionBase        uint64
+
+	debugLogger   *transcript.DebugLogger
+	debugLogPath  string
+	eventStream   *jsonEventStream
+	agentModeName runprofile.AgentMode
+
+	pinnedFiles *PinnedFileRegistry
+
+	approvalSerial     sync.Mutex
+	planApprovalMu     sync.Mutex
+	planApprovalSerial sync.Mutex
+
+	instructionAttacher *instructions.Attacher
+	summaryClient       llama.LLMClient
+}
+
 type Model struct {
 	cfg        config.Config
 	client     llama.LLMClient
@@ -182,11 +329,20 @@ type Model struct {
 	// active model.
 	implementerClient     llama.LLMClient
 	implementerController *llama.ServerController
-	workspace             *workspace.Manager
-	toolSurfaceSetup      *workspace.ConfiguredToolSurface
-	runner                *agent.Runner
-	events                chan tea.Msg
-	eventWaitArmed        bool
+	backendRuntimeState
+	managedServers             *managedServerRegistry
+	backgroundOperations       *backgroundOperationGroup
+	workspace                  *workspace.Manager
+	rollbackRegistry           *rollbackRegistry
+	undoPresentationGeneration uint64
+	toolSurfaceSetup           *workspace.ConfiguredToolSurface
+	events                     chan tea.Msg
+	eventWaitArmed             bool
+	promptExecutionMu          sync.Mutex
+	activePromptExecution      *promptExecutionLifecycle
+	promptRuntimeState
+	promptConfigurationRevision uint64
+	contextErrorRevision        uint64
 
 	width    int
 	height   int
@@ -201,76 +357,42 @@ type Model struct {
 	inputHistory      []string
 	inputHistoryIndex int
 	inputHistoryDraft string
+	// messages is both model history and visible transcript. Workers keep a
+	// deep-cloned copy and project mutations through promptTranscriptMsg so
+	// Update can render progress without sharing slice backing storage.
+	messages         []llama.ChatMessage
+	messagesRevision uint64
 
-	messages                       []llama.ChatMessage
-	promptStack                    promptstack.Stack
-	composedPrompt                 string
-	composedPromptSources          []promptstack.Source
-	composedPromptCacheKey         string
-	activeProfiles                 []string
-	streaming                      bool
-	turnEvidence                   *turnEvidence
-	pastTurnContainers             []completedEvidence
-	lastBudget                     *budgetData
-	bootingServer                  bool
-	serverUp                       bool
-	managedServer                  bool
-	modelID                        string
-	modelDisplayID                 string
-	status                         string
-	contextError                   string
-	runtimeError                   string
-	workingFrame                   int
-	thoughts                       thoughtPanelState
-	debugLogger                    *transcript.DebugLogger
-	debugLogPath                   string
-	sessionStartedAt               time.Time
-	sessionAgg                     sessionAggregate
-	sessionSummaryWritten          bool
-	eventStream                    *jsonEventStream
-	lastAssistantReasoningContent  string
-	agentModeName                  string
-	forcedTaskFamily               string
-	suppressPromptTranscript       bool
-	requestHistoryOverride         *[]llama.ChatMessage
-	nonInteractive                 bool
-	plannerOwnedVerification       bool
-	lastPlanExecuteRunResult       *planexecute.RunResult
-	maxTokensOverride              int
-	disableThinkingOverride        bool
-	forcedReadinessOpenObligations []string
-	suppressGreenfieldConfirmation bool
-	// lastTurnSourceResults carries source-body tool results from the
-	// previous conversation turn so the next turn's source grounding gate
-	// can verify evidence paths without re-reading files.
-	lastTurnSourceResults            []workspace.ToolResult
-	lastTurnSourceObjective          string
-	planExecuteActive                bool
-	planExecuteScopeContract         plancontract.PlanScopeContract
-	planExecuteAuthorizedNewFiles    []string
-	planExecuteWriteEnvelope         []string
-	planExecuteWriteEnvelopeExplicit bool
-	modelThinkingFloor               bool
-	modelSwapped                     bool
-	traceMode                        traceDisplayMode
-	planPhaseText                    string
-	mouseSelectionMode               bool
+	streaming                       bool
+	turnEvidence                    *turnEvidence
+	pastTurnContainers              []completedEvidence
+	lastBudget                      *budgetData
+	bootingServer                   bool
+	status                          string
+	runtimeError                    string
+	workingFrame                    int
+	thoughts                        thoughtPanelState
+	debugLogger                     *transcript.DebugLogger
+	debugLogPath                    string
+	sessionStartedAt                time.Time
+	eventStream                     *jsonEventStream
+	pendingMutationStateResumeAudit *mutationStateResumeAudit
+	agentModeName                   runprofile.AgentMode
+	traceMode                       traceDisplayMode
+	planPhaseText                   string
+	mouseSelectionMode              bool
 
 	pinnedFiles *PinnedFileRegistry
 
-	approvalMu                 sync.Mutex
-	approvalSerial             sync.Mutex
-	approvalPending            *pendingApproval
-	planApprovalMu             sync.Mutex
-	planApprovalSerial         sync.Mutex
-	planApprovalPending        *pendingPlanApproval
-	planExecuteApproveAllEdits bool
-	laneSwitchPopup            laneSwitchPopupState
+	approvalMu          sync.Mutex
+	approvalPending     *pendingApproval
+	planApprovalMu      sync.Mutex
+	planApprovalPending *pendingPlanApproval
+	laneSwitchPopup     laneSwitchPopupState
 	// lastLaneSwitchSelection records the most recent lane command key
 	// chosen from the lane-switch popup. It supports test assertions and
 	// operator telemetry without coupling the popup to the dispatch path.
 	lastLaneSwitchSelection string
-	rollbackHistory         []rollbackEntry
 	instructionAttacher     *instructions.Attacher
 	mdRenderer              *glamour.TermRenderer
 	mdRendererWrapWidth     int
@@ -282,17 +404,17 @@ type Model struct {
 	perMsgRenderHashes      []uint64
 	perMsgRenderLen         int
 
-	summaryClient     llama.LLMClient
-	summaryController *llama.ServerController
+	summaryClient      llama.LLMClient
+	summaryController  *llama.ServerController
+	summaryServerState *summaryServerLaunchState
 
 	panelTab      int // panelTabHistory | panelTabPlan | panelTabDocViewer | panelTabSessions
 	planViewport  viewport.Model
-	planPath      string
 	planMTime     time.Time
 	planContent   string
 	planLoadError string
 
-	plan      planState
+	planUI    planUIState
 	docViewer docViewerState
 	sessions  sessionsState
 	history   historyState
@@ -311,34 +433,6 @@ type Model struct {
 	currentTurnHistoryActive bool
 	// slashSuggestions tracks the autocomplete state when the user types /
 	slashSuggestions slashSuggestionsState
-
-	// featurePlannerEffortRoot is the absolute path to the product workflow
-	// effort folder when the TUI is in a product creation phase (PRD/ADR
-	// drafting). Empty when no product creation session is active.
-	featurePlannerEffortRoot string
-
-	// featurePlannerPhase tracks the current creation phase when a product
-	// workflow session is active. One of productworkflow.PhasePRDDrafting,
-	// PhaseADRDrafting, etc. Empty when no session is active.
-	featurePlannerPhase string
-
-	// directFeaturePlannerSessionID tracks a direct /feature-planner workflow
-	// waiting for ordinary typed operator input, such as answering an open
-	// planner question.
-	directFeaturePlannerSessionID string
-}
-
-// pinnedFilesRegistry returns the lazy-initialized per-session pin set.
-func (m *Model) pinnedFilesRegistry() *PinnedFileRegistry {
-	if m == nil {
-		return nil
-	}
-
-	if m.pinnedFiles == nil {
-		m.pinnedFiles = newPinnedFileRegistry()
-	}
-
-	return m.pinnedFiles
 }
 
 type infoMsg struct {
@@ -455,11 +549,23 @@ const (
 	traceDisplayDetail  traceDisplayMode = "detail"
 )
 
-func (m *Model) Close() {
-	m.writeSessionSummary()
+func (m *Model) Close() error {
+	if m == nil {
+		return nil
+	}
+
+	var closeErr error
+	m.cancelActivePromptExecution()
+	m.backgroundOperations.shutdown()
+
+	if err := m.writeSessionSummary(); err != nil {
+		closeErr = errors.Join(closeErr, fmt.Errorf("write session summary: %w", err))
+	}
 
 	if m.debugLogger != nil {
-		_ = m.debugLogger.Close()
+		if err := m.debugLogger.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close debug log: %w", err))
+		}
 	}
 
 	if m.toolSurfaceSetup != nil {
@@ -472,53 +578,48 @@ func (m *Model) Close() {
 	defer cancel()
 
 	if m.summaryController != nil {
-		_ = m.summaryController.Stop(ctx)
+		if err := m.summaryController.Stop(ctx); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("stop classifier backend: %w", err))
+		}
 	}
 
 	if m.implementerController != nil {
-		_ = m.implementerController.Stop(ctx)
+		if err := m.implementerController.Stop(ctx); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("stop executor backend: %w", err))
+		}
 	}
 
-	if !m.managedServer {
-		return
+	managedControllers := m.managedServers.snapshot()
+	if m.managedServer && m.controller != nil {
+		alreadyRegistered := false
+		for _, controller := range managedControllers {
+			if controller == m.controller {
+				alreadyRegistered = true
+				break
+			}
+		}
+		if !alreadyRegistered {
+			managedControllers = append(managedControllers, m.controller)
+		}
+	}
+	for _, controller := range managedControllers {
+		if err := controller.Stop(ctx); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("stop managed planner backend: %w", err))
+		}
 	}
 
-	if m.controller != nil {
-		_ = m.controller.Stop(ctx)
-	}
+	return closeErr
 }
 
-func (m *Model) chatOptions() llama.ChatOptions {
-	enableThinking := cloneChatBoolPtr(m.cfg.Chat.EnableThinking)
-	preserveThinking := m.cfg.Chat.PreserveThinking
-	chatTemplateKwargs := false
-
-	if enableThinking != nil && !*enableThinking {
-		chatTemplateKwargs = true
+func (m *Model) ensureBackgroundOperations() *backgroundOperationGroup {
+	if m == nil {
+		return nil
+	}
+	if m.backgroundOperations == nil {
+		m.backgroundOperations = newBackgroundOperationGroup()
 	}
 
-	if m.disableThinkingOverride {
-		thinkingOff := false
-
-		enableThinking = &thinkingOff
-		preserveThinking = false
-		chatTemplateKwargs = true
-	}
-
-	return llama.ChatOptions{
-		Model:              m.modelID,
-		Temperature:        m.cfg.Chat.Temperature,
-		TopP:               m.cfg.Chat.TopP,
-		TopK:               m.cfg.Chat.TopK,
-		MinP:               m.cfg.Chat.MinP,
-		PresencePenalty:    m.cfg.Chat.PresencePenalty,
-		RepetitionPenalty:  m.cfg.Chat.RepetitionPenalty,
-		EnableThinking:     enableThinking,
-		PreserveThinking:   preserveThinking,
-		ChatTemplateKwargs: chatTemplateKwargs,
-		ModelThinkingFloor: m.modelThinkingFloor,
-		MaxTokens:          m.cfg.Chat.MaxTokens,
-	}
+	return m.backgroundOperations
 }
 
 func cloneChatBoolPtr(value *bool) *bool {
@@ -530,7 +631,7 @@ func cloneChatBoolPtr(value *bool) *bool {
 }
 
 func (m *Model) samplingSummary() string {
-	return samplingSummaryForOptions(m.chatOptions())
+	return samplingSummaryForOptions(chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride))
 }
 
 func samplingSummaryForOptions(opts llama.ChatOptions) string {
@@ -588,87 +689,52 @@ func resolveModelDisplayID(spec config.LlamaServer, reported string) string {
 	return resolveModelID(spec, reported)
 }
 
-func (m *Model) activeModelDisplayID() string {
-	if m == nil {
-		return ""
+func (m *Model) bootstrapCommand() tea.Cmd {
+	planner := snapshotPlannerServerOperation(m)
+	implementer, startImplementer := snapshotImplementerServerOperation(m)
+	backgroundOperations := m.ensureBackgroundOperations()
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+
+		// Kick off the implementer server in parallel when configured; its
+		// readiness is independent of the planner and failures here must not
+		// block main-server bootstrap. Child tasks silently fall back to the
+		// planner client when the implementer isn't ready yet.
+		if startImplementer {
+			_ = backgroundOperations.start(implementer.start)
+		}
+
+		if planner.spec.IsHosted() {
+			modelID := resolveModelID(planner.spec, planner.spec.Model)
+
+			return planner.status(serverStatusMsg{
+				running:   true,
+				modelID:   modelID,
+				displayID: resolveModelDisplayID(planner.spec, planner.spec.Model),
+			})
+		}
+
+		models, err := planner.client.ListModels(ctx)
+		if err == nil && len(models) > 0 {
+			modelID := resolveModelID(planner.spec, models[0].ID)
+
+			return planner.status(serverStatusMsg{
+				running:   true,
+				modelID:   modelID,
+				displayID: resolveModelDisplayID(planner.spec, models[0].ID),
+			})
+		}
+
+		if planner.autoStart && planner.controller != nil {
+			source := planner.source
+
+			return serverStartRequestedMsg{source: &source}
+		}
+
+		return infoMsg{text: "No server detected. Use /server start or Ctrl+R."}
 	}
-
-	return textutil.Fallback(strings.TrimSpace(m.modelDisplayID), strings.TrimSpace(m.modelID))
-}
-
-func (m *Model) bootstrap() {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-
-	// Kick off the implementer server in parallel when configured; its
-	// readiness is independent of the planner and failures here must not
-	// block main-server bootstrap. Child tasks silently fall back to the
-	// planner client when the implementer isn't ready yet.
-	if m.implementerController != nil {
-		go m.startImplementerAsync()
-	}
-
-	if m.plannerSpec.IsHosted() {
-		modelID := resolveModelID(m.plannerSpec, m.plannerSpec.Model)
-		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, m.plannerSpec.Model)}
-
-		return
-	}
-
-	models, err := m.client.ListModels(ctx)
-	if err == nil && len(models) > 0 {
-		modelID := resolveModelID(m.plannerSpec, models[0].ID)
-		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID)}
-
-		return
-	}
-
-	if m.cfg.Chat.AutoStartServer && m.controller != nil {
-		m.startServerAsync()
-
-		return
-	}
-
-	m.events <- infoMsg{text: "No server detected. Use /server start or Ctrl+R."}
-}
-
-// startImplementerAsync brings up the secondary (implementer) llama-server
-// when configured. Runs detached from main bootstrap: on failure we just
-// log, child tasks fall back to the planner client. Assumes the caller
-// already checked m.implementerController != nil.
-func (m *Model) startImplementerAsync() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.Chat.ServerStartTimeoutSecs)*time.Second)
-	defer cancel()
-
-	if models, err := m.implementerClient.ListModels(ctx); err == nil && len(models) > 0 {
-		m.events <- infoMsg{text: "Implementer ready: " + resolveModelDisplayID(m.executorSpec, models[0].ID)}
-		return
-	}
-
-	if !m.cfg.Chat.AutoStartServer {
-		return
-	}
-
-	if err := m.implementerController.Start(ctx); err != nil {
-		m.logError("implementer", "start failed: "+err.Error())
-
-		return
-	}
-
-	if err := m.implementerController.WaitUntilReady(ctx); err != nil {
-		m.logError("implementer", "ready wait failed: "+err.Error())
-
-		return
-	}
-
-	models, err := m.implementerClient.ListModels(context.Background())
-	id := "local-model"
-
-	if err == nil && len(models) > 0 {
-		id = models[0].ID
-	}
-
-	m.events <- infoMsg{text: "Implementer ready: " + resolveModelDisplayID(m.executorSpec, id)}
 }
 
 func (m *Model) handleSlashCommand(raw string) bool {
@@ -677,13 +743,13 @@ func (m *Model) handleSlashCommand(raw string) bool {
 		return false
 	}
 
-	handler, ok := slashCommands[fields[0]]
+	spec, ok := slashCommandSpecFor(fields[0])
 	if !ok {
 		m.status = "Unknown command. Use /help."
 		return false
 	}
 
-	return handler(m, raw, fields)
+	return spec.handler(m, raw, fields)
 }
 
 func (m *Model) startServerAsync() {
@@ -698,32 +764,10 @@ func (m *Model) startServerAsync() {
 
 	m.bootingServer = true
 	m.status = "Starting llama-server."
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.Chat.ServerStartTimeoutSecs)*time.Second)
-		defer cancel()
-
-		if err := m.controller.Start(ctx); err != nil {
-			m.events <- serverStatusMsg{err: err}
-			return
-		}
-
-		if err := m.controller.WaitUntilReady(ctx); err != nil {
-			m.events <- serverStatusMsg{err: err}
-			return
-		}
-
-		models, err := m.client.ListModels(context.Background())
-		if err != nil || len(models) == 0 {
-			modelID := resolveModelID(m.plannerSpec, "local-model")
-			m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, "local-model"), owned: true}
-
-			return
-		}
-
-		modelID := resolveModelID(m.plannerSpec, models[0].ID)
-		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID), owned: true}
-	}()
+	operation := snapshotPlannerServerOperation(m)
+	if !m.ensureBackgroundOperations().start(operation.start) {
+		m.bootingServer = false
+	}
 }
 
 func (m *Model) stopServerAsync() {
@@ -733,14 +777,8 @@ func (m *Model) stopServerAsync() {
 	}
 
 	m.status = "Stopping llama-server."
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		err := m.controller.Stop(ctx)
-		m.events <- serverStatusMsg{running: false, err: err}
-	}()
+	operation := snapshotPlannerServerOperation(m)
+	_ = m.ensureBackgroundOperations().start(operation.stop)
 }
 
 func (m *Model) restartServerAsync() {
@@ -751,32 +789,10 @@ func (m *Model) restartServerAsync() {
 
 	m.bootingServer = true
 	m.status = "Restarting llama-server."
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.Chat.ServerStartTimeoutSecs)*time.Second)
-		defer cancel()
-
-		if err := m.controller.Restart(ctx); err != nil {
-			m.events <- serverStatusMsg{err: err}
-			return
-		}
-
-		if err := m.controller.WaitUntilReady(ctx); err != nil {
-			m.events <- serverStatusMsg{err: err}
-			return
-		}
-
-		models, err := m.client.ListModels(context.Background())
-		if err != nil || len(models) == 0 {
-			modelID := resolveModelID(m.plannerSpec, "local-model")
-			m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, "local-model"), owned: true}
-
-			return
-		}
-
-		modelID := resolveModelID(m.plannerSpec, models[0].ID)
-		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID), owned: true}
-	}()
+	operation := snapshotPlannerServerOperation(m)
+	if !m.ensureBackgroundOperations().start(operation.restart) {
+		m.bootingServer = false
+	}
 }
 
 // renderHistoryPanelContent rebuilds the history viewport content from
@@ -1155,8 +1171,8 @@ func (m *Model) workspaceSummary() string {
 }
 
 func (m *Model) modeSummary() string {
-	mode := m.currentMode()
-	return "agent=" + mode.Name
+	mode := currentMode(m.agentModeName, m.cfg.Chat.AgentMode)
+	return "agent=" + string(mode.Name)
 }
 
 func (m *Model) traceSummary() string {
@@ -1183,23 +1199,6 @@ func (m *Model) SetNonInteractive(nonInteractive bool) {
 	m.nonInteractive = nonInteractive
 }
 
-func (m *Model) queueUIEvent(msg tea.Msg) {
-	if m == nil || m.events == nil {
-		return
-	}
-
-	if m.nonInteractive {
-		select {
-		case m.events <- msg:
-		default:
-		}
-
-		return
-	}
-
-	m.events <- msg
-}
-
 func firstToolTraceLine(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -1224,13 +1223,20 @@ func (m *Model) pendingAssistantIndex() int {
 }
 
 func (m *Model) insertBeforePendingAssistant(message llama.ChatMessage) {
+	message = cloneChatMessage(message)
+	m.insertBeforePendingAssistantOwned(message)
+}
+
+func (m *Model) insertBeforePendingAssistantOwned(message llama.ChatMessage) {
 	idx := m.pendingAssistantIndex()
 	if idx == -1 {
 		m.messages = append(m.messages, message)
+		m.messagesRevision++
 		return
 	}
 
 	m.messages = append(m.messages[:idx], append([]llama.ChatMessage{message}, m.messages[idx:]...)...)
+	m.messagesRevision++
 }
 
 func (m *Model) contextSourceNames() []string {
@@ -1263,7 +1269,7 @@ func (m *Model) logMessage(role, content string) {
 		return
 	}
 
-	m.emitJSONMessage(role, content)
+	m.eventStream.emitMessage(role, content)
 
 	if m.debugLogger == nil {
 		return
@@ -1272,15 +1278,7 @@ func (m *Model) logMessage(role, content string) {
 	_ = m.debugLogger.LogMessage(role, content)
 }
 
-func (m *Model) takeLastAssistantReasoningContent() string {
-	reasoning := strings.TrimSpace(m.lastAssistantReasoningContent)
-
-	m.lastAssistantReasoningContent = ""
-
-	return reasoning
-}
-
-func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
+func (m *promptExecutionSession) logToolRequest(event agent.ToolRequestEvent) {
 	m.emitJSONToolRequest(event)
 
 	profile := workspace.DiscoveryProfileForRequest(event.Request)
@@ -1321,7 +1319,7 @@ func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
 	})
 }
 
-func (m *Model) logToolResult(event agent.ToolResultEvent) {
+func (m *promptExecutionSession) logToolResult(event agent.ToolResultEvent) {
 	m.emitJSONToolResult(event)
 
 	output := event.Result.Output
@@ -1358,6 +1356,7 @@ func (m *Model) logToolResult(event agent.ToolResultEvent) {
 		DiscoveryScope: profile.Scope,
 		DiscoveryCost:  profile.Cost,
 		ExtraFields:    workspace.ToolTelemetryFields(event.Result.Tool, event.Result.Output),
+		Facts:          event.Result.Facts,
 	})
 }
 
@@ -1375,7 +1374,7 @@ func profileForToolResult(event agent.ToolResultEvent) workspace.ToolDiscoveryPr
 	return profile
 }
 
-func (m *Model) logRunEvent(event agent.RunEvent) {
+func (m *promptExecutionSession) logRunEvent(event agent.RunEvent) {
 	if audit, ok := historyAuditEventFromRunEvent(event); ok {
 		m.enqueueHistoryAuditEvent(audit)
 	}
@@ -1430,7 +1429,7 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			payload["type"] = "completion_status"
-			m.emitJSONEvent(payload)
+			m.eventStream.emit(payload)
 		}
 
 		if m.debugLogger != nil {
@@ -1443,7 +1442,20 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			payload["type"] = "implementation_lifecycle_state"
-			m.emitJSONEvent(payload)
+			m.eventStream.emit(payload)
+		}
+
+		if m.debugLogger != nil {
+			_ = m.debugLogger.LogRunEvent(event.Role, event.Content)
+		}
+
+		return
+	case mutationStateResumeEventRole:
+		var payload map[string]any
+
+		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
+			payload["type"] = mutationStateResumeEventRole
+			m.eventStream.emit(payload)
 		}
 
 		if m.debugLogger != nil {
@@ -1556,7 +1568,7 @@ func shouldLogRunnerEventAsRunEvent(role string) bool {
 	return strings.TrimSpace(role) != ""
 }
 
-func (m *Model) logNestedToolRequest(content string) bool {
+func (m *promptExecutionSession) logNestedToolRequest(content string) bool {
 	var payload agent.ToolRequestEvent
 
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
@@ -1601,7 +1613,7 @@ func (m *Model) logNestedToolRequest(content string) bool {
 	return true
 }
 
-func (m *Model) logNestedToolResult(content string) bool {
+func (m *promptExecutionSession) logNestedToolResult(content string) bool {
 	var payload agent.ToolResultEvent
 
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
@@ -1645,12 +1657,10 @@ func (m *Model) logNestedToolResult(content string) bool {
 	return true
 }
 
-func (m *Model) writeSessionSummary() {
+func (m *Model) writeSessionSummary() error {
 	if m.sessionSummaryWritten {
-		return
+		return nil
 	}
-
-	m.sessionSummaryWritten = true
 
 	ctxSize := m.cfg.LlamaServer.CtxSize
 	peakPct := 0.0
@@ -1674,7 +1684,7 @@ func (m *Model) writeSessionSummary() {
 	}
 
 	if m.debugLogger != nil {
-		_ = m.debugLogger.LogSessionSummary(transcript.SessionSummary{
+		if err := m.debugLogger.LogSessionSummary(transcript.SessionSummary{
 			Turns:                      m.sessionAgg.turns,
 			ModelCalls:                 m.sessionAgg.modelCalls,
 			ToolCalls:                  m.sessionAgg.toolCalls,
@@ -1694,7 +1704,9 @@ func (m *Model) writeSessionSummary() {
 			DiscoveryByClass:           discoveryAggregates(m.sessionAgg.discoveryClasses),
 			DiscoveryByCost:            discoveryAggregates(m.sessionAgg.discoveryCosts),
 			DurationMillis:             duration,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
 	// Mirror to the stdout JSON event stream so wrappers (idiom lane,
@@ -1725,11 +1737,14 @@ func (m *Model) writeSessionSummary() {
 		}
 	}
 
-	m.emitJSONEvent(summary)
+	m.eventStream.emit(summary)
+	m.sessionSummaryWritten = true
+
+	return nil
 }
 
 func (m *Model) logError(kind, message string) {
-	m.emitJSONError(kind, message)
+	m.eventStream.emitError(kind, message)
 
 	if m.debugLogger == nil {
 		return
@@ -1760,6 +1775,9 @@ func (m *Model) logArtifact(kind, path string) {
 }
 
 func (m *Model) setContextError(message string) {
+	if m.contextError != message {
+		m.contextErrorRevision++
+	}
 	m.contextError = message
 	m.status = message
 	m.logError("context", message)
@@ -1788,42 +1806,6 @@ func (m *Model) SetDisableThinkingOverride(disabled bool) {
 
 func (m *Model) SetForcedReadinessOpenObligations(obligations []string) {
 	m.forcedReadinessOpenObligations = append([]string(nil), obligations...)
-}
-
-// SetLastTurnSourceResults stores source-body tool results from the completed
-// agent turn so a continuing follow-up can seed evidence grounding without
-// re-reading files.
-func (m *Model) SetLastTurnSourceResults(objective string, results []workspace.ToolResult) {
-	cap := 32
-	if len(results) > cap {
-		results = results[len(results)-cap:]
-	}
-
-	m.lastTurnSourceResults = append([]workspace.ToolResult(nil), results...)
-	m.lastTurnSourceObjective = strings.TrimSpace(objective)
-}
-
-// LastTurnSourceResultsForObjective returns previous-turn source-body results
-// only when the current objective is plausibly continuing that prior turn.
-func (m *Model) LastTurnSourceResultsForObjective(objective string) []workspace.ToolResult {
-	if len(m.lastTurnSourceResults) == 0 {
-		return nil
-	}
-
-	if !turnObjectiveContinuesSourceEvidence(m.lastTurnSourceObjective, objective) {
-		return nil
-	}
-
-	out := make([]workspace.ToolResult, len(m.lastTurnSourceResults))
-	copy(out, m.lastTurnSourceResults)
-
-	return out
-}
-
-// ClearLastTurnSourceResults resets the cross-turn seed results.
-func (m *Model) ClearLastTurnSourceResults() {
-	m.lastTurnSourceResults = nil
-	m.lastTurnSourceObjective = ""
 }
 
 func turnObjectiveContinuesSourceEvidence(previous string, current string) bool {
@@ -1899,6 +1881,9 @@ func (m *Model) SetPlanExecuteScope(contract plancontract.PlanScopeContract, aut
 }
 
 func (m *Model) clearContextError() {
+	if m.contextError != "" {
+		m.contextErrorRevision++
+	}
 	m.contextError = ""
 }
 

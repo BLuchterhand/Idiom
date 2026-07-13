@@ -188,7 +188,13 @@ func recordRediscoveryTokensAvoided(result PackResult) {
 // LoadView returns the cached PackResult for the given key, or
 // (PackResult{}, false, nil) on cache miss. Cache misses are not
 // errors; only genuine I/O or decode failures return an error.
-func LoadView(root string, key ViewKey) (PackResult, bool, error) {
+func LoadView(ctx context.Context, root string, key ViewKey) (PackResult, bool, error) {
+	if ctx == nil {
+		return PackResult{}, false, errors.New("view load context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return PackResult{}, false, err
+	}
 	sqlitePath := sqliteGraphPath(root)
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -228,7 +234,7 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 		return PackResult{}, false, fmt.Errorf("decode cached view %s: %w", key.ID(), err)
 	}
 
-	result, fresh, err := validateCachedViewFreshness(root, row, result, "load_view")
+	result, fresh, err := validateCachedViewFreshness(ctx, root, row, result, "load_view")
 	if err != nil {
 		return PackResult{}, false, err
 	}
@@ -320,7 +326,7 @@ func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus,
 		return staleCachedViewResult(result, status), status, nil
 	}
 
-	result, fresh, reason, err := validateCachedViewFreshnessStatus(root, row, result, "load_view_by_id")
+	result, fresh, reason, err := validateCachedViewFreshnessStatus(context.Background(), root, row, result, "load_view_by_id")
 	if err != nil {
 		return PackResult{}, status, err
 	}
@@ -666,15 +672,15 @@ func recordStaleRowMiss(db *sql.DB, id string) {
 	}
 }
 
-func validateCachedViewFreshness(root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, error) {
-	result, fresh, _, err := validateCachedViewFreshnessStatus(root, row, result, operation)
+func validateCachedViewFreshness(ctx context.Context, root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, error) {
+	result, fresh, _, err := validateCachedViewFreshnessStatus(ctx, root, row, result, operation)
 	return result, fresh, err
 }
 
-func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, string, error) {
+func validateCachedViewFreshnessStatus(ctx context.Context, root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, string, error) {
 	references := cachedViewReferencedPaths(row, result)
 
-	decision, err := EnsureFresh(context.Background(), FreshnessRequest{
+	decision, err := EnsureFresh(ctx, FreshnessRequest{
 		Root:              root,
 		Operation:         operation,
 		Policy:            FreshnessRequire,
@@ -1071,7 +1077,13 @@ type ViewStats struct {
 // ReadViewStats returns aggregate counters over the graph_views table
 // plus the in-process hit/miss counters. Returns zero ViewStats and no
 // error when the SQLite file is absent.
-func ReadViewStats(root string) (ViewStats, error) {
+func ReadViewStats(ctx context.Context, root string) (ViewStats, error) {
+	if ctx == nil {
+		return ViewStats{}, errors.New("view stats context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return ViewStats{}, err
+	}
 	hits, misses, writes := ViewCacheCounters()
 	freshnessHits, stalePreventions, staleRowMisses := ViewFreshnessCounters()
 	fullTokensSaved, rediscoveryTokensAvoided := TokenSavingsCounters()
@@ -1109,7 +1121,11 @@ func ReadViewStats(root string) (ViewStats, error) {
 		stats.CurrentIndexID = strings.TrimSpace(meta["index_id"])
 	}
 
-	currentWorkspaceFingerprint := ComprehensionStateFingerprint(root)
+	currentState, err := ComprehensionStateFingerprints(ctx, root)
+	if err != nil {
+		return stats, fmt.Errorf("load current comprehension state generation: %w", err)
+	}
+	currentWorkspaceFingerprint := currentState.WorkspaceStateFingerprint
 
 	var oldest, newest sql.NullString
 
@@ -1439,19 +1455,14 @@ type ComprehensionStateFingerprintSet struct {
 	RuntimeTracesFingerprint  string
 }
 
-// ComprehensionStateFingerprint returns the composite cache fingerprint
-// for workspace-side state that influences Pack output but is not part
-// of the request inputs. Component fingerprints are available through
-// ComprehensionStateFingerprints.
-func ComprehensionStateFingerprint(root string) string {
-	return ComprehensionStateFingerprints(root).WorkspaceStateFingerprint
-}
-
-func ComprehensionStateFingerprints(root string) ComprehensionStateFingerprintSet {
-	ranker := rankerWeightsStateFingerprint(root)
+func ComprehensionStateFingerprints(ctx context.Context, root string) (ComprehensionStateFingerprintSet, error) {
+	ranker, err := LoadRankerStateSnapshot(ctx, root)
+	if err != nil {
+		return ComprehensionStateFingerprintSet{}, err
+	}
 	runtime := runtimeTracesStateFingerprint(root)
 
-	return comprehensionStateFingerprintSet(ranker, runtime)
+	return comprehensionStateFingerprintSet(ranker.Generation, runtime), nil
 }
 
 func comprehensionStateFingerprintSet(rankerFingerprint string, runtimeFingerprint string) ComprehensionStateFingerprintSet {
@@ -1489,15 +1500,6 @@ func composeWorkspaceStateFingerprint(rankerFingerprint string, runtimeFingerpri
 	sum := h.Sum(nil)
 
 	return hex.EncodeToString(sum[:8])
-}
-
-func rankerWeightsStateFingerprint(root string) string {
-	weightsPath := filepath.Join(root, ".idiom", "ranker", "weights.json")
-	if data, err := os.ReadFile(weightsPath); err == nil {
-		return shortSHA256Hex(data)
-	}
-
-	return ""
 }
 
 func shortSHA256Hex(data []byte) string {

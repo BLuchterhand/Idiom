@@ -770,7 +770,13 @@ func runContractReport(kind string, args []string, stdout io.Writer, stderr io.W
 
 	if sessionID != "" {
 		report["session_id"] = sessionID
-		if completion, path, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(workspaceRoot(cfg), sessionID); err == nil && found {
+		completion, path, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(workspaceRoot(cfg), sessionID)
+		if err != nil {
+			fmt.Fprintf(stderr, "load plan-execute terminal completion for session %q: %v\n", sessionID, err)
+
+			return 1
+		}
+		if found {
 			report["plan_execute_terminal_completion_path"] = path
 			report["plan_execute_terminal_completion"] = completion
 		}

@@ -17,6 +17,8 @@ type ReadApprovalGate struct {
 	OnEvent func(readapproval.Request, readapproval.Decision, string)
 }
 
+//go:generate go tool mockgen -source=read_approval.go -destination=mock_read_approval_test.go -package=agent -typed
+
 type ReadApprovalDecider interface {
 	DecideRead(ctx context.Context, req readapproval.Request) (readapproval.Decision, error)
 }
@@ -72,6 +74,16 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 		return true, ""
 	}
 
+	decision, denialContext := g.resolve(ctx, request)
+	return decision.Outcome == readapproval.OutcomeApproved, denialContext
+}
+
+func (g *ReadApprovalGate) resolve(ctx context.Context, request readapproval.Request) (readapproval.Decision, string) {
+	if !g.active() {
+		return readapproval.Decision{}, ""
+	}
+	sessionID := request.SessionID
+	path := request.Path
 	if g.Cache != nil {
 		decision, ok, err := g.Cache.Lookup(sessionID, path)
 		if err != nil {
@@ -83,20 +95,27 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 				Path:    path,
 			}
 			g.emit(request, decision, readapproval.EventOriginCacheLookup)
-			return false, " Read approval cache could not be loaded for the current session; fail closed and do not retry this read."
+			return decision, " Read approval cache could not be loaded for the current session; fail closed and do not retry this read."
 		}
 		if ok {
 			g.emit(request, decision, readapproval.EventOriginCacheLookup)
 			switch decision.Outcome {
 			case readapproval.OutcomeApproved:
-				return true, ""
+				return decision, ""
 			case readapproval.OutcomeDenied:
-				return false, " Operator previously denied this read for the current session; do not retry."
+				return decision, " Operator previously denied this read for the current session; do not retry."
 			}
 		}
 	}
 
 	decision, err := g.Decider.DecideRead(ctx, request)
+	if ctx.Err() != nil {
+		return readapproval.Decision{
+			Outcome: readapproval.OutcomeDenied,
+			At:      time.Now(),
+			Path:    path,
+		}, " Read approval was canceled before the live decision could be accepted; fail closed and do not retry this read."
+	}
 	if err != nil {
 		decision = readapproval.Decision{
 			Outcome: readapproval.OutcomeDenied,
@@ -121,7 +140,7 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 				Path:    path,
 			}
 			g.emit(request, denial, readapproval.EventOriginCacheRecord)
-			return false, " Read approval could not be recorded for the current session; fail closed and do not retry this read."
+			return denial, " Read approval could not be recorded for the current session; fail closed and do not retry this read."
 		}
 	}
 
@@ -129,12 +148,38 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 
 	switch decision.Outcome {
 	case readapproval.OutcomeApproved:
-		return true, ""
+		return decision, ""
 	case readapproval.OutcomeDenied:
-		return false, " Operator denied this read for the current session; do not retry."
+		return decision, " Operator denied this read for the current session; do not retry."
 	default:
-		return false, ""
+		return decision, ""
 	}
+}
+
+type runnerWorkspaceSnapshotReadApprover struct {
+	gate *ReadApprovalGate
+	lane string
+}
+
+func (a runnerWorkspaceSnapshotReadApprover) ApproveWorkspaceSnapshotRead(
+	ctx context.Context,
+	request workspace.WorkspaceSnapshotReadApprovalRequest,
+) (workspace.WorkspaceSnapshotReadApprovalDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return workspace.WorkspaceSnapshotReadApprovalDecision{}, err
+	}
+	decision, _ := a.gate.resolve(ctx, readapproval.Request{
+		SessionID: request.SessionID,
+		Path:      request.CanonicalID,
+		Tool:      workspace.ToolNameReadFile,
+		Lane:      a.lane,
+	})
+	if err := ctx.Err(); err != nil {
+		return workspace.WorkspaceSnapshotReadApprovalDecision{}, err
+	}
+	return workspace.WorkspaceSnapshotReadApprovalDecision{
+		Approved: decision.Outcome == readapproval.OutcomeApproved,
+	}, nil
 }
 
 func (g *ReadApprovalGate) emit(req readapproval.Request, decision readapproval.Decision, origin string) {

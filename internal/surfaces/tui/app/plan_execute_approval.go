@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/workflows/planexecute"
 )
@@ -55,9 +56,9 @@ func (p *pendingPlanApproval) summary() string {
 	return fmt.Sprintf("%s: %d path(s): %s", label, len(paths), strings.Join(names, ", "))
 }
 
-func (m *Model) requestPlanExecuteApproval(ctx context.Context, req planexecute.PlanApprovalRequest) planexecute.PlanApprovalDecision {
+func (m *promptExecutionSession) requestPlanExecuteApproval(ctx context.Context, req planexecute.PlanApprovalRequest) planexecute.PlanApprovalDecision {
 	if m == nil {
-		return planexecute.PlanApprovalDecision{Reason: "TUI model unavailable for plan approval"}
+		return planexecute.PlanApprovalDecision{Reason: "prompt execution session unavailable for plan approval"}
 	}
 
 	m.planApprovalMu.Lock()
@@ -74,7 +75,6 @@ func (m *Model) requestPlanExecuteApproval(ctx context.Context, req planexecute.
 			ApprovedBy:    "operator",
 		}
 	}
-
 	if m.eventStream != nil || m.suppressPromptTranscript || m.nonInteractive {
 		return planexecute.PlanApprovalDecision{Reason: "no interactive TUI available to approve planned edits"}
 	}
@@ -82,25 +82,21 @@ func (m *Model) requestPlanExecuteApproval(ctx context.Context, req planexecute.
 	m.planApprovalSerial.Lock()
 	defer m.planApprovalSerial.Unlock()
 
-	resp := make(chan planApprovalResponse, 1)
-	pending := &pendingPlanApproval{request: req, response: resp}
-
-	m.planApprovalMu.Lock()
-	m.planApprovalPending = pending
-	m.planApprovalMu.Unlock()
-
+	response := make(chan planApprovalResponse, 1)
+	pending := &pendingPlanApproval{request: req, response: response}
+	m.queueUIEvent(planApprovalPendingMsg{pending: pending})
 	m.queueUIEvent(planApprovalRequiredMsg{})
 	m.queueUIEvent(infoMsg{text: "Plan edit approval required. Open the Plan tab and select Approve or Approve all edits."})
 
 	select {
 	case <-ctx.Done():
 		m.clearPendingPlanApproval(pending)
+
 		return planexecute.PlanApprovalDecision{Reason: ctx.Err().Error()}
-	case decision := <-resp:
+	case decision := <-response:
 		if !decision.allow {
 			return planexecute.PlanApprovalDecision{Reason: "plan edit approval denied"}
 		}
-
 		if decision.blanket {
 			m.planApprovalMu.Lock()
 			m.planExecuteApproveAllEdits = true
@@ -114,6 +110,69 @@ func (m *Model) requestPlanExecuteApproval(ctx context.Context, req planexecute.
 			ApprovedBy:    "operator",
 		}
 	}
+}
+
+func planExecuteAuthorizedNewFileApproval(req planexecute.PlanApprovalRequest, authorizedNewFiles []string) (planexecute.PlanApprovalDecision, bool) {
+	if req.Phase != planexecute.PlanApprovalPhaseInitial || len(req.Paths) == 0 || len(authorizedNewFiles) == 0 {
+		return planexecute.PlanApprovalDecision{}, false
+	}
+	authorized := make(map[string]struct{}, len(authorizedNewFiles))
+	for _, path := range authorizedNewFiles {
+		if normalized := pathparse.NormalizeWorkspaceRelativePath(path); normalized != "" {
+			authorized[normalized] = struct{}{}
+		}
+	}
+	approved := make([]string, 0, len(req.Paths))
+	for _, path := range req.Paths {
+		normalized := pathparse.NormalizeWorkspaceRelativePath(path)
+		if normalized == "" {
+			return planexecute.PlanApprovalDecision{}, false
+		}
+		if _, ok := authorized[normalized]; !ok {
+			return planexecute.PlanApprovalDecision{}, false
+		}
+		approved = append(approved, path)
+	}
+	return planexecute.PlanApprovalDecision{
+		Approved:      true,
+		ApprovedPaths: approved,
+		ApprovedBy:    "feature_planner_operator_authority",
+	}, true
+}
+
+func (m *promptExecutionSession) clearPendingPlanApproval(pending *pendingPlanApproval) {
+	if m == nil || pending == nil {
+		return
+	}
+
+	m.queueUIEvent(planApprovalClearedMsg{pending: pending})
+}
+
+func markPlanApprovalLines(lines []string, blanket bool) []string {
+	targets := map[planApprovalAction]bool{planApprovalActionCurrent: true}
+	if blanket {
+		targets[planApprovalActionAll] = true
+	}
+
+	for i, line := range lines {
+		item, ok := parsePlanItemLine(i, line)
+		if ok && targets[item.PlanApprovalAction] {
+			lines[i] = replacePlanCheckbox(line, "[x]")
+		}
+	}
+
+	return lines
+}
+
+func (m *promptExecutionSession) markPlanApprovalRows(allow bool, blanket bool) {
+	path := m.ensurePlanPath()
+	if path == "" || !allow {
+		return
+	}
+
+	_ = mutatePlanLines(path, func(lines []string) []string {
+		return markPlanApprovalLines(lines, blanket)
+	})
 }
 
 func (m *Model) resolvePlanApproval(allow bool, blanket bool) (string, bool) {
@@ -249,18 +308,6 @@ func textContainsAny(value string, needles []string) bool {
 	return false
 }
 
-func (m *Model) clearPendingPlanApproval(pending *pendingPlanApproval) {
-	if m == nil || pending == nil {
-		return
-	}
-
-	m.planApprovalMu.Lock()
-	if m.planApprovalPending == pending {
-		m.planApprovalPending = nil
-	}
-	m.planApprovalMu.Unlock()
-}
-
 func (m *Model) currentPlanApproval() *pendingPlanApproval {
 	if m == nil {
 		return nil
@@ -322,21 +369,7 @@ func (m *Model) markPlanApprovalRows(allow bool, blanket bool) {
 	}
 
 	if err := m.mutatePlanLines(path, func(lines []string) []string {
-		targets := map[planApprovalAction]bool{planApprovalActionCurrent: true}
-		if blanket {
-			targets[planApprovalActionAll] = true
-		}
-
-		for i, line := range lines {
-			item, ok := parsePlanItemLine(i, line)
-			if !ok || !targets[item.PlanApprovalAction] {
-				continue
-			}
-
-			lines[i] = replacePlanCheckbox(line, "[x]")
-		}
-
-		return lines
+		return markPlanApprovalLines(lines, blanket)
 	}); err != nil {
 		return
 	}
@@ -364,24 +397,4 @@ func (m *Model) planApprovalStatusText() string {
 	}
 
 	return ""
-}
-
-func (m *Model) beginPlanExecuteApprovalSession() {
-	if m == nil {
-		return
-	}
-
-	m.planApprovalMu.Lock()
-	m.planApprovalPending = nil
-	m.planApprovalMu.Unlock()
-}
-
-func (m *Model) endPlanExecuteApprovalSession() {
-	if m == nil {
-		return
-	}
-
-	m.planApprovalMu.Lock()
-	m.planApprovalPending = nil
-	m.planApprovalMu.Unlock()
 }

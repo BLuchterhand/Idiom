@@ -29,13 +29,18 @@ type sourceSanityOutcome struct {
 }
 
 func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult {
+	attemptedPaths := m.sourceSanityRequestScope(req)
 	targets, err := m.sourceSanityTargets(req)
 	if err != nil {
-		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: err.Error()}
+		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: err.Error(), Paths: attemptedPaths}
 	}
 
 	if len(targets) == 0 {
-		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: "no source files available for source sanity"}
+		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: "no source files available for source sanity", Paths: attemptedPaths}
+	}
+	attemptedPaths = make([]string, 0, len(targets))
+	for _, target := range targets {
+		attemptedPaths = textutil.AppendUnique(attemptedPaths, filepath.ToSlash(m.pathAccess.DisplayPath(target)))
 	}
 
 	limit := req.Limit
@@ -53,6 +58,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 			Tool:    ToolNameSourceSanity,
 			Summary: "Source sanity needs narrower scope",
 			Error:   fmt.Sprintf("source_sanity matched %d source files; pass a narrower path or set limit explicitly. First matches: %s", len(targets), strings.Join(rel, ", ")),
+			Paths:   attemptedPaths,
 		}
 	}
 
@@ -99,6 +105,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 			Output:  strings.Join(outputLines, "\n"),
 			Error:   strings.Join(failures, "\n"),
 			Facts:   facts,
+			Paths:   attemptedPaths,
 		}
 	}
 
@@ -115,7 +122,26 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 		Summary: summary,
 		Output:  strings.Join(outputLines, "\n"),
 		Facts:   facts,
+		Paths:   attemptedPaths,
 	}
+}
+
+func (m *Manager) sourceSanityRequestScope(req ToolRequest) []string {
+	if abs, err := m.pathAccess.ResolvePath(req.Path, req.Workdir); err == nil {
+		if display := normalizeVerificationScope(m.pathAccess.DisplayPath(abs)); display != "" {
+			return []string{display}
+		}
+	}
+
+	path := normalizeVerificationScope(req.Path)
+	if path == "" {
+		return nil
+	}
+	workdir := normalizeVerificationScope(req.Workdir)
+	if workdir == "" || workdir == "." {
+		return []string{path}
+	}
+	return []string{normalizeVerificationScope(filepath.ToSlash(filepath.Join(workdir, path)))}
 }
 
 func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {

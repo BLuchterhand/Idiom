@@ -59,8 +59,14 @@ func plannerForbiddenTool(tool string, metadata []PlanExecutePlannerToolMetadata
 	return !ok || !entry.PlannerAllowed
 }
 
-func validateProtocolProjection(protocol ModelProtocolProjection, metadata []PlanExecutePlannerToolMetadata) error {
+func validateProtocolProjection(protocol ModelProtocolProjection) error {
 	var problems []string
+	if strings.TrimSpace(protocol.ContractID) == "" {
+		problems = append(problems, "model_protocol.contract_id is required")
+	}
+	if strings.TrimSpace(protocol.ContractVersion) == "" {
+		problems = append(problems, "model_protocol.contract_version is required")
+	}
 
 	if err := validateActionClassVocabulary(actionClassVocabulary{
 		CallableField: "model_protocol.callable_action_classes",
@@ -72,21 +78,24 @@ func validateProtocolProjection(protocol ModelProtocolProjection, metadata []Pla
 		return err
 	}
 
-	if err := validateToolVocabulary(toolVocabularyPolicy{
-		ToolMetadata: metadata,
-		ExposedToolSets: []toolVocabularySet{
-			{Role: "required", Field: "model_protocol.required_tools", Tools: protocol.RequiredTools},
-			{Role: "visible", Field: "model_protocol.visible_tools", Tools: protocol.VisibleTools},
-			{Role: "callable", Field: "model_protocol.callable_tools", Tools: protocol.CallableTools},
-		},
-		RequireCallableVisible: true,
-		PlannerOnly:            true,
-	}); err != nil {
-		return err
+	if missing := firstMissingTool(protocol.CallableTools, protocol.VisibleTools); missing != "" {
+		return fmt.Errorf("tool %q cannot be callable without being visible", missing)
 	}
-	if err := validateHiddenToolProjection("model_protocol.hidden_tools", protocol.HiddenTools, protocol.VisibleTools, protocol.CallableTools, metadata); err != nil {
-		return err
+	if overlap := firstStringOverlap(protocol.HiddenTools, protocol.VisibleTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both hidden and visible in model_protocol.hidden_tools", overlap)
 	}
+	if overlap := firstStringOverlap(protocol.HiddenTools, protocol.CallableTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both hidden and callable in model_protocol.hidden_tools", overlap)
+	}
+	if overlap := firstStringOverlap(protocol.GroundedSourceBodyPaths, protocol.SourceBodyObligations); overlap != "" {
+		problems = append(problems, fmt.Sprintf("path %q cannot be both grounded source-body evidence and a pending source-body obligation", overlap))
+	}
+	if overlap := firstStringOverlap(protocol.GroundedSourceBodyPaths, protocol.CandidateOnlyPaths); overlap != "" {
+		problems = append(problems, fmt.Sprintf("path %q cannot be both grounded source-body evidence and candidate-only evidence", overlap))
+	}
+	validateEvidencePathSample("model_protocol.source_body_obligations", protocol.SourceBodyObligations, protocol.SourceBodyObligationTotal, protocol.SourceBodyObligationOmitted, &problems)
+	validateEvidencePathSample("model_protocol.grounded_source_body_paths", protocol.GroundedSourceBodyPaths, protocol.GroundedSourceBodyPathTotal, protocol.GroundedSourceBodyPathOmitted, &problems)
+	validateEvidencePathSample("model_protocol.candidate_only_paths", protocol.CandidateOnlyPaths, protocol.CandidateOnlyPathTotal, protocol.CandidateOnlyPathOmitted, &problems)
 
 	validateCompactProtocolLabels("model_protocol.schema_names", protocol.SchemaNames, &problems)
 	validateCompactProtocolLabels("model_protocol.structured_schema_names", protocol.StructuredSchemaNames, &problems)
@@ -99,6 +108,29 @@ func validateProtocolProjection(protocol ModelProtocolProjection, metadata []Pla
 	}
 
 	return nil
+}
+
+func validateEvidencePathSample(field string, paths []string, total int, omitted int, problems *[]string) {
+	if total != len(paths)+omitted {
+		*problems = append(*problems, fmt.Sprintf("%s count mismatch: total=%d shown=%d omitted=%d", field, total, len(paths), omitted))
+	}
+}
+
+func validatePlanExecuteProtocolProjection(protocol ModelProtocolProjection, metadata []PlanExecutePlannerToolMetadata) error {
+	if err := validateToolVocabulary(toolVocabularyPolicy{
+		ToolMetadata: metadata,
+		ExposedToolSets: []toolVocabularySet{
+			{Role: "required", Field: "model_protocol.required_tools", Tools: protocol.RequiredTools},
+			{Role: "visible", Field: "model_protocol.visible_tools", Tools: protocol.VisibleTools},
+			{Role: "callable", Field: "model_protocol.callable_tools", Tools: protocol.CallableTools},
+		},
+		RequireCallableVisible: true,
+		PlannerOnly:            true,
+	}); err != nil {
+		return err
+	}
+
+	return validateHiddenToolProjection("model_protocol.hidden_tools", protocol.HiddenTools, protocol.VisibleTools, protocol.CallableTools, metadata)
 }
 
 type toolVocabularyPolicy struct {
@@ -286,6 +318,8 @@ func modelProtocolProjectionValues(protocol ModelProtocolProjection) []string {
 	values = append(values, protocol.TerminalResponseShapes...)
 	values = append(values, protocol.StructuredSchemaNames...)
 	values = append(values, protocol.SourceBodyObligations...)
+	values = append(values, protocol.GroundedSourceBodyPaths...)
+	values = append(values, protocol.CandidateOnlyPaths...)
 	values = append(values, protocol.CompletedGitHistoryPaths...)
 	values = append(values, protocol.PendingGitHistoryPaths...)
 	values = append(values, protocol.RequiredEditCoverage...)

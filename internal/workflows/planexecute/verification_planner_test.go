@@ -1,63 +1,55 @@
 package planexecute
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	plancontract "idiom/internal/contracts/plan"
 )
 
-func TestVerificationPlannerDedupeExplicitAndInferredCommands(t *testing.T) {
-	root := t.TempDir()
-	writeVerificationPlannerFile(t, root, "go.mod", "module example.com/root\n\ngo 1.22\n")
-	writeVerificationPlannerFile(t, root, "pkg/feature/feature.go", "package feature\n")
+var _ = ginkgo.It("verification planner dedupe explicit and inferred commands", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	writeVerificationPlannerFile(root, "go.mod", "module example.com/root\n\ngo 1.22\n")
+	writeVerificationPlannerFile(root, "pkg/feature/feature.go", "package feature\n")
 
 	plan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot: root,
 		Prompt:        "After editing, run `go test ./pkg/feature`.",
 		ChangedPaths:  []string{"pkg/feature/feature.go", "pkg/feature/feature_test.go"},
 	})
-
-	if len(plan.Commands) != 1 {
-		t.Fatalf("commands = %#v, want one deduped command", plan.Commands)
-	}
+	gomega.Expect(len(plan.Commands) != 1).To(gomega.BeFalse(), fmt.Sprintf("commands = %#v, want one deduped command", plan.Commands))
 
 	if got := plan.Commands[0]; got.Command != "go test ./pkg/feature" || got.WorkingDir != "" || got.Source != plancontract.VerificationCommandSourcePrompt {
-		t.Fatalf("unexpected command = %#v", got)
+		ginkgo.Fail(fmt.Sprintf("unexpected command = %#v", got))
 	}
 
 	if got := plan.Commands[0].Argv; len(got) != 3 || got[0] != "go" || got[1] != "test" || got[2] != "./pkg/feature" {
-		t.Fatalf("unexpected argv = %#v", got)
+		ginkgo.Fail(fmt.Sprintf("unexpected argv = %#v", got))
 	}
+	gomega.Expect(plan.Skips).To(gomega.HaveLen(0), fmt.Sprintf("unexpected skips/rejects: skips=%#v rejects=%#v", plan.Skips, plan.Rejects))
+	gomega.Expect(plan.Rejects).To(gomega.HaveLen(0), fmt.Sprintf("unexpected skips/rejects: skips=%#v rejects=%#v", plan.Skips, plan.Rejects))
+})
 
-	if len(plan.Skips) != 0 || len(plan.Rejects) != 0 {
-		t.Fatalf("unexpected skips/rejects: skips=%#v rejects=%#v", plan.Skips, plan.Rejects)
-	}
-}
-
-func TestVerificationPlannerRejectsUnsafePromptCommand(t *testing.T) {
-	root := t.TempDir()
-	writeVerificationPlannerFile(t, root, "go.mod", "module example.com/root\n\ngo 1.22\n")
+var _ = ginkgo.It("verification planner rejects unsafe prompt command", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	writeVerificationPlannerFile(root, "go.mod", "module example.com/root\n\ngo 1.22\n")
 
 	plan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot: root,
 		Prompt:        "Required verification: run `go test ./pkg; rm -rf /`.",
 	})
+	gomega.Expect(len(plan.Commands) != 0).To(gomega.BeFalse(), fmt.Sprintf("unsafe prompt command must not be executable: %#v", plan.Commands))
+	gomega.Expect(plan.Rejects).To(gomega.HaveLen(1), fmt.Sprintf("unsafe prompt command should be a structured reject, got %#v", plan.Rejects))
+	gomega.Expect(plan.Rejects[0].Reason).To(gomega.Equal(plancontract.VerificationRejectUnsupportedCmd), fmt.Sprintf("unsafe prompt command should be a structured reject, got %#v", plan.Rejects))
+})
 
-	if len(plan.Commands) != 0 {
-		t.Fatalf("unsafe prompt command must not be executable: %#v", plan.Commands)
-	}
-
-	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != plancontract.VerificationRejectUnsupportedCmd {
-		t.Fatalf("unsafe prompt command should be a structured reject, got %#v", plan.Rejects)
-	}
-}
-
-func TestVerificationPlannerAcceptsRequestedPytestCommands(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("verification planner accepts requested pytest commands", func() {
+	root := ginkgo.GinkgoT().TempDir()
 
 	plan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot: root,
@@ -66,44 +58,35 @@ func TestVerificationPlannerAcceptsRequestedPytestCommands(t *testing.T) {
 			"After implementation, run `python -m pytest tests/test_memory.py`.",
 		}, "\n"),
 	})
-
-	if len(plan.Commands) != 2 {
-		t.Fatalf("commands = %#v, want requested pytest commands", plan.Commands)
-	}
+	gomega.Expect(len(plan.Commands) != 2).To(gomega.BeFalse(), fmt.Sprintf("commands = %#v, want requested pytest commands", plan.Commands))
 
 	if got := plan.Commands[0]; got.Command != "pytest tests/test_query_handler.py" || got.Source != plancontract.VerificationCommandSourcePrompt {
-		t.Fatalf("unexpected pytest command = %#v", got)
+		ginkgo.Fail(fmt.Sprintf("unexpected pytest command = %#v", got))
 	}
 	if got := plan.Commands[1]; got.Command != "python -m pytest tests/test_memory.py" || got.Source != plancontract.VerificationCommandSourcePrompt {
-		t.Fatalf("unexpected python -m pytest command = %#v", got)
+		ginkgo.Fail(fmt.Sprintf("unexpected python -m pytest command = %#v", got))
 	}
-	if len(plan.Rejects) != 0 {
-		t.Fatalf("safe pytest commands should not be rejected: %#v", plan.Rejects)
-	}
-}
+	gomega.Expect(len(plan.Rejects) != 0).To(gomega.BeFalse(), fmt.Sprintf("safe pytest commands should not be rejected: %#v", plan.Rejects))
+})
 
-func TestVerificationPlannerRejectsUnsafePytestCommand(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("verification planner rejects unsafe pytest command", func() {
+	root := ginkgo.GinkgoT().TempDir()
 
 	plan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot: root,
 		Prompt:        "Required verification command: run `pytest tests/test_query_handler.py; rm -rf /` after edits.",
 	})
+	gomega.Expect(len(plan.Commands) != 0).To(gomega.BeFalse(), fmt.Sprintf("unsafe pytest command must not be executable: %#v", plan.Commands))
+	gomega.Expect(plan.Rejects).To(gomega.HaveLen(1), fmt.Sprintf("unsafe pytest command should be a structured reject, got %#v", plan.Rejects))
+	gomega.Expect(plan.Rejects[0].Reason).To(gomega.Equal(plancontract.VerificationRejectUnsupportedCmd), fmt.Sprintf("unsafe pytest command should be a structured reject, got %#v", plan.Rejects))
+})
 
-	if len(plan.Commands) != 0 {
-		t.Fatalf("unsafe pytest command must not be executable: %#v", plan.Commands)
-	}
-	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != plancontract.VerificationRejectUnsupportedCmd {
-		t.Fatalf("unsafe pytest command should be a structured reject, got %#v", plan.Rejects)
-	}
-}
-
-func TestVerificationPlannerUsesClosestGoModuleRoot(t *testing.T) {
-	root := t.TempDir()
-	writeVerificationPlannerFile(t, root, "go.mod", "module example.com/root\n\ngo 1.22\n")
-	writeVerificationPlannerFile(t, root, "pkg/root/root.go", "package root\n")
-	writeVerificationPlannerFile(t, root, "nested/go.mod", "module example.com/nested\n\ngo 1.22\n")
-	writeVerificationPlannerFile(t, root, "nested/pkg/feature/feature.go", "package feature\n")
+var _ = ginkgo.It("verification planner uses closest go module root", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	writeVerificationPlannerFile(root, "go.mod", "module example.com/root\n\ngo 1.22\n")
+	writeVerificationPlannerFile(root, "pkg/root/root.go", "package root\n")
+	writeVerificationPlannerFile(root, "nested/go.mod", "module example.com/nested\n\ngo 1.22\n")
+	writeVerificationPlannerFile(root, "nested/pkg/feature/feature.go", "package feature\n")
 
 	plan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot: root,
@@ -119,37 +102,31 @@ func TestVerificationPlannerUsesClosestGoModuleRoot(t *testing.T) {
 	}
 
 	if command := got["pkg/root/root.go"]; command.Command != "go test ./pkg/root" || command.WorkingDir != "" {
-		t.Fatalf("root command = %#v", command)
+		ginkgo.Fail(fmt.Sprintf("root command = %#v", command))
 	}
 
 	if command := got["nested/pkg/feature/feature.go"]; command.Command != "go test ./pkg/feature" || command.WorkingDir != "nested" {
-		t.Fatalf("nested command = %#v", command)
+		ginkgo.Fail(fmt.Sprintf("nested command = %#v", command))
 	}
-}
+})
 
-func TestVerificationPlannerDoesNotInferFromGoWorkAlone(t *testing.T) {
-	root := t.TempDir()
-	writeVerificationPlannerFile(t, root, "go.work", "go 1.22\n")
-	writeVerificationPlannerFile(t, root, "pkg/feature/feature.go", "package feature\n")
+var _ = ginkgo.It("verification planner does not infer from go work alone", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	writeVerificationPlannerFile(root, "go.work", "go 1.22\n")
+	writeVerificationPlannerFile(root, "pkg/feature/feature.go", "package feature\n")
 
 	plan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot: root,
 		ChangedPaths:  []string{"pkg/feature/feature.go"},
 	})
+	gomega.Expect(len(plan.Commands) != 0).To(gomega.BeFalse(), fmt.Sprintf("go.work without a go.mod must not infer verification commands: %#v", plan.Commands))
+	gomega.Expect(collectVerificationPlannerSkipReasons(plan.Skips).contains(plancontract.VerificationSkipNoGoModuleRoot)).To(gomega.BeTrue(), fmt.Sprintf("missing no-module skip, got %#v", plan.Skips))
+})
 
-	if len(plan.Commands) != 0 {
-		t.Fatalf("go.work without a go.mod must not infer verification commands: %#v", plan.Commands)
-	}
-
-	if !collectVerificationPlannerSkipReasons(plan.Skips).contains(plancontract.VerificationSkipNoGoModuleRoot) {
-		t.Fatalf("missing no-module skip, got %#v", plan.Skips)
-	}
-}
-
-func TestVerificationPlannerSkipsUnsafeAndUnsupportedPaths(t *testing.T) {
-	root := t.TempDir()
-	writeVerificationPlannerFile(t, root, "go.mod", "module example.com/root\n\ngo 1.22\n")
-	writeVerificationPlannerFile(t, root, "pkg/header.go", "// Code generated by fixture. DO NOT EDIT.\npackage pkg\n")
+var _ = ginkgo.It("verification planner skips unsafe and unsupported paths", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	writeVerificationPlannerFile(root, "go.mod", "module example.com/root\n\ngo 1.22\n")
+	writeVerificationPlannerFile(root, "pkg/header.go", "// Code generated by fixture. DO NOT EDIT.\npackage pkg\n")
 
 	plan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot: root,
@@ -179,19 +156,14 @@ func TestVerificationPlannerSkipsUnsafeAndUnsupportedPaths(t *testing.T) {
 		plancontract.VerificationSkipEmptySegment,
 		plancontract.VerificationSkipNonGoPath,
 	} {
-		if !reasons.contains(want) {
-			t.Fatalf("missing skip reason %q in %#v", want, plan.Skips)
-		}
-	}
+		gomega.Expect(reasons.contains(want)).To(gomega.BeTrue(), fmt.Sprintf("missing skip reason %q in %#v", want, plan.Skips))
 
-	if len(plan.Commands) != 1 || plan.Commands[0].Command != "go test ./pkg" {
-		t.Fatalf("expected only safe explicit command, got %#v", plan.Commands)
 	}
-
-	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != plancontract.VerificationRejectUnsupportedCmd {
-		t.Fatalf("expected structured reject for unsafe command, got %#v", plan.Rejects)
-	}
-}
+	gomega.Expect(plan.Commands).To(gomega.HaveLen(1), fmt.Sprintf("expected only safe explicit command, got %#v", plan.Commands))
+	gomega.Expect(plan.Commands[0].Command).To(gomega.Equal("go test ./pkg"), fmt.Sprintf("expected only safe explicit command, got %#v", plan.Commands))
+	gomega.Expect(plan.Rejects).To(gomega.HaveLen(1), fmt.Sprintf("expected structured reject for unsafe command, got %#v", plan.Rejects))
+	gomega.Expect(plan.Rejects[0].Reason).To(gomega.Equal(plancontract.VerificationRejectUnsupportedCmd), fmt.Sprintf("expected structured reject for unsafe command, got %#v", plan.Rejects))
+})
 
 type verificationPlannerSkipReasons []string
 
@@ -208,15 +180,15 @@ func collectVerificationPlannerSkipReasons(skips []plancontract.VerificationSkip
 	return reasons
 }
 
-func writeVerificationPlannerFile(t *testing.T, root string, rel string, body string) {
-	t.Helper()
+func writeVerificationPlannerFile(root string, rel string, body string) {
+	ginkgo.GinkgoHelper()
 
 	path := filepath.Join(root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		ginkgo.Fail(fmt.Sprintf("mkdir %s: %v", filepath.Dir(path), err))
 	}
 
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
+		ginkgo.Fail(fmt.Sprintf("write %s: %v", path, err))
 	}
 }

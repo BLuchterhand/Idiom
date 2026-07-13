@@ -2,44 +2,35 @@ package runrecord
 
 import (
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestValidateRunID(t *testing.T) {
-	valid := []string{
-		"20260621-120000",
-		"run_ok-1",
-		"run_ok_2",
-	}
-	for _, id := range valid {
-		t.Run("valid/"+id, func(t *testing.T) {
-			if err := ValidateRunID(id); err != nil {
-				t.Fatalf("ValidateRunID(%q) returned error: %v", id, err)
-			}
-		})
-	}
+var _ = ginkgo.Describe("Run IDs", func() {
+	ginkgo.DescribeTable("accepts valid IDs",
+		func(id string) {
+			gomega.Expect(ValidateRunID(id)).To(gomega.Succeed())
+		},
+		ginkgo.Entry("timestamp", "20260621-120000"),
+		ginkgo.Entry("hyphen", "run_ok-1"),
+		ginkgo.Entry("underscore", "run_ok_2"),
+	)
 
-	invalid := []string{
-		"",
-		"../escape",
-		"a/b",
-		`a\b`,
-		"run.ok_2",
-		"space here",
-		strings.Repeat("a", 129),
-	}
-	for _, id := range invalid {
-		t.Run("invalid/"+id, func(t *testing.T) {
-			if err := ValidateRunID(id); err == nil {
-				t.Fatalf("ValidateRunID(%q) should fail", id)
-			}
-		})
-	}
-}
+	ginkgo.DescribeTable("rejects unsafe or malformed IDs",
+		func(id string) {
+			gomega.Expect(ValidateRunID(id)).To(gomega.HaveOccurred())
+		},
+		ginkgo.Entry("empty", ""),
+		ginkgo.Entry("parent traversal", "../escape"),
+		ginkgo.Entry("forward slash", "a/b"),
+		ginkgo.Entry("backslash", `a\b`),
+		ginkgo.Entry("dot", "run.ok_2"),
+		ginkgo.Entry("space", "space here"),
+		ginkgo.Entry("too long", strings.Repeat("a", 129)),
+	)
 
-func TestNewRunIDIsValid(t *testing.T) {
-	runID := NewRunID()
-	if err := ValidateRunID(runID); err != nil {
-		t.Fatalf("ValidateRunID(NewRunID()) = %v for %q", err, runID)
-	}
-}
+	ginkgo.It("generates a valid ID", func() {
+		gomega.Expect(ValidateRunID(NewRunID())).To(gomega.Succeed())
+	})
+})

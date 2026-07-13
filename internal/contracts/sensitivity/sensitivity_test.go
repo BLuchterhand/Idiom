@@ -2,64 +2,56 @@ package sensitivity
 
 import (
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestContainsSecretMarkerCoversSharedPolicy(t *testing.T) {
+var _ = ginkgo.Describe("Sensitive text policy", func() {
 	awsAccessKeyLike := strings.Join([]string{"AKIA", "1234567890ABCD"}, "")
 	githubTokenLike := strings.Join([]string{"ghp", "_", "1234567890abcdef"}, "")
 	openAIKeyLike := strings.Join([]string{"sk", "-", "1234567890abcdef"}, "")
 
-	for _, input := range []string{
-		"Authorization: Bearer abc123",
-		awsAccessKeyLike,
-		githubTokenLike,
-		"token=abc123",
-		"secret abc123",
-		openAIKeyLike,
-	} {
-		if !ContainsSecretMarker(input) {
-			t.Fatalf("ContainsSecretMarker(%q) = false", input)
-		}
-	}
-}
+	ginkgo.DescribeTable("recognizes secret markers",
+		func(input string) {
+			gomega.Expect(ContainsSecretMarker(input)).To(gomega.BeTrue())
+		},
+		ginkgo.Entry("bearer authorization", "Authorization: Bearer abc123"),
+		ginkgo.Entry("AWS access key", awsAccessKeyLike),
+		ginkgo.Entry("GitHub token", githubTokenLike),
+		ginkgo.Entry("token assignment", "token=abc123"),
+		ginkgo.Entry("secret label", "secret abc123"),
+		ginkgo.Entry("OpenAI key", openAIKeyLike),
+	)
 
-func TestContainsSecretMarkerAllowsNonSecretTokenProse(t *testing.T) {
-	for _, input := range []string{
-		"optional total budget tokens for the run",
-		"authorization boundary documentation",
-		"Authorization: https://example.invalid/spec",
-		"task-specific workaround",
-	} {
-		if ContainsSecretMarker(input) {
-			t.Fatalf("ContainsSecretMarker(%q) = true", input)
-		}
-	}
-}
+	ginkgo.DescribeTable("allows non-secret prose containing policy vocabulary",
+		func(input string) {
+			gomega.Expect(ContainsSecretMarker(input)).To(gomega.BeFalse())
+		},
+		ginkgo.Entry("token budget", "optional total budget tokens for the run"),
+		ginkgo.Entry("authorization boundary", "authorization boundary documentation"),
+		ginkgo.Entry("authorization URL", "Authorization: https://example.invalid/spec"),
+		ginkgo.Entry("task-specific workaround", "task-specific workaround"),
+	)
 
-func TestContainsSensitiveTextCoversSharedPrivacyPolicy(t *testing.T) {
-	for _, input := range []string{
-		"raw_prompt: summarize",
-		"file_body includes source",
-		"customer-acme-session",
-		"token abc123",
-		"/Users/example/private/repo",
-		"~/workspace/customer",
-	} {
-		if !ContainsSensitiveText(input) {
-			t.Fatalf("ContainsSensitiveText(%q) = false", input)
-		}
-	}
-}
+	ginkgo.DescribeTable("recognizes privacy-sensitive text",
+		func(input string) {
+			gomega.Expect(ContainsSensitiveText(input)).To(gomega.BeTrue())
+		},
+		ginkgo.Entry("raw prompt", "raw_prompt: summarize"),
+		ginkgo.Entry("file body", "file_body includes source"),
+		ginkgo.Entry("customer session", "customer-acme-session"),
+		ginkgo.Entry("token", "token abc123"),
+		ginkgo.Entry("absolute home path", "/Users/example/private/repo"),
+		ginkgo.Entry("tilde workspace path", "~/workspace/customer"),
+	)
 
-func TestContainsSensitiveTextAllowsBenignSecretProse(t *testing.T) {
-	for _, input := range []string{
-		"optional total budget tokens for the run",
-		"task-specific workaround",
-		"authorization boundary documentation",
-	} {
-		if ContainsSecretMarker(input) {
-			t.Fatalf("ContainsSecretMarker(%q) = true", input)
-		}
-	}
-}
+	ginkgo.DescribeTable("allows benign secret-related prose",
+		func(input string) {
+			gomega.Expect(ContainsSecretMarker(input)).To(gomega.BeFalse())
+		},
+		ginkgo.Entry("token budget", "optional total budget tokens for the run"),
+		ginkgo.Entry("task-specific workaround", "task-specific workaround"),
+		ginkgo.Entry("authorization boundary", "authorization boundary documentation"),
+	)
+})

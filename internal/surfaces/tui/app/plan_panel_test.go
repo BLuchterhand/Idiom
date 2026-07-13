@@ -2,10 +2,10 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	planartifact "idiom/internal/contracts/planartifact"
@@ -13,79 +13,95 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 )
 
-func TestLoadPlanContentUsesCacheUntilFileChanges(t *testing.T) {
+var _ = ginkgo.It("load plan content uses cache until file changes", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
 
-	if err := os.WriteFile(path, []byte("first body"), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte("first body"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
-	m := &Model{planPath: path}
-	if got := m.loadPlanContent(); got != "first body" {
-		t.Fatalf("first load = %q, want %q", got, "first body")
+	m := &Model{promptRuntimeState: promptRuntimeState{
+		promptRuntimeCompletionState: promptRuntimeCompletionState{planPath: path},
+	}}
+	{
+		got := m.loadPlanContent()
+		gomega.Expect(got).To(gomega.Equal("first body"), fmt.Sprintf("first load = %q, want %q", got, "first body"))
 	}
 
 	m.planContent = "cached body"
-	if got := m.loadPlanContent(); got != "cached body" {
-		t.Fatalf("expected unchanged plan to reuse cache, got %q", got)
+	{
+		got := m.loadPlanContent()
+		gomega.Expect(got).To(gomega.Equal("cached body"), fmt.Sprintf("expected unchanged plan to reuse cache, got %q", got))
 	}
 
-	if err := os.WriteFile(path, []byte("second body"), 0o644); err != nil {
-		t.Fatalf("rewrite plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte("second body"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("rewrite plan: %v", err))
 	}
 
 	modTime := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(path, modTime, modTime); err != nil {
-		t.Fatalf("chtimes: %v", err)
+	{
+		err := os.Chtimes(path, modTime, modTime)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("chtimes: %v", err))
 	}
 
-	if got := m.loadPlanContent(); got != "second body" {
-		t.Fatalf("expected changed plan to reload from disk, got %q", got)
+	{
+		got := m.loadPlanContent()
+		gomega.Expect(got).To(gomega.Equal("second body"), fmt.Sprintf("expected changed plan to reload from disk, got %q", got))
 	}
-}
+})
 
-func TestLoadPlanContentClearsCacheWhenFileDisappears(t *testing.T) {
+var _ = ginkgo.It("load plan content clears cache when file disappears", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
 
-	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte("body"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
-	m := &Model{planPath: path}
-	if got := m.loadPlanContent(); got != "body" {
-		t.Fatalf("loadPlanContent = %q, want %q", got, "body")
+	m := &Model{promptRuntimeState: promptRuntimeState{
+		promptRuntimeCompletionState: promptRuntimeCompletionState{planPath: path},
+	}}
+	{
+		got := m.loadPlanContent()
+		gomega.Expect(got).To(gomega.Equal("body"), fmt.Sprintf("loadPlanContent = %q, want %q", got, "body"))
 	}
 
-	if err := os.Remove(path); err != nil {
-		t.Fatalf("remove: %v", err)
+	{
+		err := os.Remove(path)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("remove: %v", err))
 	}
 
-	if got := m.loadPlanContent(); got != "" {
-		t.Fatalf("expected missing plan to return empty string, got %q", got)
+	{
+		got := m.loadPlanContent()
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("expected missing plan to return empty string, got %q", got))
 	}
 
-	if m.planContent != "" {
-		t.Fatalf("expected missing plan to clear cached content, got %q", m.planContent)
-	}
+	gomega.Expect(m.planContent).To(gomega.Equal(""), fmt.Sprintf("expected missing plan to clear cached content, got %q", m.planContent))
 
-	if !m.planMTime.IsZero() {
-		t.Fatalf("expected missing plan to clear cached mtime, got %v", m.planMTime)
-	}
-}
+	gomega.Expect(m.planMTime.IsZero()).To(gomega.BeTrue(), fmt.Sprintf("expected missing plan to clear cached mtime, got %v", m.planMTime))
+})
 
-func TestPlanPanelHeadingsCollapseWithEnter(t *testing.T) {
+var _ = ginkgo.It("plan panel headings collapse with enter", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	path := filepath.Join(root, "plan.md")
 	content := "# Plan\n\n## Objective\nkeep this readable\n- [ ] hidden item\n\n## Steps\n- [ ] visible item\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
 	m := planPanelTestModel(path)
@@ -93,72 +109,63 @@ func TestPlanPanelHeadingsCollapseWithEnter(t *testing.T) {
 
 	before := m.planViewport.View()
 	for _, want := range []string{"▾ Objective", "keep this readable", "hidden item", "▾ Steps"} {
-		if !strings.Contains(before, want) {
-			t.Fatalf("expanded plan missing %q:\n%s", want, before)
-		}
+		gomega.Expect(strings.Contains(before, want)).To(gomega.BeTrue(), fmt.Sprintf("expanded plan missing %q:\n%s", want, before))
 	}
 
 	rows := m.currentPlanSelectableRows()
 	objectiveIdx := planSelectableRowIndex(rows, "Objective")
-	if objectiveIdx < 0 {
-		t.Fatalf("Objective heading not selectable: %#v", rows)
-	}
+	gomega.Expect(objectiveIdx < 0).To(gomega.BeFalse(), fmt.Sprintf("Objective heading not selectable: %#v", rows))
 
-	m.plan.cursor = objectiveIdx
-	if handled, _ := m.handlePlanPanelKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
-		t.Fatal("Enter should be handled for plan heading")
+	m.planUI.cursor = objectiveIdx
+	{
+		handled, _ := m.handlePlanPanelKey(tea.KeyMsg{Type: tea.KeyEnter})
+		gomega.Expect(handled).To(gomega.BeTrue(), fmt.Sprint("Enter should be handled for plan heading"))
 	}
 
 	after := m.planViewport.View()
 	for _, want := range []string{"▸ Objective", "▾ Steps", "visible item"} {
-		if !strings.Contains(after, want) {
-			t.Fatalf("collapsed plan missing %q:\n%s", want, after)
-		}
+		gomega.Expect(strings.Contains(after, want)).To(gomega.BeTrue(), fmt.Sprintf("collapsed plan missing %q:\n%s", want, after))
 	}
 	for _, hidden := range []string{"keep this readable", "hidden item"} {
-		if strings.Contains(after, hidden) {
-			t.Fatalf("collapsed section leaked %q:\n%s", hidden, after)
-		}
+		gomega.Expect(strings.Contains(after, hidden)).To(gomega.BeFalse(), fmt.Sprintf("collapsed section leaked %q:\n%s", hidden, after))
 	}
-}
+})
 
-func TestPlanPanelCollapseHidesNestedHeadingsOnlyUntilPeer(t *testing.T) {
+var _ = ginkgo.It("plan panel collapse hides nested headings only until peer", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	path := filepath.Join(root, "plan.md")
 	content := "## Parent\nparent body\n### Child\nchild body\n## Peer\npeer body\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
 	m := planPanelTestModel(path)
 	rows := m.currentPlanSelectableRows()
 	parentIdx := planSelectableRowIndex(rows, "Parent")
-	if parentIdx < 0 {
-		t.Fatalf("Parent heading not selectable: %#v", rows)
-	}
+	gomega.Expect(parentIdx < 0).To(gomega.BeFalse(), fmt.Sprintf("Parent heading not selectable: %#v", rows))
 
-	m.plan.cursor = parentIdx
+	m.planUI.cursor = parentIdx
 	m.activateSelectedPlanRow()
 
 	got := m.planViewport.View()
 	for _, hidden := range []string{"parent body", "Child", "child body"} {
-		if strings.Contains(got, hidden) {
-			t.Fatalf("collapsed parent leaked nested content %q:\n%s", hidden, got)
-		}
+		gomega.Expect(strings.Contains(got, hidden)).To(gomega.BeFalse(), fmt.Sprintf("collapsed parent leaked nested content %q:\n%s", hidden, got))
 	}
 	for _, want := range []string{"▸ Parent", "▾ Peer", "peer body"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("collapsed parent should leave peer visible; missing %q:\n%s", want, got)
-		}
+		gomega.Expect(strings.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("collapsed parent should leave peer visible; missing %q:\n%s", want, got))
 	}
-}
+})
 
-func TestPlanPanelClickTogglesHeadingUsingRenderedRows(t *testing.T) {
+var _ = ginkgo.It("plan panel click toggles heading using rendered rows", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	path := filepath.Join(root, "plan.md")
 	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
 	m := planPanelTestModel(path)
@@ -171,29 +178,24 @@ func TestPlanPanelClickTogglesHeadingUsingRenderedRows(t *testing.T) {
 			break
 		}
 	}
-	if clickRow < 0 {
-		t.Fatalf("Objective row not rendered:\n%s", m.planViewport.View())
-	}
+	gomega.Expect(clickRow < 0).To(gomega.BeFalse(), fmt.Sprintf("Objective row not rendered:\n%s", m.planViewport.View()))
 
-	if !m.handlePlanPanelClick(clickRow) {
-		t.Fatal("heading click should be handled")
-	}
+	gomega.Expect(m.handlePlanPanelClick(clickRow)).To(gomega.BeTrue(), fmt.Sprint("heading click should be handled"))
 
 	got := m.planViewport.View()
-	if !strings.Contains(got, "▸ Objective") || strings.Contains(got, "body") {
-		t.Fatalf("heading click did not collapse section:\n%s", got)
-	}
-	if !strings.Contains(got, "visible item") {
-		t.Fatalf("peer content should remain visible after heading click:\n%s", got)
-	}
-}
+	gomega.Expect(got).To(gomega.ContainSubstring("▸ Objective"), fmt.Sprintf("heading click did not collapse section:\n%s", got))
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring("body")), fmt.Sprintf("heading click did not collapse section:\n%s", got))
+	gomega.Expect(strings.Contains(got, "visible item")).To(gomega.BeTrue(), fmt.Sprintf("peer content should remain visible after heading click:\n%s", got))
+})
 
-func TestPlanPanelClickUsesRenderedRowMetadataWhenRowsWrap(t *testing.T) {
+var _ = ginkgo.It("plan panel click uses rendered row metadata when rows wrap", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	path := filepath.Join(root, "plan.md")
 	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
 	m := planPanelTestModel(path)
@@ -206,14 +208,12 @@ func TestPlanPanelClickUsesRenderedRowMetadataWhenRowsWrap(t *testing.T) {
 			break
 		}
 	}
-	if stepsSourceLine < 0 {
-		t.Fatalf("Steps heading not selectable:\n%s", m.planViewport.View())
-	}
+	gomega.Expect(stepsSourceLine < 0).To(gomega.BeFalse(), fmt.Sprintf("Steps heading not selectable:\n%s", m.planViewport.View()))
 
 	// Simulate a rendered plan where earlier long rows occupy extra viewport
 	// rows. Click dispatch must use render-owned geometry instead of assuming
 	// source lines and visible rows have the same index.
-	m.plan.renderedRows = []planRenderedRow{
+	m.planUI.renderedRows = []planRenderedRow{
 		{SourceLineIdx: -1},
 		{SourceLineIdx: 0},
 		{SourceLineIdx: 0},
@@ -224,22 +224,21 @@ func TestPlanPanelClickUsesRenderedRowMetadataWhenRowsWrap(t *testing.T) {
 		{SourceLineIdx: stepsSourceLine},
 	}
 
-	if !m.handlePlanPanelClick(7) {
-		t.Fatal("heading click should be handled through rendered row metadata")
-	}
+	gomega.Expect(m.handlePlanPanelClick(7)).To(gomega.BeTrue(), fmt.Sprint("heading click should be handled through rendered row metadata"))
 
 	got := m.planViewport.View()
-	if !strings.Contains(got, "▸ Steps") || strings.Contains(got, "visible item") {
-		t.Fatalf("metadata-routed heading click did not collapse Steps:\n%s", got)
-	}
-}
+	gomega.Expect(got).To(gomega.ContainSubstring("▸ Steps"), fmt.Sprintf("metadata-routed heading click did not collapse Steps:\n%s", got))
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring("visible item")), fmt.Sprintf("metadata-routed heading click did not collapse Steps:\n%s", got))
+})
 
-func TestPlanPanelMouseClickTogglesHeadingThroughPanelHitTest(t *testing.T) {
+var _ = ginkgo.It("plan panel mouse click toggles heading through panel hit test", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	path := filepath.Join(root, "plan.md")
 	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
 	m := planPanelTestModel(path)
@@ -253,9 +252,7 @@ func TestPlanPanelMouseClickTogglesHeadingThroughPanelHitTest(t *testing.T) {
 			break
 		}
 	}
-	if clickRow < 0 {
-		t.Fatalf("Objective row not rendered:\n%s", m.planViewport.View())
-	}
+	gomega.Expect(clickRow < 0).To(gomega.BeFalse(), fmt.Sprintf("Objective row not rendered:\n%s", m.planViewport.View()))
 
 	_, handled := m.handleMouse(tea.MouseMsg{
 		X:      m.panelStartX() + 1,
@@ -263,22 +260,21 @@ func TestPlanPanelMouseClickTogglesHeadingThroughPanelHitTest(t *testing.T) {
 		Button: tea.MouseButtonLeft,
 		Action: tea.MouseActionPress,
 	})
-	if !handled {
-		t.Fatal("panel mouse click should be handled")
-	}
+	gomega.Expect(handled).To(gomega.BeTrue(), fmt.Sprint("panel mouse click should be handled"))
 
 	got := m.planViewport.View()
-	if !strings.Contains(got, "▸ Objective") || strings.Contains(got, "body") {
-		t.Fatalf("mouse click did not collapse section:\n%s", got)
-	}
-}
+	gomega.Expect(got).To(gomega.ContainSubstring("▸ Objective"), fmt.Sprintf("mouse click did not collapse section:\n%s", got))
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring("body")), fmt.Sprintf("mouse click did not collapse section:\n%s", got))
+})
 
-func TestPlanPanelMouseLeftTypeClickTogglesHeading(t *testing.T) {
+var _ = ginkgo.It("plan panel mouse left type click toggles heading", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	path := filepath.Join(root, "plan.md")
 	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write plan: %v", err))
 	}
 
 	m := planPanelTestModel(path)
@@ -292,26 +288,22 @@ func TestPlanPanelMouseLeftTypeClickTogglesHeading(t *testing.T) {
 			break
 		}
 	}
-	if clickRow < 0 {
-		t.Fatalf("Objective row not rendered:\n%s", m.planViewport.View())
-	}
+	gomega.Expect(clickRow < 0).To(gomega.BeFalse(), fmt.Sprintf("Objective row not rendered:\n%s", m.planViewport.View()))
 
 	_, handled := m.handleMouse(tea.MouseMsg{
-		Type: tea.MouseLeft,
-		X:    m.panelStartX() + 1,
-		Y:    3 + clickRow,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      m.panelStartX() + 1,
+		Y:      3 + clickRow,
 	})
-	if !handled {
-		t.Fatal("MouseLeft-typed panel click should be handled")
-	}
+	gomega.Expect(handled).To(gomega.BeTrue(), fmt.Sprint("MouseLeft-typed panel click should be handled"))
 
 	got := m.planViewport.View()
-	if !strings.Contains(got, "▸ Objective") || strings.Contains(got, "body") {
-		t.Fatalf("MouseLeft-typed click did not collapse section:\n%s", got)
-	}
-}
+	gomega.Expect(got).To(gomega.ContainSubstring("▸ Objective"), fmt.Sprintf("MouseLeft-typed click did not collapse section:\n%s", got))
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring("body")), fmt.Sprintf("MouseLeft-typed click did not collapse section:\n%s", got))
+})
 
-func TestPrimaryMousePressRecognizesSupportedEncodings(t *testing.T) {
+var _ = ginkgo.It("primary mouse press recognizes supported encodings", func() {
 	tests := []struct {
 		name string
 		msg  tea.MouseMsg
@@ -326,11 +318,6 @@ func TestPrimaryMousePressRecognizesSupportedEncodings(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "deprecated type left",
-			msg:  tea.MouseMsg{Type: tea.MouseLeft},
-			want: true,
-		},
-		{
 			name: "left release",
 			msg: tea.MouseMsg{
 				Button: tea.MouseButtonLeft,
@@ -341,7 +328,6 @@ func TestPrimaryMousePressRecognizesSupportedEncodings(t *testing.T) {
 		{
 			name: "wheel",
 			msg: tea.MouseMsg{
-				Type:   tea.MouseWheelUp,
 				Button: tea.MouseButtonWheelUp,
 				Action: tea.MouseActionPress,
 			},
@@ -350,15 +336,17 @@ func TestPrimaryMousePressRecognizesSupportedEncodings(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isPrimaryMousePress(tt.msg); got != tt.want {
-				t.Fatalf("isPrimaryMousePress() = %t, want %t", got, tt.want)
+		ginkgo.By(fmt.Sprint(tt.name), func() {
+			{
+				got := isPrimaryMousePress(tt.msg)
+				gomega.Expect(got).To(gomega.Equal(tt.want), fmt.Sprintf("isPrimaryMousePress() = %t, want %t", got, tt.want))
 			}
 		})
 	}
-}
+})
 
-func TestDocViewerRendersPlanArtifactMetadataAndCollapsedEdits(t *testing.T) {
+var _ = ginkgo.It("doc viewer renders plan artifact metadata and collapsed edits", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeDocViewerPlanArtifact(t, root)
 
@@ -376,17 +364,15 @@ func TestDocViewerRendersPlanArtifactMetadataAndCollapsedEdits(t *testing.T) {
 		"old_text",
 		"app.txt",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("doc viewer missing %q:\n%s", want, got)
-		}
+		gomega.Expect(strings.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("doc viewer missing %q:\n%s", want, got))
 	}
 
-	if strings.Contains(got, "-old value") || strings.Contains(got, "+new value") {
-		t.Fatalf("collapsed edit should not render diff body:\n%s", got)
-	}
-}
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring("-old value")), fmt.Sprintf("collapsed edit should not render diff body:\n%s", got))
+	gomega.Expect(got).To(gomega.Not(gomega.ContainSubstring("+new value")), fmt.Sprintf("collapsed edit should not render diff body:\n%s", got))
+})
 
-func TestDocViewerExpandedEditRendersDiffLikeBody(t *testing.T) {
+var _ = ginkgo.It("doc viewer expanded edit renders diff like body", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeDocViewerPlanArtifact(t, root)
 
@@ -404,31 +390,28 @@ func TestDocViewerExpandedEditRendersDiffLikeBody(t *testing.T) {
 		"-old value",
 		"+new value",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expanded doc viewer missing %q:\n%s", want, got)
-		}
+		gomega.Expect(strings.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("expanded doc viewer missing %q:\n%s", want, got))
 	}
-}
+})
 
-func TestDocViewerEnterTogglesSelectedEdit(t *testing.T) {
+var _ = ginkgo.It("doc viewer enter toggles selected edit", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeDocViewerPlanArtifact(t, root)
 
 	m := docViewerTestModel(root)
-	if handled, _ := m.handleDocViewerPanelKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
-		t.Fatal("Enter was not handled")
+	{
+		handled, _ := m.handleDocViewerPanelKey(tea.KeyMsg{Type: tea.KeyEnter})
+		gomega.Expect(handled).To(gomega.BeTrue(), fmt.Sprint("Enter was not handled"))
 	}
 
-	if !m.docViewer.expanded[0] {
-		t.Fatal("expected selected edit to expand")
-	}
+	gomega.Expect(m.docViewer.expanded[0]).To(gomega.BeTrue(), fmt.Sprint("expected selected edit to expand"))
 
-	if !strings.Contains(m.docViewer.viewport.View(), "+new value") {
-		t.Fatalf("expanded viewport did not render diff:\n%s", m.docViewer.viewport.View())
-	}
-}
+	gomega.Expect(strings.Contains(m.docViewer.viewport.View(), "+new value")).To(gomega.BeTrue(), fmt.Sprintf("expanded viewport did not render diff:\n%s", m.docViewer.viewport.View()))
+})
 
-func TestMouseClickPanelTabSwitchesAndFocusesPanel(t *testing.T) {
+var _ = ginkgo.It("mouse click panel tab switches and focuses panel", func() {
+	t := ginkgo.GinkgoT()
 	m := docViewerTestModel(t.TempDir())
 
 	m.panelTab = panelTabHistory
@@ -442,16 +425,13 @@ func TestMouseClickPanelTabSwitchesAndFocusesPanel(t *testing.T) {
 		Action: tea.MouseActionPress,
 	})
 
-	if m.panelTab != panelTabDocViewer {
-		t.Fatalf("panel tab = %d, want doc viewer", m.panelTab)
-	}
+	gomega.Expect(m.panelTab).To(gomega.Equal(panelTabDocViewer), fmt.Sprintf("panel tab = %d, want doc viewer", m.panelTab))
 
-	if !m.history.focused {
-		t.Fatal("panel click should focus the panel")
-	}
-}
+	gomega.Expect(m.history.focused).To(gomega.BeTrue(), fmt.Sprint("panel click should focus the panel"))
+})
 
-func TestMouseClickDocViewerEditTogglesExpansion(t *testing.T) {
+var _ = ginkgo.It("mouse click doc viewer edit toggles expansion", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeDocViewerPlanArtifact(t, root)
 
@@ -469,9 +449,7 @@ func TestMouseClickDocViewerEditTogglesExpansion(t *testing.T) {
 		}
 	}
 
-	if row < 0 {
-		t.Fatalf("could not find doc viewer edit row:\n%s", m.docViewer.viewport.View())
-	}
+	gomega.Expect(row < 0).To(gomega.BeFalse(), fmt.Sprintf("could not find doc viewer edit row:\n%s", m.docViewer.viewport.View()))
 
 	m.handleMouse(tea.MouseMsg{
 		X:      m.panelStartX() + 1,
@@ -480,18 +458,16 @@ func TestMouseClickDocViewerEditTogglesExpansion(t *testing.T) {
 		Action: tea.MouseActionPress,
 	})
 
-	if !m.docViewer.expanded[0] {
-		t.Fatal("mouse click should expand the clicked edit")
-	}
+	gomega.Expect(m.docViewer.expanded[0]).To(gomega.BeTrue(), fmt.Sprint("mouse click should expand the clicked edit"))
 
-	if !strings.Contains(m.docViewer.viewport.View(), "+new value") {
-		t.Fatalf("expanded viewport did not render diff:\n%s", m.docViewer.viewport.View())
-	}
-}
+	gomega.Expect(strings.Contains(m.docViewer.viewport.View(), "+new value")).To(gomega.BeTrue(), fmt.Sprintf("expanded viewport did not render diff:\n%s", m.docViewer.viewport.View()))
+})
 
 func planPanelTestModel(path string) *Model {
 	return &Model{
-		planPath: path,
+		promptRuntimeState: promptRuntimeState{
+			promptRuntimeCompletionState: promptRuntimeCompletionState{planPath: path},
+		},
 		panelTab: panelTabPlan,
 		history: historyState{
 			panelOpen: true,
@@ -530,16 +506,18 @@ func docViewerTestModel(root string) *Model {
 	}
 }
 
-func writeDocViewerPlanArtifact(t *testing.T, root string) {
-	t.Helper()
+func writeDocViewerPlanArtifact(t ginkgo.FullGinkgoTInterface, root string) {
+	ginkgo.GinkgoHelper()
 
-	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("old value\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("old value\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write source: %v", err))
 	}
 
 	planDir := filepath.Join(root, ".idiom", "plans")
-	if err := os.MkdirAll(planDir, 0o755); err != nil {
-		t.Fatalf("mkdir plan dir: %v", err)
+	{
+		err := os.MkdirAll(planDir, 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir plan dir: %v", err))
 	}
 
 	artifact := planartifact.PlanArtifact{
@@ -602,11 +580,10 @@ func writeDocViewerPlanArtifact(t *testing.T, root string) {
 	}
 
 	body, err := json.MarshalIndent(artifact, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal artifact: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal artifact: %v", err))
 
-	if err := os.WriteFile(filepath.Join(planDir, "last.plan.json"), body, 0o644); err != nil {
-		t.Fatalf("write artifact: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(planDir, "last.plan.json"), body, 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write artifact: %v", err))
 	}
 }

@@ -1,32 +1,29 @@
 package eval
 
 import (
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"testing"
 )
 
-func TestReadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
-	suitePath := evalTestdataPath(t, "swe", "representative-suite.json")
+var _ = ginkgo.It("read representative swe suite covers frontier families", func() {
+	suitePath := evalTestdataPath("swe", "representative-suite.json")
 
 	suite, err := ReadSWESuite(suitePath)
-	if err != nil {
-		t.Fatalf("ReadSWESuite: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ReadSWESuite: %v", err))
 
 	coverage := AnalyzeSWESuiteCoverage(suite)
-	if !coverage.Passed {
-		t.Fatalf("representative suite coverage failed: %v", coverage.Findings)
-	}
+	gomega.Expect(coverage.Passed).To(gomega.BeTrue(), fmt.Sprintf("representative suite coverage failed: %v", coverage.Findings))
 
-	if findings := LintSWESuite(suite); len(findings) > 0 {
-		t.Fatalf("representative suite lint failed: %v", findings)
+	{
+		findings := LintSWESuite(suite)
+		gomega.Expect(findings).To(gomega.BeEmpty(), fmt.Sprintf("representative suite lint failed: %v", findings))
 	}
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err != nil {
-		t.Fatalf("representative suite fixture validation failed: %v", err)
-	}
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).To(gomega.Succeed(), "validate representative suite fixtures")
 
 	requiredFamilies := []string{
 		"direct_question",
@@ -50,9 +47,7 @@ func TestReadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 		"multi_turn_state",
 	}
 	for _, family := range requiredFamilies {
-		if !suiteHasFamily(suite, family) {
-			t.Fatalf("representative suite missing family %q", family)
-		}
+		gomega.Expect(suiteHasFamily(suite, family)).To(gomega.BeTrue(), fmt.Sprintf("representative suite missing family %q", family))
 	}
 
 	for _, task := range suite.Tasks {
@@ -64,40 +59,65 @@ func TestReadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 		hasAssertion := task.Scenario.RequireRoutePlan != nil ||
 			len(task.Scenario.RequirePhases) > 0 ||
 			len(task.Scenario.PromptContains) > 0 ||
+			strings.TrimSpace(task.Scenario.PromptSHA256) != "" ||
 			len(task.Scenario.PromptHistoryContains) > 0 ||
 			len(task.Scenario.FinalAssistantContains) > 0 ||
 			len(task.Scenario.RequireTools) > 0
-		if !hasAssertion {
-			t.Fatalf("task %q scenario has no observable assertion; add one", task.ID)
-		}
+		gomega.Expect(hasAssertion).To(gomega.BeTrue(), fmt.Sprintf("task %q scenario has no observable assertion; add one", task.ID))
 
-		if len(task.Turns) > 0 && !task.Scenario.RequireAssistantForEachUser {
-			t.Fatalf("multi-turn task %q should require an assistant response for each user turn", task.ID)
+		if len(task.Turns) > 0 {
+			gomega.Expect(task.Scenario.RequireAssistantForEachUser).To(gomega.BeTrue(), fmt.Sprintf("multi-turn task %q should require an assistant response for each user turn", task.ID))
 		}
 
 		if strings.TrimSpace(task.Fixture) != "" {
 			fixturePath := filepath.Join(filepath.Dir(suitePath), task.Fixture)
-			if _, err := filepath.Abs(fixturePath); err != nil {
-				t.Fatalf("task %q fixture path is invalid: %v", task.ID, err)
+			{
+				_, err := filepath.Abs(fixturePath)
+				gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("task %q fixture path is invalid: %v", task.ID, err))
 			}
 
-			if !pathExists(fixturePath) {
-				t.Fatalf("task %q fixture does not exist: %s", task.ID, fixturePath)
-			}
+			gomega.Expect(pathExists(fixturePath)).To(gomega.BeTrue(), fmt.Sprintf("task %q fixture does not exist: %s", task.ID, fixturePath))
 		}
 	}
-}
-
-func TestLiveSubsetAssertionsDoNotContradictRepresentativeSuiteForSharedTasks(t *testing.T) {
-	liveSuite, err := ReadSWESuite(evalTestdataPath(t, "swe", "live-subset.json"))
-	if err != nil {
-		t.Fatalf("ReadSWESuite live subset: %v", err)
+})
+var _ = ginkgo.It("accepts a privacy-safe prompt digest and rejects malformed digests", func() {
+	validDigest := "sha256:" + strings.Repeat("a", 64)
+	minTasks := 1
+	base := SWESuite{
+		Name:    "prompt-digest",
+		Version: 1,
+		Coverage: SWECoverageContract{
+			MinTasks: &minTasks,
+		},
+		Tasks: []SWETask{{
+			ID:         "redacted-prompt",
+			Family:     "feature_planner",
+			RunnerMode: "feature-planner",
+			Prompt:     "sensitive feature request",
+			Scenario: Scenario{
+				Name:         "redacted-prompt",
+				PromptSHA256: validDigest,
+			},
+			Oracle: SWEOracle{
+				RequireNoChangedFiles: true,
+				AllowNoWrite:          true,
+			},
+		}},
 	}
 
-	representativeSuite, err := ReadSWESuite(evalTestdataPath(t, "swe", "representative-suite.json"))
-	if err != nil {
-		t.Fatalf("ReadSWESuite representative suite: %v", err)
-	}
+	gomega.Expect(LintSWESuite(base)).To(gomega.BeEmpty())
+	gomega.Expect(ValidateSWESuite(base)).To(gomega.Succeed())
+	gomega.Expect(taskScenarioAssertions(base.Tasks[0])).To(gomega.ContainElement("prompt_sha256"))
+
+	base.Tasks[0].Scenario.PromptSHA256 = "sha256:not-a-digest"
+	gomega.Expect(strings.Join(LintSWESuite(base), "\n")).To(gomega.ContainSubstring("prompt_sha256"))
+})
+var _ = ginkgo.It("live subset assertions do not contradict representative suite for shared tasks", func() {
+	liveSuite, err := ReadSWESuite(evalTestdataPath("swe", "live-subset.json"))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ReadSWESuite live subset: %v", err))
+
+	representativeSuite, err := ReadSWESuite(evalTestdataPath("swe", "representative-suite.json"))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ReadSWESuite representative suite: %v", err))
 
 	representativeByID := map[string]SWETask{}
 
@@ -116,13 +136,13 @@ func TestLiveSubsetAssertionsDoNotContradictRepresentativeSuiteForSharedTasks(t 
 			continue
 		}
 
-		assertNoScenarioAssertionContradictions(t, id, "live-subset", liveTask.Scenario, "representative-suite", representativeTask.Scenario)
-		assertNoScenarioAssertionContradictions(t, id, "representative-suite", representativeTask.Scenario, "live-subset", liveTask.Scenario)
+		assertNoScenarioAssertionContradictions(id, "live-subset", liveTask.Scenario, "representative-suite", representativeTask.Scenario)
+		assertNoScenarioAssertionContradictions(id, "representative-suite", representativeTask.Scenario, "live-subset", liveTask.Scenario)
 	}
-}
+})
 
-func assertNoScenarioAssertionContradictions(t *testing.T, taskID, requiredSuite string, requiredScenario Scenario, forbiddenSuite string, forbiddenScenario Scenario) {
-	t.Helper()
+func assertNoScenarioAssertionContradictions(taskID, requiredSuite string, requiredScenario Scenario, forbiddenSuite string, forbiddenScenario Scenario) {
+	ginkgo.GinkgoHelper()
 
 	for _, required := range requiredScenario.FinalAssistantContains {
 		required = strings.TrimSpace(required)
@@ -130,13 +150,11 @@ func assertNoScenarioAssertionContradictions(t *testing.T, taskID, requiredSuite
 			continue
 		}
 
-		if containsStringFold(forbiddenScenario.ForbidFinalAssistantContains, required) {
-			t.Fatalf("task %q assertion drift: %s requires final answer phrase %q, but %s forbids it", taskID, requiredSuite, required, forbiddenSuite)
-		}
+		gomega.Expect(containsStringFold(forbiddenScenario.ForbidFinalAssistantContains, required)).To(gomega.BeFalse(), fmt.Sprintf("task %q assertion drift: %s requires final answer phrase %q, but %s forbids it", taskID, requiredSuite, required, forbiddenSuite))
 	}
 }
 
-func TestAnalyzeSWESuiteCoverageReportsMissingContractItems(t *testing.T) {
+var _ = ginkgo.It("analyze swe suite coverage reports missing contract items", func() {
 	minTasks := 2
 	suite := SWESuite{
 		Name: "coverage",
@@ -181,9 +199,7 @@ func TestAnalyzeSWESuiteCoverageReportsMissingContractItems(t *testing.T) {
 	}
 	coverage := AnalyzeSWESuiteCoverage(suite)
 
-	if coverage.Passed {
-		t.Fatal("expected coverage contract to fail")
-	}
+	gomega.Expect(coverage.Passed).To(gomega.BeFalse(), fmt.Sprint("expected coverage contract to fail"))
 
 	joined := strings.Join(coverage.Findings, "\n")
 	for _, want := range []string{
@@ -213,17 +229,60 @@ func TestAnalyzeSWESuiteCoverageReportsMissingContractItems(t *testing.T) {
 		"required evidence surface \"go\" is missing",
 		"family \"implementation\" below coverage minimum",
 	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected finding %q, got %q", want, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(want), fmt.Sprintf("expected finding %q, got %q", want, joined))
 	}
 
-	if err := ValidateSWESuite(suite); err == nil {
-		t.Fatal("expected suite validation to reject failed coverage contract")
+	gomega.Expect(ValidateSWESuite(suite)).NotTo(gomega.Succeed(), fmt.Sprint("expected suite validation to reject failed coverage contract"))
+})
+var _ = ginkgo.It("coverage cross-products require one task to satisfy every dimension", func() {
+	required := SWECoverageCrossProduct{
+		Name:                       "locate-read",
+		RunnerMode:                 "auto",
+		RequiredTags:               []string{"lane-locate", "read-success"},
+		RequiredScenarioAssertions: []string{"route_plan", "tools"},
 	}
-}
+	suite := SWESuite{
+		Name:     "cross-product",
+		Coverage: SWECoverageContract{RequiredCrossProducts: []SWECoverageCrossProduct{required}},
+		Tasks: []SWETask{
+			{
+				ID:         "route-only",
+				Family:     "locate",
+				Prompt:     "Locate it.",
+				RunnerMode: "auto",
+				Tags:       []string{"lane-locate", "read-success"},
+				Scenario: Scenario{
+					Name:             "route-only",
+					PromptContains:   []string{"Locate"},
+					RequireRoutePlan: &RoutePlanExpectation{InitialLane: "locate"},
+				},
+			},
+			{
+				ID:         "tools-only",
+				Family:     "locate",
+				Prompt:     "Search it.",
+				RunnerMode: "auto",
+				Tags:       []string{"read-success"},
+				Scenario: Scenario{
+					Name:           "tools-only",
+					PromptContains: []string{"Search"},
+					RequireTools:   []string{"search_content"},
+				},
+			},
+		},
+	}
 
-func TestEvaluateSWESuiteDefinitionDoesNotRequireLogs(t *testing.T) {
+	coverage := AnalyzeSWESuiteCoverage(suite)
+	gomega.Expect(coverage.Passed).To(gomega.BeFalse())
+	gomega.Expect(coverage.MissingRequiredCrossProducts).To(gomega.Equal([]string{"locate-read"}))
+	gomega.Expect(strings.Join(coverage.Findings, "\n")).To(gomega.ContainSubstring(`required cross-product "locate-read" is missing`))
+
+	suite.Tasks[0].Scenario.RequireTools = []string{"search_content"}
+	coverage = AnalyzeSWESuiteCoverage(suite)
+	gomega.Expect(coverage.Passed).To(gomega.BeTrue(), fmt.Sprintf("cross-product should pass when one task owns every dimension: %v", coverage.Findings))
+	gomega.Expect(coverage.CrossProducts["locate-read"]).To(gomega.Equal(1))
+})
+var _ = ginkgo.It("evaluate swe suite definition does not require logs", func() {
 	maxTools := 2
 	suite := SWESuite{
 		Name: "definition",
@@ -244,20 +303,15 @@ func TestEvaluateSWESuiteDefinitionDoesNotRequireLogs(t *testing.T) {
 	}
 	report := EvaluateSWESuiteDefinition(suite)
 
-	if !report.Passed {
-		t.Fatalf("expected definition-only report to pass, got %v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected definition-only report to pass, got %v", report.Findings))
 
-	if report.Summary.TotalTasks != 1 || !report.Summary.CoveragePassed || !report.Summary.LintPassed {
-		t.Fatalf("unexpected definition summary: %#v", report.Summary)
-	}
+	gomega.Expect(report.Summary.TotalTasks).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected definition summary: %#v", report.Summary))
+	gomega.Expect(report.Summary.CoveragePassed).To(gomega.BeTrue(), fmt.Sprintf("unexpected definition summary: %#v", report.Summary))
+	gomega.Expect(report.Summary.LintPassed).To(gomega.BeTrue(), fmt.Sprintf("unexpected definition summary: %#v", report.Summary))
 
-	if len(report.Tasks) != 0 {
-		t.Fatalf("definition-only report should not require task logs: %#v", report.Tasks)
-	}
-}
-
-func TestTaskScenarioAssertionsIncludeDiscoveryBalance(t *testing.T) {
+	gomega.Expect(report.Tasks).To(gomega.BeEmpty(), fmt.Sprintf("definition-only report should not require task logs: %#v", report.Tasks))
+})
+var _ = ginkgo.It("task scenario assertions include discovery balance", func() {
 	maxHeavy := 1
 	task := SWETask{
 		ID:     "discovery",
@@ -273,13 +327,10 @@ func TestTaskScenarioAssertionsIncludeDiscoveryBalance(t *testing.T) {
 	assertions := taskScenarioAssertions(task)
 
 	for _, want := range []string{"discovery_tools", "discovery_classes", "heavy_discovery_budget"} {
-		if !containsStringFold(assertions, want) {
-			t.Fatalf("expected discovery assertion %q in %#v", want, assertions)
-		}
+		gomega.Expect(containsStringFold(assertions, want)).To(gomega.BeTrue(), fmt.Sprintf("expected discovery assertion %q in %#v", want, assertions))
 	}
-}
-
-func TestTaskScenarioAssertionsIncludePlanExecution(t *testing.T) {
+})
+var _ = ginkgo.It("task scenario assertions include plan execution", func() {
 	task := SWETask{
 		ID:     "plan-execution",
 		Family: "plan_execute",
@@ -295,12 +346,9 @@ func TestTaskScenarioAssertionsIncludePlanExecution(t *testing.T) {
 	}
 	assertions := taskScenarioAssertions(task)
 
-	if !containsStringFold(assertions, "plan_execution") {
-		t.Fatalf("expected plan_execution assertion, got %#v", assertions)
-	}
-}
-
-func TestTaskScenarioAssertionsIncludeContractReplay(t *testing.T) {
+	gomega.Expect(containsStringFold(assertions, "plan_execution")).To(gomega.BeTrue(), fmt.Sprintf("expected plan_execution assertion, got %#v", assertions))
+})
+var _ = ginkgo.It("task scenario assertions include contract replay", func() {
 	task := SWETask{
 		ID:     "contract-replay",
 		Family: "plan_execute",
@@ -316,12 +364,10 @@ func TestTaskScenarioAssertionsIncludeContractReplay(t *testing.T) {
 	}
 	assertions := taskScenarioAssertions(task)
 
-	if !containsStringFold(assertions, "contract_replay") {
-		t.Fatalf("expected contract_replay assertion, got %#v", assertions)
-	}
-}
-
-func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.T) {
+	gomega.Expect(containsStringFold(assertions, "contract_replay")).To(gomega.BeTrue(), fmt.Sprintf("expected contract_replay assertion, got %#v", assertions))
+})
+var _ = ginkgo.It("evaluate swe suite definition with fixtures reports missing fixture", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	suite := SWESuite{
 		Name: "definition-fixtures",
@@ -341,24 +387,18 @@ func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.
 	}
 	report := EvaluateSWESuiteDefinitionWithFixtures(suite, filepath.Join(dir, "suite.json"))
 
-	if report.Passed {
-		t.Fatal("expected suite definition with missing fixture to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected suite definition with missing fixture to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "fixture missing") {
-		t.Fatalf("expected fixture missing finding, got %q", joined)
-	}
-}
-
-func TestReadSWESuiteAppliesTaskDefaultsBeforeValidation(t *testing.T) {
+	gomega.Expect(joined).To(gomega.ContainSubstring("fixture missing"), fmt.Sprintf("expected fixture missing finding, got %q", joined))
+})
+var _ = ginkgo.It("read swe suite applies task defaults before validation", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "fixtures", "frozen-label-repo"), 0o755); err != nil {
-		t.Fatalf("mkdir fixture: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Join(dir, "fixtures", "frozen-label-repo"), 0o755)).To(gomega.Succeed(), "create fixture directory")
 
 	suitePath := filepath.Join(dir, "suite.json")
-	if err := os.WriteFile(suitePath, []byte(`{
+	gomega.Expect(os.WriteFile(suitePath, []byte(`{
   "name": "defaults-suite",
   "coverage": {
     "required_tags": ["deterministic", "fake-model", "custom"],
@@ -384,36 +424,34 @@ func TestReadSWESuiteAppliesTaskDefaultsBeforeValidation(t *testing.T) {
       "require_run_events": ["idiom.live_contract.rollback", "custom_event"]
     }
   }]
-}`), 0o644); err != nil {
-		t.Fatalf("write suite: %v", err)
-	}
+}`), 0o644)).To(gomega.Succeed(), "write suite")
 
 	suite, err := ReadSWESuite(suitePath)
-	if err != nil {
-		t.Fatalf("ReadSWESuite: %v", err)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ReadSWESuite: %v", err))
+	{
+		findings := LintSWESuite(suite)
+		gomega.Expect(findings).To(gomega.BeEmpty(), fmt.Sprintf("defaulted suite should lint cleanly: %v", findings))
 	}
-	if findings := LintSWESuite(suite); len(findings) > 0 {
-		t.Fatalf("defaulted suite should lint cleanly: %v", findings)
-	}
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err != nil {
-		t.Fatalf("defaulted suite fixture validation failed: %v", err)
-	}
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).To(gomega.Succeed(), "validate defaulted suite fixtures")
 
-	if got := suite.Tasks[0].Fixture; got != "fixtures/frozen-label-repo" {
-		t.Fatalf("default fixture = %q", got)
+	{
+		got := suite.Tasks[0].Fixture
+		gomega.Expect(got).To(gomega.BeEquivalentTo("fixtures/frozen-label-repo"), fmt.Sprintf("default fixture = %q", got))
 	}
-	if got, want := suite.Tasks[0].Tags, []string{"deterministic", "fake-model", "custom"}; !slices.Equal(got, want) {
-		t.Fatalf("defaulted tags = %#v, want %#v", got, want)
+	{
+		got, want := suite.Tasks[0].Tags, []string{"deterministic", "fake-model", "custom"}
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("defaulted tags = %#v, want %#v", got, want))
 	}
-	if got, want := suite.Tasks[0].Scenario.RequireRunEvents, []string{"idiom.live_contract.rollback", "custom_event"}; !slices.Equal(got, want) {
-		t.Fatalf("defaulted run events = %#v, want %#v", got, want)
+	{
+		got, want := suite.Tasks[0].Scenario.RequireRunEvents, []string{"idiom.live_contract.rollback", "custom_event"}
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("defaulted run events = %#v, want %#v", got, want))
 	}
-}
-
-func TestReadSWESuiteTaskDefaultsDoNotOverrideExplicitFixture(t *testing.T) {
+})
+var _ = ginkgo.It("read swe suite task defaults do not override explicit fixture", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
-	if err := os.WriteFile(suitePath, []byte(`{
+	gomega.Expect(os.WriteFile(suitePath, []byte(`{
   "name": "defaults-suite",
   "defaults": {
     "fixture": "fixtures/frozen-label-repo",
@@ -432,25 +470,22 @@ func TestReadSWESuiteTaskDefaultsDoNotOverrideExplicitFixture(t *testing.T) {
       "require_run_events": ["custom_event"]
     }
   }]
-}`), 0o644); err != nil {
-		t.Fatalf("write suite: %v", err)
-	}
+}`), 0o644)).To(gomega.Succeed(), "write suite")
 
 	suite, err := ReadSWESuite(suitePath)
-	if err != nil {
-		t.Fatalf("ReadSWESuite: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ReadSWESuite: %v", err))
 
 	task := suite.Tasks[0]
-	if got := task.Fixture; got != "fixtures/custom-repo" {
-		t.Fatalf("explicit fixture was overridden: %q", got)
+	{
+		got := task.Fixture
+		gomega.Expect(got).To(gomega.BeEquivalentTo("fixtures/custom-repo"), fmt.Sprintf("explicit fixture was overridden: %q", got))
 	}
-	if got, want := task.Scenario.RequireRunEvents, []string{"idiom.live_contract.rollback", "custom_event"}; !slices.Equal(got, want) {
-		t.Fatalf("defaulted run events = %#v, want %#v", got, want)
+	{
+		got, want := task.Scenario.RequireRunEvents, []string{"idiom.live_contract.rollback", "custom_event"}
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("defaulted run events = %#v, want %#v", got, want))
 	}
-}
-
-func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
+})
+var _ = ginkgo.It("lint swe suite reports weak oracles", func() {
 	suite := SWESuite{
 		Name: "lint",
 		Tasks: []SWETask{
@@ -585,34 +620,23 @@ func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
 	joined := strings.Join(findings, "\n")
 
 	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid", "multi-turn task must require at least 2 user turns", "multi-turn task must require an assistant response for each user turn", "file content oracle path is invalid", "file content oracle for \"../README.md\" must assert required or forbidden text", "env key \"IDIOM_SWE_LOG\" is reserved by the live runner", "runner_mode \"surprise\" is invalid", "live task with max_errors > 0 must declare typed expected_recoveries"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected lint finding %q, got %q", want, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(want), fmt.Sprintf("expected lint finding %q, got %q", want, joined))
 	}
 
-	if err := ValidateSWESuite(suite); err == nil {
-		t.Fatal("expected suite validation to reject weak oracles")
-	}
-}
+	gomega.Expect(ValidateSWESuite(suite)).NotTo(gomega.Succeed(), fmt.Sprint("expected suite validation to reject weak oracles"))
+})
+var _ = ginkgo.It("valid swe runner mode accepts feature planner", func() {
+	gomega.Expect(validSWERunnerMode("feature-planner")).To(gomega.BeTrue(), fmt.Sprint("feature-planner should be a valid SWE runner mode"))
 
-func TestValidSWERunnerModeAcceptsFeaturePlanner(t *testing.T) {
-	if !validSWERunnerMode("feature-planner") {
-		t.Fatal("feature-planner should be a valid SWE runner mode")
-	}
-
-	if !validSWERunnerMode("tui") {
-		t.Fatal("tui should be a valid SWE runner mode")
-	}
-}
-
-func TestValidateSWESuiteFixturesChecksRelativeExistingDirectories(t *testing.T) {
+	gomega.Expect(validSWERunnerMode("tui")).To(gomega.BeTrue(), fmt.Sprint("tui should be a valid SWE runner mode"))
+})
+var _ = ginkgo.It("validate swe suite fixtures checks relative existing directories", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
 	fixtureDir := filepath.Join(dir, "fixtures", "repo")
 
-	if err := os.MkdirAll(fixtureDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(fixtureDir, 0o755)).To(gomega.Succeed(), "create fixture directory")
 
 	suite := SWESuite{
 		Name: "fixtures",
@@ -627,27 +651,19 @@ func TestValidateSWESuiteFixturesChecksRelativeExistingDirectories(t *testing.T)
 			},
 		}},
 	}
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err != nil {
-		t.Fatalf("expected fixture validation to pass: %v", err)
-	}
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).To(gomega.Succeed(), "validate suite fixtures")
 
 	suite.Tasks[0].Fixture = "fixtures/missing"
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
-		t.Fatal("expected missing fixture validation failure")
-	}
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).NotTo(gomega.Succeed(), fmt.Sprint("expected missing fixture validation failure"))
 
 	suite.Tasks[0].Fixture = "/tmp/absolute"
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
-		t.Fatal("expected absolute fixture validation failure")
-	}
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).NotTo(gomega.Succeed(), fmt.Sprint("expected absolute fixture validation failure"))
 
 	suite.Tasks[0].Fixture = `..\outside`
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
-		t.Fatal("expected backslash traversal fixture validation failure")
-	}
-}
-
-func TestValidateSWESuiteFixturesChecksFixtureGitRefs(t *testing.T) {
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).NotTo(gomega.Succeed(), fmt.Sprint("expected backslash traversal fixture validation failure"))
+})
+var _ = ginkgo.It("validate swe suite fixtures checks fixture git refs", func() {
+	t := ginkgo.GinkgoT()
 	suitePath := filepath.Join(t.TempDir(), "suite.json")
 	suite := SWESuite{
 		Name: "git-ref-fixtures",
@@ -666,17 +682,12 @@ func TestValidateSWESuiteFixturesChecksFixtureGitRefs(t *testing.T) {
 		}},
 	}
 
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
-		t.Fatal("expected unreachable fixture_git_ref validation failure")
-	}
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).NotTo(gomega.Succeed(), fmt.Sprint("expected unreachable fixture_git_ref validation failure"))
 
 	suite.Tasks[0].FixtureGitRef = "-bad"
-	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
-		t.Fatal("expected unsafe fixture_git_ref validation failure")
-	}
-}
-
-func TestEvaluateSWETaskAppliesOracle(t *testing.T) {
+	gomega.Expect(ValidateSWESuiteFixtures(suite, suitePath)).NotTo(gomega.Succeed(), fmt.Sprint("expected unsafe fixture_git_ref validation failure"))
+})
+var _ = ginkgo.It("evaluate swe task applies oracle", func() {
 	maxTools := 2
 	task := SWETask{
 		ID:     "direct-debuglog-question",
@@ -705,12 +716,9 @@ func TestEvaluateSWETaskAppliesOracle(t *testing.T) {
 	}
 	report := EvaluateSWETask("direct.jsonl", records, task)
 
-	if !report.Passed {
-		t.Fatalf("expected SWE task to pass, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskRequireNoApprovalRejectsApprovalRequired(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected SWE task to pass, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task require no approval rejects approval required", func() {
 	task := SWETask{
 		ID:       "no-approval",
 		Family:   "implementation",
@@ -725,19 +733,13 @@ func TestEvaluateSWETaskRequireNoApprovalRejectsApprovalRequired(t *testing.T) {
 
 	report := EvaluateSWETask("no-approval.jsonl", records, task)
 
-	if report.Passed {
-		t.Fatal("expected approval-required run to fail require_no_approval oracle")
-	}
-	if !strings.Contains(strings.Join(report.Findings, "\n"), "approval was forbidden but required by run") {
-		t.Fatalf("expected require_no_approval finding, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskAppliesFileContentOracle(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected approval-required run to fail require_no_approval oracle"))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("approval was forbidden but required by run"), fmt.Sprintf("expected require_no_approval finding, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task applies file content oracle", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("debug logs are searchable\n"), 0o644); err != nil {
-		t.Fatalf("write readme: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, "README.md"), []byte("debug logs are searchable\n"), 0o644)).To(gomega.Succeed(), "write readme")
 
 	task := SWETask{
 		ID:     "docs-edit",
@@ -762,26 +764,22 @@ func TestEvaluateSWETaskAppliesFileContentOracle(t *testing.T) {
 	}
 	report := EvaluateSWETask("docs.jsonl", records, task)
 
-	if !report.Passed {
-		t.Fatalf("expected file content oracle to pass, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected file content oracle to pass, got %#v", report.Findings))
 
 	task.Oracle.RequireFileContent[0].Contains = []string{"missing text"}
 	report = EvaluateSWETask("docs.jsonl", records, task)
 
-	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "does not contain required text") {
-		t.Fatalf("expected file content failure, got passed=%t findings=%#v", report.Passed, report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected file content failure, got passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("does not contain required text"), fmt.Sprintf("expected file content failure, got passed=%t findings=%#v", report.Passed, report.Findings))
 
 	task.Oracle.RequireFileContent[0] = SWEFileContentExpectation{Path: `..\secret.md`, Contains: []string{"secret"}}
 	report = EvaluateSWETask("docs.jsonl", records, task)
 
-	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "escapes workspace root") {
-		t.Fatalf("expected unsafe file content path failure, got passed=%t findings=%#v", report.Passed, report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskFileContentOracleUsesLiveSnapshot(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected unsafe file content path failure, got passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("escapes workspace root"), fmt.Sprintf("expected unsafe file content path failure, got passed=%t findings=%#v", report.Passed, report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task file content oracle uses live snapshot", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	task := SWETask{
 		ID:     "generated-adr",
@@ -811,12 +809,9 @@ func TestEvaluateSWETaskFileContentOracleUsesLiveSnapshot(t *testing.T) {
 	}
 	report := EvaluateSWETask("generated-adr.jsonl", records, task)
 
-	if !report.Passed {
-		t.Fatalf("expected snapshot-backed file content oracle to pass, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected snapshot-backed file content oracle to pass, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task reports oracle failures", func() {
 	maxTools := 0
 	maxDurationMillis := int64(1)
 	task := SWETask{
@@ -853,19 +848,14 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 	}
 	report := EvaluateSWETask("security.jsonl", records, task)
 
-	if report.Passed {
-		t.Fatalf("expected SWE task to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected SWE task to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"changed files were forbidden", "shell use was forbidden", "successful tool \"read_file\" was forbidden", "tool requests exceeded", "duration exceeded"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected finding %q, got %q", want, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(want), fmt.Sprintf("expected finding %q, got %q", want, joined))
 	}
-}
-
-func TestEvaluateSWETaskForbidsSuccessfulToolWhileAllowingRejectedAttempt(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate swe task forbids successful tool while allowing rejected attempt", func() {
 	task := SWETask{
 		ID:     "shell-denial",
 		Family: "verification_only",
@@ -886,21 +876,18 @@ func TestEvaluateSWETaskForbidsSuccessfulToolWhileAllowingRejectedAttempt(t *tes
 	}
 	report := EvaluateSWETask("shell-denial.jsonl", records, task)
 
-	if !report.Passed {
-		t.Fatalf("expected rejected shell attempt to satisfy denial contract, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected rejected shell attempt to satisfy denial contract, got %#v", report.Findings))
 
 	records[1] = Record{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "ran go test ./...", "error": ""}}
 	report = EvaluateSWETask("shell-success.jsonl", records, task)
 
 	joined := strings.Join(report.Findings, "\n")
 
-	if report.Passed || !strings.Contains(joined, `required rejected tool "shell" was not observed`) || !strings.Contains(joined, `successful tool "shell" was forbidden`) {
-		t.Fatalf("expected successful shell to fail both denial and success-forbid checks, passed=%t findings=%#v", report.Passed, report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskProductWorkflowBlockerDoesNotSatisfyImplementationAcceptance(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected successful shell to fail both denial and success-forbid checks, passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(joined).To(gomega.ContainSubstring(`required rejected tool "shell" was not observed`), fmt.Sprintf("expected successful shell to fail both denial and success-forbid checks, passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(joined).To(gomega.ContainSubstring(`successful tool "shell" was forbidden`), fmt.Sprintf("expected successful shell to fail both denial and success-forbid checks, passed=%t findings=%#v", report.Passed, report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task product workflow blocker does not satisfy implementation acceptance", func() {
 	task := SWETask{
 		ID:     "product-workflow-coverage-gate-authority-reuse",
 		Family: "plan_then_execute_planner",
@@ -927,23 +914,16 @@ func TestEvaluateSWETaskProductWorkflowBlockerDoesNotSatisfyImplementationAccept
 	}
 
 	report := EvaluateSWETask("product-workflow.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("typed blocker without executor handoff, changed files, or verification must not satisfy implementation acceptance")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("typed blocker without executor handoff, changed files, or verification must not satisfy implementation acceptance"))
 
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"changed files do not include", "plan execution handoff id was required", "executor handoff was required", "verification did not pass", "blocker-only without allow_no_write"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected finding %q, got %q", want, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(want), fmt.Sprintf("expected finding %q, got %q", want, joined))
 	}
 
-	if strings.Contains(joined, "runner rejections were forbidden") {
-		t.Fatalf("typed blocker fixture should fail implementation acceptance, not runner-rejection oracle: %q", joined)
-	}
-}
-
-func TestEvaluateSWETaskCountsExplicitCompletionGateRejectAfterPostReadinessGap(t *testing.T) {
+	gomega.Expect(joined).NotTo(gomega.ContainSubstring("runner rejections were forbidden"), fmt.Sprintf("typed blocker fixture should fail implementation acceptance, not runner-rejection oracle: %q", joined))
+})
+var _ = ginkgo.It("evaluate swe task counts explicit completion gate reject after post readiness gap", func() {
 	task := SWETask{
 		ID:     "read-only-gap-friction",
 		Family: "direct_question",
@@ -986,20 +966,14 @@ func TestEvaluateSWETaskCountsExplicitCompletionGateRejectAfterPostReadinessGap(
 	}
 
 	report := EvaluateSWETask("read-only-gap-friction.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("explicit completion-gate rejection should still fail no-runner-rejection oracle")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("explicit completion-gate rejection should still fail no-runner-rejection oracle"))
 
-	if report.Metrics.TotalErrorEvents() != 0 {
-		t.Fatalf("recoverable post-readiness tool friction should not be scored as a tool error: %#v", report.Metrics)
-	}
+	gomega.Expect(report.Metrics.TotalErrorEvents()).To(gomega.BeEquivalentTo(0), fmt.Sprintf("recoverable post-readiness tool friction should not be scored as a tool error: %#v", report.Metrics))
 
-	if report.Metrics.RejectedActions != 1 || report.Metrics.CompletionGateRejections != 1 {
-		t.Fatalf("explicit completion gate rejection should remain visible: %#v", report.Metrics)
-	}
-}
-
-func TestEvaluateSWETaskSourceSatisfiedNeedsExplicitAllowanceForImplementationRequiredTask(t *testing.T) {
+	gomega.Expect(report.Metrics.RejectedActions).To(gomega.BeEquivalentTo(1), fmt.Sprintf("explicit completion gate rejection should remain visible: %#v", report.Metrics))
+	gomega.Expect(report.Metrics.CompletionGateRejections).To(gomega.BeEquivalentTo(1), fmt.Sprintf("explicit completion gate rejection should remain visible: %#v", report.Metrics))
+})
+var _ = ginkgo.It("evaluate swe task source satisfied needs explicit allowance for implementation required task", func() {
 	task := SWETask{
 		ID:     "source-satisfied-implementation",
 		Family: "plan_then_execute_planner",
@@ -1017,23 +991,16 @@ func TestEvaluateSWETaskSourceSatisfiedNeedsExplicitAllowanceForImplementationRe
 	}
 
 	report := EvaluateSWETask("source-satisfied.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("source-satisfied-only must not satisfy implementation-required task without explicit allowance")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("source-satisfied-only must not satisfy implementation-required task without explicit allowance"))
 
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"source-satisfied-only without allow_source_satisfied", "changed files do not include"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected finding %q, got %q", want, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(want), fmt.Sprintf("expected finding %q, got %q", want, joined))
 	}
 
-	if report.Metrics.SourceSatisfiedOutcomes == 0 {
-		t.Fatalf("expected source-satisfied outcome metric, got %#v", report.Metrics)
-	}
-}
-
-func TestEvaluateSWETaskAllowsExplicitSourceSatisfiedNoWriteFixture(t *testing.T) {
+	gomega.Expect(report.Metrics.SourceSatisfiedOutcomes).NotTo(gomega.BeEquivalentTo(0), fmt.Sprintf("expected source-satisfied outcome metric, got %#v", report.Metrics))
+})
+var _ = ginkgo.It("evaluate swe task allows explicit source satisfied no write fixture", func() {
 	task := SWETask{
 		ID:     "source-satisfied-no-write",
 		Family: "plan_then_execute_planner",
@@ -1065,12 +1032,9 @@ func TestEvaluateSWETaskAllowsExplicitSourceSatisfiedNoWriteFixture(t *testing.T
 	}
 
 	report := EvaluateSWETask("source-satisfied-no-write.jsonl", records, task)
-	if !report.Passed {
-		t.Fatalf("explicit source-satisfied no-write fixture should pass, findings: %v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskRequiresCleanRollback(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("explicit source-satisfied no-write fixture should pass, findings: %v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task requires clean rollback", func() {
 	task := SWETask{
 		ID:       "rollback",
 		Family:   "implementation",
@@ -1088,28 +1052,20 @@ func TestEvaluateSWETaskRequiresCleanRollback(t *testing.T) {
 	}
 
 	report := EvaluateSWETask("rollback.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected dirty rollback to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected dirty rollback to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "rollback status was not clean") {
-		t.Fatalf("expected rollback finding, got %q", joined)
-	}
-}
-
-func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
+	gomega.Expect(joined).To(gomega.ContainSubstring("rollback status was not clean"), fmt.Sprintf("expected rollback finding, got %q", joined))
+})
+var _ = ginkgo.It("evaluate swe task groundedness boosts context files", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	contextPath := "internal/runtime/agent/runner.go"
 	full := filepath.Join(root, contextPath)
 
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(full), 0o755)).To(gomega.Succeed(), "create context directory")
 
-	if err := os.WriteFile(full, []byte("the runner enforces request budget through ledger snapshot"), 0o644); err != nil {
-		t.Fatalf("write context: %v", err)
-	}
+	gomega.Expect(os.WriteFile(full, []byte("the runner enforces request budget through ledger snapshot"), 0o644)).To(gomega.Succeed(), "write context")
 
 	task := SWETask{
 		ID:       "grounded-task",
@@ -1130,51 +1086,38 @@ func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
 	}
 	report := EvaluateSWETask("grounded.jsonl", records, task)
 
-	if report.LearningUpdate == nil {
-		t.Fatalf("expected learning update record, got nil; findings=%#v", report.Findings)
-	}
+	gomega.Expect(report.LearningUpdate).NotTo(gomega.BeNil(), fmt.Sprintf("expected learning update record, got nil; findings=%#v", report.Findings))
 
-	if report.LearningUpdate.Action != "boost" {
-		t.Fatalf("expected boost action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score)
-	}
+	gomega.Expect(report.LearningUpdate.Action).To(gomega.BeEquivalentTo("boost"), fmt.Sprintf("expected boost action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score))
 
-	if !report.LearningUpdate.Applied {
-		t.Fatalf("expected applied=true for boost band")
-	}
+	gomega.Expect(report.LearningUpdate.Applied).To(gomega.BeTrue(), fmt.Sprintf("expected applied=true for boost band"))
 
-	if report.LearningUpdate.EventID == "" || report.LearningUpdate.State != "accepted" {
-		t.Fatalf("expected accepted learning event, got %#v", report.LearningUpdate)
-	}
+	gomega.Expect(report.LearningUpdate.EventID).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("expected accepted learning event, got %#v", report.LearningUpdate))
+	gomega.Expect(report.LearningUpdate.State).To(gomega.BeEquivalentTo("accepted"), fmt.Sprintf("expected accepted learning event, got %#v", report.LearningUpdate))
 
 	weightsPath := filepath.Join(root, ".idiom", "ranker", "weights.json")
-	if _, err := os.Stat(weightsPath); err != nil {
-		t.Fatalf("weights.json missing: %v", err)
+	{
+		_, err := os.Stat(weightsPath)
+		gomega.Expect(err).To(gomega.BeNil(), fmt.Sprintf("weights.json missing: %v", err))
 	}
 
 	logPath := filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl")
 
 	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("learning log missing: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("learning log missing: %v", err))
 
-	if !strings.Contains(string(data), "\"source\":\"eval\"") ||
-		!strings.Contains(string(data), "\"action\":\"boost\"") ||
-		!strings.Contains(string(data), "\"state\":\"accepted\"") ||
-		!strings.Contains(string(data), "\"before_weights\"") ||
-		!strings.Contains(string(data), "\"rollback\"") {
-
-		t.Fatalf("learning log missing expected entry: %s", string(data))
-	}
-}
-
-func TestEvaluateSWETaskGroundednessPenalizesLowScore(t *testing.T) {
+	gomega.Expect(string(data)).To(gomega.ContainSubstring("\"source\":\"eval\""), fmt.Sprintf("learning log missing expected entry: %s", string(data)))
+	gomega.Expect(string(data)).To(gomega.ContainSubstring("\"action\":\"boost\""), fmt.Sprintf("learning log missing expected entry: %s", string(data)))
+	gomega.Expect(string(data)).To(gomega.ContainSubstring("\"state\":\"accepted\""), fmt.Sprintf("learning log missing expected entry: %s", string(data)))
+	gomega.Expect(string(data)).To(gomega.ContainSubstring("\"before_weights\""), fmt.Sprintf("learning log missing expected entry: %s", string(data)))
+	gomega.Expect(string(data)).To(gomega.ContainSubstring("\"rollback\""), fmt.Sprintf("learning log missing expected entry: %s", string(data)))
+})
+var _ = ginkgo.It("evaluate swe task groundedness penalizes low score", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	contextPath := "spec.md"
 
-	if err := os.WriteFile(filepath.Join(root, contextPath), []byte("workspace ranker hub demotion penalty multipliers"), 0o644); err != nil {
-		t.Fatalf("write context: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, contextPath), []byte("workspace ranker hub demotion penalty multipliers"), 0o644)).To(gomega.Succeed(), "write context")
 
 	task := SWETask{
 		ID:       "ungrounded",
@@ -1193,24 +1136,18 @@ func TestEvaluateSWETaskGroundednessPenalizesLowScore(t *testing.T) {
 	}
 	report := EvaluateSWETask("ungrounded.jsonl", records, task)
 
-	if report.LearningUpdate == nil {
-		t.Fatalf("expected learning update, got nil")
-	}
+	gomega.Expect(report.LearningUpdate).NotTo(gomega.BeNil(), fmt.Sprintf("expected learning update, got nil"))
 
-	if report.LearningUpdate.Action != "penalize" {
-		t.Fatalf("expected penalize action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score)
-	}
-}
-
-func TestEvaluateSWETaskGroundednessLearningHonorsDisable(t *testing.T) {
+	gomega.Expect(report.LearningUpdate.Action).To(gomega.BeEquivalentTo("penalize"), fmt.Sprintf("expected penalize action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score))
+})
+var _ = ginkgo.It("evaluate swe task groundedness learning honors disable", func() {
+	t := ginkgo.GinkgoT()
 	t.Setenv("IDIOM_RANKER_LEARNING", "0")
 
 	root := t.TempDir()
 	contextPath := "spec.md"
 
-	if err := os.WriteFile(filepath.Join(root, contextPath), []byte("runner budget ledger snapshot"), 0o644); err != nil {
-		t.Fatalf("write context: %v", err)
-	}
+	gomega.Expect(os.WriteFile(filepath.Join(root, contextPath), []byte("runner budget ledger snapshot"), 0o644)).To(gomega.Succeed(), "write context")
 
 	task := SWETask{
 		ID:       "learning-disabled",
@@ -1228,29 +1165,24 @@ func TestEvaluateSWETaskGroundednessLearningHonorsDisable(t *testing.T) {
 	}
 	report := EvaluateSWETask("disabled.jsonl", records, task)
 
-	if report.LearningUpdate == nil {
-		t.Fatalf("expected learning update")
-	}
+	gomega.Expect(report.LearningUpdate).NotTo(gomega.BeNil(), fmt.Sprintf("expected learning update"))
 
-	if report.LearningUpdate.Applied || report.LearningUpdate.State != "rejected" || report.LearningUpdate.Reason != "learning_disabled" {
-		t.Fatalf("disabled learning should be rejected without applying: %#v", report.LearningUpdate)
-	}
+	gomega.Expect(report.LearningUpdate.Applied).To(gomega.BeFalse(), fmt.Sprintf("disabled learning should be rejected without applying: %#v", report.LearningUpdate))
+	gomega.Expect(report.LearningUpdate.State).To(gomega.BeEquivalentTo("rejected"), fmt.Sprintf("disabled learning should be rejected without applying: %#v", report.LearningUpdate))
+	gomega.Expect(report.LearningUpdate.Reason).To(gomega.BeEquivalentTo("learning_disabled"), fmt.Sprintf("disabled learning should be rejected without applying: %#v", report.LearningUpdate))
 
-	if _, err := os.Stat(filepath.Join(root, ".idiom", "ranker", "weights.json")); !os.IsNotExist(err) {
-		t.Fatalf("disabled learning should not create weights.json, err=%v", err)
+	{
+		_, err := os.Stat(filepath.Join(root, ".idiom", "ranker", "weights.json"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("disabled learning should not create weights.json, err=%v", err))
 	}
 
 	data, err := os.ReadFile(filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl"))
-	if err != nil {
-		t.Fatalf("learning log missing: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("learning log missing: %v", err))
 
-	if !strings.Contains(string(data), "\"state\":\"rejected\"") || !strings.Contains(string(data), "\"reason\":\"learning_disabled\"") {
-		t.Fatalf("learning log missing disabled rejection: %s", string(data))
-	}
-}
-
-func TestEvaluateSWETaskRequiresNoRunnerRejections(t *testing.T) {
+	gomega.Expect(string(data)).To(gomega.ContainSubstring("\"state\":\"rejected\""), fmt.Sprintf("learning log missing disabled rejection: %s", string(data)))
+	gomega.Expect(string(data)).To(gomega.ContainSubstring("\"reason\":\"learning_disabled\""), fmt.Sprintf("learning log missing disabled rejection: %s", string(data)))
+})
+var _ = ginkgo.It("evaluate swe task requires no runner rejections", func() {
 	task := SWETask{
 		ID:       "no-rejections",
 		Family:   "direct_question",
@@ -1266,21 +1198,14 @@ func TestEvaluateSWETaskRequiresNoRunnerRejections(t *testing.T) {
 	}}
 
 	report := EvaluateSWETask("rejected.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected runner rejection to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected runner rejection to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "runner rejections were forbidden") {
-		t.Fatalf("expected runner rejection finding, got %q", joined)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("runner rejections were forbidden"), fmt.Sprintf("expected runner rejection finding, got %q", joined))
 
-	if !containsStringFold(taskOracleAssertions(task), "no_runner_rejections") {
-		t.Fatalf("expected no_runner_rejections assertion")
-	}
-}
-
-func TestEvaluateSWETaskExpectedRecoveryCanAccountForRunnerRejection(t *testing.T) {
+	gomega.Expect(containsStringFold(taskOracleAssertions(task), "no_runner_rejections")).To(gomega.BeTrue(), fmt.Sprintf("expected no_runner_rejections assertion"))
+})
+var _ = ginkgo.It("evaluate swe task expected recovery can account for runner rejection", func() {
 	maxErrors := 0
 	task := SWETask{
 		ID:       "typed-post-readiness-recovery",
@@ -1310,9 +1235,7 @@ func TestEvaluateSWETaskExpectedRecoveryCanAccountForRunnerRejection(t *testing.
 	}
 
 	report := EvaluateSWETask("typed-recovery.jsonl", records, task)
-	if !report.Passed {
-		t.Fatalf("expected typed recovery to account for runner rejection, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected typed recovery to account for runner rejection, got %#v", report.Findings))
 
 	unexpected := append(records, Record{Type: "tool_result", Data: map[string]any{
 		"tool":    "shell",
@@ -1322,17 +1245,12 @@ func TestEvaluateSWETaskExpectedRecoveryCanAccountForRunnerRejection(t *testing.
 
 	report = EvaluateSWETask("typed-recovery.jsonl", unexpected, task)
 
-	if report.Passed {
-		t.Fatal("expected unexpected runner rejection to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected unexpected runner rejection to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "unexpected error event did not match expected_recoveries") {
-		t.Fatalf("expected unmatched recovery finding, got %q", joined)
-	}
-}
-
-func TestEvaluateSWETaskExpectedRecoveryDoesNotAccountForNonRejectionEvent(t *testing.T) {
+	gomega.Expect(joined).To(gomega.ContainSubstring("unexpected error event did not match expected_recoveries"), fmt.Sprintf("expected unmatched recovery finding, got %q", joined))
+})
+var _ = ginkgo.It("evaluate swe task expected recovery does not account for non rejection event", func() {
 	maxErrors := 0
 	task := SWETask{
 		ID:       "typed-non-rejection-event",
@@ -1363,16 +1281,11 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotAccountForNonRejectionEvent(t *te
 	}
 
 	report := EvaluateSWETask("typed-non-rejection-event.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("matched expected_recoveries event without runner rejection flag must not account for aggregate rejected_actions")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("matched expected_recoveries event without runner rejection flag must not account for aggregate rejected_actions"))
 
-	if !strings.Contains(strings.Join(report.Findings, "\n"), "runner rejections were forbidden") {
-		t.Fatalf("expected unaccounted runner rejection finding, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskExpectedRecoveryDoesNotDoubleAccountOverlappingMatcher(t *testing.T) {
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("runner rejections were forbidden"), fmt.Sprintf("expected unaccounted runner rejection finding, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task expected recovery does not double account overlapping matcher", func() {
 	maxErrors := 0
 	task := SWETask{
 		ID:       "typed-overlapping-recovery",
@@ -1412,17 +1325,12 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotDoubleAccountOverlappingMatcher(t
 	}
 
 	report := EvaluateSWETask("typed-overlapping-recovery.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected one actual recovery event not to account for two aggregate runner rejections")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected one actual recovery event not to account for two aggregate runner rejections"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "runner rejections were forbidden but observed unexpected rejected_actions=1") {
-		t.Fatalf("expected overlapping matcher not to double-account, got %q", joined)
-	}
-}
-
-func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testing.T) {
+	gomega.Expect(joined).To(gomega.ContainSubstring("runner rejections were forbidden but observed unexpected rejected_actions=1"), fmt.Sprintf("expected overlapping matcher not to double-account, got %q", joined))
+})
+var _ = ginkgo.It("evaluate swe task expected recovery can bound guard family across tools", func() {
 	maxErrors := 0
 	task := SWETask{
 		ID:       "typed-cross-tool-recovery",
@@ -1461,9 +1369,7 @@ func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testin
 	}
 
 	report := EvaluateSWETask("typed-cross-tool-recovery.jsonl", records, task)
-	if !report.Passed {
-		t.Fatalf("expected one typed recovery family to account across tools, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected one typed recovery family to account across tools, got %#v", report.Findings))
 
 	tooMany := append([]Record{}, records...)
 
@@ -1475,16 +1381,11 @@ func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testin
 	tooMany[len(tooMany)-1] = Record{Type: "turn_summary", Data: map[string]any{"rejected_actions": 4, "completion_gate_rejections": 0}}
 
 	report = EvaluateSWETask("typed-cross-tool-recovery.jsonl", tooMany, task)
-	if report.Passed {
-		t.Fatal("expected typed recovery family maximum to reject excess guard friction")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected typed recovery family maximum to reject excess guard friction"))
 
-	if !strings.Contains(strings.Join(report.Findings, "\n"), "exceeded maximum") {
-		t.Fatalf("expected max-count finding, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskRequiresTurnSummaryForNoRunnerRejections(t *testing.T) {
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("exceeded maximum"), fmt.Sprintf("expected max-count finding, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task requires turn summary for no runner rejections", func() {
 	task := SWETask{
 		ID:       "no-rejections-summary",
 		Family:   "direct_question",
@@ -1497,17 +1398,12 @@ func TestEvaluateSWETaskRequiresTurnSummaryForNoRunnerRejections(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Yes."}},
 	}, task)
 
-	if report.Passed {
-		t.Fatal("expected missing turn_summary to fail no-runner-rejections oracle")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected missing turn_summary to fail no-runner-rejections oracle"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "no turn_summary was present") {
-		t.Fatalf("expected missing turn_summary finding, got %q", joined)
-	}
-}
-
-func TestEvaluateSWETaskRequiresNoRunnerRejectionsFromGateEvents(t *testing.T) {
+	gomega.Expect(joined).To(gomega.ContainSubstring("no turn_summary was present"), fmt.Sprintf("expected missing turn_summary finding, got %q", joined))
+})
+var _ = ginkgo.It("evaluate swe task requires no runner rejections from gate events", func() {
 	task := SWETask{
 		ID:       "no-rejections-events",
 		Family:   "direct_question",
@@ -1529,17 +1425,12 @@ func TestEvaluateSWETaskRequiresNoRunnerRejectionsFromGateEvents(t *testing.T) {
 	}
 
 	report := EvaluateSWETask("gate-rejected.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected gate rejection event to fail no-runner-rejections oracle")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected gate rejection event to fail no-runner-rejections oracle"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "completion_gate_rejections=1") {
-		t.Fatalf("expected completion gate rejection finding, got %q", joined)
-	}
-}
-
-func TestEvaluateSWETaskContractReplayUsesAutonomyEvents(t *testing.T) {
+	gomega.Expect(joined).To(gomega.ContainSubstring("completion_gate_rejections=1"), fmt.Sprintf("expected completion gate rejection finding, got %q", joined))
+})
+var _ = ginkgo.It("evaluate swe task contract replay uses autonomy events", func() {
 	maxViolations := 0
 	task := SWETask{
 		ID:     "contract-replay-clean",
@@ -1598,24 +1489,16 @@ func TestEvaluateSWETaskContractReplayUsesAutonomyEvents(t *testing.T) {
 	}
 
 	report := EvaluateSWETask("contract-replay.jsonl", records, task)
-	if !report.Passed {
-		t.Fatalf("expected contract replay task to pass, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected contract replay task to pass, got %#v", report.Findings))
 
-	if report.Metrics.ContractReplay == nil {
-		t.Fatal("expected contract replay metrics")
-	}
+	gomega.Expect(report.Metrics.ContractReplay).NotTo(gomega.BeNil(), fmt.Sprint("expected contract replay metrics"))
 
-	if report.Metrics.ContractReplay.TotalEvents != 2 || !report.Metrics.ContractReplay.AllClear {
-		t.Fatalf("unexpected contract replay report: %#v", report.Metrics.ContractReplay)
-	}
+	gomega.Expect(report.Metrics.ContractReplay.TotalEvents).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected contract replay report: %#v", report.Metrics.ContractReplay))
+	gomega.Expect(report.Metrics.ContractReplay.AllClear).To(gomega.BeTrue(), fmt.Sprintf("unexpected contract replay report: %#v", report.Metrics.ContractReplay))
 
-	if report.Metrics.ContractReplay.Packs["completion/readiness"] != 1 {
-		t.Fatalf("expected replay pack count, got %#v", report.Metrics.ContractReplay.Packs)
-	}
-}
-
-func TestEvaluateSWETaskContractReplayFailsExpectations(t *testing.T) {
+	gomega.Expect(report.Metrics.ContractReplay.Packs["completion/readiness"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected replay pack count, got %#v", report.Metrics.ContractReplay.Packs))
+})
+var _ = ginkgo.It("evaluate swe task contract replay fails expectations", func() {
 	maxViolations := 0
 	task := SWETask{
 		ID:     "contract-replay-violations",
@@ -1653,19 +1536,14 @@ func TestEvaluateSWETaskContractReplayFailsExpectations(t *testing.T) {
 	}}
 
 	report := EvaluateSWETask("contract-replay-violation.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected contract replay violation to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected contract replay violation to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"contract replay violations exceeded limit", "contract replay violation \"contract_event_unmatched_contract_reference\" was forbidden"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected finding %q, got %q", want, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(want), fmt.Sprintf("expected finding %q, got %q", want, joined))
 	}
-}
-
-func TestEvaluateSWETaskContractReplayMaxViolationsIgnoresAuditDiagnostics(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate swe task contract replay max violations ignores audit diagnostics", func() {
 	maxViolations := 0
 	task := SWETask{
 		ID:     "contract-replay-audit-diagnostic",
@@ -1703,20 +1581,17 @@ func TestEvaluateSWETaskContractReplayMaxViolationsIgnoresAuditDiagnostics(t *te
 	}}
 
 	report := EvaluateSWETask("contract-replay-audit-diagnostic.jsonl", records, task)
-	if !report.Passed {
-		t.Fatalf("expected audit-only diagnostics not to count against replay max violations, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected audit-only diagnostics not to count against replay max violations, got %#v", report.Findings))
 
-	if report.Metrics.ContractReplay == nil || len(report.Metrics.ContractReplay.Violations) == 0 {
-		t.Fatalf("expected audit diagnostic to remain visible, got %#v", report.Metrics.ContractReplay)
-	}
+	gomega.Expect(report.Metrics.ContractReplay).NotTo(gomega.BeNil(), fmt.Sprintf("expected audit diagnostic to remain visible, got %#v", report.Metrics.ContractReplay))
+	gomega.Expect(report.Metrics.ContractReplay.Violations).NotTo(gomega.HaveLen(0), fmt.Sprintf("expected audit diagnostic to remain visible, got %#v", report.Metrics.ContractReplay))
 
-	if got := len(report.Metrics.ContractReplay.Replay.Violations); got != 0 {
-		t.Fatalf("expected no deterministic replay violations, got %d", got)
+	{
+		got := len(report.Metrics.ContractReplay.Replay.Violations)
+		gomega.Expect(got).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected no deterministic replay violations, got %d", got))
 	}
-}
-
-func TestEvaluateSWETaskWithoutAutonomyEventsKeepsReplayOptional(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate swe task without autonomy events keeps replay optional", func() {
 	task := SWETask{
 		ID:       "no-contract-replay",
 		Family:   "direct_question",
@@ -1727,23 +1602,17 @@ func TestEvaluateSWETaskWithoutAutonomyEventsKeepsReplayOptional(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "user", "content": "Explain."}},
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done."}},
 	}, task)
-	if !report.Passed {
-		t.Fatalf("expected task without contract replay expectation to pass, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected task without contract replay expectation to pass, got %#v", report.Findings))
 
-	if report.Metrics.ContractReplay != nil {
-		t.Fatalf("expected no contract replay metrics without autonomy events, got %#v", report.Metrics.ContractReplay)
-	}
+	gomega.Expect(report.Metrics.ContractReplay).To(gomega.BeNil(), fmt.Sprintf("expected no contract replay metrics without autonomy events, got %#v", report.Metrics.ContractReplay))
 
 	task.Scenario.RequireContractReplay = &ContractReplayExpectation{}
 	report = EvaluateSWETask("no-contract-replay.jsonl", nil, task)
 
-	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "required contract replay was not observed") {
-		t.Fatalf("expected missing contract replay finding, got passed=%t findings=%#v", report.Passed, report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskDistinguishesLowValueActionsFromRunnerRejections(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected missing contract replay finding, got passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("required contract replay was not observed"), fmt.Sprintf("expected missing contract replay finding, got passed=%t findings=%#v", report.Passed, report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task distinguishes low value actions from runner rejections", func() {
 	maxLowValue := 0
 	task := SWETask{
 		ID:       "low-value",
@@ -1766,25 +1635,18 @@ func TestEvaluateSWETaskDistinguishesLowValueActionsFromRunnerRejections(t *test
 	}
 
 	report := EvaluateSWETask("low-value.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected low-value action limit to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected low-value action limit to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "low-value actions exceeded") {
-		t.Fatalf("expected low-value finding, got %q", joined)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("low-value actions exceeded"), fmt.Sprintf("expected low-value finding, got %q", joined))
 
-	if strings.Contains(joined, "runner rejections were forbidden") {
-		t.Fatalf("low-value action must not be treated as hard runner rejection: %q", joined)
-	}
+	gomega.Expect(joined).NotTo(gomega.ContainSubstring("runner rejections were forbidden"), fmt.Sprintf("low-value action must not be treated as hard runner rejection: %q", joined))
 
-	if report.Metrics.LowValueActions != 1 || report.Metrics.RejectedActions != 0 || report.Metrics.CompletionGateRejections != 0 {
-		t.Fatalf("unexpected metrics: %#v", report.Metrics)
-	}
-}
-
-func TestEvaluateSWETaskMaxErrorsUsesErrorEventsNotUniqueMessages(t *testing.T) {
+	gomega.Expect(report.Metrics.LowValueActions).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected metrics: %#v", report.Metrics))
+	gomega.Expect(report.Metrics.RejectedActions).To(gomega.BeEquivalentTo(0), fmt.Sprintf("unexpected metrics: %#v", report.Metrics))
+	gomega.Expect(report.Metrics.CompletionGateRejections).To(gomega.BeEquivalentTo(0), fmt.Sprintf("unexpected metrics: %#v", report.Metrics))
+})
+var _ = ginkgo.It("evaluate swe task max errors uses error events not unique messages", func() {
 	maxErrors := 1
 	task := SWETask{
 		ID:       "repeat-error",
@@ -1798,21 +1660,15 @@ func TestEvaluateSWETaskMaxErrorsUsesErrorEventsNotUniqueMessages(t *testing.T) 
 	}
 
 	report := EvaluateSWETask("repeat-error.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected max_errors to fail on two identical error events")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected max_errors to fail on two identical error events"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "unexpected errors exceeded oracle limit: got 2 want <= 1") {
-		t.Fatalf("expected error event count finding, got %q", joined)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("unexpected errors exceeded oracle limit: got 2 want <= 1"), fmt.Sprintf("expected error event count finding, got %q", joined))
 
-	if report.Metrics.ErrorCount != 2 || len(report.Metrics.Errors) != 1 {
-		t.Fatalf("expected event count plus deduplicated messages, got count=%d errors=%#v", report.Metrics.ErrorCount, report.Metrics.Errors)
-	}
-}
-
-func TestEvaluateSWETaskExpectedRecoveriesDoNotHideUnrelatedErrors(t *testing.T) {
+	gomega.Expect(report.Metrics.ErrorCount).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected event count plus deduplicated messages, got count=%d errors=%#v", report.Metrics.ErrorCount, report.Metrics.Errors))
+	gomega.Expect(report.Metrics.Errors).To(gomega.HaveLen(1), fmt.Sprintf("expected event count plus deduplicated messages, got count=%d errors=%#v", report.Metrics.ErrorCount, report.Metrics.Errors))
+})
+var _ = ginkgo.It("evaluate swe task expected recoveries do not hide unrelated errors", func() {
 	maxErrors := 2
 	task := SWETask{
 		ID:       "typed-recoveries",
@@ -1836,25 +1692,17 @@ func TestEvaluateSWETaskExpectedRecoveriesDoNotHideUnrelatedErrors(t *testing.T)
 	}
 
 	report := EvaluateSWETask("typed-recoveries.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected unrelated error to fail despite max_errors allowance")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected unrelated error to fail despite max_errors allowance"))
 
-	if !strings.Contains(strings.Join(report.Findings, "\n"), "unexpected error event did not match expected_recoveries") {
-		t.Fatalf("expected unrelated error finding, got %#v", report.Findings)
-	}
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("unexpected error event did not match expected_recoveries"), fmt.Sprintf("expected unrelated error finding, got %#v", report.Findings))
 
 	matched := EvaluateSWETask("typed-recoveries.jsonl", records[:1], task)
-	if !matched.Passed {
-		t.Fatalf("expected matching recovery error to pass, got %#v", matched.Findings)
-	}
+	gomega.Expect(matched.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected matching recovery error to pass, got %#v", matched.Findings))
 
-	if len(matched.Metrics.ErrorEvents) != 1 || matched.Metrics.ErrorEvents[0].Tool != "read_file" {
-		t.Fatalf("expected typed error event metrics, got %#v", matched.Metrics.ErrorEvents)
-	}
-}
-
-func TestEvaluateSWETaskExpectedRecoveriesDoNotConsumeMaxErrors(t *testing.T) {
+	gomega.Expect(matched.Metrics.ErrorEvents).To(gomega.HaveLen(1), fmt.Sprintf("expected typed error event metrics, got %#v", matched.Metrics.ErrorEvents))
+	gomega.Expect(matched.Metrics.ErrorEvents[0].Tool).To(gomega.BeEquivalentTo("read_file"), fmt.Sprintf("expected typed error event metrics, got %#v", matched.Metrics.ErrorEvents))
+})
+var _ = ginkgo.It("evaluate swe task expected recoveries do not consume max errors", func() {
 	maxErrors := 0
 	task := SWETask{
 		ID:       "typed-recovery-strict",
@@ -1876,12 +1724,9 @@ func TestEvaluateSWETaskExpectedRecoveriesDoNotConsumeMaxErrors(t *testing.T) {
 	}
 
 	report := EvaluateSWETask("typed-recovery-strict.jsonl", records, task)
-	if !report.Passed {
-		t.Fatalf("typed expected recovery should not consume max_errors, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskExpectedRecoveriesDefaultToRequired(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("typed expected recovery should not consume max_errors, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task expected recoveries default to required", func() {
 	task := SWETask{
 		ID:       "typed-recovery-required",
 		Family:   "implementation",
@@ -1898,25 +1743,18 @@ func TestEvaluateSWETaskExpectedRecoveriesDefaultToRequired(t *testing.T) {
 	}
 	report := EvaluateSWETask("typed-recovery-required.jsonl", nil, task)
 
-	if report.Passed {
-		t.Fatal("expected missing recovery to fail by default")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected missing recovery to fail by default"))
 
-	if !strings.Contains(strings.Join(report.Findings, "\n"), "below minimum: got 0 want >= 1") {
-		t.Fatalf("expected missing recovery finding, got %#v", report.Findings)
-	}
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("below minimum: got 0 want >= 1"), fmt.Sprintf("expected missing recovery finding, got %#v", report.Findings))
 
 	optional := task
 
 	optional.Oracle.ExpectedRecoveries[0].MinCount = intPtr(0)
 	report = EvaluateSWETask("typed-recovery-optional.jsonl", nil, optional)
 
-	if !report.Passed {
-		t.Fatalf("explicit min_count=0 recovery should be optional, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateSWETaskRequiresNoTimeout(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("explicit min_count=0 recovery should be optional, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate swe task requires no timeout", func() {
 	task := SWETask{
 		ID:       "timeout",
 		Family:   "implementation",
@@ -1929,21 +1767,14 @@ func TestEvaluateSWETaskRequiresNoTimeout(t *testing.T) {
 	}
 
 	report := EvaluateSWETask("timeout.jsonl", records, task)
-	if report.Passed {
-		t.Fatal("expected timeout oracle to fail")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected timeout oracle to fail"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "timeouts were forbidden") {
-		t.Fatalf("expected timeout finding, got %q", joined)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("timeouts were forbidden"), fmt.Sprintf("expected timeout finding, got %q", joined))
 
-	if strings.Contains(joined, "runner rejections were forbidden") {
-		t.Fatalf("timeout must not be treated as runner rejection: %q", joined)
-	}
-}
-
-func TestLintSWESuiteFlagsGroundednessConfigErrors(t *testing.T) {
+	gomega.Expect(joined).NotTo(gomega.ContainSubstring("runner rejections were forbidden"), fmt.Sprintf("timeout must not be treated as runner rejection: %q", joined))
+})
+var _ = ginkgo.It("lint swe suite flags groundedness config errors", func() {
 	suite := SWESuite{
 		Name: "groundedness-lint",
 		Tasks: []SWETask{
@@ -1988,24 +1819,17 @@ func TestLintSWESuiteFlagsGroundednessConfigErrors(t *testing.T) {
 	findings := LintSWESuite(suite)
 	joined := strings.Join(findings, "\n")
 
-	if !strings.Contains(joined, "no-context") || !strings.Contains(joined, "context_files or context_fragments") {
-		t.Fatalf("expected no-context lint finding, got %v", findings)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("no-context"), fmt.Sprintf("expected no-context lint finding, got %v", findings))
+	gomega.Expect(joined).To(gomega.ContainSubstring("context_files or context_fragments"), fmt.Sprintf("expected no-context lint finding, got %v", findings))
 
-	if !strings.Contains(joined, "out-of-range") || !strings.Contains(joined, "must be in [0, 1]") {
-		t.Fatalf("expected out-of-range lint finding, got %v", findings)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("out-of-range"), fmt.Sprintf("expected out-of-range lint finding, got %v", findings))
+	gomega.Expect(joined).To(gomega.ContainSubstring("must be in [0, 1]"), fmt.Sprintf("expected out-of-range lint finding, got %v", findings))
 
-	if !strings.Contains(joined, "absolute-path") {
-		t.Fatalf("expected absolute-path lint finding, got %v", findings)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("absolute-path"), fmt.Sprintf("expected absolute-path lint finding, got %v", findings))
 
-	if !strings.Contains(joined, "backslash-traversal") {
-		t.Fatalf("expected backslash-traversal lint finding, got %v", findings)
-	}
-}
-
-func TestTaskOracleAssertionsCoversNewOracles(t *testing.T) {
+	gomega.Expect(joined).To(gomega.ContainSubstring("backslash-traversal"), fmt.Sprintf("expected backslash-traversal lint finding, got %v", findings))
+})
+var _ = ginkgo.It("task oracle assertions covers new oracles", func() {
 	task := SWETask{
 		Oracle: SWEOracle{
 			Groundedness:         &SWEGroundednessOracle{MinScore: 0.5, ContextFragments: []string{"x"}},
@@ -2014,14 +1838,10 @@ func TestTaskOracleAssertionsCoversNewOracles(t *testing.T) {
 	}
 	got := taskOracleAssertions(task)
 
-	if !containsStr(got, "groundedness") {
-		t.Fatalf("expected groundedness in assertions, got %v", got)
-	}
+	gomega.Expect(containsStr(got, "groundedness")).To(gomega.BeTrue(), fmt.Sprintf("expected groundedness in assertions, got %v", got))
 
-	if !containsStr(got, "forbid_generic_phrases") {
-		t.Fatalf("expected forbid_generic_phrases in assertions, got %v", got)
-	}
-}
+	gomega.Expect(containsStr(got, "forbid_generic_phrases")).To(gomega.BeTrue(), fmt.Sprintf("expected forbid_generic_phrases in assertions, got %v", got))
+})
 
 func containsStr(set []string, want string) bool {
 	for _, v := range set {
@@ -2033,7 +1853,7 @@ func containsStr(set []string, want string) bool {
 	return false
 }
 
-func TestEvaluateSWESuiteReportsMissingLogs(t *testing.T) {
+var _ = ginkgo.It("evaluate swe suite reports missing logs", func() {
 	suite := SWESuite{
 		Name: "small",
 		Tasks: []SWETask{{
@@ -2048,32 +1868,29 @@ func TestEvaluateSWESuiteReportsMissingLogs(t *testing.T) {
 	}
 	report := EvaluateSWESuiteWithLoadErrors(suite, nil, nil, nil)
 
-	if report.Passed {
-		t.Fatal("expected missing task log to fail suite")
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected missing task log to fail suite"))
+
+	gomega.Expect(report.Coverage.Passed).To(gomega.BeTrue(), fmt.Sprintf("coverage should pass when no contract is set: %#v", report.Coverage))
+
+	gomega.Expect(report.Summary.FailedTasks).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected missing-log summary: %#v", report.Summary))
+	gomega.Expect(report.Summary.MissingLogs).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected missing-log summary: %#v", report.Summary))
+
+	{
+		bucket := report.Summary.ByFamily["direct_question"]
+		gomega.Expect(bucket.Total).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected family bucket: %#v", bucket))
+		gomega.Expect(bucket.Failed).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected family bucket: %#v", bucket))
 	}
 
-	if !report.Coverage.Passed {
-		t.Fatalf("coverage should pass when no contract is set: %#v", report.Coverage)
+	{
+		bucket := report.Summary.ByTaskShape["read_only"]
+		gomega.Expect(bucket.Total).To(gomega.BeEquivalentTo(0), fmt.Sprintf("unexpected task-shape bucket for untagged task: %#v", bucket))
+		gomega.Expect(bucket.Failed).To(gomega.BeEquivalentTo(0), fmt.Sprintf("unexpected task-shape bucket for untagged task: %#v", bucket))
 	}
 
-	if report.Summary.FailedTasks != 1 || report.Summary.MissingLogs != 1 {
-		t.Fatalf("unexpected missing-log summary: %#v", report.Summary)
-	}
-
-	if bucket := report.Summary.ByFamily["direct_question"]; bucket.Total != 1 || bucket.Failed != 1 {
-		t.Fatalf("unexpected family bucket: %#v", bucket)
-	}
-
-	if bucket := report.Summary.ByTaskShape["read_only"]; bucket.Total != 0 || bucket.Failed != 0 {
-		t.Fatalf("unexpected task-shape bucket for untagged task: %#v", bucket)
-	}
-
-	if len(report.Tasks) != 1 || report.Tasks[0].Passed {
-		t.Fatalf("unexpected suite report: %#v", report)
-	}
-}
-
-func TestEvaluateSWESuiteReportsLoadErrors(t *testing.T) {
+	gomega.Expect(report.Tasks).To(gomega.HaveLen(1), fmt.Sprintf("unexpected suite report: %#v", report))
+	gomega.Expect(report.Tasks[0].Passed).To(gomega.BeFalse(), fmt.Sprintf("unexpected suite report: %#v", report))
+})
+var _ = ginkgo.It("evaluate swe suite reports load errors", func() {
 	suite := SWESuite{
 		Name: "small",
 		Tasks: []SWETask{{
@@ -2093,19 +1910,14 @@ func TestEvaluateSWESuiteReportsLoadErrors(t *testing.T) {
 		map[string]error{"bad-log": errSynthetic("decode log record: invalid character")},
 	)
 
-	if report.Passed {
-		t.Fatal("expected load error to fail suite")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprint("expected load error to fail suite"))
 
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "task log could not be loaded") {
-		t.Fatalf("expected load error finding, got %q", joined)
-	}
+	gomega.Expect(joined).To(gomega.ContainSubstring("task log could not be loaded"), fmt.Sprintf("expected load error finding, got %q", joined))
 
-	if report.Summary.LoadErrors != 1 || report.Summary.FailedTasks != 1 {
-		t.Fatalf("unexpected load-error summary: %#v", report.Summary)
-	}
-}
+	gomega.Expect(report.Summary.LoadErrors).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected load-error summary: %#v", report.Summary))
+	gomega.Expect(report.Summary.FailedTasks).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected load-error summary: %#v", report.Summary))
+})
 
 func suiteHasFamily(suite SWESuite, family string) bool {
 	for _, task := range suite.Tasks {

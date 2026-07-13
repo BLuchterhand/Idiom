@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/muesli/reflow/wordwrap"
@@ -36,6 +35,7 @@ func wrapLines(s string, width int) []string {
 // Consecutive same-sender messages collapse into one entry (contents grows);
 // a new entry is created as soon as the sender changes.
 type historyEntry struct {
+	revision    uint64
 	sender      string              // "user" or "agent"
 	contents    []string            // each message in send order (newest appended)
 	toolCalls   []historyToolCall   // tool-trace first lines, agent entries only
@@ -63,8 +63,36 @@ type historyAuditEvent struct {
 
 // historySummaryMsg is emitted by summarizeEntry when the 9B model returns.
 type historySummaryMsg struct {
-	index   int
-	summary string
+	index           int
+	historyRevision uint64
+	entryRevision   uint64
+	summary         string
+}
+
+func (m *Model) markHistoryEntryChanged(entry *historyEntry) {
+	if m == nil || entry == nil {
+		return
+	}
+
+	entry.revision++
+}
+
+func cloneHistoryEntry(entry historyEntry) historyEntry {
+	entry.contents = append([]string(nil), entry.contents...)
+	entry.toolCalls = append([]historyToolCall(nil), entry.toolCalls...)
+	entry.auditEvents = append([]historyAuditEvent(nil), entry.auditEvents...)
+
+	return entry
+}
+
+func (m *Model) startHistorySummary(index int, entry historyEntry) {
+	execution := snapshotHistorySummaryExecution(m)
+	entry = cloneHistoryEntry(entry)
+	historyRevision := m.history.revision
+	entryRevision := entry.revision
+	_ = m.ensureBackgroundOperations().start(func(ctx context.Context) {
+		summarizeEntry(ctx, index, historyRevision, entryRevision, entry, execution)
+	})
 }
 
 // appendHistoryMessage records a message from sender into the panel. If the
@@ -91,6 +119,7 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 		}
 
 		entry.toolCalls = append(entry.toolCalls, historyToolCallsFromLines(toolCalls)...)
+		m.markHistoryEntryChanged(entry)
 		entry.summary = localFallbackSummary(entry)
 		grouped = true
 	}
@@ -101,6 +130,7 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 			entry.contents = []string{content}
 		}
 
+		m.markHistoryEntryChanged(&entry)
 		entry.summary = localFallbackSummary(&entry)
 		m.history.entries = append(m.history.entries, entry)
 		m.history.selected = len(m.history.entries) - 1
@@ -108,7 +138,7 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 
 	idx := len(m.history.entries) - 1
 	if m.cfg.RouteClassifier.Enabled && m.summaryClient != nil {
-		go m.summarizeEntry(idx, m.history.entries[idx])
+		m.startHistorySummary(idx, m.history.entries[idx])
 	}
 
 	m.requestHistoryPanelRender(false, true)
@@ -143,6 +173,7 @@ func (m *Model) beginAgentHistoryTurn() {
 		entry.auditEvents = append(entry.auditEvents, privacy)
 	}
 
+	m.markHistoryEntryChanged(&entry)
 	entry.summary = localFallbackSummary(&entry)
 	m.history.entries = append(m.history.entries, entry)
 	m.history.selected = len(m.history.entries) - 1
@@ -190,6 +221,7 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 		}
 
 		entry.auditEvents = append(entry.auditEvents, auditEvents...)
+		m.markHistoryEntryChanged(entry)
 		entry.summary = localFallbackSummary(entry)
 
 		m.requestHistoryPanelRender(false, true)
@@ -277,6 +309,7 @@ func (m *Model) recordHistoryAuditEvent(event historyAuditEvent) {
 
 	if _, entry, ok := m.activeAgentHistoryEntry(); ok {
 		entry.auditEvents = append(entry.auditEvents, event)
+		m.markHistoryEntryChanged(entry)
 		entry.summary = localFallbackSummary(entry)
 
 		m.requestHistoryPanelRender(false, true)
@@ -309,6 +342,7 @@ func (m *Model) finishAgentHistoryTurn(response string) {
 		entry.inProgress = false
 		m.currentTurnHistoryActive = false
 		m.currentTurnTools = nil
+		m.markHistoryEntryChanged(entry)
 
 		if response == "" && len(entry.toolCalls) == 0 {
 			m.removeEmptyCurrentHistoryEntry()
@@ -321,7 +355,7 @@ func (m *Model) finishAgentHistoryTurn(response string) {
 		idx := m.currentTurnHistoryIndex
 
 		if m.cfg.RouteClassifier.Enabled && m.summaryClient != nil {
-			go m.summarizeEntry(idx, *entry)
+			m.startHistorySummary(idx, *entry)
 		}
 
 		m.requestHistoryPanelRender(true, true)
@@ -351,6 +385,7 @@ func (m *Model) failAgentHistoryTurn(err error) {
 		m.currentTurnTools = nil
 
 		entry.contents = append(entry.contents, "Chat failed: "+err.Error())
+		m.markHistoryEntryChanged(entry)
 		entry.summary = localFallbackSummary(entry)
 
 		m.requestHistoryPanelRender(true, true)
@@ -368,6 +403,7 @@ func (m *Model) removeEmptyCurrentHistoryEntry() {
 	}
 
 	m.history.entries = append(m.history.entries[:idx], m.history.entries[idx+1:]...)
+	m.history.revision++
 	if m.history.selected >= len(m.history.entries) {
 		m.history.selected = len(m.history.entries) - 1
 	}
@@ -416,11 +452,30 @@ func (m *Model) requestHistoryPanelRender(force bool, stickBottom bool) {
 		delay = historyPanelRenderThrottle
 	}
 
-	go func() {
-		time.Sleep(delay)
+	events := m.events
+	if events == nil {
+		m.flushHistoryPanelRender()
 
-		m.events <- historyPanelRefreshMsg{}
-	}()
+		return
+	}
+
+	if !m.ensureBackgroundOperations().start(func(ctx context.Context) {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return
+		}
+
+		select {
+		case events <- historyPanelRefreshMsg{}:
+		case <-ctx.Done():
+		}
+	}) {
+		m.history.renderPending = false
+	}
 }
 
 func (m *Model) flushHistoryPanelRender() {
@@ -593,12 +648,20 @@ func stripThinkTags(s string) string {
 	return s
 }
 
-// summarizeEntry runs the 9B model on a completed entry and emits a
-// historySummaryMsg. Safe to call as a goroutine. If the route-classifier
-// server is not reachable and auto-start is enabled, the server is launched
-// first and the summary retried once it's ready.
-func (m *Model) summarizeEntry(idx int, entry historyEntry) {
-	_ = m.ensureSummaryServer() // auto-start if configured; completeChatWithFallback routes to m.client on failure
+// summarizeEntry runs one immutable history snapshot through the classifier
+// and publishes only a revision-correlated result.
+func summarizeEntry(
+	ownerCtx context.Context,
+	index int,
+	historyRevision uint64,
+	entryRevision uint64,
+	entry historyEntry,
+	execution historySummaryExecution,
+) {
+	_ = execution.server.ensure(ownerCtx)
+	if ownerCtx.Err() != nil {
+		return
+	}
 
 	var sb strings.Builder
 
@@ -670,22 +733,12 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 		},
 	}
 
-	timeout := time.Duration(m.cfg.RouteClassifier.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ownerCtx, execution.timeout)
 
 	defer cancel()
 
-	maxTokens := m.cfg.RouteClassifier.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 64
-	}
-
-	text, err := m.completeChatWithFallback(ctx, msgs, llama.ChatOptions{
-		MaxTokens:          maxTokens,
+	text, err := completeHistorySummaryChat(ctx, execution, msgs, llama.ChatOptions{
+		MaxTokens:          execution.maxTokens,
 		Temperature:        0.3,
 		EnableThinking:     &thinkingOff,
 		ChatTemplateKwargs: true,
@@ -700,115 +753,33 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 	}
 
 	summary = truncateRunes(collapseWhitespace(summary), 60)
-	m.events <- historySummaryMsg{index: idx, summary: summary}
-}
-
-// summaryServerOnce guards the one-time lazy spin-up of the route-classifier
-// server. We only launch once per session even if summarizeEntry is called
-// repeatedly before the server becomes ready.
-var summaryServerOnce struct {
-	sync.Mutex
-	started bool
-	ready   chan struct{}
-}
-
-// ensureSummaryServer returns nil as soon as the route-classifier endpoint is
-// reachable. If it's not reachable and auto_start_server is enabled in the
-// RouteClassifier config, a llama-server is spawned with those settings and
-// the call blocks until it's ready (or errors). Subsequent calls reuse the
-// same launch.
-func (m *Model) ensureSummaryServer() error {
-	if m.summaryClient == nil {
-		return errSummaryDisabled
-	}
-
-	// Fast path: endpoint already responds.
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	_, err := m.summaryClient.ListModels(pingCtx)
-
-	pingCancel()
-
-	if err == nil {
-		return nil
-	}
-
-	if !m.cfg.RouteClassifier.AutoStartServer {
-		return err
-	}
-
-	summaryServerOnce.Lock()
-
-	if !summaryServerOnce.started {
-		summaryServerOnce.started = true
-		summaryServerOnce.ready = make(chan struct{})
-
-		go m.launchSummaryServer()
-	}
-
-	ready := summaryServerOnce.ready
-	summaryServerOnce.Unlock()
-
-	startTimeout := time.Duration(m.cfg.RouteClassifier.StartTimeoutSeconds) * time.Second
-	if startTimeout <= 0 {
-		startTimeout = 120 * time.Second
-	}
-
 	select {
-	case <-ready:
-	case <-time.After(startTimeout):
-		return errSummaryStartTimeout
+	case execution.events <- historySummaryMsg{
+		index:           index,
+		historyRevision: historyRevision,
+		entryRevision:   entryRevision,
+		summary:         summary,
+	}:
+	case <-ownerCtx.Done():
 	}
-
-	// Verify the endpoint actually responds post-launch.
-	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer verifyCancel()
-
-	_, err = m.summaryClient.ListModels(verifyCtx)
-
-	return err
 }
 
-// launchSummaryServer starts llama-server with the RouteClassifier settings
-// and closes summaryServerOnce.ready once it's responding. Safe to call as a
-// goroutine — ensureSummaryServer guarantees a single invocation per session.
-func (m *Model) launchSummaryServer() {
-	defer func() {
-		summaryServerOnce.Lock()
-
-		if summaryServerOnce.ready != nil {
-			// Always close so waiters unblock; they'll verify the endpoint.
-			select {
-			case <-summaryServerOnce.ready:
-			default:
-				close(summaryServerOnce.ready)
-			}
+func completeHistorySummaryChat(
+	ctx context.Context,
+	execution historySummaryExecution,
+	messages []llama.ChatMessage,
+	options llama.ChatOptions,
+) (string, error) {
+	if execution.server.client != nil {
+		if text, err := execution.server.client.CompleteChat(ctx, messages, options); err == nil {
+			return text, nil
 		}
-
-		summaryServerOnce.Unlock()
-	}()
-
-	if m.summaryController == nil {
-		return
+	}
+	if execution.fallbackClient == nil {
+		return "", errSummaryDisabled
 	}
 
-	startTimeout := time.Duration(m.cfg.RouteClassifier.StartTimeoutSeconds) * time.Second
-	if startTimeout <= 0 {
-		startTimeout = 120 * time.Second
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
-
-	defer cancel()
-
-	if err := m.summaryController.Start(ctx); err != nil {
-		m.logError("route_classifier", "start failed: "+err.Error())
-
-		return
-	}
-
-	if err := m.summaryController.WaitUntilReady(ctx); err != nil {
-		m.logError("route_classifier", "ready wait failed: "+err.Error())
-	}
+	return execution.fallbackClient.CompleteChat(ctx, messages, options)
 }
 
 // truncateRunes truncates s to at most max runes, appending "…" if cut.

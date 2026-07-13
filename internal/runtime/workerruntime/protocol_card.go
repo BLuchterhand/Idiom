@@ -1,6 +1,7 @@
 package workerruntime
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -44,6 +45,8 @@ func RenderActiveProtocolCard(protocol contractcompile.ModelProtocolProjection) 
 	b.WriteString(protocolCardList(protocolCardDisplayOrder(protocol.VisibleTools)))
 	b.WriteString("\nCallable tools now: ")
 	b.WriteString(protocolCardList(protocolCardDisplayOrder(protocol.CallableTools)))
+	b.WriteString("\nCallable action classes now: ")
+	b.WriteString(protocolCardList(protocolCardDisplayOrder(protocol.CallableActionClasses)))
 
 	if len(terminalOutcomes) > 0 {
 		b.WriteString("\nValid terminal outcomes: ")
@@ -64,6 +67,18 @@ func RenderActiveProtocolCard(protocol contractcompile.ModelProtocolProjection) 
 		b.WriteString(protocolCardList(protocol.PathRoleSummary))
 	}
 
+	if len(protocol.GroundedSourceBodyPaths) > 0 || protocol.GroundedSourceBodyPathTotal > 0 ||
+		len(protocol.CandidateOnlyPaths) > 0 || protocol.CandidateOnlyPathTotal > 0 ||
+		len(protocol.SourceBodyObligations) > 0 || protocol.SourceBodyObligationTotal > 0 {
+		b.WriteString("\nSource evidence: grounded_body_paths=")
+		b.WriteString(protocolCardEvidencePathSample(protocol.GroundedSourceBodyPaths, protocol.GroundedSourceBodyPathTotal, protocol.GroundedSourceBodyPathOmitted))
+		b.WriteString("; pending_body_obligations=")
+		b.WriteString(protocolCardEvidencePathSample(protocol.SourceBodyObligations, protocol.SourceBodyObligationTotal, protocol.SourceBodyObligationOmitted))
+		b.WriteString("; candidate_or_outline_only_paths=")
+		b.WriteString(protocolCardEvidencePathSample(protocol.CandidateOnlyPaths, protocol.CandidateOnlyPathTotal, protocol.CandidateOnlyPathOmitted))
+		b.WriteString(" (candidate/search/outline paths are not source-body evidence)")
+	}
+
 	if verification := strings.Join(protocol.VerificationObligations, "; "); verification != "" {
 		b.WriteString("\nVerification: ")
 		b.WriteString(verification)
@@ -75,6 +90,17 @@ func RenderActiveProtocolCard(protocol contractcompile.ModelProtocolProjection) 
 	}
 
 	return b.String()
+}
+
+func protocolCardEvidencePathSample(paths []string, total int, omitted int) string {
+	if omitted < 0 {
+		omitted = 0
+	}
+	if total != len(paths)+omitted {
+		total = len(paths) + omitted
+	}
+
+	return fmt.Sprintf("%s (total=%d, omitted=%d)", protocolCardList(paths), total, omitted)
 }
 
 func protocolCardList(values []string) string {

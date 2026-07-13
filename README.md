@@ -261,6 +261,14 @@ Common direct tools:
 | `history_range`, `history_symbol`, `blame_range` | Inspect git history. |
 | `semgrep_scan`, `joern_scan` | Run optional security/dataflow discovery. |
 
+`read_only_capability` exposes only stable contracts with exact adapters.
+`harness_audit` reports the remaining read-only tools as documented direct-only
+surfaces when their narrower, broader, or owner-specific contract is not an
+exact capability match; those tools are not unresolved routing gaps. Optional
+precision backends such as `typescript-language-server` and `madge` remain
+visible as `optional_unavailable` when absent, but their built-in fallbacks mean
+that expected absence is not an action-required finding.
+
 The full installer path installs the declared discovery backends and CI smokes
 the installed CLI against the manifest. See [docs/release.md](docs/release.md).
 
@@ -284,6 +292,17 @@ See [docs/cli.md](docs/cli.md).
 
 Idiom writes local telemetry and conversation logs, then exposes audit and eval
 commands for behavior review.
+
+Ranker learning is opt-in workspace state. `harness_audit` reports
+`idle_expected` when both ranker artifacts are absent, `initialized_idle` when
+the artifacts are present but valid and empty, `active` when valid weights or
+learning events exist, and `degraded` with `action_required` when either
+artifact is malformed, unreadable, oversized, or has an unsafe filesystem
+shape, and also when more than three quarters of valid mutable learning events
+are no-ops. Integrity-degraded evidence does not drive learning-quality or
+trigger-wiring advice. Eval, ranker CLI, and recovery reconciliation are the current state
+producers; verified-edit, `harness_feedback`, and audit-watch remain documented
+candidates until they are wired.
 
 ```bash
 idiom tool harness_audit --input '{"purpose":"tool_surface"}'
@@ -367,30 +386,31 @@ make swe-live-subset
 Run install coverage checks that do not require host dependency installation:
 
 ```bash
-./scripts/test-install-dependencies.sh --manifest-only
-bash -n scripts/test-install-macos.sh
-python3 -m py_compile scripts/test-post-install-harness.py
-python3 -m py_compile scripts/test-discovery-tools-e2e.py
+make test-system-hermetic
 ```
+
+The build-tagged system suite owns assertions for the external shell, Python,
+and PowerShell fixtures. Direct targets select one fixture and fail when its
+required platform or toolchain is unavailable.
 
 Run the post-install harness smoke after an installer has initialized
 `~/.idiom`:
 
 ```bash
-IDIOM_BIN=/path/to/idiom python3 scripts/test-post-install-harness.py
+IDIOM_BIN=/path/to/idiom make test-post-install-harness
 ```
 
 Run the macOS release-installer smoke on a macOS host:
 
 ```bash
-./scripts/test-install-macos.sh
+make test-install-macos
 ```
 
 Run the installed-tool smoke only on a host where the full dependency set is
 installed:
 
 ```bash
-IDIOM_BIN=/path/to/idiom IDIOM_TOOL_BIN=/path/to/idiom-tool ./scripts/test-discovery-tools-e2e.sh
+IDIOM_BIN=/path/to/idiom IDIOM_TOOL_BIN=/path/to/idiom-tool make test-install-discovery-tools
 ```
 
 ## Release Gates

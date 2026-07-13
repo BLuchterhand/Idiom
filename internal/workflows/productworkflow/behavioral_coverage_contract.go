@@ -27,6 +27,10 @@ const (
 	BehavioralCoveragePromotionCommitStatusCommitted    = "committed"
 	BehavioralCoveragePromotionCommitStatusBlocked      = "blocked"
 
+	BehavioralCoveragePromotionAuditStatusNotAttempted = "not_attempted"
+	BehavioralCoveragePromotionAuditStatusRecorded     = "recorded"
+	BehavioralCoveragePromotionAuditStatusDegraded     = "degraded"
+
 	BehavioralMutationRequirementRequired    = "required"
 	BehavioralMutationRequirementWaived      = "waived"
 	BehavioralMutationRequirementNotRequired = "not_required"
@@ -44,6 +48,9 @@ type BehavioralCoveragePromotionResult struct {
 	State            string
 	CommitStatus     string
 	LedgerCommitted  bool
+	CommitWarning    string
+	AuditStatus      string
+	AuditError       string
 	EventID          string
 	Digest           string
 	SupersededDigest string
@@ -57,6 +64,7 @@ type BehavioralCoverageContract struct {
 	TaskID            string                       `json:"task_id,omitempty"`
 	CoverageTier      string                       `json:"coverage_tier,omitempty"`
 	EventID           string                       `json:"event_id,omitempty"`
+	PromotionState    string                       `json:"promotion_state,omitempty"`
 	SourceRefs        []string                     `json:"source_refs,omitempty"`
 	RiskClass         string                       `json:"risk_class,omitempty"`
 	EARS              []EARSRequirementCoverage    `json:"ears,omitempty"`
@@ -364,6 +372,16 @@ type BehavioralCoverageQuestion struct {
 
 func ValidateBehavioralCoverageContract(contract BehavioralCoverageContract) error {
 	var errs []error
+	errs = append(errs, validateBehavioralCoverageIdentifierUniqueness(contract)...)
+	switch strings.TrimSpace(contract.PromotionState) {
+	case "":
+	case BehavioralCoveragePromotionStateAccepted:
+		if strings.TrimSpace(contract.EventID) == "" {
+			errs = append(errs, errors.New("accepted behavioral coverage promotion is missing event_id"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("behavioral coverage promotion_state %q is unsupported", contract.PromotionState))
+	}
 	obligationIDs := behavioralCoverageObligationIDs(contract.TestObligations)
 	coverageIDs := behavioralCoverageArtifactIDs(contract)
 	requirementIDs := behavioralCoverageEARSRequirementIDs(contract.EARS)
@@ -982,80 +1000,92 @@ func behavioralCoverageAnyRefAccepted(refs []string, accepted map[string]bool) b
 	return false
 }
 
-func ReviewBehavioralCoverageContractWithResult(ledger TDDLedger, contract BehavioralCoverageContract) (BehavioralCoveragePromotionResult, error) {
-	result, err := behavioralCoveragePromotionResult(ledger, contract, BehavioralCoveragePromotionStateReviewed)
+func reviewBehavioralCoverageContractWithResult(
+	state WorkflowState,
+	ledger TDDLedger,
+	contract BehavioralCoverageContract,
+) (BehavioralCoveragePromotionResult, error) {
+	result, err := behavioralCoveragePromotionProjection(state, ledger, contract, BehavioralCoveragePromotionStateReviewed)
 	if err != nil {
 		return result, err
 	}
 	result.CommitStatus = BehavioralCoveragePromotionCommitStatusNotWritten
+	result.AuditStatus = BehavioralCoveragePromotionAuditStatusNotAttempted
 	return result, nil
 }
 
-func PromoteBehavioralCoverageContractWithResult(ledger TDDLedger, contract BehavioralCoverageContract) (BehavioralCoveragePromotionResult, error) {
-	result, err := behavioralCoveragePromotionResult(ledger, contract, BehavioralCoveragePromotionStateAccepted)
+func prepareBehavioralCoveragePromotion(
+	state WorkflowState,
+	ledger TDDLedger,
+	contract BehavioralCoverageContract,
+) (BehavioralCoveragePromotionResult, error) {
+	result, err := behavioralCoveragePromotionProjection(state, ledger, contract, BehavioralCoveragePromotionStatePrepared)
 	if err != nil {
 		return result, err
 	}
 	result.CommitStatus = BehavioralCoveragePromotionCommitStatusWritePending
+	result.AuditStatus = BehavioralCoveragePromotionAuditStatusNotAttempted
 	return result, nil
 }
 
-func behavioralCoveragePromotionResult(ledger TDDLedger, contract BehavioralCoverageContract, state string) (BehavioralCoveragePromotionResult, error) {
-	contract = fillBehavioralCoverageContractIdentity(ledger, contract)
+func behavioralCoveragePromotionProjection(
+	state WorkflowState,
+	ledger TDDLedger,
+	contract BehavioralCoverageContract,
+	promotionState string,
+) (BehavioralCoveragePromotionResult, error) {
+	contract, err := validateTDDContractAuthority(state, ledger, contract)
+	if err != nil {
+		return BehavioralCoveragePromotionResult{
+			State:        BehavioralCoveragePromotionStateRejected,
+			CommitStatus: BehavioralCoveragePromotionCommitStatusBlocked,
+			AuditStatus:  BehavioralCoveragePromotionAuditStatusNotAttempted,
+		}, err
+	}
 	if err := ValidateBehavioralCoverageContract(contract); err != nil {
 		return BehavioralCoveragePromotionResult{
 			State:        BehavioralCoveragePromotionStateRejected,
 			CommitStatus: BehavioralCoveragePromotionCommitStatusBlocked,
+			AuditStatus:  BehavioralCoveragePromotionAuditStatusNotAttempted,
 		}, err
 	}
 
 	projected := ProjectBehavioralCoverageContract(contract)
 	var supersededDigest string
+	priorPromotedObligationIDs := map[string]bool{}
 	if ledger.BehavioralCoverage != nil {
 		supersededDigest = BehavioralCoverageContractDigest(*ledger.BehavioralCoverage)
+		priorPromotedObligationIDs = behavioralCoverageObligationIDs(ledger.BehavioralCoverage.TestObligations)
+	}
+	digest := BehavioralCoverageContractDigest(contract)
+	if digest == "" {
+		return BehavioralCoveragePromotionResult{
+			State:        BehavioralCoveragePromotionStateRejected,
+			CommitStatus: BehavioralCoveragePromotionCommitStatusBlocked,
+			AuditStatus:  BehavioralCoveragePromotionAuditStatusNotAttempted,
+		}, errors.New("behavioral coverage contract digest could not be computed")
 	}
 	ledger.SchemaVersion = firstNonEmptyStr(ledger.SchemaVersion, "v1")
-	ledger.EffortID = firstNonEmptyStr(ledger.EffortID, contract.EffortID)
-	ledger.TaskID = firstNonEmptyStr(ledger.TaskID, contract.TaskID)
-	ledger.CoverageTier = firstNonEmptyStr(ledger.CoverageTier, contract.CoverageTier)
 	ledger.Coverage = projected
 	ledger.BehavioralCoverage = &contract
-	ledger.Obligations = mergePromotedBehavioralObligations(ledger.Obligations, projectBehavioralTestObligations(contract.TestObligations))
+	ledger.Obligations = mergePromotedBehavioralObligations(
+		ledger.Obligations,
+		priorPromotedObligationIDs,
+		projectBehavioralTestObligations(contract.TestObligations),
+	)
 
-	digest := BehavioralCoverageContractDigest(contract)
 	if supersededDigest == digest {
 		supersededDigest = ""
 	}
 	return BehavioralCoveragePromotionResult{
-		State:            state,
-		EventID:          behavioralCoveragePromotionEventID(contract, digest),
+		State:            promotionState,
 		Digest:           digest,
 		SupersededDigest: supersededDigest,
 		Ledger:           ledger,
 	}, nil
 }
 
-func fillBehavioralCoverageContractIdentity(ledger TDDLedger, contract BehavioralCoverageContract) BehavioralCoverageContract {
-	if strings.TrimSpace(contract.EffortID) == "" {
-		contract.EffortID = strings.TrimSpace(ledger.EffortID)
-	}
-	if strings.TrimSpace(contract.TaskID) == "" {
-		contract.TaskID = strings.TrimSpace(ledger.TaskID)
-	}
-	if strings.TrimSpace(contract.CoverageTier) == "" {
-		contract.CoverageTier = strings.TrimSpace(ledger.CoverageTier)
-	}
-	if strings.TrimSpace(contract.ContractID) == "" {
-		contract.ContractID = firstNonEmptyStr(contract.TaskID, ledger.TaskID)
-	}
-
-	return contract
-}
-
-func behavioralCoveragePromotionEventID(contract BehavioralCoverageContract, digest string) string {
-	if eventID := strings.TrimSpace(contract.EventID); eventID != "" {
-		return eventID
-	}
+func behavioralCoveragePromotionEventID(digest string) string {
 	digest = strings.TrimPrefix(strings.TrimSpace(digest), "sha256:")
 	if len(digest) > 16 {
 		digest = digest[:16]
@@ -1066,23 +1096,17 @@ func behavioralCoveragePromotionEventID(contract BehavioralCoverageContract, dig
 	return "coverage_promoted_" + digest
 }
 
-func mergePromotedBehavioralObligations(existing []TDDObligation, promoted []TDDObligation) []TDDObligation {
-	if len(promoted) == 0 {
-		return append([]TDDObligation(nil), existing...)
-	}
-
-	promotedIDs := map[string]bool{}
-	for _, obligation := range promoted {
-		id := strings.TrimSpace(obligation.ID)
-		if id != "" {
-			promotedIDs[id] = true
-		}
-	}
+func mergePromotedBehavioralObligations(
+	existing []TDDObligation,
+	priorPromotedIDs map[string]bool,
+	promoted []TDDObligation,
+) []TDDObligation {
+	promotedIDs := tddObligationIDs(promoted)
 
 	out := make([]TDDObligation, 0, len(existing)+len(promoted))
 	for _, obligation := range existing {
 		id := strings.TrimSpace(obligation.ID)
-		if id != "" && promotedIDs[id] {
+		if id != "" && (priorPromotedIDs[id] || promotedIDs[id]) {
 			continue
 		}
 		out = append(out, obligation)
@@ -1090,6 +1114,17 @@ func mergePromotedBehavioralObligations(existing []TDDObligation, promoted []TDD
 	out = append(out, promoted...)
 
 	return out
+}
+
+func tddObligationIDs(obligations []TDDObligation) map[string]bool {
+	ids := make(map[string]bool, len(obligations))
+	for _, obligation := range obligations {
+		if id := strings.TrimSpace(obligation.ID); id != "" {
+			ids[id] = true
+		}
+	}
+
+	return ids
 }
 
 func ValidateBehavioralCoverageProjection(contract BehavioralCoverageContract, coverage TDDCoverage) error {
@@ -1175,11 +1210,30 @@ func ValidateBehavioralCoverageProjection(contract BehavioralCoverageContract, c
 }
 
 func BehavioralCoverageContractDigest(contract BehavioralCoverageContract) string {
+	// EventID is promotion provenance, not contract content. Excluding it keeps
+	// the digest stable when the owner records the generated event identity in
+	// the authoritative TDD ledger.
+	contract.EventID = ""
+	contract.PromotionState = ""
 	data, err := json.Marshal(contract)
 	if err != nil {
 		return ""
 	}
 	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func legacyBehavioralCoverageContractDigest(contract BehavioralCoverageContract) string {
+	// Before promotion provenance moved into the ledger authority, EventID was
+	// part of the contract digest and PromotionState did not exist. Retain this
+	// projection only for matching already-written audit events.
+	contract.PromotionState = ""
+	data, err := json.Marshal(contract)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
@@ -1627,6 +1681,174 @@ func behavioralCoverageArtifactIDs(contract BehavioralCoverageContract) map[stri
 	}
 
 	return out
+}
+
+func validateBehavioralCoverageIdentifierUniqueness(contract BehavioralCoverageContract) []error {
+	var errs []error
+	global := map[string]string{}
+	addGlobal := func(id, location string) {
+		if err := recordUniqueBehavioralCoverageID(global, id, location); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for index, ref := range contract.SourceRefs {
+		addGlobal(ref, fmt.Sprintf("source_refs[%d]", index))
+	}
+	for index, item := range contract.ExampleRules {
+		addGlobal(item.ID, fmt.Sprintf("example_rules[%d]", index))
+		examples := map[string]string{}
+		for exampleIndex, example := range item.Examples {
+			if err := recordUniqueBehavioralCoverageID(examples, example.ID, fmt.Sprintf("example_rules[%d].examples[%d]", index, exampleIndex)); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	for index, item := range contract.BDDScenarios {
+		addGlobal(item.ID, fmt.Sprintf("bdd_scenarios[%d]", index))
+	}
+	for index, item := range contract.DesignContracts {
+		addGlobal(item.ID, fmt.Sprintf("design_contracts[%d]", index))
+	}
+	for index, item := range contract.Invariants {
+		addGlobal(item.ID, fmt.Sprintf("invariants[%d]", index))
+	}
+	for index, item := range contract.StateMachines {
+		addGlobal(item.ID, fmt.Sprintf("state_machines[%d]", index))
+		for transitionIndex, transition := range item.Transitions {
+			addGlobal(transition.ID, fmt.Sprintf("state_machines[%d].transitions[%d]", index, transitionIndex))
+		}
+	}
+	for index, item := range contract.FailureModes {
+		addGlobal(item.ID, fmt.Sprintf("failure_modes[%d]", index))
+	}
+	for index, item := range contract.HAZOPDeviations {
+		addGlobal(item.ID, fmt.Sprintf("hazop_deviations[%d]", index))
+	}
+	for index, item := range contract.FaultTreeLeaves {
+		addGlobal(item.ID, fmt.Sprintf("fault_tree_leaves[%d]", index))
+	}
+	for index, item := range contract.DecisionTables {
+		addGlobal(item.ID, fmt.Sprintf("decision_tables[%d]", index))
+		for ruleIndex, rule := range item.Rules {
+			addGlobal(rule.ID, fmt.Sprintf("decision_tables[%d].rules[%d]", index, ruleIndex))
+		}
+	}
+	for index, item := range contract.BoundaryValues {
+		addGlobal(item.ID, fmt.Sprintf("boundary_values[%d]", index))
+	}
+	for index, item := range contract.PostMortems {
+		addGlobal(item.ID, fmt.Sprintf("post_mortems[%d]", index))
+	}
+	for index, item := range contract.FormalModels {
+		addGlobal(item.ID, fmt.Sprintf("formal_models[%d]", index))
+	}
+	for index, item := range contract.FuzzTargets {
+		addGlobal(item.ID, fmt.Sprintf("fuzz_targets[%d]", index))
+	}
+	for index, item := range contract.RAGEvals {
+		addGlobal(item.ID, fmt.Sprintf("rag_evals[%d]", index))
+	}
+	for index, item := range contract.SecurityCases {
+		addGlobal(item.ID, fmt.Sprintf("security_cases[%d]", index))
+	}
+	for index, item := range contract.PrivacyControls {
+		addGlobal(item.ID, fmt.Sprintf("privacy_controls[%d]", index))
+	}
+	for index, item := range contract.ProviderContracts {
+		addGlobal(item.ID, fmt.Sprintf("provider_contracts[%d]", index))
+	}
+	for index, item := range contract.Observability {
+		addGlobal(item.ID, fmt.Sprintf("observability[%d]", index))
+	}
+	for index, item := range contract.PerformanceBounds {
+		addGlobal(item.ID, fmt.Sprintf("performance_bounds[%d]", index))
+	}
+	for index, item := range contract.E2EJourneys {
+		addGlobal(item.ID, fmt.Sprintf("e2e_journeys[%d]", index))
+	}
+
+	localNamespaces := []struct {
+		name string
+		ids  []string
+	}{
+		{name: "ears", ids: behavioralCoverageEARSIDValues(contract.EARS)},
+		{name: "test_obligations", ids: behavioralCoverageTestObligationIDValues(contract.TestObligations)},
+		{name: "verification", ids: behavioralCoverageVerificationIDValues(contract.Verification)},
+		{name: "waivers", ids: behavioralCoverageWaiverIDValues(contract.Waivers)},
+		{name: "feedback", ids: behavioralCoverageFeedbackIDValues(contract.Feedback)},
+		{name: "open_questions", ids: behavioralCoverageQuestionIDValues(contract.OpenQuestions)},
+	}
+	for _, namespace := range localNamespaces {
+		seen := map[string]string{}
+		for index, id := range namespace.ids {
+			if err := recordUniqueBehavioralCoverageID(seen, id, fmt.Sprintf("%s[%d]", namespace.name, index)); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	return errs
+}
+
+func recordUniqueBehavioralCoverageID(seen map[string]string, id, location string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	if first, ok := seen[id]; ok {
+		return fmt.Errorf("behavioral coverage %s duplicates id %q first declared at %s", location, id, first)
+	}
+	seen[id] = location
+
+	return nil
+}
+
+func behavioralCoverageEARSIDValues(items []EARSRequirementCoverage) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+func behavioralCoverageTestObligationIDValues(items []TestObligationCoverage) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+func behavioralCoverageVerificationIDValues(items []VerificationGateCoverage) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+func behavioralCoverageWaiverIDValues(items []BehavioralCoverageWaiver) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+func behavioralCoverageFeedbackIDValues(items []BehavioralFeedbackCoverage) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+func behavioralCoverageQuestionIDValues(items []BehavioralCoverageQuestion) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
 }
 
 func containsAmbiguousEARSRequirementLanguage(statement string) bool {

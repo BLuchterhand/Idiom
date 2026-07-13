@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/repository/discovery"
 	semanticpython "idiom/internal/repository/semantic/python"
 )
@@ -230,15 +229,11 @@ func (m *Manager) pythonReadSymbol(req ToolRequest) ToolResult {
 	displayPath := m.displayPath(abs)
 
 	return ToolResult{
-		Tool:    "python_read_symbol",
-		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", pythonDisplayName(match.Qualified, match.Name), displayPath, start, end),
-		Output:  snippet,
-		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:      displayPath,
-			StartLine: start,
-			EndLine:   end,
-		}),
+		Tool:          "python_read_symbol",
+		Summary:       fmt.Sprintf("Read %s in %s lines %d-%d", pythonDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:        snippet,
+		Paths:         []string{displayPath},
+		SourceWindows: []SourceWindowPlan{{Path: displayPath, StartLine: start, EndLine: end}},
 	}
 }
 

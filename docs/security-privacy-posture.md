@@ -62,12 +62,12 @@ CLI example command ID:
 Focused posture evidence:
 
 ```bash
-go test ./internal/evidence/sidecarvalidation -run 'TestP79|TestP76'
-go test ./internal/surfaces/cli/tool -run TestP75
-go test ./internal/surfaces/cli/localops -run TestLocalOpsBenchmark
-go test ./internal/surfaces/cli/root -run TestRunMainWritesTelemetryForRejectedDirectToolInput
-go test ./internal/surfaces/cli/mcp -run 'TestP86|TestP85'
-go test ./internal/capabilities/mcp -run 'TestHTTP|TestClient(CanceledCalls|ReaderTermination|CloseFailsPendingCall)'
+go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p79 security privacy|P7\.6 CLI classification examples' -ginkgo.fail-on-empty -count=1
+go test ./internal/surfaces/cli/tool -ginkgo.focus='p7 5 containment' -ginkgo.fail-on-empty -count=1
+go test ./internal/surfaces/cli/localops -ginkgo.focus='local ops local ops benchmark' -ginkgo.fail-on-empty -count=1
+go test ./internal/surfaces/cli/root -ginkgo.focus='Direct tool routing writes telemetry for rejected direct-tool input' -ginkgo.fail-on-empty -count=1
+go test ./internal/surfaces/cli/mcp -ginkgo.focus='P8\.6 MCP stdio proof|p85 mcp classification parity' -ginkgo.fail-on-empty -count=1
+go test ./internal/capabilities/mcp -ginkgo.focus='HTTP network policy|MCP HTTP transport|MCP client (removes canceled calls from pending state|fails and removes a pending call when the response reader terminates|fails a pending call when the client closes)' -ginkgo.fail-on-empty -count=1
 go test ./internal/contracts/autonomy ./internal/capabilities/workspace ./internal/evidence/telemetry
 ```
 

@@ -3,66 +3,63 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 	"time"
 
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestRouteContractClassifierUnavailableNaturalLanguageFallsBackToConversation(t *testing.T) {
+var _ = ginkgo.It("route contract classifier unavailable natural language falls back to conversation", func() {
 	m := &Model{
 		cfg: config.Config{
 			RouteClassifier: config.RouteClassifier{Enabled: true},
 		},
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", modepolicy.BuildMode())
+	plan := newDetachedPromptExecutionSession(context.Background(), m).classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if plan.Family != "conversation" || plan.InitialLane != "main" || plan.Contract != "direct_answer" {
-		t.Fatalf("fallback route = %#v, want conversation/main/direct_answer", plan)
-	}
+	gomega.Expect(plan.Family).To(gomega.Equal("conversation"), fmt.Sprintf("fallback route = %#v, want conversation/main/direct_answer", plan))
+	gomega.Expect(plan.InitialLane).To(gomega.Equal("main"), fmt.Sprintf("fallback route = %#v, want conversation/main/direct_answer", plan))
+	gomega.Expect(plan.Contract).To(gomega.Equal("direct_answer"), fmt.Sprintf("fallback route = %#v, want conversation/main/direct_answer", plan))
 
-	if contract.Source != routeSourceConservativeFallback {
-		t.Fatalf("source = %q, want conservative fallback", contract.Source)
-	}
+	gomega.Expect(contract.Source).To(gomega.Equal(routeSourceConservativeFallback), fmt.Sprintf("source = %q, want conservative fallback", contract.Source))
 
-	if contract.MutationAuthority != routeMutationAuthorityNone || contract.MutationCapable {
-		t.Fatalf("fallback natural language must not grant mutation authority: %#v", contract)
-	}
-}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityNone), fmt.Sprintf("fallback natural language must not grant mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeFalse(), fmt.Sprintf("fallback natural language must not grant mutation authority: %#v", contract))
+})
 
-func TestRouteContractFallbackConcreteBrowserCreationActivatesImplementation(t *testing.T) {
+var _ = ginkgo.It("route contract fallback concrete browser creation activates implementation", func() {
 	plan := fallbackTurnRoute("Let’s make this feel like a cozy little personal place I can open in a browser. Choose the smallest useful first step.", modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if contract.Family != "implementation" || contract.Lane != "implement" || contract.Contract != "implementation_result" {
-		t.Fatalf("browser creation prompt should route to implementation, got %#v", contract)
-	}
+	gomega.Expect(contract.Family).To(gomega.Equal("implementation"), fmt.Sprintf("browser creation prompt should route to implementation, got %#v", contract))
+	gomega.Expect(contract.Lane).To(gomega.Equal("implement"), fmt.Sprintf("browser creation prompt should route to implementation, got %#v", contract))
+	gomega.Expect(contract.Contract).To(gomega.Equal("implementation_result"), fmt.Sprintf("browser creation prompt should route to implementation, got %#v", contract))
 
-	if contract.Source != routeSourceConservativeFallback {
-		t.Fatalf("source = %q, want conservative fallback", contract.Source)
-	}
+	gomega.Expect(contract.Source).To(gomega.Equal(routeSourceConservativeFallback), fmt.Sprintf("source = %q, want conservative fallback", contract.Source))
 
-	if contract.MutationAuthority != routeMutationAuthorityExplicit || !contract.MutationCapable {
-		t.Fatalf("browser creation fallback should grant guarded mutation authority: %#v", contract)
-	}
-}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityExplicit), fmt.Sprintf("browser creation fallback should grant guarded mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeTrue(), fmt.Sprintf("browser creation fallback should grant guarded mutation authority: %#v", contract))
+})
 
-func TestRouteContractFallbackCreationQuestionStaysConversation(t *testing.T) {
+var _ = ginkgo.It("route contract fallback creation question stays conversation", func() {
 	plan := fallbackTurnRoute("How would we make this into a cozy browser journal without editing files?", modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if contract.Family != "conversation" || contract.MutationAuthority != routeMutationAuthorityNone || contract.MutationCapable {
-		t.Fatalf("read-only creation question should stay conversation, got %#v", contract)
-	}
-}
+	gomega.Expect(contract.Family).To(gomega.Equal("conversation"), fmt.Sprintf("read-only creation question should stay conversation, got %#v", contract))
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityNone), fmt.Sprintf("read-only creation question should stay conversation, got %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeFalse(), fmt.Sprintf("read-only creation question should stay conversation, got %#v", contract))
+})
 
-func TestRouteContractClassifierImplementationActivatesGuardedMutationAuthority(t *testing.T) {
+var _ = ginkgo.It("route contract classifier implementation activates guarded mutation authority", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -79,77 +76,67 @@ func TestRouteContractClassifierImplementationActivatesGuardedMutationAuthority(
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", modepolicy.BuildMode())
+	plan := newDetachedPromptExecutionSession(context.Background(), m).classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if contract.Source != routeSourceClassifier {
-		t.Fatalf("source = %q, want classifier", contract.Source)
-	}
+	gomega.Expect(contract.Source).To(gomega.Equal(routeSourceClassifier), fmt.Sprintf("source = %q, want classifier", contract.Source))
 
-	if contract.Family != "implementation" || contract.Lane != "implement" || contract.Contract != "implementation_result" {
-		t.Fatalf("projection lost route fields: %#v", contract)
-	}
+	gomega.Expect(contract.Family).To(gomega.Equal("implementation"), fmt.Sprintf("projection lost route fields: %#v", contract))
+	gomega.Expect(contract.Lane).To(gomega.Equal("implement"), fmt.Sprintf("projection lost route fields: %#v", contract))
+	gomega.Expect(contract.Contract).To(gomega.Equal("implementation_result"), fmt.Sprintf("projection lost route fields: %#v", contract))
 
-	if contract.MutationAuthority != routeMutationAuthorityExplicit || !contract.MutationCapable {
-		t.Fatalf("classifier implementation route should activate guarded mutation authority: %#v", contract)
-	}
-}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityExplicit), fmt.Sprintf("classifier implementation route should activate guarded mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeTrue(), fmt.Sprintf("classifier implementation route should activate guarded mutation authority: %#v", contract))
+})
 
-func TestRouteContractTypedCommandActivatesExplicitMutationAuthority(t *testing.T) {
+var _ = ginkgo.It("route contract typed command activates explicit mutation authority", func() {
 	contract := projectRouteContract(turnRoutePlan{
 		Family:      "implementation",
 		RouteSource: routeSourceTypedCommand,
 	}, modepolicy.BuildMode())
 
-	if contract.Source != routeSourceTypedCommand {
-		t.Fatalf("source = %q, want typed command", contract.Source)
-	}
+	gomega.Expect(contract.Source).To(gomega.Equal(routeSourceTypedCommand), fmt.Sprintf("source = %q, want typed command", contract.Source))
 
-	if contract.Family != "implementation" || contract.Lane != "implement" || contract.Contract != "implementation_result" {
-		t.Fatalf("projection lost typed command route fields: %#v", contract)
-	}
+	gomega.Expect(contract.Family).To(gomega.Equal("implementation"), fmt.Sprintf("projection lost typed command route fields: %#v", contract))
+	gomega.Expect(contract.Lane).To(gomega.Equal("implement"), fmt.Sprintf("projection lost typed command route fields: %#v", contract))
+	gomega.Expect(contract.Contract).To(gomega.Equal("implementation_result"), fmt.Sprintf("projection lost typed command route fields: %#v", contract))
 
-	if contract.MutationAuthority != routeMutationAuthorityExplicit || !contract.MutationCapable {
-		t.Fatalf("typed command should grant explicit mutation authority: %#v", contract)
-	}
-}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityExplicit), fmt.Sprintf("typed command should grant explicit mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeTrue(), fmt.Sprintf("typed command should grant explicit mutation authority: %#v", contract))
+})
 
-func TestRouteContractProductionTypedCommandPlansActivateExplicitMutationAuthority(t *testing.T) {
+var _ = ginkgo.It("route contract production typed command plans activate explicit mutation authority", func() {
 	m := &Model{}
-	implement := m.implementCommandExecutionPlan("Update the label.")
+	execution := newDetachedPromptExecutionSession(context.Background(), m)
+	implement := execution.implementCommandExecutionPlan("Update the label.")
 	implementContract := projectRouteContract(implement.route, implement.mode)
 
-	if implementContract.Source != routeSourceTypedCommand || implementContract.MutationAuthority != routeMutationAuthorityExplicit {
-		t.Fatalf("implement command contract = %#v, want typed explicit mutation authority", implementContract)
-	}
+	gomega.Expect(implementContract.Source).To(gomega.Equal(routeSourceTypedCommand), fmt.Sprintf("implement command contract = %#v, want typed explicit mutation authority", implementContract))
+	gomega.Expect(implementContract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityExplicit), fmt.Sprintf("implement command contract = %#v, want typed explicit mutation authority", implementContract))
 
-	planExecute := m.planExecuteCommandExecutionPlan("Update the label.")
+	planExecute := execution.planExecuteCommandExecutionPlan("Update the label.")
 	planExecuteContract := projectRouteContract(planExecute.route, planExecute.mode)
 
-	if planExecuteContract.Source != routeSourceTypedCommand || planExecuteContract.MutationAuthority != routeMutationAuthorityExplicit {
-		t.Fatalf("plan-execute command contract = %#v, want typed explicit mutation authority", planExecuteContract)
-	}
-}
+	gomega.Expect(planExecuteContract.Source).To(gomega.Equal(routeSourceTypedCommand), fmt.Sprintf("plan-execute command contract = %#v, want typed explicit mutation authority", planExecuteContract))
+	gomega.Expect(planExecuteContract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityExplicit), fmt.Sprintf("plan-execute command contract = %#v, want typed explicit mutation authority", planExecuteContract))
+})
 
-func TestRouteContractPromptWordingAndPathShapeDoNotGrantMutationAuthority(t *testing.T) {
+var _ = ginkgo.It("route contract prompt wording and path shape do not grant mutation authority", func() {
 	prompt := "Implement the change. Required edit paths: internal/surfaces/tui/app/route_contract.go, internal/surfaces/tui/app/route_contract_test.go."
 	plan := fallbackTurnRoute(prompt, modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if contract.Source != routeSourceConservativeFallback {
-		t.Fatalf("source = %q, want conservative fallback", contract.Source)
-	}
+	gomega.Expect(contract.Source).To(gomega.Equal(routeSourceConservativeFallback), fmt.Sprintf("source = %q, want conservative fallback", contract.Source))
 
-	if contract.Family != "conversation" || contract.Lane != "main" || contract.Contract != "direct_answer" {
-		t.Fatalf("fallback prompt with path-shaped wording should stay conversation: %#v", contract)
-	}
+	gomega.Expect(contract.Family).To(gomega.Equal("conversation"), fmt.Sprintf("fallback prompt with path-shaped wording should stay conversation: %#v", contract))
+	gomega.Expect(contract.Lane).To(gomega.Equal("main"), fmt.Sprintf("fallback prompt with path-shaped wording should stay conversation: %#v", contract))
+	gomega.Expect(contract.Contract).To(gomega.Equal("direct_answer"), fmt.Sprintf("fallback prompt with path-shaped wording should stay conversation: %#v", contract))
 
-	if contract.MutationAuthority != routeMutationAuthorityNone || contract.MutationCapable {
-		t.Fatalf("prompt wording/path shape must not grant mutation authority: %#v", contract)
-	}
-}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityNone), fmt.Sprintf("prompt wording/path shape must not grant mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeFalse(), fmt.Sprintf("prompt wording/path shape must not grant mutation authority: %#v", contract))
+})
 
-func TestRouteContractOutcomeCorrectsPostCompletionDefectReportToImplementation(t *testing.T) {
+var _ = ginkgo.It("route contract outcome corrects post completion defect report to implementation", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -175,23 +162,22 @@ func TestRouteContractOutcomeCorrectsPostCompletionDefectReportToImplementation(
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "that didnt quite fix it - the cursor still goes off the screen.", modepolicy.BuildMode())
+	plan := newDetachedPromptExecutionSession(context.Background(), m).classifyTurnRoute(context.Background(), "that didnt quite fix it - the cursor still goes off the screen.", modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if contract.Family != "implementation" || contract.Lane != "implement" || contract.Contract != "implementation_result" {
-		t.Fatalf("post-completion defect report should be corrected to implementation, got %#v", contract)
-	}
+	gomega.Expect(contract.Family).To(gomega.Equal("implementation"), fmt.Sprintf("post-completion defect report should be corrected to implementation, got %#v", contract))
+	gomega.Expect(contract.Lane).To(gomega.Equal("implement"), fmt.Sprintf("post-completion defect report should be corrected to implementation, got %#v", contract))
+	gomega.Expect(contract.Contract).To(gomega.Equal("implementation_result"), fmt.Sprintf("post-completion defect report should be corrected to implementation, got %#v", contract))
 
-	if contract.RequestedOutcome != "change_workspace" || contract.WriteIntent != "yes" || contract.ContinuationTarget != "prior_change" {
-		t.Fatalf("outcome metadata was not preserved: %#v", contract)
-	}
+	gomega.Expect(contract.RequestedOutcome).To(gomega.Equal("change_workspace"), fmt.Sprintf("outcome metadata was not preserved: %#v", contract))
+	gomega.Expect(contract.WriteIntent).To(gomega.Equal("yes"), fmt.Sprintf("outcome metadata was not preserved: %#v", contract))
+	gomega.Expect(contract.ContinuationTarget).To(gomega.Equal("prior_change"), fmt.Sprintf("outcome metadata was not preserved: %#v", contract))
 
-	if contract.MutationAuthority != routeMutationAuthorityExplicit || !contract.MutationCapable {
-		t.Fatalf("corrected classifier route should activate guarded mutation authority: %#v", contract)
-	}
-}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityExplicit), fmt.Sprintf("corrected classifier route should activate guarded mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeTrue(), fmt.Sprintf("corrected classifier route should activate guarded mutation authority: %#v", contract))
+})
 
-func TestRouteContractReadOnlyConstraintBeatsImplementationOutcome(t *testing.T) {
+var _ = ginkgo.It("route contract read only constraint beats implementation outcome", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -217,23 +203,21 @@ func TestRouteContractReadOnlyConstraintBeatsImplementationOutcome(t *testing.T)
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "Before changing anything, why didn't that fix it?", modepolicy.BuildMode())
+	plan := newDetachedPromptExecutionSession(context.Background(), m).classifyTurnRoute(context.Background(), "Before changing anything, why didn't that fix it?", modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if contract.Family != "conversation" || contract.Lane != "main" || contract.Contract != "direct_answer" {
-		t.Fatalf("explicit read-only question should be corrected to conversation, got %#v", contract)
-	}
+	gomega.Expect(contract.Family).To(gomega.Equal("conversation"), fmt.Sprintf("explicit read-only question should be corrected to conversation, got %#v", contract))
+	gomega.Expect(contract.Lane).To(gomega.Equal("main"), fmt.Sprintf("explicit read-only question should be corrected to conversation, got %#v", contract))
+	gomega.Expect(contract.Contract).To(gomega.Equal("direct_answer"), fmt.Sprintf("explicit read-only question should be corrected to conversation, got %#v", contract))
 
-	if contract.MutationAuthority != routeMutationAuthorityNone || contract.MutationCapable {
-		t.Fatalf("read-only constraint must not grant mutation authority: %#v", contract)
-	}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityNone), fmt.Sprintf("read-only constraint must not grant mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeFalse(), fmt.Sprintf("read-only constraint must not grant mutation authority: %#v", contract))
 
-	if !contract.ReadOnlyConstraint || contract.WriteIntent != "no" {
-		t.Fatalf("read-only metadata was not preserved: %#v", contract)
-	}
-}
+	gomega.Expect(contract.ReadOnlyConstraint).To(gomega.BeTrue(), fmt.Sprintf("read-only metadata was not preserved: %#v", contract))
+	gomega.Expect(contract.WriteIntent).To(gomega.Equal("no"), fmt.Sprintf("read-only metadata was not preserved: %#v", contract))
+})
 
-func TestRouteContractEvidenceReportPromptBeatsMisclassifiedImplementation(t *testing.T) {
+var _ = ginkgo.It("route contract evidence report prompt beats misclassified implementation", func() {
 	const prompt = "you are a research assistant for another agentic process; please provide structured evidence in the form of files, line numbers, and relevant symbols. We are trying to debug an issue where resizing the TUI mid-answer caused the conversation to become non-scrollable. Please debug and present your findings."
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -262,23 +246,21 @@ func TestRouteContractEvidenceReportPromptBeatsMisclassifiedImplementation(t *te
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
+	plan := newDetachedPromptExecutionSession(context.Background(), m).classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
 	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
-	if contract.Family != "conversation" || contract.Lane != "main" || contract.Contract != "direct_answer" {
-		t.Fatalf("evidence-report prompt should be corrected to conversation, got %#v", contract)
-	}
+	gomega.Expect(contract.Family).To(gomega.Equal("conversation"), fmt.Sprintf("evidence-report prompt should be corrected to conversation, got %#v", contract))
+	gomega.Expect(contract.Lane).To(gomega.Equal("main"), fmt.Sprintf("evidence-report prompt should be corrected to conversation, got %#v", contract))
+	gomega.Expect(contract.Contract).To(gomega.Equal("direct_answer"), fmt.Sprintf("evidence-report prompt should be corrected to conversation, got %#v", contract))
 
-	if contract.MutationAuthority != routeMutationAuthorityNone || contract.MutationCapable {
-		t.Fatalf("evidence-report prompt must not grant mutation authority: %#v", contract)
-	}
+	gomega.Expect(contract.MutationAuthority).To(gomega.Equal(routeMutationAuthorityNone), fmt.Sprintf("evidence-report prompt must not grant mutation authority: %#v", contract))
+	gomega.Expect(contract.MutationCapable).To(gomega.BeFalse(), fmt.Sprintf("evidence-report prompt must not grant mutation authority: %#v", contract))
 
-	if contract.RequestedOutcome != "diagnose" || contract.WriteIntent != "no" {
-		t.Fatalf("evidence-report outcome metadata not corrected: %#v", contract)
-	}
-}
+	gomega.Expect(contract.RequestedOutcome).To(gomega.Equal("diagnose"), fmt.Sprintf("evidence-report outcome metadata not corrected: %#v", contract))
+	gomega.Expect(contract.WriteIntent).To(gomega.Equal("no"), fmt.Sprintf("evidence-report outcome metadata not corrected: %#v", contract))
+})
 
-func TestCorrectTurnRoutePlanKeepsDebugAndFixImplementation(t *testing.T) {
+var _ = ginkgo.It("correct turn route plan keeps debug and fix implementation", func() {
 	prompt := "Please debug and fix the issue where resizing the TUI mid-answer makes the conversation non-scrollable."
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{
 		Family:           "investigate_then_implement",
@@ -286,16 +268,15 @@ func TestCorrectTurnRoutePlanKeepsDebugAndFixImplementation(t *testing.T) {
 		WriteIntent:      "yes",
 	}, prompt, modepolicy.BuildMode())
 
-	if plan.Family != "investigate_then_implement" || plan.InitialLane != "explore" || plan.FollowupLane != "implement" {
-		t.Fatalf("debug-and-fix prompt should stay implementation-shaped, got %#v", plan)
-	}
+	gomega.Expect(plan.Family).To(gomega.Equal("investigate_then_implement"), fmt.Sprintf("debug-and-fix prompt should stay implementation-shaped, got %#v", plan))
+	gomega.Expect(plan.InitialLane).To(gomega.Equal("explore"), fmt.Sprintf("debug-and-fix prompt should stay implementation-shaped, got %#v", plan))
+	gomega.Expect(plan.FollowupLane).To(gomega.Equal("implement"), fmt.Sprintf("debug-and-fix prompt should stay implementation-shaped, got %#v", plan))
 
-	if plan.WriteIntent != "yes" || plan.Contract != "implementation_result" {
-		t.Fatalf("debug-and-fix metadata lost: %#v", plan)
-	}
-}
+	gomega.Expect(plan.WriteIntent).To(gomega.Equal("yes"), fmt.Sprintf("debug-and-fix metadata lost: %#v", plan))
+	gomega.Expect(plan.Contract).To(gomega.Equal("implementation_result"), fmt.Sprintf("debug-and-fix metadata lost: %#v", plan))
+})
 
-func TestEvidenceReportPromptMutationGuardUsesWholeWords(t *testing.T) {
+var _ = ginkgo.It("evidence report prompt mutation guard uses whole words", func() {
 	prompts := []string{
 		"You are a research assistant; debug this fixture failure and present findings with structured evidence.",
 		"You are a research assistant; debug what changed in the resize path and present findings with line numbers.",
@@ -312,17 +293,16 @@ func TestEvidenceReportPromptMutationGuardUsesWholeWords(t *testing.T) {
 			WriteIntent:      "yes",
 		}, prompt, modepolicy.BuildMode())
 
-		if plan.Family != "conversation" || plan.InitialLane != "main" || plan.Contract != "direct_answer" {
-			t.Fatalf("descriptive RCA wording should not be treated as mutation intent for %q, got %#v", prompt, plan)
-		}
+		gomega.Expect(plan.Family).To(gomega.Equal("conversation"), fmt.Sprintf("descriptive RCA wording should not be treated as mutation intent for %q, got %#v", prompt, plan))
+		gomega.Expect(plan.InitialLane).To(gomega.Equal("main"), fmt.Sprintf("descriptive RCA wording should not be treated as mutation intent for %q, got %#v", prompt, plan))
+		gomega.Expect(plan.Contract).To(gomega.Equal("direct_answer"), fmt.Sprintf("descriptive RCA wording should not be treated as mutation intent for %q, got %#v", prompt, plan))
 
-		if plan.WriteIntent != "no" || plan.RequestedOutcome != "diagnose" {
-			t.Fatalf("evidence-report metadata not corrected for %q: %#v", prompt, plan)
-		}
+		gomega.Expect(plan.WriteIntent).To(gomega.Equal("no"), fmt.Sprintf("evidence-report metadata not corrected for %q: %#v", prompt, plan))
+		gomega.Expect(plan.RequestedOutcome).To(gomega.Equal("diagnose"), fmt.Sprintf("evidence-report metadata not corrected for %q: %#v", prompt, plan))
 	}
-}
+})
 
-func TestEvidenceReportPromptDoesNotOverrideExplicitFollowupMutation(t *testing.T) {
+var _ = ginkgo.It("evidence report prompt does not override explicit followup mutation", func() {
 	prompts := []string{
 		"Please debug and fix the resize issue and present findings with structured evidence.",
 		"Act as a research assistant, debug this issue, present findings, then make the changes.",
@@ -338,12 +318,11 @@ func TestEvidenceReportPromptDoesNotOverrideExplicitFollowupMutation(t *testing.
 			WriteIntent:      "yes",
 		}, prompt, modepolicy.BuildMode())
 
-		if plan.Family != "investigate_then_implement" || plan.InitialLane != "explore" || plan.FollowupLane != "implement" {
-			t.Fatalf("explicit follow-up mutation should stay implementation-shaped for %q, got %#v", prompt, plan)
-		}
+		gomega.Expect(plan.Family).To(gomega.Equal("investigate_then_implement"), fmt.Sprintf("explicit follow-up mutation should stay implementation-shaped for %q, got %#v", prompt, plan))
+		gomega.Expect(plan.InitialLane).To(gomega.Equal("explore"), fmt.Sprintf("explicit follow-up mutation should stay implementation-shaped for %q, got %#v", prompt, plan))
+		gomega.Expect(plan.FollowupLane).To(gomega.Equal("implement"), fmt.Sprintf("explicit follow-up mutation should stay implementation-shaped for %q, got %#v", prompt, plan))
 
-		if plan.WriteIntent != "yes" || plan.Contract != "implementation_result" {
-			t.Fatalf("explicit follow-up mutation metadata lost for %q: %#v", prompt, plan)
-		}
+		gomega.Expect(plan.WriteIntent).To(gomega.Equal("yes"), fmt.Sprintf("explicit follow-up mutation metadata lost for %q: %#v", prompt, plan))
+		gomega.Expect(plan.Contract).To(gomega.Equal("implementation_result"), fmt.Sprintf("explicit follow-up mutation metadata lost for %q: %#v", prompt, plan))
 	}
-}
+})

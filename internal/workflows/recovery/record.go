@@ -387,7 +387,11 @@ func writeFailureRecord(root string, record recoverycontract.FailureRecord, now 
 		return recoverycontract.FailureRecord{}, "", fmt.Errorf("recovery failure record path rejected: %w", err)
 	}
 
-	if existing, _, found, err := TryLoadFailureRecord(root, record.FailureID); err == nil && found && strings.TrimSpace(existing.CreatedAt) != "" {
+	existing, _, found, err := TryLoadFailureRecord(root, record.FailureID)
+	if err != nil {
+		return recoverycontract.FailureRecord{}, relPath, fmt.Errorf("load existing recovery failure record: %w", err)
+	}
+	if found && strings.TrimSpace(existing.CreatedAt) != "" {
 		record.CreatedAt = existing.CreatedAt
 	}
 
@@ -541,13 +545,23 @@ func cleanImplementationState(state *recoverycontract.ImplementationState) *reco
 	}
 
 	clean := recoverycontract.ImplementationState{
-		Phase:                      strings.TrimSpace(state.Phase),
-		StopReason:                 strings.TrimSpace(state.StopReason),
-		RemainingRequiredEditPaths: cleanPathList(state.RemainingRequiredEditPaths),
-		ChangedPaths:               cleanPathList(state.ChangedPaths),
-		SourcedEvidencePaths:       cleanPathList(state.SourcedEvidencePaths),
-		PendingRedirects:           cleanImplementationPendingRedirects(state.PendingRedirects),
-		WriteReadyNudgeCount:       state.WriteReadyNudgeCount,
+		Phase:                           strings.TrimSpace(state.Phase),
+		StopReason:                      strings.TrimSpace(state.StopReason),
+		RemainingRequiredEditPaths:      cleanPathList(state.RemainingRequiredEditPaths),
+		MissingRequiredEditSnippetIDs:   cleanRecoveryTextList(state.MissingRequiredEditSnippetIDs, 500),
+		MissingRequiredEditSnippetPaths: cleanPathList(state.MissingRequiredEditSnippetPaths),
+		UnresolvedRejectedMutationPaths: cleanPathList(state.UnresolvedRejectedMutationPaths),
+		OpenTaskLedgerObligationIDs:     cleanRecoveryTextList(state.OpenTaskLedgerObligationIDs, 500),
+		BlockedTaskLedgerItems:          cleanImplementationBlockedTaskItems(state.BlockedTaskLedgerItems),
+		TerminalDisposition:             strings.TrimSpace(state.TerminalDisposition),
+		ChangedPaths:                    cleanPathList(state.ChangedPaths),
+		SourcedEvidencePaths:            cleanPathList(state.SourcedEvidencePaths),
+		VerificationPending:             state.VerificationPending,
+		VerificationFailed:              state.VerificationFailed,
+		SemanticVerificationPending:     state.SemanticVerificationPending,
+		WriteReadyNudgeCount:            state.WriteReadyNudgeCount,
+		CanonicalMutationScope:          cleanCanonicalMutationScopeProjection(state.CanonicalMutationScope),
+		CommitReceipts:                  cleanMutationCommitProjections(state.CommitReceipts),
 	}
 	if clean.WriteReadyNudgeCount < 0 {
 		clean.WriteReadyNudgeCount = 0
@@ -559,31 +573,90 @@ func cleanImplementationState(state *recoverycontract.ImplementationState) *reco
 	return &clean
 }
 
-func cleanImplementationPendingRedirects(redirects []recoverycontract.ImplementationPendingRedirect) []recoverycontract.ImplementationPendingRedirect {
-	seen := map[string]bool{}
-
-	var out []recoverycontract.ImplementationPendingRedirect
-	for _, redirect := range redirects {
-		clean := recoverycontract.ImplementationPendingRedirect{
-			Path:        cleanRelPath(redirect.Path),
-			PendingTool: strings.TrimSpace(redirect.PendingTool),
-			Source:      strings.TrimSpace(redirect.Source),
-			Detail:      sanitizeAndTruncate(redirect.Detail, 240),
-		}
-		if clean.Path == "" && clean.PendingTool == "" && clean.Source == "" && clean.Detail == "" {
-			continue
-		}
-
-		key := strings.Join([]string{clean.Path, clean.PendingTool, clean.Source, clean.Detail}, "\x00")
-		if seen[key] {
-			continue
-		}
-
-		seen[key] = true
-		out = append(out, clean)
+func cleanImplementationBlockedTaskItems(items []recoverycontract.ImplementationBlockedTaskItem) []recoverycontract.ImplementationBlockedTaskItem {
+	clean := make([]recoverycontract.ImplementationBlockedTaskItem, 0, len(items))
+	for _, item := range items {
+		clean = append(clean, recoverycontract.ImplementationBlockedTaskItem{
+			ID:               sanitizeAndTruncate(item.ID, 500),
+			Kind:             strings.TrimSpace(item.Kind),
+			SubjectNamespace: strings.TrimSpace(item.SubjectNamespace),
+			SubjectID:        sanitizeAndTruncate(item.SubjectID, 500),
+			Reason:           sanitizeAndTruncate(item.Reason, 1000),
+			Paths:            cleanPathList(item.Paths),
+		})
 	}
+	return clean
+}
 
-	return out
+func cleanCanonicalMutationScopeProjection(scope *recoverycontract.CanonicalMutationScopeProjection) *recoverycontract.CanonicalMutationScopeProjection {
+	if scope == nil {
+		return nil
+	}
+	clean := &recoverycontract.CanonicalMutationScopeProjection{
+		RequiredCoverageIDs: cleanPathList(scope.RequiredCoverageIDs),
+		Rules:               make([]recoverycontract.CanonicalMutationScopeRuleProjection, 0, len(scope.Rules)),
+		Presentations:       make([]recoverycontract.CanonicalMutationScopePresentationProjection, 0, len(scope.Presentations)),
+	}
+	for _, rule := range scope.Rules {
+		clean.Rules = append(clean.Rules, recoverycontract.CanonicalMutationScopeRuleProjection{
+			Kind:        strings.TrimSpace(rule.Kind),
+			Source:      strings.TrimSpace(rule.Source),
+			CanonicalID: cleanProjectionPath(rule.CanonicalID),
+		})
+	}
+	for _, presentation := range scope.Presentations {
+		clean.Presentations = append(clean.Presentations, recoverycontract.CanonicalMutationScopePresentationProjection{
+			PresentedPath: cleanProjectionPath(presentation.PresentedPath),
+			CanonicalID:   cleanProjectionPath(presentation.CanonicalID),
+			Source:        strings.TrimSpace(presentation.Source),
+		})
+	}
+	return clean
+}
+
+func cleanMutationCommitProjections(receipts []recoverycontract.MutationCommitProjection) []recoverycontract.MutationCommitProjection {
+	clean := make([]recoverycontract.MutationCommitProjection, 0, len(receipts))
+	for _, receipt := range receipts {
+		projection := recoverycontract.MutationCommitProjection{
+			Scope:              cleanCanonicalMutationScopeProjection(receipt.Scope),
+			PostimageFileIDs:   cleanPathList(receipt.PostimageFileIDs),
+			AffectedFileIDs:    cleanPathList(receipt.AffectedFileIDs),
+			Effects:            make([]recoverycontract.MutationCommitEffectProjection, 0, len(receipt.Effects)),
+			FailedTargets:      make([]recoverycontract.MutationTargetProjection, 0, len(receipt.FailedTargets)),
+			UnattemptedTargets: make([]recoverycontract.MutationTargetProjection, 0, len(receipt.UnattemptedTargets)),
+		}
+		for _, effect := range receipt.Effects {
+			projection.Effects = append(projection.Effects, recoverycontract.MutationCommitEffectProjection{
+				CanonicalID: cleanProjectionPath(effect.CanonicalID),
+				Kind:        strings.TrimSpace(effect.Kind),
+				Role:        strings.TrimSpace(effect.Role),
+			})
+		}
+		for _, target := range receipt.FailedTargets {
+			projection.FailedTargets = append(projection.FailedTargets, recoverycontract.MutationTargetProjection{
+				CanonicalID:   cleanProjectionPath(target.CanonicalID),
+				Role:          strings.TrimSpace(target.Role),
+				PreimageClass: strings.TrimSpace(target.PreimageClass),
+			})
+		}
+		for _, target := range receipt.UnattemptedTargets {
+			projection.UnattemptedTargets = append(projection.UnattemptedTargets, recoverycontract.MutationTargetProjection{
+				CanonicalID:   cleanProjectionPath(target.CanonicalID),
+				Role:          strings.TrimSpace(target.Role),
+				PreimageClass: strings.TrimSpace(target.PreimageClass),
+			})
+		}
+		clean = append(clean, projection)
+	}
+	return clean
+}
+
+func cleanProjectionPath(path string) string {
+	paths := cleanPathList([]string{path})
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
 }
 
 func cleanContractSnapshot(snapshot *recoverycontract.ContractSnapshot, source recoverycontract.SourceRun) *recoverycontract.ContractSnapshot {

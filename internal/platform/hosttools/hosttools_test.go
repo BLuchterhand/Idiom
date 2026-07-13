@@ -5,77 +5,66 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestFirstAvailableUsesPathOrder(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("executable fixture uses POSIX mode bits")
-	}
+var _ = ginkgo.Describe("Host tools", func() {
+	ginkgo.BeforeEach(func() {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("executable fixtures use POSIX mode bits")
+		}
+	})
 
-	firstDir := t.TempDir()
-	secondDir := t.TempDir()
-	writeExecutableHostTool(t, filepath.Join(secondDir, "tool-a"), "#!/bin/sh\nexit 0\n")
-	writeExecutableHostTool(t, filepath.Join(firstDir, "tool-b"), "#!/bin/sh\nexit 0\n")
-	writeExecutableHostTool(t, filepath.Join(secondDir, "tool-b"), "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", firstDir+string(os.PathListSeparator)+secondDir)
+	ginkgo.It("selects the first named tool using PATH order", func() {
+		firstDir := ginkgo.GinkgoT().TempDir()
+		secondDir := ginkgo.GinkgoT().TempDir()
+		writeExecutableHostTool(filepath.Join(secondDir, "tool-a"), "#!/bin/sh\nexit 0\n")
+		writeExecutableHostTool(filepath.Join(firstDir, "tool-b"), "#!/bin/sh\nexit 0\n")
+		writeExecutableHostTool(filepath.Join(secondDir, "tool-b"), "#!/bin/sh\nexit 0\n")
+		ginkgo.GinkgoT().Setenv("PATH", firstDir+string(os.PathListSeparator)+secondDir)
 
-	got := FirstAvailable("missing-tool", "tool-b", "tool-a")
-	want := filepath.Join(firstDir, "tool-b")
-	if got != want {
-		t.Fatalf("FirstAvailable = %q, want %q", got, want)
-	}
-}
+		gomega.Expect(FirstAvailable("missing-tool", "tool-b", "tool-a")).To(gomega.Equal(filepath.Join(firstDir, "tool-b")))
+	})
 
-func TestVersionOutputCapturesMergedOutputAndRejectsFailures(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("executable fixture uses POSIX mode bits")
-	}
+	ginkgo.It("captures merged version output and rejects failed commands", func(ctx ginkgo.SpecContext) {
+		stdoutTool := writeExecutableHostTool(
+			filepath.Join(ginkgo.GinkgoT().TempDir(), "stdout-tool"),
+			"#!/bin/sh\nprintf '%s\\n' 'tool 1.0'\n",
+		)
+		output, err := VersionOutput(ctx, stdoutTool, 1024)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(strings.TrimSpace(output)).To(gomega.Equal("tool 1.0"))
 
-	stdoutTool := writeExecutableHostTool(t, filepath.Join(t.TempDir(), "stdout-tool"), "#!/bin/sh\nprintf '%s\\n' 'tool 1.0'\n")
-	got, err := VersionOutput(t.Context(), stdoutTool, 1024)
-	if err != nil {
-		t.Fatalf("VersionOutput stdout: %v", err)
-	}
-	if strings.TrimSpace(got) != "tool 1.0" {
-		t.Fatalf("VersionOutput stdout = %q", got)
-	}
+		stderrTool := writeExecutableHostTool(
+			filepath.Join(ginkgo.GinkgoT().TempDir(), "stderr-tool"),
+			"#!/bin/sh\nprintf '%s\\n' 'tool 2.0' >&2\n",
+		)
+		output, err = VersionOutput(ctx, stderrTool, 1024)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(strings.TrimSpace(output)).To(gomega.Equal("tool 2.0"))
 
-	stderrTool := writeExecutableHostTool(t, filepath.Join(t.TempDir(), "stderr-tool"), "#!/bin/sh\nprintf '%s\\n' 'tool 2.0' >&2\n")
-	got, err = VersionOutput(t.Context(), stderrTool, 1024)
-	if err != nil {
-		t.Fatalf("VersionOutput stderr: %v", err)
-	}
-	if strings.TrimSpace(got) != "tool 2.0" {
-		t.Fatalf("VersionOutput stderr = %q", got)
-	}
+		failingTool := writeExecutableHostTool(
+			filepath.Join(ginkgo.GinkgoT().TempDir(), "failing-tool"),
+			"#!/bin/sh\nprintf '%s\\n' 'tool 3.0'\nexit 2\n",
+		)
+		_, err = VersionOutput(ctx, failingTool, 1024)
+		gomega.Expect(err).To(gomega.HaveOccurred())
+	})
 
-	failingTool := writeExecutableHostTool(t, filepath.Join(t.TempDir(), "failing-tool"), "#!/bin/sh\nprintf '%s\\n' 'tool 3.0'\nexit 2\n")
-	if _, err := VersionOutput(t.Context(), failingTool, 1024); err == nil {
-		t.Fatalf("VersionOutput failing tool returned nil error")
-	}
-}
+	ginkgo.It("matches version markers case-insensitively", func(ctx ginkgo.SpecContext) {
+		tool := writeExecutableHostTool(
+			filepath.Join(ginkgo.GinkgoT().TempDir(), "ctags"),
+			"#!/bin/sh\nprintf '%s\\n' 'Universal Ctags 6.0'\n",
+		)
 
-func TestVersionOutputContainsIsCaseInsensitive(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("executable fixture uses POSIX mode bits")
-	}
+		gomega.Expect(VersionOutputContains(ctx, tool, "universal ctags")).To(gomega.BeTrue())
+		gomega.Expect(VersionOutputContains(ctx, tool, "gnu grep")).To(gomega.BeFalse())
+	})
+})
 
-	tool := writeExecutableHostTool(t, filepath.Join(t.TempDir(), "ctags"), "#!/bin/sh\nprintf '%s\\n' 'Universal Ctags 6.0'\n")
-	if !VersionOutputContains(t.Context(), tool, "universal ctags") {
-		t.Fatalf("VersionOutputContains did not match marker")
-	}
-	if VersionOutputContains(t.Context(), tool, "gnu grep") {
-		t.Fatalf("VersionOutputContains matched absent marker")
-	}
-}
-
-func writeExecutableHostTool(t *testing.T, path string, body string) string {
-	t.Helper()
-
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatalf("write executable %s: %v", path, err)
-	}
-
+func writeExecutableHostTool(path, body string) string {
+	gomega.Expect(os.WriteFile(path, []byte(body), 0o755)).To(gomega.Succeed())
 	return path
 }

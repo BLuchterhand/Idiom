@@ -1,0 +1,8 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"confirm the exact ShortLabel source before submit readiness\"}",
+  "{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"inspect additional authorized context after submit readiness\"}",
+  "{\"tool\":\"submit_plan\",\"rationale\":\"Update only the required label source using current target evidence; README.md remains read-only context.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"shorten the save label\"}]}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5}",
+  "{\"tool\":\"submit_plan\",\"rationale\":\"Update only the required label source using current target evidence and the newly gathered history rationale; README.md remains read-only context.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"shorten the save label\"}]}",
+  "Decision: pass\\n\\nVerification Checklist:\\n- Required behavior: ShortLabel returns \"Save\" after the submitted edit.\\n- Scope safety: Only internal/labels/labels.go changed; README.md remained read-only.\\n- Test or command evidence: executor verification passed."
+]

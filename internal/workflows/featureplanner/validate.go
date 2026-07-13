@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -3324,6 +3325,10 @@ func ValidateDurableState(state FeatureState) error {
 	if state.Revision < 0 {
 		errs = append(errs, errors.New("feature state revision must be non-negative"))
 	}
+	if (strings.TrimSpace(state.EffortID) != "" || strings.TrimSpace(state.EffortRoot) != "") &&
+		len(state.VerificationClosures) > 0 && strings.TrimSpace(state.TaskID) == "" {
+		errs = append(errs, errors.New("product-bound feature state with verification authority is missing task_id"))
+	}
 
 	if isTerminalFeatureState(state.Status) {
 		if len(state.ActiveRuns) > 0 {
@@ -3339,12 +3344,22 @@ func ValidateDurableState(state FeatureState) error {
 		}
 	}
 
+	atomsByID := make(map[string]FeatureAtomState, len(state.Atoms))
+	duplicateAtomIDs := make(map[string]struct{})
 	for i, atom := range state.Atoms {
 		if strings.TrimSpace(atom.State) == "" {
 			errs = append(errs, fmt.Errorf("atom %d missing state", i))
 		} else if !isValidAtomState(atom.State) {
 			errs = append(errs, fmt.Errorf("atom %d has unknown state %q", i, atom.State))
 		}
+		atomID := strings.TrimSpace(atom.ID)
+		if atomID == "" {
+			continue
+		}
+		if _, exists := atomsByID[atomID]; exists {
+			duplicateAtomIDs[atomID] = struct{}{}
+		}
+		atomsByID[atomID] = atom
 	}
 
 	for i, question := range state.OpenQuestions {
@@ -3391,6 +3406,7 @@ func ValidateDurableState(state FeatureState) error {
 	closureIDs := map[string]struct{}{}
 	expectedTerminalClosureIDs := map[string]struct{}{}
 	for i, closure := range state.VerificationClosures {
+		rawClosure := closure
 		closure = normalizeVerificationClosure(closure)
 		if strings.TrimSpace(closure.EventID) == "" {
 			errs = append(errs, fmt.Errorf("verification closure %d missing event_id", i))
@@ -3403,6 +3419,52 @@ func ValidateDurableState(state FeatureState) error {
 		}
 		if closure.Status != "" && !VerificationClosureStatusAllowed(closure.Status) {
 			errs = append(errs, fmt.Errorf("verification closure %d has unsupported status %q", i, closure.Status))
+		}
+		sourceSatisfiedClosure := closure.Status == VerificationClosureStatusSourceSatisfied ||
+			strings.TrimSpace(closure.Outcome) == string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied)
+		if sourceSatisfiedClosure {
+			if closure.Status != VerificationClosureStatusSourceSatisfied ||
+				strings.TrimSpace(closure.Outcome) != string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied) {
+				errs = append(errs, fmt.Errorf("verification closure %d has inconsistent source-satisfied status/outcome", i))
+			}
+			atomID := strings.TrimSpace(closure.AtomID)
+			atom, atomExists := atomsByID[atomID]
+			if !atomExists {
+				errs = append(errs, fmt.Errorf("verification closure %d references unknown atom %q", i, atomID))
+			} else {
+				if _, duplicate := duplicateAtomIDs[atomID]; duplicate {
+					errs = append(errs, fmt.Errorf("verification closure %d references duplicated atom %q", i, atomID))
+				}
+				if atom.State != AtomStateSourceSatisfied {
+					errs = append(errs, fmt.Errorf("verification closure %d source-satisfied status does not match atom %q state %q", i, atomID, atom.State))
+				}
+				requiredPaths := plancontract.UniqueScopePaths(atom.RequiredEditPaths)
+				if len(requiredPaths) == 0 || !slices.Equal(requiredPaths, atom.RequiredEditPaths) {
+					errs = append(errs, fmt.Errorf("verification closure %d atom %q required edit paths are missing or not normalized", i, atomID))
+				}
+				evidencePaths := closure.SourceSatisfiedEvidencePaths
+				if len(evidencePaths) == 0 || !slices.Equal(evidencePaths, rawClosure.SourceSatisfiedEvidencePaths) {
+					errs = append(errs, fmt.Errorf("verification closure %d source-satisfied evidence paths are missing or not normalized", i))
+				}
+				evidence := closure.SourceSatisfiedEvidence
+				if len(evidence) == 0 || !slices.Equal(evidence, rawClosure.SourceSatisfiedEvidence) {
+					errs = append(errs, fmt.Errorf("verification closure %d source-satisfied evidence refs are missing or not normalized", i))
+				}
+				violations := plancontract.ValidateSourceSatisfiedPathCoverage(plancontract.SourceSatisfiedPathCoverageInput{
+					RequiredPaths:        requiredPaths,
+					SourceSatisfiedPaths: evidencePaths,
+					Evidence:             evidence,
+					RequireEvidence:      true,
+				})
+				if len(evidencePaths) != len(requiredPaths) || len(evidence) != len(evidencePaths) || len(violations) > 0 {
+					errs = append(errs, fmt.Errorf("verification closure %d source-satisfied evidence must exactly cover atom %q required edit paths with current-state refs", i, atomID))
+				}
+			}
+			if len(closure.ChangedPaths) > 0 {
+				errs = append(errs, fmt.Errorf("verification closure %d source-satisfied authority contains changed paths", i))
+			}
+		} else if len(closure.SourceSatisfiedEvidencePaths) > 0 || len(closure.SourceSatisfiedEvidence) > 0 {
+			errs = append(errs, fmt.Errorf("verification closure %d non-source authority contains source-satisfied evidence", i))
 		}
 		if state.Plan.Artifact.ArtifactID != "" {
 			if closure.PlanArtifactID != state.Plan.Artifact.ArtifactID {
@@ -3843,6 +3905,7 @@ func normalizeVerificationClosure(closure VerificationClosure) VerificationClosu
 	closure.ScopeContractHash = strings.TrimSpace(closure.ScopeContractHash)
 	closure.ChangedPaths = plancontract.UniqueScopePaths(closure.ChangedPaths)
 	closure.SourceSatisfiedEvidencePaths = plancontract.UniqueScopePaths(closure.SourceSatisfiedEvidencePaths)
+	closure.SourceSatisfiedEvidence = plancontract.NormalizeSourceSatisfiedEvidenceRefs(closure.SourceSatisfiedEvidence)
 	closure.RequiredTestResults = normalizeVerificationCommandResults(closure.RequiredTestResults)
 	closure.TDDCommandResults = normalizeVerificationCommandResults(closure.TDDCommandResults)
 	closure.SourceSanity = normalizeVerificationCheckResults(closure.SourceSanity)

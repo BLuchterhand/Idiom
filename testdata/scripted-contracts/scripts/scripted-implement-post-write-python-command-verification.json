@@ -1,6 +1,8 @@
 [
+  "{\"tool\":\"read_file\",\"path\":\"labels/labels.py\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"inspect the current Python label implementation before editing\"}",
+  "{\"tool\":\"history_range\",\"path\":\"labels/labels.py\",\"start_line\":1,\"end_line\":2,\"named_gap\":\"satisfy the established-logic history prerequisite before a fresh Python edit\"}",
   "{\"tool\":\"edit_file\",\"path\":\"labels/labels.py\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the Python label implementation\"}",
-  "Implemented the Python label change.\n\nChanged paths:\n- labels/labels.py",
   "{\"tool\":\"shell\",\"command\":\"python3 -B -m unittest\"}",
+  "{\"tool\":\"read_file\",\"path\":\"labels/labels.py\",\"start_line\":1,\"end_line\":8,\"named_gap\":\"refresh the changed Python source before the final report\"}",
   "Implemented the Python label change.\n\nChanged paths:\n- labels/labels.py\n\nVerification: python3 -B -m unittest passed."
 ]

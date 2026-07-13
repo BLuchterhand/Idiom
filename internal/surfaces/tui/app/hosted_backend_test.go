@@ -1,17 +1,21 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
-	"testing"
 
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/backends"
+	runtimesession "idiom/internal/runtime/session"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestBackendsModelToLlamaServerCarriesHostedFields(t *testing.T) {
+var _ = ginkgo.It("backends model to llama server carries hosted fields", func() {
 	defaults := config.Default().LlamaServer
-	got := backendsModelToLlamaServer(backends.Model{
+	got := runtimesession.ServerSpecForBackendModel(backends.Model{
 		Alias:           "glm",
 		Kind:            "zai",
 		Model:           "glm-5.1",
@@ -22,26 +26,22 @@ func TestBackendsModelToLlamaServerCarriesHostedFields(t *testing.T) {
 		Roles:           []string{backends.RolePlanner},
 	}, defaults)
 
-	if !got.IsHosted() || !got.IsZAI() {
-		t.Fatalf("expected hosted ZAI spec, got %#v", got)
-	}
+	gomega.Expect(got.IsHosted()).To(gomega.BeTrue(), fmt.Sprintf("expected hosted ZAI spec, got %#v", got))
+	gomega.Expect(got.IsZAI()).To(gomega.BeTrue(), fmt.Sprintf("expected hosted ZAI spec, got %#v", got))
 
-	if got.Model != "glm-5.1" || got.EndpointBaseURL() != "https://api.z.ai/api/paas/v4" || got.APIKeyEnvName() != "ZAI_API_KEY" {
-		t.Fatalf("hosted fields not carried: %#v", got)
-	}
+	gomega.Expect(got.Model).To(gomega.Equal("glm-5.1"), fmt.Sprintf("hosted fields not carried: %#v", got))
+	gomega.Expect(got.EndpointBaseURL()).To(gomega.Equal("https://api.z.ai/api/paas/v4"), fmt.Sprintf("hosted fields not carried: %#v", got))
+	gomega.Expect(got.APIKeyEnvName()).To(gomega.Equal("ZAI_API_KEY"), fmt.Sprintf("hosted fields not carried: %#v", got))
 
-	if got.DisplayName != "glm" {
-		t.Fatalf("expected display name to preserve alias, got %q", got.DisplayName)
-	}
+	gomega.Expect(got.DisplayName).To(gomega.Equal("glm"), fmt.Sprintf("expected display name to preserve alias, got %q", got.DisplayName))
 
-	if got.ReasoningEffort != "high" || got.Verbosity != "low" {
-		t.Fatalf("provider options not carried: %#v", got)
-	}
-}
+	gomega.Expect(got.ReasoningEffort).To(gomega.Equal("high"), fmt.Sprintf("provider options not carried: %#v", got))
+	gomega.Expect(got.Verbosity).To(gomega.Equal("low"), fmt.Sprintf("provider options not carried: %#v", got))
+})
 
-func TestBackendsModelToLlamaServerCarriesGLMDefaults(t *testing.T) {
+var _ = ginkgo.It("backends model to llama server carries glm defaults", func() {
 	defaults := config.Default().LlamaServer
-	got := backendsModelToLlamaServer(backends.Model{
+	got := runtimesession.ServerSpecForBackendModel(backends.Model{
 		Alias:           "glm-5.2",
 		Kind:            config.BackendGLM,
 		Model:           "glm-5.2",
@@ -49,20 +49,18 @@ func TestBackendsModelToLlamaServerCarriesGLMDefaults(t *testing.T) {
 		Roles:           []string{backends.RolePlanner, backends.RoleExecutor, backends.RoleClassifier},
 	}, defaults)
 
-	if !got.IsHosted() || !got.IsGLM() {
-		t.Fatalf("expected hosted GLM spec, got %#v", got)
-	}
+	gomega.Expect(got.IsHosted()).To(gomega.BeTrue(), fmt.Sprintf("expected hosted GLM spec, got %#v", got))
+	gomega.Expect(got.IsGLM()).To(gomega.BeTrue(), fmt.Sprintf("expected hosted GLM spec, got %#v", got))
 
-	if got.Model != "glm-5.2" || got.EndpointBaseURL() != "https://api.z.ai/api/coding/paas/v4" || got.APIKeyEnvName() != "ZAI_API_KEY" {
-		t.Fatalf("GLM defaults not applied: %#v", got)
-	}
+	gomega.Expect(got.Model).To(gomega.Equal("glm-5.2"), fmt.Sprintf("GLM defaults not applied: %#v", got))
+	gomega.Expect(got.EndpointBaseURL()).To(gomega.Equal("https://api.z.ai/api/coding/paas/v4"), fmt.Sprintf("GLM defaults not applied: %#v", got))
+	gomega.Expect(got.APIKeyEnvName()).To(gomega.Equal("ZAI_API_KEY"), fmt.Sprintf("GLM defaults not applied: %#v", got))
 
-	if got.DisplayName != "glm-5.2" || got.ReasoningEffort != "max" {
-		t.Fatalf("GLM alias/provider options not carried: %#v", got)
-	}
-}
+	gomega.Expect(got.DisplayName).To(gomega.Equal("glm-5.2"), fmt.Sprintf("GLM alias/provider options not carried: %#v", got))
+	gomega.Expect(got.ReasoningEffort).To(gomega.Equal("max"), fmt.Sprintf("GLM alias/provider options not carried: %#v", got))
+})
 
-func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *testing.T) {
+var _ = ginkgo.It("backends model to llama server does not carry local base url into hosted role", func() {
 	defaults := config.Default().RouteClassifier.LlamaServerSpec()
 
 	defaults.Kind = config.BackendMLX
@@ -71,7 +69,7 @@ func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *tes
 	defaults.Port = 11437
 	defaults.Model = "/models/local-classifier"
 
-	got := backendsModelToLlamaServer(backends.Model{
+	got := runtimesession.ServerSpecForBackendModel(backends.Model{
 		Alias:     "deepseek-v4-pro",
 		Kind:      config.BackendDeepSeek,
 		Model:     "deepseek-chat",
@@ -79,42 +77,36 @@ func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *tes
 		Roles:     []string{backends.RolePlanner, backends.RoleClassifier},
 	}, defaults)
 
-	if !got.IsDeepSeek() {
-		t.Fatalf("expected hosted DeepSeek classifier, got %#v", got)
-	}
+	gomega.Expect(got.IsDeepSeek()).To(gomega.BeTrue(), fmt.Sprintf("expected hosted DeepSeek classifier, got %#v", got))
 
-	if got.BaseURL != "" {
-		t.Fatalf("hosted role without explicit base_url must not inherit local classifier base_url, got %q", got.BaseURL)
-	}
+	gomega.Expect(got.BaseURL).To(gomega.Equal(""), fmt.Sprintf("hosted role without explicit base_url must not inherit local classifier base_url, got %q", got.BaseURL))
 
-	if got.EndpointBaseURL() != "https://api.deepseek.com" {
-		t.Fatalf("expected DeepSeek default endpoint, got %q from %#v", got.EndpointBaseURL(), got)
-	}
-}
+	gomega.Expect(got.EndpointBaseURL()).To(gomega.Equal("https://api.deepseek.com"), fmt.Sprintf("expected DeepSeek default endpoint, got %q from %#v", got.EndpointBaseURL(), got))
+})
 
-func TestBackendsModelToLlamaServerKeepsCustomBaseURLForSameHostedKind(t *testing.T) {
+var _ = ginkgo.It("backends model to llama server keeps custom base url for same hosted kind", func() {
 	defaults := config.Default().LlamaServer
 
 	defaults.Kind = config.BackendDeepSeek
 	defaults.BaseURL = "https://deepseek.internal/v1"
 	defaults.APIKeyEnv = "DEEPSEEK_API_KEY"
 
-	got := backendsModelToLlamaServer(backends.Model{
+	got := runtimesession.ServerSpecForBackendModel(backends.Model{
 		Alias: "deepseek-v4-pro",
 		Kind:  config.BackendDeepSeek,
 		Model: "deepseek-chat",
 		Roles: []string{backends.RolePlanner},
 	}, defaults)
 
-	if got.EndpointBaseURL() != "https://deepseek.internal/v1" {
-		t.Fatalf("same hosted kind should inherit custom base_url, got %q", got.EndpointBaseURL())
-	}
-}
+	gomega.Expect(got.EndpointBaseURL()).To(gomega.Equal("https://deepseek.internal/v1"), fmt.Sprintf("same hosted kind should inherit custom base_url, got %q", got.EndpointBaseURL()))
+})
 
-func TestRoleSpecResolvesExplicitHostedAliasAcrossProfiles(t *testing.T) {
+var _ = ginkgo.It("role spec resolves explicit hosted alias across profiles", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
 	}
 
 	backendsJSON := `{
@@ -135,29 +127,32 @@ func TestRoleSpecResolvesExplicitHostedAliasAcrossProfiles(t *testing.T) {
     }
   }
 }`
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends.json: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
 	}
 
 	defaults := config.Default().LlamaServer
 
 	defaults.Model = "glm-5.1"
 
-	got, ok := roleSpec(root, backends.RolePlanner, defaults)
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.LlamaServer = defaults
+	got := runtimesession.ResolveBackendResources(cfg).PlannerSpec
 
-	if !ok {
-		t.Fatal("expected explicit alias to resolve")
-	}
+	gomega.Expect(got.IsZAI()).To(gomega.BeTrue(), fmt.Sprintf("unexpected resolved spec: %#v", got))
+	gomega.Expect(got.Model).To(gomega.Equal("glm-5.1"), fmt.Sprintf("unexpected resolved spec: %#v", got))
+	gomega.Expect(got.EndpointBaseURL()).To(gomega.Equal("https://api.z.ai/api/paas/v4"), fmt.Sprintf("unexpected resolved spec: %#v", got))
+})
 
-	if !got.IsZAI() || got.Model != "glm-5.1" || got.EndpointBaseURL() != "https://api.z.ai/api/paas/v4" {
-		t.Fatalf("unexpected resolved spec: %#v", got)
-	}
-}
-
-func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
+var _ = ginkgo.It("new reuses planner client when classifier role matches planner", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
 	}
 
 	backendsJSON := `{
@@ -176,8 +171,9 @@ func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
     }
   }
 }`
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends.json: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
 	}
 
 	cfg := config.Default()
@@ -195,19 +191,17 @@ func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
 	model := New(cfg)
 	defer model.Close()
 
-	if model.summaryClient != model.client {
-		t.Fatal("classifier role shares the planner target; expected summary client to reuse planner client")
-	}
+	gomega.Expect(model.summaryClient).To(gomega.Equal(model.client), fmt.Sprint("classifier role shares the planner target; expected summary client to reuse planner client"))
 
-	if model.summaryController != nil {
-		t.Fatal("classifier role shares the planner target; must not create a second server controller")
-	}
-}
+	gomega.Expect(model.summaryController).To(gomega.BeNil(), fmt.Sprint("classifier role shares the planner target; must not create a second server controller"))
+})
 
-func TestNewHostedClassifierRoleDoesNotUseStaleLocalClassifierBaseURL(t *testing.T) {
+var _ = ginkgo.It("new hosted classifier role does not use stale local classifier base url", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
 	}
 
 	backendsJSON := `{
@@ -229,8 +223,9 @@ func TestNewHostedClassifierRoleDoesNotUseStaleLocalClassifierBaseURL(t *testing
     }
   }
 }`
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends.json: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
 	}
 
 	cfg := config.Default()
@@ -248,15 +243,9 @@ func TestNewHostedClassifierRoleDoesNotUseStaleLocalClassifierBaseURL(t *testing
 	model := New(cfg)
 	defer model.Close()
 
-	if model.plannerSpec.EndpointBaseURL() != "https://api.deepseek.com" {
-		t.Fatalf("expected hosted planner endpoint, got %#v", model.plannerSpec)
-	}
+	gomega.Expect(model.plannerSpec.EndpointBaseURL()).To(gomega.Equal("https://api.deepseek.com"), fmt.Sprintf("expected hosted planner endpoint, got %#v", model.plannerSpec))
 
-	if model.summaryClient != model.client {
-		t.Fatal("classifier role shares the hosted planner target; expected summary client to reuse planner client")
-	}
+	gomega.Expect(model.summaryClient).To(gomega.Equal(model.client), fmt.Sprint("classifier role shares the hosted planner target; expected summary client to reuse planner client"))
 
-	if model.summaryController != nil {
-		t.Fatal("hosted classifier role must not create a local summary controller")
-	}
-}
+	gomega.Expect(model.summaryController).To(gomega.BeNil(), fmt.Sprint("hosted classifier role must not create a local summary controller"))
+})

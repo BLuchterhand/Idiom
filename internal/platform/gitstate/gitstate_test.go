@@ -6,483 +6,292 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestCurrentCapturesHeadAndPorcelainStatus(t *testing.T) {
-	root := initGitStateRepo(t)
-	head := strings.TrimSpace(gitStateGit(t, root, "rev-parse", "HEAD"))
+var _ = ginkgo.Describe("Git repository state", ginkgo.Label("integration"), func() {
+	ginkgo.It("captures HEAD and porcelain status", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		head := strings.TrimSpace(gitStateGit(root, "rev-parse", "HEAD"))
+		writeGitStateFile(filepath.Join(root, "tracked.txt"), "changed\n")
+		writeGitStateFile(filepath.Join(root, "untracked.txt"), "new\n")
 
-	writeGitStateFile(t, filepath.Join(root, "tracked.txt"), "changed\n")
-	writeGitStateFile(t, filepath.Join(root, "untracked.txt"), "new\n")
-
-	snapshot, err := Current(t.Context(), root)
-	if err != nil {
-		t.Fatalf("Current: %v", err)
-	}
-
-	if snapshot.Head != head {
-		t.Fatalf("Head = %q, want %q", snapshot.Head, head)
-	}
-	if !snapshot.Dirty {
-		t.Fatalf("Dirty = false; status=%q", snapshot.Status)
-	}
-	if !containsGitStateLine(snapshot.StatusLines, "M tracked.txt") {
-		t.Fatalf("status lines missing tracked modification: %#v", snapshot.StatusLines)
-	}
-	if !containsGitStateLine(snapshot.StatusLines, "?? untracked.txt") {
-		t.Fatalf("status lines missing untracked file: %#v", snapshot.StatusLines)
-	}
-	if snapshot.Token() != snapshot.Head+"\n"+snapshot.Status {
-		t.Fatalf("Token did not preserve head/status shape")
-	}
-}
-
-func TestCurrentReturnsErrorOutsideGitRepo(t *testing.T) {
-	_, err := Current(t.Context(), t.TempDir())
-	if err == nil {
-		t.Fatalf("Current outside git repo returned nil error")
-	}
-
-	text := err.Error()
-	if !strings.Contains(text, "git rev-parse HEAD:") || !strings.Contains(strings.ToLower(text), "not a git repository") {
-		t.Fatalf("Current error should include command and git output, got %q", text)
-	}
-}
-
-func TestCombinedOutputTextPreservesRawOutputAndWrapsGitErrors(t *testing.T) {
-	root := initGitStateRepo(t)
-	head := gitStateGit(t, root, "rev-parse", "HEAD")
-
-	got, err := CombinedOutputText(t.Context(), root, "rev-parse", "HEAD")
-	if err != nil {
-		t.Fatalf("CombinedOutputText success: %v", err)
-	}
-	if got != head {
-		t.Fatalf("CombinedOutputText output = %q, want %q", got, head)
-	}
-
-	_, err = CombinedOutputText(t.Context(), t.TempDir(), "rev-parse", "HEAD")
-	if err == nil {
-		t.Fatalf("CombinedOutputText outside git repo returned nil error")
-	}
-
-	text := err.Error()
-	if !strings.Contains(text, "git rev-parse HEAD:") || !strings.Contains(strings.ToLower(text), "not a git repository") {
-		t.Fatalf("CombinedOutputText error should include command and git output, got %q", text)
-	}
-}
-
-func TestOutputSuccessDoesNotMergeStderr(t *testing.T) {
-	root := initGitStateRepo(t)
-
-	got, err := Output(t.Context(), root, "-c", "alias.noisy=!sh -c 'printf stdout; printf stderr >&2'", "noisy")
-	if err != nil {
-		t.Fatalf("Output success: %v", err)
-	}
-
-	if got != "stdout" {
-		t.Fatalf("Output merged stderr into stdout: got %q, want stdout", got)
-	}
-}
-
-func TestGitPathResolvesRelativeGitPath(t *testing.T) {
-	root := initGitStateRepo(t)
-
-	path, err := GitPath(t.Context(), root, "info/exclude")
-	if err != nil {
-		t.Fatalf("GitPath: %v", err)
-	}
-
-	want := filepath.Join(root, ".git", "info", "exclude")
-	if path != want {
-		t.Fatalf("GitPath = %q, want %q", path, want)
-	}
-}
-
-func TestPathFromPorcelainLine(t *testing.T) {
-	tests := []struct {
-		line string
-		want string
-	}{
-		{line: " M tracked.txt", want: "tracked.txt"},
-		{line: "?? nested/file.txt", want: "nested/file.txt"},
-		{line: "R  old/name.txt -> new/name.txt", want: "new/name.txt"},
-		{line: `R  "old -> name.txt" -> "new -> name.txt"`, want: "new -> name.txt"},
-		{line: `R  old.go -> " trailing.go "`, want: " trailing.go "},
-		{line: ` M "space path.txt"`, want: "space path.txt"},
-		{line: `?? "quote\"path.txt"`, want: `quote"path.txt`},
-		{line: `?? " leading.go"`, want: " leading.go"},
-		{line: `?? a -> b.txt`, want: "a -> b.txt"},
-		{line: "A  folder/file.txt", want: "folder/file.txt"},
-		{line: " M", want: ""},
-	}
-
-	for _, tt := range tests {
-		if got := PathFromPorcelainLine(tt.line); got != tt.want {
-			t.Fatalf("PathFromPorcelainLine(%q) = %q, want %q", tt.line, got, tt.want)
-		}
-	}
-}
-
-func TestDirtyPathsFromPorcelainFiltersDedupesAndSorts(t *testing.T) {
-	got := dirtyPathsFromPorcelain(strings.Join([]string{
-		" M tracked.go",
-		"?? nested/new.go",
-		"R  old.go -> renamed.go",
-		` M "space path.go"`,
-		" M .idiom/recovery/packet.json",
-		" M .idiom/plan-execute/progress.json",
-		" M tracked.go",
-	}, "\n"), DirtyPathOptions{
-		IgnorePrefixes: []string{".idiom/recovery/", ".idiom/plan-execute/"},
-		Sort:           true,
+		snapshot, err := Current(ctx, root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(snapshot.Head).To(gomega.Equal(head))
+		gomega.Expect(snapshot.Dirty).To(gomega.BeTrue())
+		gomega.Expect(snapshot.StatusLines).To(gomega.ContainElement(gomega.ContainSubstring("M tracked.txt")))
+		gomega.Expect(snapshot.StatusLines).To(gomega.ContainElement(gomega.ContainSubstring("?? untracked.txt")))
+		gomega.Expect(snapshot.Token()).To(gomega.Equal(snapshot.Head + "\n" + snapshot.Status))
 	})
 
-	want := []string{"nested/new.go", "renamed.go", "space path.go", "tracked.go"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("dirtyPathsFromPorcelain sorted = %#v, want %#v", got, want)
-	}
-}
-
-func TestDirtyPathsFromPorcelainCanPreserveGitOrder(t *testing.T) {
-	got := dirtyPathsFromPorcelain(strings.Join([]string{
-		" M z.go",
-		" M a.go",
-	}, "\n"), DirtyPathOptions{})
-
-	want := []string{"z.go", "a.go"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("dirtyPathsFromPorcelain order = %#v, want %#v", got, want)
-	}
-}
-
-func TestDirtyPathsIncludesAllUntrackedFiles(t *testing.T) {
-	root := initGitStateRepo(t)
-	writeGitStateFile(t, filepath.Join(root, "tracked.txt"), "changed\n")
-	writeGitStateFile(t, filepath.Join(root, "nested", "new.txt"), "new\n")
-	writeGitStateFile(t, filepath.Join(root, `quote"path.txt`), "quoted\n")
-	writeGitStateFile(t, filepath.Join(root, "a -> b.txt"), "arrow\n")
-	writeGitStateFile(t, filepath.Join(root, ".idiom", "recovery", "packet.json"), "{}\n")
-
-	got, err := DirtyPaths(t.Context(), root, DirtyPathOptions{
-		IgnorePrefixes: []string{".idiom/recovery/"},
-		Sort:           true,
+	ginkgo.It("returns the Git command error outside a repository", func(ctx ginkgo.SpecContext) {
+		_, err := Current(ctx, ginkgo.GinkgoT().TempDir())
+		gomega.Expect(err).To(gomega.MatchError(gomega.And(
+			gomega.ContainSubstring("git rev-parse HEAD:"),
+			gomega.ContainSubstring("not a git repository"),
+		)))
 	})
-	if err != nil {
-		t.Fatalf("DirtyPaths: %v", err)
-	}
 
-	want := []string{"a -> b.txt", "nested/new.txt", `quote"path.txt`, "tracked.txt"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("DirtyPaths = %#v, want %#v", got, want)
-	}
-}
+	ginkgo.It("preserves combined output and wraps Git failures", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		head := gitStateGit(root, "rev-parse", "HEAD")
 
-func TestDirtyPathsSupportsPathspecs(t *testing.T) {
-	root := initGitStateRepo(t)
-	writeGitStateFile(t, filepath.Join(root, "other.txt"), "other\n")
-	gitStateGit(t, root, "add", "other.txt")
-	gitStateGit(t, root, "commit", "-m", "add other")
+		got, err := CombinedOutputText(ctx, root, "rev-parse", "HEAD")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(got).To(gomega.Equal(head))
 
-	writeGitStateFile(t, filepath.Join(root, "tracked.txt"), "changed\n")
-	writeGitStateFile(t, filepath.Join(root, "other.txt"), "changed\n")
-	writeGitStateFile(t, filepath.Join(root, "nested", "new.txt"), "new\n")
-
-	got, err := DirtyPaths(t.Context(), root, DirtyPathOptions{
-		Pathspecs: []string{"tracked.txt", "nested"},
-		Sort:      true,
+		_, err = CombinedOutputText(ctx, ginkgo.GinkgoT().TempDir(), "rev-parse", "HEAD")
+		gomega.Expect(err).To(gomega.MatchError(gomega.And(
+			gomega.ContainSubstring("git rev-parse HEAD:"),
+			gomega.ContainSubstring("not a git repository"),
+		)))
 	})
-	if err != nil {
-		t.Fatalf("DirtyPaths: %v", err)
-	}
 
-	want := []string{"nested/new.txt", "tracked.txt"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("DirtyPaths scoped = %#v, want %#v", got, want)
-	}
-}
+	ginkgo.It("does not merge stderr into successful stdout", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		got, err := Output(ctx, root, "-c", "alias.noisy=!sh -c 'printf stdout; printf stderr >&2'", "noisy")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(got).To(gomega.Equal("stdout"))
+	})
 
-func TestChangedPathsSinceFirstPathCommitUsesPathspecForBaseline(t *testing.T) {
-	root := initGitStateRepo(t)
-	writeGitStateFile(t, filepath.Join(root, "effort", "initial.go"), "package effort\n")
-	gitStateGit(t, root, "add", "effort/initial.go")
-	gitStateGit(t, root, "commit", "-m", "add effort")
-	writeGitStateFile(t, filepath.Join(root, "outside.go"), "package outside\n")
-	gitStateGit(t, root, "add", "outside.go")
-	gitStateGit(t, root, "commit", "-m", "add outside")
-	writeGitStateFile(t, filepath.Join(root, "effort", "later.go"), "package effort\n")
-	gitStateGit(t, root, "add", "effort/later.go")
-	gitStateGit(t, root, "commit", "-m", "add later effort")
+	ginkgo.It("resolves relative Git metadata paths", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		path, err := GitPath(ctx, root, "info/exclude")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(path).To(gomega.Equal(filepath.Join(root, ".git", "info", "exclude")))
+	})
 
-	got, err := ChangedPathsSinceFirstPathCommit(t.Context(), root, "effort")
-	if err != nil {
-		t.Fatalf("ChangedPathsSinceFirstPathCommit: %v", err)
-	}
-
-	want := []string{"effort/initial.go", "effort/later.go", "outside.go"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("ChangedPathsSinceFirstPathCommit = %#v, want %#v", got, want)
-	}
-}
-
-func TestCommitChangedPathsReturnsCommitNameOnlyPaths(t *testing.T) {
-	root := initGitStateRepo(t)
-	writeGitStateFile(t, filepath.Join(root, "nested", "new.go"), "package nested\n")
-	gitStateGit(t, root, "add", "nested/new.go")
-	gitStateGit(t, root, "commit", "-m", "add nested")
-	head := strings.TrimSpace(gitStateGit(t, root, "rev-parse", "HEAD"))
-
-	got, err := CommitChangedPaths(t.Context(), root, head)
-	if err != nil {
-		t.Fatalf("CommitChangedPaths: %v", err)
-	}
-
-	want := []string{"nested/new.go"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("CommitChangedPaths = %#v, want %#v", got, want)
-	}
-}
-
-func TestMetadataRootFindsAncestorGitMetadata(t *testing.T) {
-	root := initGitStateRepo(t)
-	nested := filepath.Join(root, "a", "b")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatalf("MkdirAll nested: %v", err)
-	}
-
-	got, ok := MetadataRoot(nested)
-	if !ok {
-		t.Fatalf("MetadataRoot did not find ancestor")
-	}
-	if got != root {
-		t.Fatalf("MetadataRoot = %q, want %q", got, root)
-	}
-	if !HasMetadataAncestor(nested) {
-		t.Fatalf("HasMetadataAncestor should use MetadataRoot result")
-	}
-}
-
-func TestFilterPorcelainStatusByPathPrefixUsesParsedPath(t *testing.T) {
-	status := strings.Join([]string{
-		" M .idiom/recovery/packet.json",
-		` M "docs/.idiom-note.md"`,
-		"?? src/main.go",
-		`R  "old -> path.go" -> ".idiom/generated.go"`,
-	}, "\n")
-
-	got := FilterPorcelainStatusByPathPrefix(status, ".idiom/")
-	want := strings.Join([]string{
-		`M "docs/.idiom-note.md"`,
-		"?? src/main.go",
-	}, "\n")
-	if got != want {
-		t.Fatalf("filtered status = %q, want %q", got, want)
-	}
-}
-
-func TestRunnerStatusAndDiffUseInjectedCommandPolicy(t *testing.T) {
-	var calls []string
-	runner := Runner{
-		Root: "/repo",
-		RunCommand: func(ctx context.Context, root string, args ...string) (string, error) {
-			if root != "/repo" {
-				t.Fatalf("root = %q, want /repo", root)
-			}
-			calls = append(calls, strings.Join(args, " "))
-			return strings.Join(args, " "), nil
+	ginkgo.DescribeTable("parsing porcelain paths",
+		func(line string, want string) {
+			gomega.Expect(PathFromPorcelainLine(line)).To(gomega.Equal(want))
 		},
-	}
+		ginkgo.Entry("modified", " M tracked.txt", "tracked.txt"),
+		ginkgo.Entry("untracked nested", "?? nested/file.txt", "nested/file.txt"),
+		ginkgo.Entry("renamed", "R  old/name.txt -> new/name.txt", "new/name.txt"),
+		ginkgo.Entry("quoted rename arrows", `R  "old -> name.txt" -> "new -> name.txt"`, "new -> name.txt"),
+		ginkgo.Entry("quoted trailing spaces", `R  old.go -> " trailing.go "`, " trailing.go "),
+		ginkgo.Entry("path with spaces", ` M "space path.txt"`, "space path.txt"),
+		ginkgo.Entry("quoted quote", `?? "quote\"path.txt"`, `quote"path.txt`),
+		ginkgo.Entry("leading space", `?? " leading.go"`, " leading.go"),
+		ginkgo.Entry("literal arrow", `?? a -> b.txt`, "a -> b.txt"),
+		ginkgo.Entry("added", "A  folder/file.txt", "folder/file.txt"),
+		ginkgo.Entry("missing path", " M", ""),
+	)
 
-	status, err := runner.Status(t.Context())
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if status != "status --porcelain=v1 --branch --untracked-files=normal" {
-		t.Fatalf("Status command = %q", status)
-	}
+	ginkgo.It("filters, deduplicates, and sorts dirty porcelain paths", func() {
+		got := dirtyPathsFromPorcelain(strings.Join([]string{
+			" M tracked.go",
+			"?? nested/new.go",
+			"R  old.go -> renamed.go",
+			` M "space path.go"`,
+			" M .idiom/recovery/packet.json",
+			" M .idiom/plan-execute/progress.json",
+			" M tracked.go",
+		}, "\n"), DirtyPathOptions{
+			IgnorePrefixes: []string{".idiom/recovery/", ".idiom/plan-execute/"},
+			Sort:           true,
+		})
+		gomega.Expect(got).To(gomega.Equal([]string{"nested/new.go", "renamed.go", "space path.go", "tracked.go"}))
+	})
 
-	diff, err := runner.WorktreeDiff(t.Context(), "src/file.go")
-	if err != nil {
-		t.Fatalf("WorktreeDiff: %v", err)
-	}
-	if diff != "diff --no-color -- src/file.go" {
-		t.Fatalf("WorktreeDiff command = %q", diff)
-	}
+	ginkgo.It("can preserve Git's dirty-path order", func() {
+		got := dirtyPathsFromPorcelain(" M z.go\n M a.go", DirtyPathOptions{})
+		gomega.Expect(got).To(gomega.Equal([]string{"z.go", "a.go"}))
+	})
 
-	want := []string{
-		"status --porcelain=v1 --branch --untracked-files=normal",
-		"diff --no-color -- src/file.go",
-	}
-	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
-	}
+	ginkgo.It("includes every untracked path while honoring ignored prefixes", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		writeGitStateFile(filepath.Join(root, "tracked.txt"), "changed\n")
+		writeGitStateFile(filepath.Join(root, "nested", "new.txt"), "new\n")
+		writeGitStateFile(filepath.Join(root, `quote"path.txt`), "quoted\n")
+		writeGitStateFile(filepath.Join(root, "a -> b.txt"), "arrow\n")
+		writeGitStateFile(filepath.Join(root, ".idiom", "recovery", "packet.json"), "{}\n")
+
+		got, err := DirtyPaths(ctx, root, DirtyPathOptions{IgnorePrefixes: []string{".idiom/recovery/"}, Sort: true})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(got).To(gomega.Equal([]string{"a -> b.txt", "nested/new.txt", `quote"path.txt`, "tracked.txt"}))
+	})
+
+	ginkgo.It("scopes dirty paths with Git pathspecs", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		writeGitStateFile(filepath.Join(root, "other.txt"), "other\n")
+		gitStateGit(root, "add", "other.txt")
+		gitStateGit(root, "commit", "-m", "add other")
+		writeGitStateFile(filepath.Join(root, "tracked.txt"), "changed\n")
+		writeGitStateFile(filepath.Join(root, "other.txt"), "changed\n")
+		writeGitStateFile(filepath.Join(root, "nested", "new.txt"), "new\n")
+
+		got, err := DirtyPaths(ctx, root, DirtyPathOptions{Pathspecs: []string{"tracked.txt", "nested"}, Sort: true})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(got).To(gomega.Equal([]string{"nested/new.txt", "tracked.txt"}))
+	})
+
+	ginkgo.It("uses the first path commit only to choose the repository-wide baseline", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		writeGitStateFile(filepath.Join(root, "effort", "initial.go"), "package effort\n")
+		gitStateGit(root, "add", "effort/initial.go")
+		gitStateGit(root, "commit", "-m", "add effort")
+		writeGitStateFile(filepath.Join(root, "outside.go"), "package outside\n")
+		gitStateGit(root, "add", "outside.go")
+		gitStateGit(root, "commit", "-m", "add outside")
+		writeGitStateFile(filepath.Join(root, "effort", "later.go"), "package effort\n")
+		gitStateGit(root, "add", "effort/later.go")
+		gitStateGit(root, "commit", "-m", "add later effort")
+
+		got, err := ChangedPathsSinceFirstPathCommit(ctx, root, "effort")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(got).To(gomega.Equal([]string{"effort/initial.go", "effort/later.go", "outside.go"}))
+	})
+
+	ginkgo.It("returns the name-only paths for a commit", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		writeGitStateFile(filepath.Join(root, "nested", "new.go"), "package nested\n")
+		gitStateGit(root, "add", "nested/new.go")
+		gitStateGit(root, "commit", "-m", "add nested")
+		head := strings.TrimSpace(gitStateGit(root, "rev-parse", "HEAD"))
+
+		got, err := CommitChangedPaths(ctx, root, head)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(got).To(gomega.Equal([]string{"nested/new.go"}))
+	})
+
+	ginkgo.It("finds Git metadata through ancestor directories", func() {
+		root := initGitStateRepo()
+		nested := filepath.Join(root, "a", "b")
+		gomega.Expect(os.MkdirAll(nested, 0o755)).To(gomega.Succeed())
+
+		got, ok := MetadataRoot(nested)
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(got).To(gomega.Equal(root))
+		gomega.Expect(HasMetadataAncestor(nested)).To(gomega.BeTrue())
+	})
+
+	ginkgo.It("filters porcelain status by parsed path instead of raw text", func() {
+		status := strings.Join([]string{
+			" M .idiom/recovery/packet.json",
+			` M "docs/.idiom-note.md"`,
+			"?? src/main.go",
+			`R  "old -> path.go" -> ".idiom/generated.go"`,
+		}, "\n")
+		want := "M \"docs/.idiom-note.md\"\n?? src/main.go"
+		gomega.Expect(FilterPorcelainStatusByPathPrefix(status, ".idiom/")).To(gomega.Equal(want))
+	})
+
+	ginkgo.It("routes status and diff through the injected command policy", func(ctx ginkgo.SpecContext) {
+		var calls []string
+		runner := Runner{
+			Root: "/repo",
+			RunCommand: func(_ context.Context, root string, args ...string) (string, error) {
+				gomega.Expect(root).To(gomega.Equal("/repo"))
+				call := strings.Join(args, " ")
+				calls = append(calls, call)
+				return call, nil
+			},
+		}
+
+		status, err := runner.Status(ctx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(status).To(gomega.Equal("status --porcelain=v1 --branch --untracked-files=normal"))
+		diff, err := runner.WorktreeDiff(ctx, "src/file.go")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(diff).To(gomega.Equal("diff --no-color -- src/file.go"))
+		gomega.Expect(calls).To(gomega.Equal([]string{
+			"status --porcelain=v1 --branch --untracked-files=normal",
+			"diff --no-color -- src/file.go",
+		}))
+	})
+
+	ginkgo.It("classifies the repository states that make history inapplicable", func(ctx ginkgo.SpecContext) {
+		nonGit := ginkgo.GinkgoT().TempDir()
+		writeGitStateFile(filepath.Join(nonGit, "sample.go"), "package main\n")
+		expectHistoryApplicability(ctx, nonGit, "sample.go", false, HistoryReasonNonGitRoot)
+
+		noHead := ginkgo.GinkgoT().TempDir()
+		gitStateGit(noHead, "init")
+		writeGitStateFile(filepath.Join(noHead, "sample.go"), "package main\n")
+		expectHistoryApplicability(ctx, noHead, "sample.go", false, HistoryReasonNoHead)
+
+		untracked := initGitStateRepo()
+		writeGitStateFile(filepath.Join(untracked, "sample.go"), "package main\n")
+		expectHistoryApplicability(ctx, untracked, "sample.go", false, HistoryReasonUntrackedPath)
+
+		noCommittedHistory := initGitStateRepo()
+		writeGitStateFile(filepath.Join(noCommittedHistory, "sample.go"), "package main\n")
+		gitStateGit(noCommittedHistory, "add", "sample.go")
+		expectHistoryApplicability(ctx, noCommittedHistory, "sample.go", false, HistoryReasonPathNoCommittedHistory)
+
+		applicable := initGitStateRepo()
+		expectHistoryApplicability(ctx, applicable, "tracked.txt", true, "")
+	})
+
+	ginkgo.It("matches history applicability against exact paths", func(ctx ginkgo.SpecContext) {
+		root := initGitStateRepo()
+		writeGitStateFile(filepath.Join(root, "dir", "space path.go"), "package main\n")
+		writeGitStateFile(filepath.Join(root, "dir", "space path.go.bak"), "package main\n")
+		gitStateGit(root, "add", "dir/space path.go.bak")
+		gitStateGit(root, "commit", "-m", "add sibling")
+
+		expectHistoryApplicability(ctx, root, "dir/space path.go", false, HistoryReasonUntrackedPath)
+		expectHistoryApplicability(ctx, root, "dir/space path.go.bak", true, "")
+	})
+
+	ginkgo.It("uses stable Git forms for range, symbol, and blame history", func(ctx ginkgo.SpecContext) {
+		root := ginkgo.GinkgoT().TempDir()
+		gitStateGit(root, "init")
+		gitStateGit(root, "config", "user.email", "test@example.com")
+		gitStateGit(root, "config", "user.name", "Test User")
+		writeGitStateFile(filepath.Join(root, "sample.go"), "package main\n\nfunc add(a int, b int) int {\n\treturn a + b\n}\n")
+		gitStateGit(root, "add", "sample.go")
+		gitStateGit(root, "commit", "-m", "initial")
+		writeGitStateFile(filepath.Join(root, "sample.go"), "package main\n\nfunc add(a int, b int) int {\n\treturn a - b\n}\n")
+		gitStateGit(root, "commit", "-am", "change add")
+
+		runner := Runner{Root: root}
+		history, err := runner.HistoryRange(ctx, "sample.go", 3, 5)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(history.HasCommitDescriptions).To(gomega.BeTrue())
+		gomega.Expect(history.Output).To(gomega.And(gomega.ContainSubstring("change add"), gomega.ContainSubstring("initial")))
+
+		symbol, err := runner.HistorySymbol(ctx, "sample.go", "add")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(symbol.HasCommitDescriptions).To(gomega.BeTrue())
+		gomega.Expect(symbol.Output).To(gomega.And(gomega.ContainSubstring("change add"), gomega.ContainSubstring("initial")))
+
+		blame, err := runner.BlameRange(ctx, "sample.go", 4, 4)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(blame).To(gomega.ContainSubstring("return a - b"))
+	})
+})
+
+func expectHistoryApplicability(ctx context.Context, root string, path string, applicable bool, reason HistoryNotApplicableReason) {
+	result, err := (Runner{Root: root}).CheckHistoryApplicability(ctx, path)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(result.Applicable).To(gomega.Equal(applicable))
+	gomega.Expect(result.Reason).To(gomega.Equal(reason))
 }
 
-func TestCheckHistoryApplicabilityReportsRepositoryStates(t *testing.T) {
-	nonGit := t.TempDir()
-	writeGitStateFile(t, filepath.Join(nonGit, "sample.go"), "package main\n")
-	got, err := (Runner{Root: nonGit}).CheckHistoryApplicability(t.Context(), "sample.go")
-	if err != nil {
-		t.Fatalf("CheckHistoryApplicability non-git: %v", err)
-	}
-	if got.Applicable || got.Reason != HistoryReasonNonGitRoot {
-		t.Fatalf("non-git applicability = %#v, want non_git_root", got)
-	}
-
-	noHead := t.TempDir()
-	gitStateGit(t, noHead, "init")
-	writeGitStateFile(t, filepath.Join(noHead, "sample.go"), "package main\n")
-	got, err = (Runner{Root: noHead}).CheckHistoryApplicability(t.Context(), "sample.go")
-	if err != nil {
-		t.Fatalf("CheckHistoryApplicability no-head: %v", err)
-	}
-	if got.Applicable || got.Reason != HistoryReasonNoHead {
-		t.Fatalf("no-head applicability = %#v, want no_head", got)
-	}
-
-	untracked := initGitStateRepo(t)
-	writeGitStateFile(t, filepath.Join(untracked, "sample.go"), "package main\n")
-	got, err = (Runner{Root: untracked}).CheckHistoryApplicability(t.Context(), "sample.go")
-	if err != nil {
-		t.Fatalf("CheckHistoryApplicability untracked: %v", err)
-	}
-	if got.Applicable || got.Reason != HistoryReasonUntrackedPath {
-		t.Fatalf("untracked applicability = %#v, want untracked_path", got)
-	}
-
-	noCommittedHistory := initGitStateRepo(t)
-	writeGitStateFile(t, filepath.Join(noCommittedHistory, "sample.go"), "package main\n")
-	gitStateGit(t, noCommittedHistory, "add", "sample.go")
-	got, err = (Runner{Root: noCommittedHistory}).CheckHistoryApplicability(t.Context(), "sample.go")
-	if err != nil {
-		t.Fatalf("CheckHistoryApplicability staged path: %v", err)
-	}
-	if got.Applicable || got.Reason != HistoryReasonPathNoCommittedHistory {
-		t.Fatalf("staged path applicability = %#v, want path_no_committed_history", got)
-	}
-
-	applicable := initGitStateRepo(t)
-	got, err = (Runner{Root: applicable}).CheckHistoryApplicability(t.Context(), "tracked.txt")
-	if err != nil {
-		t.Fatalf("CheckHistoryApplicability applicable: %v", err)
-	}
-	if !got.Applicable || got.Reason != "" {
-		t.Fatalf("applicable history = %#v, want applicable", got)
-	}
-}
-
-func TestCheckHistoryApplicabilityMatchesExactPaths(t *testing.T) {
-	root := initGitStateRepo(t)
-	writeGitStateFile(t, filepath.Join(root, "dir", "space path.go"), "package main\n")
-	writeGitStateFile(t, filepath.Join(root, "dir", "space path.go.bak"), "package main\n")
-	gitStateGit(t, root, "add", "dir/space path.go.bak")
-	gitStateGit(t, root, "commit", "-m", "add sibling")
-
-	got, err := (Runner{Root: root}).CheckHistoryApplicability(t.Context(), "dir/space path.go")
-	if err != nil {
-		t.Fatalf("CheckHistoryApplicability: %v", err)
-	}
-	if got.Applicable || got.Reason != HistoryReasonUntrackedPath {
-		t.Fatalf("untracked path with committed sibling = %#v, want untracked_path", got)
-	}
-
-	got, err = (Runner{Root: root}).CheckHistoryApplicability(t.Context(), "dir/space path.go.bak")
-	if err != nil {
-		t.Fatalf("CheckHistoryApplicability sibling: %v", err)
-	}
-	if !got.Applicable {
-		t.Fatalf("committed sibling applicability = %#v, want applicable", got)
-	}
-}
-
-func TestHistoryCommandsUseStableGitForms(t *testing.T) {
-	root := t.TempDir()
-	gitStateGit(t, root, "init")
-	gitStateGit(t, root, "config", "user.email", "test@example.com")
-	gitStateGit(t, root, "config", "user.name", "Test User")
-	writeGitStateFile(t, filepath.Join(root, "sample.go"), "package main\n\nfunc add(a int, b int) int {\n\treturn a + b\n}\n")
-	gitStateGit(t, root, "add", "sample.go")
-	gitStateGit(t, root, "commit", "-m", "initial")
-	writeGitStateFile(t, filepath.Join(root, "sample.go"), "package main\n\nfunc add(a int, b int) int {\n\treturn a - b\n}\n")
-	gitStateGit(t, root, "commit", "-am", "change add")
-
-	runner := Runner{Root: root}
-
-	history, err := runner.HistoryRange(t.Context(), "sample.go", 3, 5)
-	if err != nil {
-		t.Fatalf("HistoryRange: %v\n%s", err, history.Output)
-	}
-	if !history.HasCommitDescriptions {
-		t.Fatalf("HistoryRange should report commit descriptions: %#v", history)
-	}
-	if !strings.Contains(history.Output, "change add") || !strings.Contains(history.Output, "initial") {
-		t.Fatalf("HistoryRange missing expected commits:\n%s", history.Output)
-	}
-
-	symbol, err := runner.HistorySymbol(t.Context(), "sample.go", "add")
-	if err != nil {
-		t.Fatalf("HistorySymbol: %v\n%s", err, symbol.Output)
-	}
-	if !symbol.HasCommitDescriptions {
-		t.Fatalf("HistorySymbol should report commit descriptions: %#v", symbol)
-	}
-	if !strings.Contains(symbol.Output, "change add") || !strings.Contains(symbol.Output, "initial") {
-		t.Fatalf("HistorySymbol missing expected commits:\n%s", symbol.Output)
-	}
-
-	blame, err := runner.BlameRange(t.Context(), "sample.go", 4, 4)
-	if err != nil {
-		t.Fatalf("BlameRange: %v\n%s", err, blame)
-	}
-	if !strings.Contains(blame, "return a - b") {
-		t.Fatalf("BlameRange missing changed line:\n%s", blame)
-	}
-}
-
-func initGitStateRepo(t *testing.T) string {
-	t.Helper()
-
-	root := t.TempDir()
-	gitStateGit(t, root, "init")
-	gitStateGit(t, root, "config", "user.name", "Idiom Test")
-	gitStateGit(t, root, "config", "user.email", "idiom@example.test")
-	writeGitStateFile(t, filepath.Join(root, "tracked.txt"), "initial\n")
-	gitStateGit(t, root, "add", "tracked.txt")
-	gitStateGit(t, root, "commit", "-m", "initial")
-
+func initGitStateRepo() string {
+	root := ginkgo.GinkgoT().TempDir()
+	gitStateGit(root, "init")
+	gitStateGit(root, "config", "user.name", "Idiom Test")
+	gitStateGit(root, "config", "user.email", "idiom@example.test")
+	writeGitStateFile(filepath.Join(root, "tracked.txt"), "initial\n")
+	gitStateGit(root, "add", "tracked.txt")
+	gitStateGit(root, "commit", "-m", "initial")
 	return root
 }
 
-func gitStateGit(t *testing.T, root string, args ...string) string {
-	t.Helper()
-
+func gitStateGit(root string, args ...string) string {
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, string(out))
-	}
-
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "git %s\n%s", strings.Join(args, " "), string(out))
 	return string(out)
 }
 
-func writeGitStateFile(t *testing.T, path string, content string) {
-	t.Helper()
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("MkdirAll %s: %v", path, err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("WriteFile %s: %v", path, err)
-	}
-}
-
-func containsGitStateLine(lines []string, want string) bool {
-	for _, line := range lines {
-		if line == want || strings.Contains(line, want) {
-			return true
-		}
-	}
-
-	return false
+func writeGitStateFile(path string, content string) {
+	gomega.Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(path, []byte(content), 0o644)).To(gomega.Succeed())
 }

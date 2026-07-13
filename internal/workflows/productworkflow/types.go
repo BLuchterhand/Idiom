@@ -3,6 +3,8 @@ package productworkflow
 import (
 	"encoding/json"
 	"strings"
+
+	plancontract "idiom/internal/contracts/plan"
 )
 
 const (
@@ -28,32 +30,44 @@ type EffortIndexEntry struct {
 }
 
 type WorkflowState struct {
-	SchemaVersion          string            `json:"schema_version"`
-	EffortID               string            `json:"effort_id"`
-	TaskID                 string            `json:"task_id"`
-	Title                  string            `json:"title"`
-	CreatedAt              string            `json:"created_at"`
-	UpdatedAt              string            `json:"updated_at"`
-	StateRevision          int               `json:"state_revision"`
-	LastEventID            string            `json:"last_event_id"`
-	WorkspaceFingerprint   string            `json:"workspace_fingerprint"`
-	StatusBucket           string            `json:"status_bucket"`
-	CurrentPhase           string            `json:"current_phase"`
-	CurrentState           string            `json:"current_state"`
-	ArtifactPaths          map[string]string `json:"artifact_paths"`
-	Context                WorkflowContext   `json:"context"`
-	Coverage               CoverageState     `json:"coverage"`
-	OpenObligations        []string          `json:"open_obligations"`
-	OpenQuestions          []string          `json:"open_questions"`
-	Blockers               []string          `json:"blockers"`
-	Privacy                PrivacyState      `json:"privacy"`
-	SessionIDs             map[string]string `json:"session_ids"`
-	FolderPath             string            `json:"folder_path"`
-	PriorFolderPaths       []string          `json:"prior_folder_paths"`
-	LastReconciliationAt   string            `json:"last_reconciliation_at"`
-	ReconciliationMismatch bool              `json:"reconciliation_mismatch"`
-	NextValidActions       []string          `json:"next_valid_actions"`
-	DurabilityLevel        string            `json:"durability_level"`
+	SchemaVersion           string                           `json:"schema_version"`
+	EffortID                string                           `json:"effort_id"`
+	TaskID                  string                           `json:"task_id"`
+	Title                   string                           `json:"title"`
+	CreatedAt               string                           `json:"created_at"`
+	UpdatedAt               string                           `json:"updated_at"`
+	StateRevision           int                              `json:"state_revision"`
+	LastEventID             string                           `json:"last_event_id"`
+	WorkspaceFingerprint    string                           `json:"workspace_fingerprint"`
+	StatusBucket            string                           `json:"status_bucket"`
+	CurrentPhase            string                           `json:"current_phase"`
+	CurrentState            string                           `json:"current_state"`
+	ArtifactPaths           map[string]string                `json:"artifact_paths"`
+	Context                 WorkflowContext                  `json:"context"`
+	Coverage                CoverageState                    `json:"coverage"`
+	OpenObligations         []string                         `json:"open_obligations"`
+	OpenQuestions           []string                         `json:"open_questions"`
+	Blockers                []string                         `json:"blockers"`
+	Privacy                 PrivacyState                     `json:"privacy"`
+	SessionIDs              map[string]string                `json:"session_ids"`
+	FolderPath              string                           `json:"folder_path"`
+	PriorFolderPaths        []string                         `json:"prior_folder_paths"`
+	LastReconciliationAt    string                           `json:"last_reconciliation_at"`
+	ReconciliationMismatch  bool                             `json:"reconciliation_mismatch"`
+	NextValidActions        []string                         `json:"next_valid_actions"`
+	DurabilityLevel         string                           `json:"durability_level"`
+	SourceSatisfiedDelivery *SourceSatisfiedDeliveryCloseout `json:"source_satisfied_delivery,omitempty"`
+}
+
+type SourceSatisfiedDeliveryCloseout struct {
+	EffortID         string                                    `json:"effort_id"`
+	TaskID           string                                    `json:"task_id"`
+	Outcome          plancontract.PlanExecuteTerminalOutcome   `json:"outcome"`
+	SessionID        string                                    `json:"session_id"`
+	CompletionDigest string                                    `json:"completion_digest"`
+	EvidencePaths    []string                                  `json:"evidence_paths"`
+	Evidence         []plancontract.SourceSatisfiedEvidenceRef `json:"evidence"`
+	RecordedAt       string                                    `json:"recorded_at"`
 }
 
 type WorkflowContext struct {

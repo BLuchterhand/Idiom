@@ -7,7 +7,9 @@ import (
 
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace/externaltool"
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/mcpidentity"
+	"idiom/internal/platform/textutil"
 )
 
 type ToolSurface struct {
@@ -41,6 +43,87 @@ type AdvertisedToolSurfaceInput struct {
 	ConversationOnly bool
 	SuppressAll      bool
 	DisableTaskTool  bool
+}
+
+type PermissionAuthorizedInspectionProjection struct {
+	tools         []string
+	actionClasses []string
+	toolSet       map[string]struct{}
+}
+
+// PermissionAuthorizedInspection projects the non-mutating/discovery subset
+// of an invocation's already-authorized tool names through the immutable tool
+// surface and external read-only metadata captured by this snapshot.
+func (s ToolSurfaceSnapshot) PermissionAuthorizedInspection(authorized []string) PermissionAuthorizedInspectionProjection {
+	available := make(map[string]struct{}, len(s.allowedTools))
+	for _, tool := range s.allowedTools {
+		if tool = strings.TrimSpace(tool); tool != "" {
+			available[tool] = struct{}{}
+		}
+	}
+	projection := PermissionAuthorizedInspectionProjection{toolSet: make(map[string]struct{})}
+	for _, tool := range authorized {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		if _, ok := available[tool]; !ok {
+			continue
+		}
+		declaredReadOnly := ToolAllowedForProfile(tool, ToolProfileDiscovery).Allowed
+		_, externalReadOnly := s.externalReadOnlyDiscovery[tool]
+		if !declaredReadOnly && !externalReadOnly && tool != ToolNameShell {
+			continue
+		}
+		if _, duplicate := projection.toolSet[tool]; duplicate {
+			continue
+		}
+		projection.toolSet[tool] = struct{}{}
+		projection.tools = append(projection.tools, tool)
+		if tool == ToolNameShell {
+			// Shell is classified from the concrete request. A permission-authorized
+			// non-mutating command can be either an inspection read (for example rg)
+			// or verification (for example go test), so the name-only projection
+			// must preserve both classes. AllowsRequest remains the authority that
+			// excludes every shell request not proven read-only.
+			projection.actionClasses = textutil.Unique(append(
+				projection.actionClasses,
+				string(autonomy.ActionClassRead),
+				string(autonomy.ActionClassVerify),
+			))
+			continue
+		}
+		actionClass := ToolActionClass(tool)
+		if actionClass == "" && externalReadOnly {
+			actionClass = autonomy.ActionClassSearch
+		}
+		if actionClass != "" {
+			projection.actionClasses = textutil.Unique(append(projection.actionClasses, string(actionClass)))
+		}
+	}
+	return projection
+}
+
+func (projection PermissionAuthorizedInspectionProjection) ActionClasses() []string {
+	return append([]string(nil), projection.actionClasses...)
+}
+
+func (projection PermissionAuthorizedInspectionProjection) ToolNames() []string {
+	return append([]string(nil), projection.tools...)
+}
+
+// AllowsRequest performs the request-specific shell classification that a
+// name-only projection cannot safely infer. Other projected tools already
+// carry read-only/discovery metadata.
+func (projection PermissionAuthorizedInspectionProjection) AllowsRequest(request ToolRequest) bool {
+	tool := strings.TrimSpace(request.Tool)
+	if _, ok := projection.toolSet[tool]; !ok {
+		return false
+	}
+	if tool == ToolNameShell {
+		return AnalyzeShellCommand(request.Command).SideEffect == autonomy.SideEffectReadOnly
+	}
+	return true
 }
 
 func (s ToolSurfaceSnapshot) AllowedTools() []string {

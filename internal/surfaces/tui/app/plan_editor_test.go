@@ -1,36 +1,32 @@
 package app
 
 import (
+	"fmt"
 	"reflect"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestSplitEditorCommandParsesQuotedArgsWithoutShell(t *testing.T) {
+var _ = ginkgo.It("split editor command parses quoted args without shell", func() {
 	args, err := splitEditorCommand(`code --wait "plan file.md"`)
-	if err != nil {
-		t.Fatalf("splitEditorCommand: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("splitEditorCommand: %v", err))
 
 	want := []string{"code", "--wait", "plan file.md"}
-	if !reflect.DeepEqual(args, want) {
-		t.Fatalf("args = %#v, want %#v", args, want)
-	}
-}
+	gomega.Expect(reflect.DeepEqual(args, want)).To(gomega.BeTrue(), fmt.Sprintf("args = %#v, want %#v", args, want))
+})
 
-func TestSplitEditorCommandTreatsShellMetacharactersAsArgs(t *testing.T) {
+var _ = ginkgo.It("split editor command treats shell metacharacters as args", func() {
 	args, err := splitEditorCommand(`vi; touch injected`)
-	if err != nil {
-		t.Fatalf("splitEditorCommand: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("splitEditorCommand: %v", err))
 
 	want := []string{"vi;", "touch", "injected"}
-	if !reflect.DeepEqual(args, want) {
-		t.Fatalf("args = %#v, want %#v", args, want)
-	}
-}
+	gomega.Expect(reflect.DeepEqual(args, want)).To(gomega.BeTrue(), fmt.Sprintf("args = %#v, want %#v", args, want))
+})
 
-func TestSplitEditorCommandRejectsUnterminatedQuote(t *testing.T) {
-	if _, err := splitEditorCommand(`code "unterminated`); err == nil {
-		t.Fatal("expected unterminated quote error")
+var _ = ginkgo.It("split editor command rejects unterminated quote", func() {
+	{
+		_, err := splitEditorCommand(`code "unterminated`)
+		gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected unterminated quote error"))
 	}
-}
+})

@@ -7,6 +7,11 @@ import (
 )
 
 func (m *Manager) Dispatch(ctx context.Context, req ToolRequest) ToolResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req.invocationContext = ctx
+
 	result := m.dispatch(ctx, req)
 	return annotateToolFailure(result)
 }

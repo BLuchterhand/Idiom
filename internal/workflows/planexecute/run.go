@@ -715,6 +715,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 	}
 
 	answer := ""
+	var observedSourceSatisfiedPaths []string
 	emitPhase := opts.OnPhase
 	executorRequiredEditPaths := scope.RequiredEditPaths
 	autoExactScopePaths := scope.RequiredEditPaths
@@ -868,6 +869,9 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 			Telemetry:                rec,
 			ScopeContract:            scope.ScopeContract,
 			AuthorizedNewFiles:       append([]string(nil), scope.AuthorizedNewFiles...),
+			OnSourceSatisfied: func(paths []string) {
+				observedSourceSatisfiedPaths = plancontract.UniqueScopePaths(append(observedSourceSatisfiedPaths, paths...))
+			},
 		}, stdout)
 		if err != nil {
 			progress.MarkPlanningFailed(string(plancontract.PlanExecuteFailurePlannerFailed), err.Error())
@@ -889,6 +893,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 	planPath, err := deps.FindPlanArtifact(cfg.Workspace.Root, sessionStart, prep.SessionID)
 	if err != nil {
 		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, scope.RequiredEditPaths, scope.AllowedEditPaths)
+		sourceSatisfiedEvidence := planExecuteObservedSourceSatisfiedEvidence(sourceSatisfiedPaths, observedSourceSatisfiedPaths)
 		if marker := planExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer, sourceSatisfiedPaths); marker != "" && plancontract.SourceSatisfiedAnswerDeclaresDecision(answer) {
 			message := fmt.Sprintf("%s: source-satisfied evidence includes unsupported inference marker %q; submit a grounded plan or report a typed blocker", string(plancontract.PlanExecuteFailureSourceSatisfiedUnsupportedEvidence), marker)
 			return rejectPlanExecuteSourceSatisfied(cfg.Workspace.Root, &progress, &progressPath, opts.JSONEvents, stdout, stderr, emitRunJSONEvent, scope, planExecuteSourceSatisfiedRejectionInput{
@@ -934,6 +939,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 				plancontract.PlanExecuteEventFieldRequiredEditPaths:               scope.RequiredEditPaths,
 				plancontract.PlanExecuteEventFieldAllowedEditPaths:                scope.AllowedEditPaths,
 				plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths: sourceSatisfiedPaths,
+				plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidence:      sourceSatisfiedEvidence,
 				plancontract.PlanExecuteEventFieldMissingEditSetObligations:       scope.EditSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
 				plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        plancontract.SourceSatisfiedMissingCoveragePaths(answer, scope.RequiredEditPaths),
 				plancontract.PlanExecuteEventFieldEditSetObligations:              scope.EditSetObligations,
@@ -954,6 +960,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 				ExitCode:                     0,
 				SourceSatisfied:              true,
 				SourceSatisfiedEvidencePaths: sourceSatisfiedPaths,
+				SourceSatisfiedEvidence:      sourceSatisfiedEvidence,
 				AcceptanceEvidenceIDs:        planExecuteHarnessAcceptanceEvidenceIDs(progress),
 			})
 		}

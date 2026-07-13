@@ -555,12 +555,17 @@ func StripPathLocationSuffix(candidate string) string {
 		}
 
 		suffix := candidate[colon+1:]
-		if suffix == "" || !AllASCIIDigits(suffix) {
+		if suffix == "" || (!AllASCIIDigits(suffix) && !isASCIILineRange(suffix)) {
 			return candidate
 		}
 
 		candidate = candidate[:colon]
 	}
+}
+
+func isASCIILineRange(value string) bool {
+	start, end, ok := strings.Cut(value, "-")
+	return ok && AllASCIIDigits(start) && AllASCIIDigits(end)
 }
 
 func AllASCIIDigits(value string) bool {

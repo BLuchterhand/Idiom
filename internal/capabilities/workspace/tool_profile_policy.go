@@ -122,7 +122,7 @@ func ToolRequestAllowedForWorkspaceProfile(req ToolRequest, profile string, poli
 	}
 
 	if strings.HasPrefix(strings.TrimSpace(req.Tool), "mcp:") &&
-		toolpolicy.Match(req.Tool, ToolPolicyRequest(req), config.ToolPolicyRules(policy.Workspace.ToolRules)) == toolpolicy.Allow {
+		toolpolicy.Match(ToolPolicyInput(req), config.ToolPolicyRules(policy.Workspace.ToolRules)) == toolpolicy.Allow {
 
 		return ToolProfileDecision{Allowed: true}
 	}

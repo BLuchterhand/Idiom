@@ -6,20 +6,19 @@ import (
 	"os"
 	"path/filepath"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	cmdconfig "idiom/internal/surfaces/cli/config"
 	localopscmd "idiom/internal/surfaces/cli/localops"
 	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
-func writeMainConfig(t testFataler) string {
-	t.Helper()
+func writeMainConfig() string {
+	ginkgo.GinkgoHelper()
 
-	root := t.TempDir()
+	root := ginkgo.GinkgoT().TempDir()
 	path := filepath.Join(root, "config.json")
-
-	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte("{}\n"), 0o644)).To(gomega.Succeed())
 
 	return path
 }
@@ -47,39 +46,26 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 }
 
-func writeMainConfigRoot(t testFataler, root string) string {
-	t.Helper()
+func writeMainConfigRoot(root string) string {
+	ginkgo.GinkgoHelper()
 
-	path := filepath.Join(t.TempDir(), "config.json")
+	path := filepath.Join(ginkgo.GinkgoT().TempDir(), "config.json")
 	configJSON := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
-
-	if err := os.WriteFile(path, []byte(configJSON+"\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(configJSON+"\n"), 0o644)).To(gomega.Succeed())
 
 	return path
 }
 
-func stageDoctorConfigWithBudget(t testFataler, root string, ctxSize int, maxTokens int) {
-	t.Helper()
+func stageDoctorConfigWithBudget(root string, ctxSize int, maxTokens int) {
+	ginkgo.GinkgoHelper()
 
 	cfg := filepath.Join(root, ".idiom", "config.json")
-	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
-		t.Fatalf("mkdir config dir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(cfg), 0o755)).To(gomega.Succeed())
 
 	body := fmt.Sprintf(`{
   "workspace": {"root": %q, "cwd": %q},
   "llama_server": {"ctx_size": %d},
   "chat": {"max_tokens": %d}
 }`, root, root, ctxSize, maxTokens)
-	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
-		t.Fatalf("stage config: %v", err)
-	}
-}
-
-type testFataler interface {
-	Helper()
-	TempDir() string
-	Fatalf(format string, args ...any)
+	gomega.Expect(os.WriteFile(cfg, []byte(body), 0o644)).To(gomega.Succeed())
 }

@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
@@ -62,7 +63,7 @@ func routeClassifierFamilyEnumList() string {
 	}, ", ")
 }
 
-func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode modepolicy.Mode) turnRoutePlan {
+func (m *promptExecutionSession) classifyTurnRoute(ctx context.Context, prompt string, mode modepolicy.Mode) turnRoutePlan {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return fallbackTurnRoute(prompt, mode)
@@ -85,7 +86,7 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode modep
 	return fallback
 }
 
-func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode modepolicy.Mode) (turnRoutePlan, bool) {
+func (m *promptExecutionSession) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode modepolicy.Mode) (turnRoutePlan, bool) {
 	if m == nil {
 		return turnRoutePlan{}, false
 	}
@@ -212,7 +213,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	return plan, plan.Family != ""
 }
 
-func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.LLMClient, mode modepolicy.Mode, classifierPrompt string, invalid string, parseErr error) (turnRoutePlan, error) {
+func (m *promptExecutionSession) repairTurnRouteClassification(ctx context.Context, client llama.LLMClient, mode modepolicy.Mode, classifierPrompt string, invalid string, parseErr error) (turnRoutePlan, error) {
 	if client == nil {
 		return turnRoutePlan{}, fmt.Errorf("no classifier client")
 	}
@@ -258,7 +259,7 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 	return parseTurnRoutePlan(text)
 }
 
-func (m *Model) logRouteClassifierDecision(fields map[string]any) {
+func (m *promptExecutionSession) logRouteClassifierDecision(fields map[string]any) {
 	if m == nil {
 		return
 	}
@@ -273,7 +274,7 @@ func (m *Model) logRouteClassifierDecision(fields map[string]any) {
 	}
 }
 
-func (m *Model) logTurnRouteCorrection(before, after turnRoutePlan) {
+func (m *promptExecutionSession) logTurnRouteCorrection(before, after turnRoutePlan) {
 	if m == nil || !routePlanCorrectionChanged(before, after) {
 		return
 	}
@@ -310,7 +311,7 @@ func routePlanCorrectionChanged(before, after turnRoutePlan) bool {
 		before.ContinuationTarget != after.ContinuationTarget
 }
 
-func (m *Model) routeClassifierChatClient() llama.LLMClient {
+func (m *promptExecutionSession) routeClassifierChatClient() llama.LLMClient {
 	if m == nil {
 		return nil
 	}
@@ -994,7 +995,7 @@ func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 	// If the classifier is unavailable or declines to route, stay conservative:
 	// natural language remains conversation, while typed slash commands enter
 	// their lanes through explicit command handlers outside this fallback.
-	if strings.EqualFold(mode.Name, "build") && promptRequestsConcreteWorkspaceCreation(prompt) {
+	if mode.Name == runprofile.AgentModeBuild && promptRequestsConcreteWorkspaceCreation(prompt) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family:           "implementation",
 			InitialLane:      "implement",
@@ -1007,7 +1008,7 @@ func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 		}, mode)
 	}
 
-	if strings.EqualFold(mode.Name, "build") && promptRequestsFileDeletionFollowup(prompt) {
+	if mode.Name == runprofile.AgentModeBuild && promptRequestsFileDeletionFollowup(prompt) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family:           "implementation",
 			InitialLane:      "implement",
@@ -1020,7 +1021,7 @@ func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 		}, mode)
 	}
 
-	if strings.EqualFold(mode.Name, "plan") {
+	if mode.Name == runprofile.AgentModePlan {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture", RouteSource: routeSourceConservativeFallback}, mode)
 	}
 
@@ -1227,7 +1228,7 @@ func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode modepolicy.Mode, workspa
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
 
-func (m *Model) workspaceAllowedToolsForTaskFamily(family string) []string {
+func (m *promptExecutionSession) workspaceAllowedToolsForTaskFamily(family string) []string {
 	if m == nil || m.workspace == nil {
 		return nil
 	}

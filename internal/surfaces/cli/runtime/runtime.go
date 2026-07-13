@@ -2,6 +2,7 @@ package cmdruntime
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -20,9 +21,8 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
+	runtimesession "idiom/internal/runtime/session"
 	"idiom/internal/runtime/sessionlog"
-	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/surfaces/tui/app"
 )
 
 type RunOptions struct {
@@ -37,6 +37,7 @@ type RunOptions struct {
 	Telemetry                   *telemetry.Recorder
 	ScopeContract               plancontract.PlanScopeContract
 	AuthorizedNewFiles          []string
+	OnSourceSatisfied           func([]string)
 }
 
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
@@ -44,6 +45,22 @@ type PromptsRunner func(config.Config, []string, RunOptions, io.Writer) ([]strin
 type ModeRunner func(config.Config, RunOptions) error
 type ListSessionsRunner func(config.Config, io.Writer) error
 type VersionRunner func([]string, io.Writer, io.Writer) int
+
+// InteractiveModel is the composition-root contract needed to launch the TUI.
+// It keeps the CLI runtime independent of the concrete TUI app package.
+type InteractiveModel interface {
+	tea.Model
+	DebugLogPath() string
+	ResumeSession(string) error
+	Close() error
+}
+
+type InteractiveModelFactory func(config.Config) InteractiveModel
+
+type SessionLifecycle interface {
+	DebugLogPath() string
+	Close() error
+}
 
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, tuiRun ModeRunner, serverRun ModeRunner, listSessions ListSessionsRunner, versionRun VersionRunner, rec *telemetry.Recorder) int {
 	var (
@@ -114,17 +131,46 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, tuiRun 
 	return 0
 }
 
-func RunTUI(cfg config.Config, opts RunOptions) error {
-	if !stdoutIsTerminal() || !stderrIsTerminal() {
-		return fmt.Errorf("interactive TUI requires a terminal; use `idiom run --prompt ...` for non-interactive runs")
+func NewTUIRunner(factory InteractiveModelFactory) ModeRunner {
+	return func(cfg config.Config, opts RunOptions) (resultErr error) {
+		if !stdoutIsTerminal() || !stderrIsTerminal() {
+			return fmt.Errorf("interactive TUI requires a terminal; use `idiom run --prompt ...` for non-interactive runs")
+		}
+		if factory == nil {
+			return fmt.Errorf("interactive model factory is required")
+		}
+
+		model := factory(cfg)
+		if model == nil {
+			return fmt.Errorf("interactive model factory returned no model")
+		}
+
+		return runInteractiveModel(
+			context.Background(),
+			model,
+			opts,
+			tea.WithAltScreen(),
+			tea.WithMouseCellMotion(),
+		)
 	}
+}
 
-	model := app.New(cfg)
+func runInteractiveModel(ctx context.Context, model InteractiveModel, opts RunOptions, programOptions ...tea.ProgramOption) (resultErr error) {
 	closeModel := ModelCloseout(opts.Telemetry, model, "tui", opts.TaskFamily)
-	unregisterCloseout := opts.Telemetry.RegisterCloseout(closeModel)
+	programContext, cancelProgram := context.WithCancel(ctx)
+	runnerDone := make(chan struct{})
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(func() {
+		cancelProgram()
+		<-runnerDone
+		_ = closeModel()
+	})
 
-	defer closeModel()
-	defer unregisterCloseout()
+	defer func() {
+		cancelProgram()
+		close(runnerDone)
+		unregisterCloseout()
+		resultErr = errors.Join(resultErr, closeModel())
+	}()
 
 	LogModelSessionLink(opts.Telemetry, "tui", model.DebugLogPath())
 
@@ -134,7 +180,13 @@ func RunTUI(cfg config.Config, opts RunOptions) error {
 		}
 	}
 
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	options := make([]tea.ProgramOption, 0, len(programOptions)+2)
+	options = append(options, programOptions...)
+	options = append(options, tea.WithContext(programContext))
+	if opts.Telemetry != nil {
+		options = append(options, tea.WithoutSignalHandler())
+	}
+	program := tea.NewProgram(model, options...)
 	if _, err := program.Run(); err != nil {
 		return err
 	}
@@ -150,105 +202,89 @@ func stderrIsTerminal() bool {
 	return term.IsTerminal(int(os.Stderr.Fd()))
 }
 
-func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.Writer) (string, error) {
-	model := app.New(cfg)
-	closeModel := ModelCloseout(opts.Telemetry, model, "prompt", opts.TaskFamily)
-	unregisterCloseout := opts.Telemetry.RegisterCloseout(closeModel)
-
-	defer closeModel()
-	defer unregisterCloseout()
-
-	model.SetForcedTaskFamily(opts.TaskFamily)
-	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
-	model.SetMaxTokensOverride(opts.MaxTokensOverride)
-	model.SetDisableThinkingOverride(opts.DisableThinking)
-	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
-	model.SetNonInteractive(true)
-	if opts.UseActiveModel {
-		model.UseConfigPlannerModel()
-	}
-
-	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) {
-		model.SetPlanExecuteScope(opts.ScopeContract, opts.AuthorizedNewFiles)
-	}
-
-	LogModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())
-
-	if opts.Resume != "" {
-		path := sessionlog.ResolveSessionLogPath(cfg, opts.Resume)
-		if err := model.LoadHistoryFromSession(path); err != nil {
-			return "", fmt.Errorf("resume %q: %w", opts.Resume, err)
-		}
-	}
-
-	if opts.JSONEvents {
-		sessionID := ""
-		if path := model.DebugLogPath(); path != "" {
-			sessionID = sessionlog.SessionIDFromPath(path)
-		}
-
-		model.SetJSONEventStream(stdout, sessionID)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Chat.RequestTimeoutSeconds+cfg.Chat.ServerStartTimeoutSecs)*time.Second)
-	defer cancel()
-
-	return model.RunPromptOnce(ctx, prompt)
-}
-
-func RunPromptsOnce(cfg config.Config, prompts []string, opts RunOptions, stdout io.Writer) ([]string, error) {
-	model := app.New(cfg)
-	closeModel := ModelCloseout(opts.Telemetry, model, "turns_file", opts.TaskFamily)
-	unregisterCloseout := opts.Telemetry.RegisterCloseout(closeModel)
-
-	defer closeModel()
-	defer unregisterCloseout()
-
-	model.SetForcedTaskFamily(opts.TaskFamily)
-	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
-	model.SetMaxTokensOverride(opts.MaxTokensOverride)
-	model.SetDisableThinkingOverride(opts.DisableThinking)
-	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
-	model.SetNonInteractive(true)
-	LogModelSessionLink(opts.Telemetry, "turns_file", model.DebugLogPath())
-
-	if opts.Resume != "" {
-		path := sessionlog.ResolveSessionLogPath(cfg, opts.Resume)
-		if err := model.LoadHistoryFromSession(path); err != nil {
-			return nil, fmt.Errorf("resume %q: %w", opts.Resume, err)
-		}
-	}
-
-	if opts.JSONEvents {
-		sessionID := ""
-		if path := model.DebugLogPath(); path != "" {
-			sessionID = sessionlog.SessionIDFromPath(path)
-		}
-
-		model.SetJSONEventStream(stdout, sessionID)
-	}
-
-	answers := make([]string, 0, len(prompts))
-	for _, prompt := range prompts {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Chat.RequestTimeoutSeconds+cfg.Chat.ServerStartTimeoutSecs)*time.Second)
-		answer, err := model.RunPromptOnce(ctx, prompt)
-
-		cancel()
-
+func NewHeadlessRunners(factory runtimesession.Factory) (PromptRunner, PromptsRunner) {
+	runPrompt := func(cfg config.Config, prompt string, opts RunOptions, stdout io.Writer) (answer string, resultErr error) {
+		s, err := openHeadlessSession(cfg, factory, opts, stdout, "prompt")
 		if err != nil {
-			return answers, err
+			return "", err
 		}
+		defer func() {
+			resultErr = errors.Join(resultErr, s.close())
+		}()
 
-		answers = append(answers, answer)
+		return s.runtime.RunPrompt(context.Background(), prompt)
 	}
 
-	return answers, nil
+	runPrompts := func(cfg config.Config, prompts []string, opts RunOptions, stdout io.Writer) (answers []string, resultErr error) {
+		s, err := openHeadlessSession(cfg, factory, opts, stdout, "turns_file")
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			resultErr = errors.Join(resultErr, s.close())
+		}()
+
+		return s.runtime.RunPrompts(context.Background(), prompts)
+	}
+
+	return runPrompt, runPrompts
 }
 
-func ModelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskFamily string) func() {
-	var once sync.Once
+type headlessSession struct {
+	runtime            *runtimesession.Session
+	closeout           func() error
+	unregisterCloseout func()
+}
 
-	return func() {
+func openHeadlessSession(cfg config.Config, factory runtimesession.Factory, opts RunOptions, stdout io.Writer, mode string) (*headlessSession, error) {
+	runtimeSession, err := runtimesession.Open(cfg, factory, runtimesession.Options{
+		Resume:                      opts.Resume,
+		JSONEvents:                  opts.JSONEvents,
+		TaskFamily:                  opts.TaskFamily,
+		PlannerOwnedVerification:    opts.PlannerOwnedVerification,
+		MaxTokensOverride:           opts.MaxTokensOverride,
+		DisableThinking:             opts.DisableThinking,
+		ReviewRepairOpenObligations: append([]string(nil), opts.ReviewRepairOpenObligations...),
+		UseActiveModel:              opts.UseActiveModel,
+		ScopeContract:               opts.ScopeContract,
+		AuthorizedNewFiles:          append([]string(nil), opts.AuthorizedNewFiles...),
+		OnSourceSatisfied:           opts.OnSourceSatisfied,
+	}, stdout)
+	if err != nil {
+		return nil, err
+	}
+
+	closeout := ModelCloseout(opts.Telemetry, runtimeSession, mode, opts.TaskFamily)
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(func() { _ = closeout() })
+	LogModelSessionLink(opts.Telemetry, mode, runtimeSession.DebugLogPath())
+
+	return &headlessSession{
+		runtime:            runtimeSession,
+		closeout:           closeout,
+		unregisterCloseout: unregisterCloseout,
+	}, nil
+}
+
+func (s *headlessSession) close() error {
+	if s == nil {
+		return nil
+	}
+	var closeErr error
+	if s.closeout != nil {
+		closeErr = s.closeout()
+	}
+	if s.unregisterCloseout != nil {
+		s.unregisterCloseout()
+	}
+
+	return closeErr
+}
+
+func ModelCloseout(rec *telemetry.Recorder, model SessionLifecycle, mode string, taskFamily string) func() error {
+	var once sync.Once
+	var closeErr error
+
+	return func() error {
 		once.Do(func() {
 			sessionID := ""
 			debugLogPath := ""
@@ -271,9 +307,12 @@ func ModelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskF
 			}
 
 			if model != nil {
-				model.Close()
-
-				fields["model_closed"] = true
+				closeErr = model.Close()
+				if closeErr == nil {
+					fields["model_closed"] = true
+				} else {
+					fields["model_close_error"] = closeErr.Error()
+				}
 			}
 
 			telemetry.LogPhase(rec, "model_session_closeout", fields)
@@ -282,6 +321,8 @@ func ModelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskF
 				telemetry.LogPhase(rec, "implement_session_closeout", fields)
 			}
 		})
+
+		return closeErr
 	}
 }
 

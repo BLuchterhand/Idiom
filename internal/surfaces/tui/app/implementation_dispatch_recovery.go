@@ -18,6 +18,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
+	runtimesession "idiom/internal/runtime/session"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/implementationdispatch"
@@ -26,7 +27,7 @@ import (
 	"idiom/internal/workflows/recovery"
 )
 
-func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.PromptRunner {
+func (m *promptExecutionSession) newPlanExecutePromptRunner(ctx context.Context) planexecute.PromptRunner {
 	if m == nil {
 		return func(config.Config, string, planexecute.RunOptions, io.Writer) (string, error) {
 			return "", fmt.Errorf("plan-execute prompt runner unavailable")
@@ -34,6 +35,11 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 	}
 
 	return func(cfg config.Config, prompt string, opts planexecute.RunOptions, stdout io.Writer) (string, error) {
+		executionCtx := workspace.WithExecutionSessionID(ctx, cfg.Workspace.SessionID)
+		executionCtx = workspace.WithMutationApprover(executionCtx, &tuiMutationApprover{
+			session:   m,
+			sessionID: strings.TrimSpace(cfg.Workspace.SessionID),
+		})
 		restoreRoute := m.applyPlanExecutePromptRunnerRoute(ctx, opts)
 		restore := m.applyPlanExecutePromptRunnerState(cfg, opts, stdout)
 
@@ -64,11 +70,11 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 			restoreRoute()
 		}()
 
-		return m.RunPromptOnce(ctx, prompt)
+		return m.runPromptOnce(executionCtx, prompt)
 	}
 }
 
-func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts planexecute.RunOptions) func() {
+func (m *promptExecutionSession) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts planexecute.RunOptions) func() {
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) {
 		return func() {}
 	}
@@ -76,7 +82,7 @@ func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts plan
 	return m.applyExecutorPromptRoute(ctx, "plan-execute in-process runner", opts.UseActiveModel)
 }
 
-func (m *Model) applyExecutorPromptRoute(ctx context.Context, routeLabel string, useActiveModel bool) func() {
+func (m *promptExecutionSession) applyExecutorPromptRoute(ctx context.Context, routeLabel string, useActiveModel bool) func() {
 	if m == nil || m.implementerClient == nil {
 		return func() {}
 	}
@@ -87,17 +93,17 @@ func (m *Model) applyExecutorPromptRoute(ctx context.Context, routeLabel string,
 	}
 
 	if useActiveModel {
-		m.logMessage("dispatch_route", fmt.Sprintf("%s using active model %s for fallback", routeLabel, strings.TrimSpace(m.activeModelDisplayID())))
+		m.logMessage("dispatch_route", fmt.Sprintf("%s using active model %s for fallback", routeLabel, strings.TrimSpace(activeModelDisplayID(m.modelDisplayID, m.modelID))))
 
 		return func() {}
 	}
 
-	if sameLlamaTarget(m.executorSpec, m.plannerSpec) {
+	if runtimesession.SameLlamaTarget(m.executorSpec, m.plannerSpec) {
 		return func() {}
 	}
 
 	if !m.executorPromptRouteReachable(ctx) {
-		m.logMessage("dispatch_route", fmt.Sprintf("%s falling back to active model %s because executor model %s is not reachable", routeLabel, strings.TrimSpace(m.activeModelDisplayID()), strings.TrimSpace(resolveModelDisplayID(m.executorSpec, m.executorSpec.Model))))
+		m.logMessage("dispatch_route", fmt.Sprintf("%s falling back to active model %s because executor model %s is not reachable", routeLabel, strings.TrimSpace(activeModelDisplayID(m.modelDisplayID, m.modelID)), strings.TrimSpace(resolveModelDisplayID(m.executorSpec, m.executorSpec.Model))))
 
 		return func() {}
 	}
@@ -114,7 +120,7 @@ func (m *Model) applyExecutorPromptRoute(ctx context.Context, routeLabel string,
 	m.modelDisplayID = resolveModelDisplayID(m.executorSpec, m.executorSpec.Model)
 	m.modelThinkingFloor = m.executorSpec.IsHosted() || m.executorSpec.IsMLX()
 	m.invalidateComposedPrompt()
-	m.logMessage("dispatch_route", fmt.Sprintf("%s using executor model %s", routeLabel, strings.TrimSpace(m.activeModelDisplayID())))
+	m.logMessage("dispatch_route", fmt.Sprintf("%s using executor model %s", routeLabel, strings.TrimSpace(activeModelDisplayID(m.modelDisplayID, m.modelID))))
 
 	return func() {
 		m.client = priorClient
@@ -126,7 +132,7 @@ func (m *Model) applyExecutorPromptRoute(ctx context.Context, routeLabel string,
 	}
 }
 
-func (m *Model) executorPromptRouteReachable(ctx context.Context) bool {
+func (m *promptExecutionSession) executorPromptRouteReachable(ctx context.Context) bool {
 	if m == nil || m.implementerClient == nil {
 		return false
 	}
@@ -140,18 +146,12 @@ func (m *Model) executorPromptRouteReachable(ctx context.Context) bool {
 	return err == nil && len(models) > 0
 }
 
-func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planexecute.RunOptions, stdout io.Writer) func() {
+func (m *promptExecutionSession) applyPlanExecutePromptRunnerState(cfg config.Config, opts planexecute.RunOptions, stdout io.Writer) func() {
 	if m == nil {
 		return func() {}
 	}
 
 	priorSessionID := m.cfg.Workspace.SessionID
-	priorWorkspaceSessionID := ""
-
-	if m.workspace != nil {
-		priorWorkspaceSessionID = m.workspace.SessionID()
-	}
-
 	priorImplementationDispatch := m.cfg.Chat.ImplementationDispatch
 	priorForcedTaskFamily := m.forcedTaskFamily
 	priorPlannerOwnedVerification := m.plannerOwnedVerification
@@ -164,53 +164,48 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorPlanExecuteAuthorizedNewFiles := append([]string(nil), m.planExecuteAuthorizedNewFiles...)
 	priorPlanExecuteWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
 	priorPlanExecuteWriteEnvelopeExplicit := m.planExecuteWriteEnvelopeExplicit
+	priorPlanExecuteSourceSatisfiedObserver := m.planExecuteSourceSatisfiedObserver
 	disableThinking := priorDisableThinkingOverride || opts.DisableThinking ||
 		(workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) && m.shouldDisableThinkingForPlanExecutePlanner())
 
 	m.planExecuteActive = true
 	m.planExecuteScopeContract = opts.ScopeContract.Normalized()
 	m.planExecuteAuthorizedNewFiles = appendUniqueBriefStrings(nil, opts.AuthorizedNewFiles...)
+	m.planExecuteSourceSatisfiedObserver = opts.OnSourceSatisfied
 	m.cfg.Workspace.SessionID = cfg.Workspace.SessionID
 
-	if m.workspace != nil {
-		m.workspace.SetSessionID(cfg.Workspace.SessionID)
-	}
-
 	m.cfg.Chat.ImplementationDispatch = ""
-	m.SetForcedTaskFamily(opts.TaskFamily)
-	m.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
-	m.SetMaxTokensOverride(opts.MaxTokensOverride)
-	m.SetDisableThinkingOverride(disableThinking)
-	m.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
+	m.forcedTaskFamily = strings.TrimSpace(opts.TaskFamily)
+	m.plannerOwnedVerification = opts.PlannerOwnedVerification
+	m.maxTokensOverride = max(0, opts.MaxTokensOverride)
+	m.disableThinkingOverride = disableThinking
+	m.forcedReadinessOpenObligations = append([]string(nil), opts.ReviewRepairOpenObligations...)
 
 	if opts.JSONEvents && stdout != nil {
-		m.SetJSONEventStream(stdout, cfg.Workspace.SessionID)
+		m.eventStream = newJSONEventStream(stdout, cfg.Workspace.SessionID)
 	}
 
 	return func() {
 		m.planExecuteActive = priorPlanExecuteActive
 		m.cfg.Workspace.SessionID = priorSessionID
 
-		if m.workspace != nil {
-			m.workspace.SetSessionID(priorWorkspaceSessionID)
-		}
-
 		m.cfg.Chat.ImplementationDispatch = priorImplementationDispatch
-		m.SetForcedTaskFamily(priorForcedTaskFamily)
-		m.SetPlannerOwnedVerification(priorPlannerOwnedVerification)
-		m.SetMaxTokensOverride(priorMaxTokensOverride)
-		m.SetDisableThinkingOverride(priorDisableThinkingOverride)
-		m.SetForcedReadinessOpenObligations(priorForcedReadinessOpenObligations)
+		m.forcedTaskFamily = priorForcedTaskFamily
+		m.plannerOwnedVerification = priorPlannerOwnedVerification
+		m.maxTokensOverride = priorMaxTokensOverride
+		m.disableThinkingOverride = priorDisableThinkingOverride
+		m.forcedReadinessOpenObligations = priorForcedReadinessOpenObligations
 
 		m.planExecuteScopeContract = priorPlanExecuteScopeContract
 		m.planExecuteAuthorizedNewFiles = priorPlanExecuteAuthorizedNewFiles
 		m.planExecuteWriteEnvelope = priorPlanExecuteWriteEnvelope
 		m.planExecuteWriteEnvelopeExplicit = priorPlanExecuteWriteEnvelopeExplicit
+		m.planExecuteSourceSatisfiedObserver = priorPlanExecuteSourceSatisfiedObserver
 		m.eventStream = priorEventStream
 	}
 }
 
-func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan) (string, error) {
+func (m *promptExecutionSession) runImplementationViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan) (string, error) {
 	_, _, planDocuments, resolutionBlockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, m.cfg)
 	if len(resolutionBlockers) > 0 {
 		var refs []string
@@ -240,11 +235,18 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 	return m.runImplementationPlanDocumentsViaPlanExecute(ctx, prompt, plan, planDocuments)
 }
 
-func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationdispatch.PlanDocument) (string, error) {
+func (m *promptExecutionSession) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationdispatch.PlanDocument) (string, error) {
 	planDocuments = implementationdispatch.PlanDocumentsWithDirtyAllowance(prompt, planDocuments)
 	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
-
-	requiredPaths, allowedPaths := implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, m.cfg)
+	editScope := implementationdispatch.ResolvePlanDocumentEditScope(implementationdispatch.PlanDocumentEditScopeInput{
+		WorkspaceRoot: root,
+		RequiredPaths: intake.RequiredTargets,
+		AllowedPaths:  intake.AllowedTargets,
+		PlanDocuments: planDocuments,
+	})
+	requiredPaths := editScope.RequiredPaths
+	allowedPaths := editScope.AllowedPaths
 
 	if closed := implementationdispatch.PlanDocumentsTerminalAtoms(planDocuments); len(closed) == len(planDocuments) && len(closed) > 0 {
 		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d closed design-doc atom(s)", len(closed)))
@@ -308,7 +310,14 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		}
 
 		planDocuments = refinedPlanDocuments
-		requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
+		editScope = implementationdispatch.ResolvePlanDocumentEditScope(implementationdispatch.PlanDocumentEditScopeInput{
+			WorkspaceRoot: root,
+			RequiredPaths: intake.RequiredTargets,
+			AllowedPaths:  intake.AllowedTargets,
+			PlanDocuments: planDocuments,
+		})
+		requiredPaths = editScope.RequiredPaths
+		allowedPaths = editScope.AllowedPaths
 
 		if refinedBlocked := implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
 			WorkspaceRoot: m.cfg.Workspace.Root,
@@ -418,7 +427,14 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 			}
 
 			planDocuments = refinedPlanDocuments
-			requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
+			editScope = implementationdispatch.ResolvePlanDocumentEditScope(implementationdispatch.PlanDocumentEditScopeInput{
+				WorkspaceRoot: root,
+				RequiredPaths: intake.RequiredTargets,
+				AllowedPaths:  intake.AllowedTargets,
+				PlanDocuments: planDocuments,
+			})
+			requiredPaths = editScope.RequiredPaths
+			allowedPaths = editScope.AllowedPaths
 
 			if refinedBlocked := implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
 				WorkspaceRoot: m.cfg.Workspace.Root,
@@ -486,7 +502,7 @@ func implementationDispatchRefinedDocumentIsDispatchable(ctx context.Context, cf
 	})) == 0
 }
 
-func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, atomDocuments []implementationdispatch.PlanDocument) (string, error) {
+func (m *promptExecutionSession) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, atomDocuments []implementationdispatch.PlanDocument) (string, error) {
 	if len(atomDocuments) == 0 {
 		return "Plan-execute dispatch blocked before the planner ran.\n\nThe referenced design document needed sub-atoms, but no dispatchable atom briefs could be materialized.", nil
 	}
@@ -566,7 +582,7 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 	return strings.TrimSpace(b.String()), nil
 }
 
-func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt string, plan promptExecutionPlan, scope planexecute.ContinuationScope) (string, error) {
+func (m *promptExecutionSession) runPersistedPlanExecuteContinuation(ctx context.Context, prompt string, plan promptExecutionPlan, scope planexecute.ContinuationScope) (string, error) {
 	allow, blanket, ok := planExecuteApprovalDecisionFromOperatorInput(prompt)
 	if !ok || !allow {
 		return "", fmt.Errorf("plan-execute continuation requires operator approval input")
@@ -579,10 +595,6 @@ func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt 
 	requiredPaths := appendUniqueBriefStrings(nil, scope.RequiredEditPaths...)
 	authorizedNewFiles := appendUniqueBriefStrings(plan.runtimeBrief.AuthorizedNewFiles, scope.AuthorizedNewFiles...)
 	planExecuteDeps := planexecuteadapters.Dependencies()
-
-	if len(requiredPaths) > 0 {
-		m.recordRollbackSnapshotsForPaths(requiredPaths)
-	}
 
 	opts := planexecute.Options{
 		Context:               ctx,
@@ -633,9 +645,6 @@ func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt 
 
 	var outBuf, errBuf bytes.Buffer
 
-	m.beginPlanExecuteApprovalSession()
-	defer m.endPlanExecuteApprovalSession()
-
 	result := planexecute.RunExecutorContinuationWithDependencies(m.cfg, opts, promptRun, nil, &outBuf, &errBuf, planExecuteDeps)
 
 	m.lastPlanExecuteRunResult = &result
@@ -663,7 +672,7 @@ func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt 
 	return answer, nil
 }
 
-func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, requiredPaths []string, allowedPaths []string, planDocuments []implementationdispatch.PlanDocument) (string, error) {
+func (m *promptExecutionSession) runSingleImplementationPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, requiredPaths []string, allowedPaths []string, planDocuments []implementationdispatch.PlanDocument) (string, error) {
 	brief := composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
 	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, m.cfg)
@@ -753,10 +762,8 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 	brief = planexecute.ComposePlannerPromptWithContextPack(brief, contextPackSection)
 
 	if len(requiredPaths) > 0 {
-		m.recordRollbackSnapshotsForPaths(requiredPaths)
 		m.logMessage("dispatch_scope", fmt.Sprintf("derived %d required edit path(s) for plan-execute dispatch", len(requiredPaths)))
 	} else if len(allowedPaths) > 0 {
-		m.recordRollbackSnapshotsForPaths(allowedPaths)
 		m.logMessage("dispatch_scope", fmt.Sprintf("derived %d candidate edit path(s) from referenced plan document", len(allowedPaths)))
 	}
 
@@ -774,11 +781,16 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		scopeExtractionPolicy = planexecute.ScopeExtractionFrozen
 	}
 
+	invocationBinding, bindingErr := featureplanner.ParsePlanExecuteInvocationBinding(prompt)
+	if bindingErr != nil {
+		return "", bindingErr
+	}
+
 	opts := planexecute.Options{
 		Context:               ctx,
 		Prompt:                brief,
 		Model:                 m.implementationDispatchPlanExecuteModelOverride(),
-		SessionID:             featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt),
+		SessionID:             invocationBinding.SessionID,
 		RequiredEditPaths:     requiredPaths,
 		AllowedEditPaths:      allowedPaths,
 		EditSetObligations:    editSetObligations,
@@ -803,7 +815,12 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 			m.queueUIEvent(planPhaseMsg{phase: "executing", detail: fmt.Sprintf("Edit %d/%d %s (%s)", step, total, filepath.Base(path), label)})
 		},
-		OnPlanApproval: m.requestPlanExecuteApproval,
+		OnPlanApproval: func(approvalCtx context.Context, request planexecute.PlanApprovalRequest) planexecute.PlanApprovalDecision {
+			if decision, covered := planExecuteAuthorizedNewFileApproval(request, authorizedNewFiles); covered {
+				return decision
+			}
+			return m.requestPlanExecuteApproval(approvalCtx, request)
+		},
 	}
 	promptRun := m.newPlanExecutePromptRunner(ctx)
 
@@ -812,9 +829,6 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 	m.queueUIEvent(infoMsg{text: "Dispatching to plan-execute..."})
 
 	var outBuf, errBuf bytes.Buffer
-
-	m.beginPlanExecuteApprovalSession()
-	defer m.endPlanExecuteApprovalSession()
 
 	result := planexecute.RunWithDependencies(m.cfg, opts, promptRun, nil, &outBuf, &errBuf, planExecuteDeps)
 
@@ -860,7 +874,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 	return answer, nil
 }
 
-func (m *Model) implementationDispatchPlanExecuteModelOverride() string {
+func (m *promptExecutionSession) implementationDispatchPlanExecuteModelOverride() string {
 	if m == nil || !m.plannerSpec.IsHosted() {
 		return ""
 	}
@@ -880,7 +894,10 @@ func humanPlanExecuteExecutionRecoveryOpenMessage(root string, result planexecut
 		return "", false
 	}
 
-	state, _, found, _ := planexecute.TryLoadProgressState(root, result.SessionID)
+	state, statePath, found, err := planexecute.TryLoadProgressState(root, result.SessionID)
+	if err != nil {
+		return humanPlanExecuteProgressStateLoadFailureMessage(result, statePath), true
+	}
 	requiredPaths := appendUniqueBriefStrings(nil, fallbackRequiredPaths...)
 
 	if found && len(state.RequiredEditPaths) > 0 {
@@ -966,13 +983,37 @@ func humanPlanExecuteNewFileAuthorizationRequiredMessage(paths []string) string 
 	return strings.TrimSpace(b.String())
 }
 
-func (m *Model) humanPlanExecuteMissingNewFileAuthorizationMessage(result planexecute.RunResult, authorizedNewFiles []string) (string, bool) {
+func humanPlanExecuteProgressStateLoadFailureMessage(result planexecute.RunResult, statePath string) string {
+	var b strings.Builder
+
+	b.WriteString("plan-execute: progress_state_invalid\n")
+	fmt.Fprintf(&b, "session_id: %s\n", strings.TrimSpace(result.SessionID))
+
+	if path := strings.TrimSpace(firstNonEmpty(statePath, result.ResumeStatePath)); path != "" {
+		fmt.Fprintf(&b, "progress_state: %s\n", path)
+	}
+
+	if failureKind := strings.TrimSpace(result.FailureKind); failureKind != "" {
+		fmt.Fprintf(&b, "failure_kind: %s\n", failureKind)
+	}
+
+	b.WriteString("diagnostic: the progress state is unreadable or invalid; recovery scope and authorization were not inferred\n")
+	b.WriteString("next: inspect or repair the progress state before retrying recovery\n")
+
+	return strings.TrimSpace(b.String())
+}
+
+func (m *promptExecutionSession) humanPlanExecuteMissingNewFileAuthorizationMessage(result planexecute.RunResult, authorizedNewFiles []string) (string, bool) {
 	if implementationDispatchPlanExecuteRunFailureKind(result) != plancontract.PlanExecuteFailureMissingEditPathWithoutNewFileAuth {
 		return "", false
 	}
 
 	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
-	state, _, found, _ := planexecute.TryLoadProgressState(root, result.SessionID)
+	state, statePath, found, err := planexecute.TryLoadProgressState(root, result.SessionID)
+	if err != nil {
+		m.logMessage("dispatch_scope", fmt.Sprintf("plan-execute progress state load failed; authorization recovery stopped (session=%s state=%s)", strings.TrimSpace(result.SessionID), strings.TrimSpace(statePath)))
+		return humanPlanExecuteProgressStateLoadFailureMessage(result, statePath), true
+	}
 	if !found {
 		return "", false
 	}
@@ -1031,7 +1072,7 @@ func implementationDispatchShouldChainMissingEditRecovery(result planexecute.Run
 type implementationDispatchMissingEditRetrySpec struct {
 	failureKind          plancontract.PlanExecuteFailureKind
 	obligationKind       plancontract.EditSetObligationKind
-	allowedPaths         func(*Model, implementationDispatchPlanExecuteFailure) []string
+	allowedPaths         func(*promptExecutionSession, implementationDispatchPlanExecuteFailure) ([]string, error)
 	appendAddendum       func(string, []string) string
 	alreadyCarriedLog    string
 	alreadyCarriedReason string
@@ -1045,14 +1086,14 @@ type implementationDispatchMissingEditRetrySpec struct {
 	finalReason          string
 }
 
-func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (string, bool, error) {
+func (m *promptExecutionSession) handlePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (string, bool, error) {
 	const maxPlannerBlockedChainDepth = 3
 
 	if failure.PlannerBlockedChainDepth >= maxPlannerBlockedChainDepth {
 		m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked chain depth %d reached limit %d; surfacing to user", failure.PlannerBlockedChainDepth, maxPlannerBlockedChainDepth))
 
 		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   fmt.Sprintf("plan-execute retry chain depth %d exceeded; surfacing blocker to user", failure.PlannerBlockedChainDepth),
 		}), true, nil
 	}
@@ -1065,11 +1106,9 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 
 	for _, spec := range []implementationDispatchMissingEditRetrySpec{
 		{
-			failureKind:    plancontract.PlanExecuteFailureMissingRequestedTestEdit,
-			obligationKind: plancontract.EditSetObligationKindTestEdit,
-			allowedPaths: func(m *Model, failure implementationDispatchPlanExecuteFailure) []string {
-				return m.implementationDispatchAllowedPathsForMissingRequestedTestEdit(failure)
-			},
+			failureKind:          plancontract.PlanExecuteFailureMissingRequestedTestEdit,
+			obligationKind:       plancontract.EditSetObligationKindTestEdit,
+			allowedPaths:         (*promptExecutionSession).implementationDispatchAllowedPathsForMissingRequestedTestEdit,
 			appendAddendum:       recovery.AppendMissingRequestedTestEditRecoveryAddendum,
 			alreadyCarriedLog:    "surfacing missing test-edit rejection after typed test obligation was already carried",
 			alreadyCarriedReason: "test-edit obligation was already explicit, but the retry still did not produce a valid test edit",
@@ -1083,11 +1122,9 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			finalReason:          "automatic missing-test retry did not produce a valid test edit plan",
 		},
 		{
-			failureKind:    plancontract.PlanExecuteFailureMissingRequestedImplementationEdit,
-			obligationKind: plancontract.EditSetObligationKindImplementationEdit,
-			allowedPaths: func(m *Model, failure implementationDispatchPlanExecuteFailure) []string {
-				return m.implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(failure)
-			},
+			failureKind:          plancontract.PlanExecuteFailureMissingRequestedImplementationEdit,
+			obligationKind:       plancontract.EditSetObligationKindImplementationEdit,
+			allowedPaths:         (*promptExecutionSession).implementationDispatchAllowedPathsForMissingRequestedImplementationEdit,
 			appendAddendum:       recovery.AppendMissingRequestedImplementationEditRecoveryAddendum,
 			alreadyCarriedLog:    "surfacing missing implementation-edit rejection after typed implementation obligation was already carried",
 			alreadyCarriedReason: "implementation-edit obligation was already explicit, but the retry still did not produce a valid implementation edit",
@@ -1157,14 +1194,14 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}
 
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   "automatic discovered-scope retry did not produce a plan",
 		}), true, nil
 	}
 
 	if path, ok := planExecuteRequiredSourceReadBlockerPath(failure); ok {
 		decision := recovery.PlanExecuteRecoveryDecision{
-			Decision:      "retry",
+			Decision:      recovery.PlanExecuteRecoveryDecisionRetry,
 			Reason:        "planner blocker names an unread required source path that a retry can satisfy with a source-body read",
 			RetryAddendum: fmt.Sprintf("First read source for `%s` using a source-body route, then submit the plan when every required path has source evidence.", path),
 		}
@@ -1214,7 +1251,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}
 
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   "automatic source-read retry did not produce a plan",
 		}), true, nil
 	}
@@ -1258,25 +1295,26 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}
 
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   "active-model fallback did not produce a plan",
 		}), true, nil
 	}
 
-	decision, raw, err := m.decidePlanExecutePlannerBlocked(ctx, failure)
+	decisionResult, err := m.requestPlanExecutePlannerBlockedDecision(ctx, failure)
 	if err != nil {
 		m.logMessage("dispatch_recovery", "recovery decision failed; surfacing planner blocker: "+err.Error())
 
 		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   "recovery decision failed: " + err.Error(),
 		}), true, nil
 	}
+	decision := decisionResult.Decision
 
-	m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked decision=%s reason=%s", strings.TrimSpace(decision.Decision), textutil.TruncateWithByteCount(strings.TrimSpace(decision.Reason), 240)))
+	m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked decision=%s reason=%s", decision.Decision, textutil.TruncateWithByteCount(strings.TrimSpace(decision.Reason), 240)))
 
-	if textutil.EqualTrimFold(decision.Decision, "retry") {
-		retryPrompt := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, raw)
+	if decision.Decision == recovery.PlanExecuteRecoveryDecisionRetry {
+		retryPrompt := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, decisionResult.Raw)
 		retryOptions := failure.Options
 
 		retryOptions.Prompt = retryPrompt
@@ -1322,7 +1360,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}
 
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   "automatic retry did not produce a plan",
 			Message:  strings.TrimSpace(decision.Message),
 		}), true, nil
@@ -1331,22 +1369,27 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 	return humanPlanExecutePlannerBlockedMessage(failure, decision), true, nil
 }
 
-func (m *Model) handlePlanExecuteMissingEditRetry(ctx context.Context, failure implementationDispatchPlanExecuteFailure, spec implementationDispatchMissingEditRetrySpec) (string, bool, error) {
+func (m *promptExecutionSession) handlePlanExecuteMissingEditRetry(ctx context.Context, failure implementationDispatchPlanExecuteFailure, spec implementationDispatchMissingEditRetrySpec) (string, bool, error) {
 	if implementationDispatchOptionsAlreadyCarriedEditSetObligation(failure.Options, spec.obligationKind) {
 		m.logMessage("dispatch_recovery", spec.alreadyCarriedLog)
 
 		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   spec.alreadyCarriedReason,
 		}), true, nil
 	}
 
-	allowedPaths := spec.allowedPaths(m, failure)
+	allowedPaths, err := spec.allowedPaths(m, failure)
+	if err != nil {
+		m.logMessage("dispatch_recovery", "progress state load failed; missing-edit retry stopped: "+err.Error())
+
+		return humanPlanExecuteProgressStateLoadFailureMessage(failure.Result, failure.Result.ResumeStatePath), true, nil
+	}
 	if len(allowedPaths) == 0 {
 		m.logMessage("dispatch_recovery", spec.noScopeLog)
 
 		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   spec.noScopeReason,
 		}), true, nil
 	}
@@ -1391,13 +1434,13 @@ func (m *Model) handlePlanExecuteMissingEditRetry(ctx context.Context, failure i
 
 	if implementationDispatchPlanExecuteRunFailureKind(retryResult) == plancontract.PlanExecuteFailureExecutorFailed {
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
-			Decision: "surface",
+			Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 			Reason:   spec.executorFailedReason,
 		}), true, nil
 	}
 
 	return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
-		Decision: "surface",
+		Decision: recovery.PlanExecuteRecoveryDecisionSurface,
 		Reason:   spec.finalReason,
 	}), true, nil
 }
@@ -1523,14 +1566,14 @@ func uniqueImplementationDispatchStrings(values []string) []string {
 	return out
 }
 
-func (m *Model) resolveUnscopedImplementationAllowedPaths(ctx context.Context, prompt string) []string {
+func (m *promptExecutionSession) resolveUnscopedImplementationAllowedPaths(ctx context.Context, prompt string) []string {
 	if m == nil {
 		return nil
 	}
 
 	wsCfg := m.cfg.Workspace
 	if strings.TrimSpace(wsCfg.Root) == "" {
-		wsCfg.Root = m.projectRoot()
+		wsCfg.Root = resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace)
 	}
 
 	if strings.TrimSpace(wsCfg.CWD) == "" {
@@ -1543,7 +1586,7 @@ func (m *Model) resolveUnscopedImplementationAllowedPaths(ctx context.Context, p
 
 	for _, filePattern := range implementationDispatchFallbackFilePatterns(prompt) {
 		result := manager.Execute(ctx, workspace.ToolRequest{
-			Tool:            "search_files",
+			Tool:            workspace.ToolNameSearchFiles,
 			Path:            ".",
 			Pattern:         filePattern,
 			NamedGap:        "locate candidate source path for unscoped TUI implementation dispatch",
@@ -1568,7 +1611,7 @@ func (m *Model) resolveUnscopedImplementationAllowedPaths(ctx context.Context, p
 	}
 
 	result := manager.Execute(ctx, workspace.ToolRequest{
-		Tool:              "search_content",
+		Tool:              workspace.ToolNameSearchContent,
 		Path:              ".",
 		Pattern:           pattern,
 		NamedGap:          "locate candidate source path for unscoped TUI implementation dispatch",
@@ -1910,7 +1953,7 @@ func isImplementationDispatchContextPackSectionBoundary(line string) bool {
 	return false
 }
 
-func (m *Model) implementationDispatchAllowedPathsFromPreloadedContextPack(prompt string, contextPackSection string) []string {
+func (m *promptExecutionSession) implementationDispatchAllowedPathsFromPreloadedContextPack(prompt string, contextPackSection string) []string {
 	if strings.TrimSpace(contextPackSection) == "" {
 		return nil
 	}
@@ -2244,7 +2287,7 @@ func implementationDispatchSearchPathScore(path string, text string, terms []str
 	return score
 }
 
-func (m *Model) planExecuteFailureHasPlanExecuteHandoff(failure implementationDispatchPlanExecuteFailure) bool {
+func (m *promptExecutionSession) planExecuteFailureHasPlanExecuteHandoff(failure implementationDispatchPlanExecuteFailure) bool {
 	if len(failure.RequiredPaths) > 0 || len(failure.AllowedPaths) > 0 {
 		return true
 	}
@@ -2256,12 +2299,12 @@ func (m *Model) planExecuteFailureHasPlanExecuteHandoff(failure implementationDi
 	return implementationDispatchHasPlanExecuteHandoff(failure.Prompt, failure.Plan, m.cfg)
 }
 
-func (m *Model) decidePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (recovery.PlanExecuteRecoveryDecision, string, error) {
+func (m *promptExecutionSession) requestPlanExecutePlannerBlockedDecision(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (implementationdispatch.PlanExecutePlannerBlockedDecisionResult, error) {
 	if m == nil || m.client == nil {
-		return recovery.PlanExecuteRecoveryDecision{}, "", fmt.Errorf("model client unavailable")
+		return implementationdispatch.PlanExecutePlannerBlockedDecisionResult{}, fmt.Errorf("model client unavailable")
 	}
 
-	opts := m.chatOptions()
+	opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 
 	opts.Tools = nil
 	opts.ToolChoice = ""
@@ -2273,82 +2316,25 @@ func (m *Model) decidePlanExecutePlannerBlocked(ctx context.Context, failure imp
 	opts.PreserveThinking = false
 	opts.ChatTemplateKwargs = true
 
-	prompt := planExecutePlannerBlockedDecisionPrompt(failure)
+	request := implementationdispatch.BuildPlanExecutePlannerBlockedDecisionRequest(implementationdispatch.PlanExecutePlannerBlockedDecisionInput{
+		Objective:          failure.Prompt,
+		RequiredEditPaths:  append([]string(nil), failure.RequiredPaths...),
+		AllowedEditPaths:   append([]string(nil), failure.AllowedPaths...),
+		FailureReason:      failure.Result.FailureReason,
+		PlannerAnswer:      failure.Result.PlannerAnswer,
+		OrchestratorOutput: failure.Stdout,
+		OrchestratorError:  failure.Stderr,
+	})
 
 	raw, err := m.client.CompleteChat(ctx, []llama.ChatMessage{
-		{Role: "system", Content: "You are a recovery controller for a local coding-agent harness. Return only the requested JSON object."},
-		{Role: "user", Content: prompt},
+		{Role: "system", Content: request.SystemInstruction},
+		{Role: "user", Content: request.Prompt},
 	}, opts)
 	if err != nil {
-		return recovery.PlanExecuteRecoveryDecision{}, raw, err
+		return implementationdispatch.PlanExecutePlannerBlockedDecisionResult{Raw: raw}, err
 	}
 
-	decision, ok := recovery.ParsePlanExecuteRecoveryDecision(raw)
-	if !ok {
-		return recovery.PlanExecuteRecoveryDecision{}, raw, fmt.Errorf("recovery decision was not valid JSON")
-	}
-
-	decision.Decision = strings.ToLower(strings.TrimSpace(decision.Decision))
-	if decision.Decision != "retry" && decision.Decision != "surface" {
-		return recovery.PlanExecuteRecoveryDecision{}, raw, fmt.Errorf("unsupported recovery decision %q", decision.Decision)
-	}
-
-	return decision, raw, nil
-}
-
-func planExecutePlannerBlockedDecisionPrompt(failure implementationDispatchPlanExecuteFailure) string {
-	var b strings.Builder
-
-	b.WriteString("# Plan-Execute Planner Blocked Recovery\n\n")
-	b.WriteString("The in-process plan-execute planner stopped before a successful `submit_plan`. Decide whether one automatic retry is worthwhile or whether this should be surfaced to the human.\n\n")
-	b.WriteString("Return JSON only with this schema:\n")
-	b.WriteString(`{"decision":"retry|surface","reason":"short reason","message":"human-facing message when surfacing","retry_addendum":"optional short observation; protocol instructions are ignored"}`)
-	b.WriteString("\n\nRetry only when the next run can materially change conditions. Surface when the failure is missing human information, missing body evidence, repeated no-tool/no-progress behavior, or a contract failure that a same-model retry is likely to repeat. The harness owns the retry contract; do not invent submit_plan schemas or tool-call instructions in retry_addendum.\n\n")
-	b.WriteString("## Objective\n\n")
-	b.WriteString(strings.TrimSpace(failure.Prompt))
-	b.WriteString("\n\n## Required Edit Paths\n\n")
-
-	for _, path := range failure.RequiredPaths {
-		b.WriteString("- ")
-		b.WriteString(path)
-		b.WriteString("\n")
-	}
-
-	if len(failure.AllowedPaths) > 0 {
-		b.WriteString("\n## Allowed Edit Paths\n\n")
-
-		for _, path := range failure.AllowedPaths {
-			b.WriteString("- ")
-			b.WriteString(path)
-			b.WriteString("\n")
-		}
-	}
-
-	if reason := strings.TrimSpace(failure.Result.FailureReason); reason != "" {
-		b.WriteString("\n## Planner Blocker Summary\n\n")
-		b.WriteString(reason)
-		b.WriteString("\n")
-	}
-
-	if answer := strings.TrimSpace(failure.Result.PlannerAnswer); answer != "" {
-		b.WriteString("\n## Planner Blocker Answer\n\n")
-		b.WriteString(textutil.TruncateWithByteCount(answer, 6000))
-		b.WriteString("\n")
-	}
-
-	if stderr := strings.TrimSpace(failure.Stderr); stderr != "" {
-		b.WriteString("\n## Orchestrator Error\n\n")
-		b.WriteString(textutil.TruncateWithByteCount(stderr, 2000))
-		b.WriteString("\n")
-	}
-
-	if stdout := strings.TrimSpace(failure.Stdout); stdout != "" && !strings.Contains(stdout, failure.Result.PlannerAnswer) {
-		b.WriteString("\n## Orchestrator Output\n\n")
-		b.WriteString(textutil.TruncateWithByteCount(stdout, 3000))
-		b.WriteString("\n")
-	}
-
-	return b.String()
+	return implementationdispatch.ResolvePlanExecutePlannerBlockedDecision(raw)
 }
 
 func appendPlanExecutePlannerRecoveryAddendum(brief string, failure implementationDispatchPlanExecuteFailure, decision recovery.PlanExecuteRecoveryDecision, rawDecision string) string {
@@ -2466,7 +2452,7 @@ func planExecutePlannerRecoveryAddendumContradictsContract(addendum string) bool
 		"every edit",
 		"must have",
 		"must contain",
-		"submit_plan",
+		workspace.ToolNameSubmitPlan,
 	}
 	hasContractTerm := false
 
@@ -2490,10 +2476,13 @@ func planExecutePlannerRecoveryAddendumContradictsContract(addendum string) bool
 	return false
 }
 
-func (m *Model) implementationDispatchAllowedPathsForMissingRequestedTestEdit(failure implementationDispatchPlanExecuteFailure) []string {
+func (m *promptExecutionSession) implementationDispatchAllowedPathsForMissingRequestedTestEdit(failure implementationDispatchPlanExecuteFailure) ([]string, error) {
 	var paths []string
 
-	submittedPaths := m.implementationDispatchSubmittedPlanPaths(failure)
+	submittedPaths, err := m.implementationDispatchSubmittedPlanPaths(failure)
+	if err != nil {
+		return nil, err
+	}
 
 	paths = append(paths, submittedPaths...)
 	paths = append(paths, failure.RequiredPaths...)
@@ -2503,11 +2492,14 @@ func (m *Model) implementationDispatchAllowedPathsForMissingRequestedTestEdit(fa
 	paths = append(paths, implementationDispatchAllowedPathsFromContextPack(failure.Options.Prompt, 8)...)
 	paths = append(paths, implementationDispatchTestPathsFromContextPack(failure.Options.Prompt, 8)...)
 
-	return uniqueImplementationDispatchPaths(paths)
+	return uniqueImplementationDispatchPaths(paths), nil
 }
 
-func (m *Model) implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(failure implementationDispatchPlanExecuteFailure) []string {
-	submittedPaths := m.implementationDispatchSubmittedPlanPaths(failure)
+func (m *promptExecutionSession) implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(failure implementationDispatchPlanExecuteFailure) ([]string, error) {
+	submittedPaths, err := m.implementationDispatchSubmittedPlanPaths(failure)
+	if err != nil {
+		return nil, err
+	}
 
 	var paths []string
 
@@ -2525,10 +2517,10 @@ func (m *Model) implementationDispatchAllowedPathsForMissingRequestedImplementat
 	paths = append(paths, failure.Options.AllowedEditPaths...)
 	paths = append(paths, implementationDispatchAllowedPathsFromContextPack(failure.Options.Prompt, 8)...)
 
-	return uniqueImplementationDispatchPaths(paths)
+	return uniqueImplementationDispatchPaths(paths), nil
 }
 
-func (m *Model) implementationDispatchSiblingSourceForTestPath(path string) string {
+func (m *promptExecutionSession) implementationDispatchSiblingSourceForTestPath(path string) string {
 	path = filepath.ToSlash(strings.TrimSpace(path))
 	if path == "" || !strings.HasSuffix(strings.ToLower(path), "_test.go") {
 		return ""
@@ -2539,7 +2531,7 @@ func (m *Model) implementationDispatchSiblingSourceForTestPath(path string) stri
 	}
 
 	sourcePath := strings.TrimSuffix(path, "_test.go") + ".go"
-	root := strings.TrimSpace(m.projectRoot())
+	root := strings.TrimSpace(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 
 	if root == "" {
 		return ""
@@ -2553,14 +2545,14 @@ func (m *Model) implementationDispatchSiblingSourceForTestPath(path string) stri
 	return sourcePath
 }
 
-func (m *Model) implementationDispatchSubmittedPlanPaths(failure implementationDispatchPlanExecuteFailure) []string {
+func (m *promptExecutionSession) implementationDispatchSubmittedPlanPaths(failure implementationDispatchPlanExecuteFailure) ([]string, error) {
 	if m == nil {
-		return nil
+		return nil, fmt.Errorf("load submitted plan paths: model is nil")
 	}
 
 	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 	if strings.TrimSpace(root) == "" {
-		return nil
+		return nil, fmt.Errorf("load submitted plan paths: workspace root is empty")
 	}
 
 	sessionID := strings.TrimSpace(failure.Result.SessionID)
@@ -2571,12 +2563,15 @@ func (m *Model) implementationDispatchSubmittedPlanPaths(failure implementationD
 	}
 
 	if sessionID == "" {
-		return nil
+		return nil, fmt.Errorf("load submitted plan paths: plan-execute session id is empty")
 	}
 
-	state, _, found, err := planexecute.TryLoadProgressState(root, sessionID)
-	if err != nil || !found {
-		return nil
+	state, statePath, found, err := planexecute.TryLoadProgressState(root, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load submitted plan progress state %s: %w", statePath, err)
+	}
+	if !found {
+		return nil, nil
 	}
 
 	var paths []string
@@ -2587,7 +2582,7 @@ func (m *Model) implementationDispatchSubmittedPlanPaths(failure implementationD
 		paths = append(paths, edit.Path)
 	}
 
-	return uniqueImplementationDispatchPaths(paths)
+	return uniqueImplementationDispatchPaths(paths), nil
 }
 
 func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExecuteFailure, decision recovery.PlanExecuteRecoveryDecision) string {
@@ -2748,6 +2743,6 @@ func humanPlanExecuteDispatchWithoutScopeMessage(failure implementationDispatchP
 	return strings.TrimSpace(b.String())
 }
 
-func (m *Model) shouldDisableThinkingForPlanExecutePlanner() bool {
+func (m *promptExecutionSession) shouldDisableThinkingForPlanExecutePlanner() bool {
 	return m == nil || !m.modelThinkingFloor
 }

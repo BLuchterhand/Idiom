@@ -3,12 +3,14 @@ package workspace
 import (
 	"errors"
 	"fmt"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/platform/failures"
 )
 
-func TestSentinelFailuresPreserveErrorsIsAndCanonicalCodes(t *testing.T) {
+var _ = ginkgo.Describe("sentinel failures preserve errors is and canonical codes", func() {
+
 	tests := []struct {
 		name string
 		err  error
@@ -32,16 +34,13 @@ func TestSentinelFailuresPreserveErrorsIsAndCanonicalCodes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			wrapped := fmt.Errorf("wrapped: %w", tt.err)
-
-			if !errors.Is(wrapped, tt.err) {
-				t.Fatalf("errors.Is(wrapped, sentinel) = false")
-			}
+			gomega.Expect(errors.Is(wrapped, tt.err)).To(gomega.BeTrue(), fmt.Sprintf("errors.Is(wrapped, sentinel) = false"))
 
 			if got := failures.CodeOf(wrapped); got != tt.code {
-				t.Fatalf("failures.CodeOf(wrapped) = %v, want %v", got, tt.code)
+				ginkgo.Fail(fmt.Sprintf("failures.CodeOf(wrapped) = %v, want %v", got, tt.code))
 			}
 		})
 	}
-}
+})

@@ -482,7 +482,7 @@ func recordRecoverReconciliationLearning(root string, packet recoverycontract.De
 	score := metrics["packet_quality"]
 	resultID := recoverLearningResultID(packet, reconciliation)
 
-	event, err := comprehension.RecordVerifiedRankerEvidence(root, comprehension.VerifiedRankerLearningRequest{
+	event, err := comprehension.RecordVerifiedRankerEvidence(context.Background(), root, comprehension.VerifiedRankerLearningRequest{
 		Source:   comprehension.LearningSourceRecoveryReconciliation,
 		Action:   "no_op",
 		Files:    files,

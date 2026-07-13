@@ -2,15 +2,16 @@ package root
 
 import (
 	"bytes"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestRunMainRoutesPlanExecuteCommand(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+var _ = ginkgo.Describe("Plan-execute command routing", func() {
+	ginkgo.It("routes the command and reports missing required arguments", func() {
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"plan-execute"}, &stdout, &stderr)
 
-	code := runMain([]string{"plan-execute"}, &stdout, &stderr)
-
-	if code != 2 {
-		t.Fatalf("expected plan-execute usage failure 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-}
+		gomega.Expect(code).To(gomega.Equal(2), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+	})
+})

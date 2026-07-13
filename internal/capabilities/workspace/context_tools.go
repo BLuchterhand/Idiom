@@ -173,7 +173,8 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 		}
 	}
 
-	output, err := json.MarshalIndent(result, "", "  ")
+	projection := newContextQueryProjection(result)
+	output, err := renderContextQueryProjection(projection)
 	if err != nil {
 		return ToolResult{Tool: ToolNameContextQuery, Summary: "Context query report encode failed", Error: err.Error()}
 	}
@@ -188,7 +189,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 	return ToolResult{
 		Tool:    ToolNameContextQuery,
 		Summary: fmt.Sprintf("Context query returned %d node(s) and %d edge(s)%s%s", len(result.Nodes), len(result.Edges), gap, refreshSummary),
-		Output:  string(output),
+		Output:  output,
 		Facts:   contextQueryToolResultFacts(result),
 	}
 }
@@ -274,7 +275,7 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 		return contextFreshnessBlockerResult(ToolNameContextPack, freshness)
 	}
 
-	result, err := comprehension.Pack(comprehension.PackOptions{
+	result, err := comprehension.Pack(ctx, comprehension.PackOptions{
 		Root:              m.cfg.Root,
 		Task:              task,
 		Path:              req.Path,
@@ -388,7 +389,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		return contextFreshnessBlockerResult(ToolNameContextImpact, freshness)
 	}
 
-	pack, err := comprehension.Pack(comprehension.PackOptions{
+	pack, err := comprehension.Pack(ctx, comprehension.PackOptions{
 		Root:              m.cfg.Root,
 		Task:              task,
 		Path:              req.Path,

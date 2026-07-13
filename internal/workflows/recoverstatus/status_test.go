@@ -4,116 +4,173 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
 	"time"
 
-	recoverycontract "idiom/internal/contracts/recovery"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
+	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/workflows/recovery"
 )
 
-func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
-	root := t.TempDir()
-	packet := recoverStatusTestPacket(t)
+var _ = ginkgo.Describe("Recovery status", func() {
+	ginkgo.It("reports a ready decomposition packet without leaking evidence summaries", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		packet := recoverStatusTestPacket()
+		packet.ProductLinks.PRDPaths = []string{"docs/prd.md"}
+		packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{
+			Kind:    "legacy_failure",
+			Path:    "internal/workflows/recoverstatus/status.go",
+			Summary: "raw transcript details must not leak",
+		})
 
-	packet.ProductLinks.PRDPaths = []string{"docs/prd.md"}
-	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{
-		Kind:    "legacy_failure",
-		Path:    "internal/workflows/recoverstatus/status.go",
-		Summary: "raw transcript details must not leak",
+		_, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		report, err := Build(root, "packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(report.Status).To(gomega.Equal(recoverycontract.PacketStatusReady))
+		gomega.Expect(report.NextAction).To(gomega.Equal(recoverycontract.NextActionReviewDecomposition))
+		gomega.Expect(report.WorkflowID).To(gomega.Equal(workflowstate.WorkflowRecovery))
+		gomega.Expect(report.WorkflowState).To(gomega.Equal(workflowstate.StateDecomposing))
+		gomega.Expect(report.WorkflowTerminalState).To(gomega.BeEmpty())
+		gomega.Expect(report.Dispatchable).To(gomega.BeFalse())
+		gomega.Expect(report.PacketPath).To(gomega.Equal("packet.json"))
+		gomega.Expect(report.FailureID).To(gomega.Equal(packet.FailureID))
+		gomega.Expect(report.ResidualWork).To(gomega.HaveLen(1))
+		gomega.Expect(report.CandidateAtoms).To(gomega.HaveLen(1))
+
+		body, err := json.Marshal(report)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(string(body)).NotTo(gomega.ContainSubstring("raw transcript"))
+
+		text := FormatText(report)
+		gomega.Expect(text).To(gomega.And(
+			gomega.ContainSubstring("recover status: ready"),
+			gomega.ContainSubstring("workflow_state: decomposing"),
+			gomega.ContainSubstring("workflow_terminal_state: "),
+			gomega.ContainSubstring("dispatchable: false"),
+			gomega.ContainSubstring("packet: packet.json"),
+			gomega.ContainSubstring("failure_id: failure-status-test"),
+			gomega.ContainSubstring("dirty_status: clean"),
+			gomega.ContainSubstring("prd: docs/prd.md"),
+			gomega.ContainSubstring("next_valid_action: review_decomposition"),
+			gomega.ContainSubstring("- residual-001: Recover status test"),
+			gomega.ContainSubstring("evidence_refs: required_path:internal/workflows/recoverstatus/status.go; required_test:go test ./internal/workflows/recoverstatus"),
+			gomega.ContainSubstring("- recovery-001: Recover status test"),
+			gomega.ContainSubstring("required_tests: go test ./internal/workflows/recoverstatus"),
+		))
+		forbidden := []string{"recover promote", "recover reconcile", "recovery_decompose", "raw transcript"}
+		gomega.Expect(text).NotTo(gomega.Or(gomega.ContainSubstring(forbidden[0]), gomega.ContainSubstring(forbidden[1]), gomega.ContainSubstring(forbidden[2]), gomega.ContainSubstring(forbidden[3])))
 	})
 
-	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
-		t.Fatalf("WriteDecompositionPacket: %v", err)
-	}
+	ginkgo.It("uses a valid sibling reconciliation to report only remaining work", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		packet := recoverStatusTestPacket()
+		packet.ResidualWork = append(packet.ResidualWork, recoverycontract.ResidualWork{
+			ID:     "residual-002",
+			Title:  "Second residual",
+			Reason: string(recoverycontract.FailureClassExecutorEdit),
+			Paths:  []string{"internal/surfaces/tui/app/recover_status.go"},
+		})
+		packet.CandidateAtoms = append(packet.CandidateAtoms, recoverycontract.CandidateAtom{
+			ID:              "recovery-002",
+			Title:           "Second residual",
+			RequiredPaths:   []string{"internal/surfaces/tui/app/recover_status.go"},
+			RequiredTests:   []string{"go test ./internal/surfaces/tui/app"},
+			Gates:           []string{recoverycontract.GateWorkspaceState},
+			ResidualWorkIDs: []string{"residual-002"},
+		})
 
-	report, err := Build(root, "packet.json")
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+		_, _, err := recovery.WriteDecompositionPacket(root, packet, "nested/packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		reconciliation := buildPassingReconciliation(packet)
+		writeReconciliation(filepath.Join(root, "nested", "reconciliation.json"), reconciliation)
 
-	if report.Status != recoverycontract.PacketStatusReady || report.NextAction != recoverycontract.NextActionReviewDecomposition {
-		t.Fatalf("unexpected report status: %#v", report)
-	}
+		report, err := Build(root, "nested/packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(report.Status).To(gomega.Equal(recoverycontract.PacketStatusPartial))
+		gomega.Expect(report.ReconciliationPath).To(gomega.Equal("nested/reconciliation.json"))
+		gomega.Expect(report.WorkflowState).To(gomega.Equal(workflowstate.StateReconciling))
+		gomega.Expect(report.WorkflowTerminalState).To(gomega.BeEmpty())
+		gomega.Expect(report.Dispatchable).To(gomega.BeFalse())
+		gomega.Expect(report.CandidateAtoms).To(gomega.ConsistOf(gomega.Satisfy(func(atom recoverycontract.CandidateAtom) bool {
+			return atom.ID == "recovery-002"
+		})))
+		gomega.Expect(report.ResidualWork).To(gomega.ConsistOf(gomega.Satisfy(func(work recoverycontract.ResidualWork) bool {
+			return work.ID == "residual-002"
+		})))
+	})
 
-	if report.WorkflowID != workflowstate.WorkflowRecovery ||
-		report.WorkflowState != workflowstate.StateDecomposing ||
-		report.WorkflowTerminalState != "" ||
-		report.Dispatchable {
+	ginkgo.It("reports an invalid sibling reconciliation as blocked", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		packet := recoverStatusTestPacket()
+		_, _, err := recovery.WriteDecompositionPacket(root, packet, "nested/packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		t.Fatalf("unexpected workflow classification: %#v", report)
-	}
+		reconciliation := buildPassingReconciliation(packet)
+		reconciliation.PacketDigest = "sha256:stale"
+		writeReconciliation(filepath.Join(root, "nested", "reconciliation.json"), reconciliation)
 
-	if report.PacketPath != "packet.json" || report.FailureID != packet.FailureID {
-		t.Fatalf("unexpected packet identity: %#v", report)
-	}
+		report, err := Build(root, "nested/packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(report.Status).To(gomega.Equal(recoverycontract.PacketStatusBlocked))
+		gomega.Expect(report.NextAction).To(gomega.Equal(recoverycontract.NextActionInspectFailure))
+		gomega.Expect(report.WorkflowState).To(gomega.Equal(workflowstate.StateTerminal))
+		gomega.Expect(report.WorkflowTerminalState).To(gomega.Equal(workflowstate.TerminalStateBlocked))
+		gomega.Expect(report.Dispatchable).To(gomega.BeFalse())
+		gomega.Expect(report.ReconciliationPath).To(gomega.Equal("nested/reconciliation.json"))
+		gomega.Expect(report.Reconciliation).NotTo(gomega.BeNil())
+		gomega.Expect(report.Blockers).To(gomega.ContainElement(gomega.ContainSubstring("recovery_reconciliation_packet_digest_mismatch")))
+	})
 
-	if len(report.ResidualWork) != 1 || len(report.CandidateAtoms) != 1 {
-		t.Fatalf("expected residual and atom: %#v", report)
-	}
+	ginkgo.It("rejects a packet outside the workspace root", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		outsideRoot := ginkgo.GinkgoT().TempDir()
+		_, _, err := recovery.WriteDecompositionPacket(outsideRoot, recoverStatusTestPacket(), "packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	body, err := json.Marshal(report)
-	if err != nil {
-		t.Fatalf("marshal report: %v", err)
-	}
+		_, err = Build(root, filepath.Join(outsideRoot, "packet.json"))
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("workspace root")))
+	})
 
-	if strings.Contains(string(body), "raw transcript") {
-		t.Fatalf("report leaked evidence summary: %s", body)
-	}
-
-	text := FormatText(report)
-	for _, want := range []string{
-		"recover status: ready",
-		"workflow_state: decomposing",
-		"workflow_terminal_state: ",
-		"dispatchable: false",
-		"packet: packet.json",
-		"failure_id: failure-status-test",
-		"dirty_status: clean",
-		"prd: docs/prd.md",
-		"next_valid_action: review_decomposition",
-		"- residual-001: Recover status test",
-		"evidence_refs: required_path:internal/workflows/recoverstatus/status.go; required_test:go test ./internal/workflows/recoverstatus",
-		"- recovery-001: Recover status test",
-		"required_tests: go test ./internal/workflows/recoverstatus",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("expected text to contain %q, got:\n%s", want, text)
+	ginkgo.It("rejects a symlinked packet path", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		outsideRoot := ginkgo.GinkgoT().TempDir()
+		outsidePacket := filepath.Join(outsideRoot, "packet.json")
+		_, _, err := recovery.WriteDecompositionPacket(outsideRoot, recoverStatusTestPacket(), "packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		if err := os.Symlink(outsidePacket, filepath.Join(root, "packet.json")); err != nil {
+			ginkgo.Skip("symlinks unavailable: " + err.Error())
 		}
-	}
 
-	for _, forbidden := range []string{"recover promote", "recover reconcile", "recovery_decompose", "raw transcript"} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("status text advertised or leaked %q:\n%s", forbidden, text)
+		_, err = Build(root, "packet.json")
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("symlink")))
+	})
+
+	ginkgo.It("rejects a symlinked default reconciliation path", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		packet := recoverStatusTestPacket()
+		packet.FailureID = "failure-status-symlink-reconciliation"
+		_, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		outsideRoot := ginkgo.GinkgoT().TempDir()
+		outsidePath := filepath.Join(outsideRoot, "reconciliation.json")
+		writeReconciliation(outsidePath, buildPassingReconciliation(packet))
+		defaultPath := filepath.Join(root, ".idiom", "recovery", packet.FailureID, "reconciliation.json")
+		gomega.Expect(os.MkdirAll(filepath.Dir(defaultPath), 0o755)).To(gomega.Succeed())
+		if err := os.Symlink(outsidePath, defaultPath); err != nil {
+			ginkgo.Skip("symlinks unavailable: " + err.Error())
 		}
-	}
-}
 
-func TestBuildUsesValidSiblingReconciliationForRemainingStatus(t *testing.T) {
-	root := t.TempDir()
-	packet := recoverStatusTestPacket(t)
-
-	packet.ResidualWork = append(packet.ResidualWork, recoverycontract.ResidualWork{
-		ID:     "residual-002",
-		Title:  "Second residual",
-		Reason: string(recoverycontract.FailureClassExecutorEdit),
-		Paths:  []string{"internal/surfaces/tui/app/recover_status.go"},
+		_, err = Build(root, "packet.json")
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("symlink")))
 	})
-	packet.CandidateAtoms = append(packet.CandidateAtoms, recoverycontract.CandidateAtom{
-		ID:              "recovery-002",
-		Title:           "Second residual",
-		RequiredPaths:   []string{"internal/surfaces/tui/app/recover_status.go"},
-		RequiredTests:   []string{"go test ./internal/surfaces/tui/app"},
-		Gates:           []string{recoverycontract.GateWorkspaceState},
-		ResidualWorkIDs: []string{"residual-002"},
-	})
+})
 
-	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "nested/packet.json"); err != nil {
-		t.Fatalf("WriteDecompositionPacket: %v", err)
-	}
-
+func buildPassingReconciliation(packet recoverycontract.DecompositionPacket) recoverycontract.Reconciliation {
 	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
 		Now:              time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
 		CompletedAtomIDs: []string{"recovery-001"},
@@ -126,196 +183,17 @@ func TestBuildUsesValidSiblingReconciliationForRemainingStatus(t *testing.T) {
 			}},
 		},
 	})
-	if err != nil {
-		t.Fatalf("BuildReconciliation: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return reconciliation
+}
 
+func writeReconciliation(path string, reconciliation recoverycontract.Reconciliation) {
 	body, err := json.MarshalIndent(reconciliation, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal reconciliation: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "nested", "reconciliation.json"), append(body, '\n'), 0o644); err != nil {
-		t.Fatalf("write reconciliation: %v", err)
-	}
-
-	report, err := Build(root, "nested/packet.json")
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
-	if report.Status != recoverycontract.PacketStatusPartial || report.ReconciliationPath != "nested/reconciliation.json" {
-		t.Fatalf("expected partial sibling reconciliation status, got %#v", report)
-	}
-
-	if report.WorkflowState != workflowstate.StateReconciling || report.WorkflowTerminalState != "" || report.Dispatchable {
-		t.Fatalf("expected partial recovery report to remain nonterminal reconciling, got %#v", report)
-	}
-
-	if len(report.CandidateAtoms) != 1 || report.CandidateAtoms[0].ID != "recovery-002" {
-		t.Fatalf("expected only remaining atom, got %#v", report.CandidateAtoms)
-	}
-
-	if len(report.ResidualWork) != 1 || report.ResidualWork[0].ID != "residual-002" {
-		t.Fatalf("expected only remaining residual, got %#v", report.ResidualWork)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(os.WriteFile(path, append(body, '\n'), 0o644)).To(gomega.Succeed())
 }
 
-func TestBuildReportsInvalidSiblingReconciliationAsBlocked(t *testing.T) {
-	root := t.TempDir()
-	packet := recoverStatusTestPacket(t)
-
-	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "nested/packet.json"); err != nil {
-		t.Fatalf("WriteDecompositionPacket: %v", err)
-	}
-
-	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
-		Now:              time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
-		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recoverycontract.ReconciliationVerification{
-			Status: recoverycontract.ReconciliationVerificationPass,
-			Commands: []recoverycontract.ReconciliationCommandResult{{
-				Command:  "go test ./internal/workflows/recoverstatus",
-				Status:   recoverycontract.ReconciliationVerificationPass,
-				ExitCode: 0,
-			}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("BuildReconciliation: %v", err)
-	}
-
-	reconciliation.PacketDigest = "sha256:stale"
-
-	body, err := json.MarshalIndent(reconciliation, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal reconciliation: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "nested", "reconciliation.json"), append(body, '\n'), 0o644); err != nil {
-		t.Fatalf("write reconciliation: %v", err)
-	}
-
-	report, err := Build(root, "nested/packet.json")
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
-	if report.Status != recoverycontract.PacketStatusBlocked || report.NextAction != recoverycontract.NextActionInspectFailure {
-		t.Fatalf("expected blocked invalid reconciliation report, got %#v", report)
-	}
-
-	if report.WorkflowState != workflowstate.StateTerminal || report.WorkflowTerminalState != workflowstate.TerminalStateBlocked || report.Dispatchable {
-		t.Fatalf("blocked reconciliation should not be dispatchable, got %#v", report)
-	}
-
-	if report.ReconciliationPath != "nested/reconciliation.json" || report.Reconciliation == nil {
-		t.Fatalf("expected reconciliation identity to remain visible, got %#v", report)
-	}
-
-	foundDigestMismatch := false
-
-	for _, blocker := range report.Blockers {
-		if strings.Contains(blocker, "recovery_reconciliation_packet_digest_mismatch") {
-			foundDigestMismatch = true
-			break
-		}
-	}
-
-	if !foundDigestMismatch {
-		t.Fatalf("expected packet digest mismatch blocker, got %#v", report.Blockers)
-	}
-}
-
-func TestBuildRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
-	root := t.TempDir()
-	outsideRoot := t.TempDir()
-
-	if _, _, err := recovery.WriteDecompositionPacket(outsideRoot, recoverStatusTestPacket(t), "packet.json"); err != nil {
-		t.Fatalf("WriteDecompositionPacket: %v", err)
-	}
-
-	_, err := Build(root, filepath.Join(outsideRoot, "packet.json"))
-	if err == nil || !strings.Contains(err.Error(), "workspace root") {
-		t.Fatalf("expected outside packet path rejection, got %v", err)
-	}
-}
-
-func TestBuildRejectsSymlinkedPacketPath(t *testing.T) {
-	root := t.TempDir()
-	outsideRoot := t.TempDir()
-	outsidePacket := filepath.Join(outsideRoot, "packet.json")
-
-	if _, _, err := recovery.WriteDecompositionPacket(outsideRoot, recoverStatusTestPacket(t), "packet.json"); err != nil {
-		t.Fatalf("WriteDecompositionPacket: %v", err)
-	}
-
-	if err := os.Symlink(outsidePacket, filepath.Join(root, "packet.json")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-
-	_, err := Build(root, "packet.json")
-	if err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink packet path rejection, got %v", err)
-	}
-}
-
-func TestBuildRejectsSymlinkedDefaultReconciliationPath(t *testing.T) {
-	root := t.TempDir()
-	packet := recoverStatusTestPacket(t)
-
-	packet.FailureID = "failure-status-symlink-reconciliation"
-
-	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
-		t.Fatalf("WriteDecompositionPacket: %v", err)
-	}
-
-	outsideRoot := t.TempDir()
-
-	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
-		Now:              time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
-		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recoverycontract.ReconciliationVerification{
-			Status: recoverycontract.ReconciliationVerificationPass,
-			Commands: []recoverycontract.ReconciliationCommandResult{{
-				Command:  "go test ./internal/workflows/recoverstatus",
-				Status:   recoverycontract.ReconciliationVerificationPass,
-				ExitCode: 0,
-			}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("BuildReconciliation: %v", err)
-	}
-
-	outsideBody, err := json.MarshalIndent(reconciliation, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal reconciliation: %v", err)
-	}
-
-	outsidePath := filepath.Join(outsideRoot, "reconciliation.json")
-	if err := os.WriteFile(outsidePath, append(outsideBody, '\n'), 0o644); err != nil {
-		t.Fatalf("write outside reconciliation: %v", err)
-	}
-
-	defaultPath := filepath.Join(root, ".idiom", "recovery", packet.FailureID, "reconciliation.json")
-	if err := os.MkdirAll(filepath.Dir(defaultPath), 0o755); err != nil {
-		t.Fatalf("mkdir default reconciliation dir: %v", err)
-	}
-
-	if err := os.Symlink(outsidePath, defaultPath); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-
-	_, err = Build(root, "packet.json")
-	if err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlinked reconciliation rejection, got %v", err)
-	}
-}
-
-func recoverStatusTestPacket(t *testing.T) recoverycontract.DecompositionPacket {
-	t.Helper()
-
+func recoverStatusTestPacket() recoverycontract.DecompositionPacket {
 	return recoverycontract.DecompositionPacket{
 		SchemaVersion: recoverycontract.DecompositionPacketSchemaVersion,
 		PacketID:      "packet-failure-status-test",

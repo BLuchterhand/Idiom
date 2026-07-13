@@ -3,484 +3,412 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/config"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
-func TestDiscoveryQueryImpactAnalysisWritesLayeredArtifact(t *testing.T) {
-	root := seedDiscoveryQueryGoRepo(t)
-	mgr := NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		CommandTimeoutSeconds: 30,
-		MaxOutputBytes:        65536,
-		MaxFileBytes:          65536,
-		EnableShell:           true,
-		EnableWrites:          true,
-	})
+var _ = ginkgo.Describe("discovery query", func() {
+	ginkgo.It("discovery query impact analysis writes layered artifact", func() {
+		root := seedDiscoveryQueryGoRepo()
+		mgr := NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			CommandTimeoutSeconds: 30,
+			MaxOutputBytes:        65536,
+			MaxFileBytes:          65536,
+			EnableShell:           true,
+			EnableWrites:          true,
+		})
 
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:     "discovery_query",
-		Purpose:  "impact_analysis",
-		Path:     "service/service.go",
-		Pattern:  "Target",
-		Language: "go",
-		MaxDepth: 2,
-	})
-	if result.Error != "" {
-		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
-	}
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:     "discovery_query",
+			Purpose:  "impact_analysis",
+			Path:     "service/service.go",
+			Pattern:  "Target",
+			Language: "go",
+			MaxDepth: 2,
+		})
+		gomega.Expect(result.Error).To(gomega.Equal(""), fmt.Sprintf("discovery_query returned error: %v\n%s", result.Error, result.Output))
+		gomega.Expect(result.Output).To(gomega.ContainSubstring(`"artifact_path"`), fmt.Sprintf("expected compact discovery query summary, got:\n%s", result.Output))
+		gomega.Expect(result.Output).To(gomega.ContainSubstring(`"impact_analysis"`), fmt.Sprintf("expected compact discovery query summary, got:\n%s", result.Output))
+		gomega.Expect(result.Output).To(gomega.ContainSubstring(`"evidence"`), fmt.Sprintf("expected visible summary to include compact evidence excerpts, got:\n%s", result.Output))
+		gomega.Expect(result.Output).To(gomega.ContainSubstring(`"output_excerpt"`), fmt.Sprintf("expected visible summary to include compact evidence excerpts, got:\n%s", result.Output))
 
-	if !strings.Contains(result.Output, `"artifact_path"`) || !strings.Contains(result.Output, `"impact_analysis"`) {
-		t.Fatalf("expected compact discovery query summary, got:\n%s", result.Output)
-	}
+		packet := readDiscoveryQueryPacket(root, result.Output)
+		gomega.Expect(packet.Purpose).To(gomega.Equal("impact_analysis"), fmt.Sprintf("unexpected packet header: %#v", packet))
+		gomega.Expect(packet.Target).To(gomega.Equal("service/service.go"), fmt.Sprintf("unexpected packet header: %#v", packet))
+		gomega.Expect(packet.Pattern).To(gomega.Equal("Target"), fmt.Sprintf("unexpected packet header: %#v", packet))
 
-	if !strings.Contains(result.Output, `"evidence"`) || !strings.Contains(result.Output, `"output_excerpt"`) {
-		t.Fatalf("expected visible summary to include compact evidence excerpts, got:\n%s", result.Output)
-	}
+		for _, want := range []string{"file_outline", "text_anchor_search", "dependency_graph", "go_workspace_symbol", "go_references", "go_calls_from", "go_calls_into", "related_files", "history_symbol", "blame_range"} {
+			gomega.Expect(packetHasLayer(packet, want)).To(gomega.BeTrue(), fmt.Sprintf("expected discovery query layer %q, got layers %#v", want, packetLayerNames(packet)))
 
-	packet := readDiscoveryQueryPacket(t, root, result.Output)
-	if packet.Purpose != "impact_analysis" || packet.Target != "service/service.go" || packet.Pattern != "Target" {
-		t.Fatalf("unexpected packet header: %#v", packet)
-	}
-
-	for _, want := range []string{"file_outline", "text_anchor_search", "dependency_graph", "go_workspace_symbol", "go_references", "go_calls_from", "go_calls_into", "related_files", "history_symbol", "blame_range"} {
-		if !packetHasLayer(packet, want) {
-			t.Fatalf("expected discovery query layer %q, got layers %#v", want, packetLayerNames(packet))
 		}
-	}
+		gomega.Expect(strings.HasPrefix(packet.ArtifactPath, ".idiom/discovery/queries/")).To(gomega.BeTrue(), fmt.Sprintf("artifact should live under hidden discovery query dir, got %q", packet.ArtifactPath))
 
-	if !strings.HasPrefix(packet.ArtifactPath, ".idiom/discovery/queries/") {
-		t.Fatalf("artifact should live under hidden discovery query dir, got %q", packet.ArtifactPath)
-	}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packet.ArtifactPath))); err != nil {
+			ginkgo.Fail(fmt.Sprintf("expected artifact to exist: %v", err))
+		}
 
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packet.ArtifactPath))); err != nil {
-		t.Fatalf("expected artifact to exist: %v", err)
-	}
-
-	if exclude, err := os.ReadFile(filepath.Join(root, ".git", "info", "exclude")); err == nil && !strings.Contains(string(exclude), ".idiom/") {
-		t.Fatalf("expected discovery artifacts to be locally ignored, got:\n%s", string(exclude))
-	}
-}
-
-func TestDiscoveryQueryUsesFreshContextIndexForOrientation(t *testing.T) {
-	root := seedDiscoveryQueryGoRepo(t)
-	mgr := NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		CommandTimeoutSeconds: 30,
-		MaxOutputBytes:        65536,
-		MaxFileBytes:          65536,
-		EnableShell:           true,
-		EnableWrites:          true,
+		if exclude, err := os.ReadFile(filepath.Join(root, ".git", "info", "exclude")); err == nil && !strings.Contains(string(exclude), ".idiom/") {
+			ginkgo.Fail(fmt.Sprintf("expected discovery artifacts to be locally ignored, got:\n%s", string(exclude)))
+		}
 	})
+	ginkgo.It("discovery query uses fresh context index for orientation", func() {
+		root := seedDiscoveryQueryGoRepo()
+		mgr := NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			CommandTimeoutSeconds: 30,
+			MaxOutputBytes:        65536,
+			MaxFileBytes:          65536,
+			EnableShell:           true,
+			EnableWrites:          true,
+		})
 
-	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
-		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
-	}
+		if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+			ginkgo.Fail(fmt.Sprintf("context_index returned error: %v\n%s", result.Error, result.Output))
+		}
 
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:     "discovery_query",
-		Purpose:  "impact_analysis",
-		Path:     ".",
-		Pattern:  "Target",
-		Language: "go",
-		MaxDepth: 2,
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:     "discovery_query",
+			Purpose:  "impact_analysis",
+			Path:     ".",
+			Pattern:  "Target",
+			Language: "go",
+			MaxDepth: 2,
+		})
+		gomega.Expect(result.Error).To(gomega.Equal(""), fmt.Sprintf("discovery_query returned error: %v\n%s", result.Error, result.Output))
+
+		packet := readDiscoveryQueryPacket(root, result.Output)
+		gomega.Expect(packet.ContextIndexID).NotTo(gomega.BeEmpty(), fmt.Sprintf("expected context index/view metadata in artifact, got %#v", packet))
+		gomega.Expect(packet.ContextViews).To(gomega.HaveLen(1), fmt.Sprintf("expected context index/view metadata in artifact, got %#v", packet))
+		gomega.Expect(packetHasLayer(packet, "context_pack")).To(gomega.BeTrue(), fmt.Sprintf("expected context_pack layer, got layers %#v", packetLayerNames(packet)))
+		gomega.Expect(packetHasLayer(packet, "target_listing")).To(gomega.BeFalse(), fmt.Sprintf("fresh context graph should replace broad target listing, got layers %#v", packetLayerNames(packet)))
+
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packet.ContextViews[0]))); err != nil {
+			ginkgo.Fail(fmt.Sprintf("expected context view artifact to exist: %v", err))
+		}
 	})
-	if result.Error != "" {
-		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
-	}
+	ginkgo.It("discovery query builds missing context index for orientation", func() {
+		root := seedDiscoveryQueryGoRepo()
+		mgr := NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			CommandTimeoutSeconds: 30,
+			MaxOutputBytes:        65536,
+			MaxFileBytes:          65536,
+			EnableShell:           true,
+			EnableWrites:          true,
+		})
 
-	packet := readDiscoveryQueryPacket(t, root, result.Output)
-	if packet.ContextIndexID == "" || len(packet.ContextViews) != 1 {
-		t.Fatalf("expected context index/view metadata in artifact, got %#v", packet)
-	}
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:     "discovery_query",
+			Purpose:  "impact_analysis",
+			Path:     ".",
+			Pattern:  "Target",
+			Language: "go",
+			MaxDepth: 2,
+		})
+		gomega.Expect(result.Error).To(gomega.Equal(""), fmt.Sprintf("discovery_query returned error: %v\n%s", result.Error, result.Output))
 
-	if !packetHasLayer(packet, "context_pack") {
-		t.Fatalf("expected context_pack layer, got layers %#v", packetLayerNames(packet))
-	}
+		packet := readDiscoveryQueryPacket(root, result.Output)
+		gomega.Expect(packet.ContextFreshness).NotTo(gomega.BeNil(), fmt.Sprintf("expected missing context index to rebuild through freshness gate, got %#v", packet.ContextFreshness))
+		gomega.Expect(packet.ContextFreshness.FreshForScope).To(gomega.BeTrue(), fmt.Sprintf("expected missing context index to rebuild through freshness gate, got %#v", packet.ContextFreshness))
+		gomega.Expect(packet.ContextFreshness.Refresh).NotTo(gomega.BeNil(), fmt.Sprintf("expected missing context index to rebuild through freshness gate, got %#v", packet.ContextFreshness))
+		gomega.Expect(packet.ContextFreshness.Refresh.Reason).To(gomega.Equal("missing_index"), fmt.Sprintf("expected missing context index to rebuild through freshness gate, got %#v", packet.ContextFreshness))
+		gomega.Expect(packetHasLayer(packet, "context_pack")).To(gomega.BeTrue(), fmt.Sprintf("rebuilt context graph should generate context_pack layer, got layers %#v", packetLayerNames(packet)))
+		gomega.Expect(packetHasLayer(packet, "target_listing")).To(gomega.BeFalse(), fmt.Sprintf("fresh context graph should replace broad target listing, got layers %#v", packetLayerNames(packet)))
 
-	if packetHasLayer(packet, "target_listing") {
-		t.Fatalf("fresh context graph should replace broad target listing, got layers %#v", packetLayerNames(packet))
-	}
-
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packet.ContextViews[0]))); err != nil {
-		t.Fatalf("expected context view artifact to exist: %v", err)
-	}
-}
-
-func TestDiscoveryQueryBuildsMissingContextIndexForOrientation(t *testing.T) {
-	root := seedDiscoveryQueryGoRepo(t)
-	mgr := NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		CommandTimeoutSeconds: 30,
-		MaxOutputBytes:        65536,
-		MaxFileBytes:          65536,
-		EnableShell:           true,
-		EnableWrites:          true,
 	})
+	ginkgo.It("discovery query refreshes unbounded stale context before graph orientation", func() {
+		root := seedDiscoveryQueryGoRepo()
+		mgr := NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			CommandTimeoutSeconds: 30,
+			MaxOutputBytes:        65536,
+			MaxFileBytes:          65536,
+			EnableShell:           true,
+			EnableWrites:          true,
+		})
 
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:     "discovery_query",
-		Purpose:  "impact_analysis",
-		Path:     ".",
-		Pattern:  "Target",
-		Language: "go",
-		MaxDepth: 2,
-	})
-	if result.Error != "" {
-		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
-	}
+		if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+			ginkgo.Fail(fmt.Sprintf("context_index returned error: %v\n%s", result.Error, result.Output))
+		}
 
-	packet := readDiscoveryQueryPacket(t, root, result.Output)
-	if packet.ContextFreshness == nil || !packet.ContextFreshness.FreshForScope || packet.ContextFreshness.Refresh == nil || packet.ContextFreshness.Refresh.Reason != "missing_index" {
-		t.Fatalf("expected missing context index to rebuild through freshness gate, got %#v", packet.ContextFreshness)
-	}
-
-	if !packetHasLayer(packet, "context_pack") {
-		t.Fatalf("rebuilt context graph should generate context_pack layer, got layers %#v", packetLayerNames(packet))
-	}
-
-	if packetHasLayer(packet, "target_listing") {
-		t.Fatalf("fresh context graph should replace broad target listing, got layers %#v", packetLayerNames(packet))
-	}
-}
-
-func TestDiscoveryQueryRefreshesUnboundedStaleContextBeforeGraphOrientation(t *testing.T) {
-	root := seedDiscoveryQueryGoRepo(t)
-	mgr := NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		CommandTimeoutSeconds: 30,
-		MaxOutputBytes:        65536,
-		MaxFileBytes:          65536,
-		EnableShell:           true,
-		EnableWrites:          true,
-	})
-
-	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
-		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
-	}
-
-	writeWorkspaceFile(t, filepath.Join(root, "service", "service.go"), `package service
+		writeWorkspaceFile(filepath.Join(root, "service", "service.go"), `package service
 
 func Target(v string) string {
 	return v + "changed"
 }
 `)
 
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:     "discovery_query",
-		Purpose:  "impact_analysis",
-		Path:     ".",
-		Pattern:  "Target",
-		Language: "go",
-		MaxDepth: 2,
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:     "discovery_query",
+			Purpose:  "impact_analysis",
+			Path:     ".",
+			Pattern:  "Target",
+			Language: "go",
+			MaxDepth: 2,
+		})
+		gomega.Expect(result.Error).To(gomega.Equal(""), fmt.Sprintf("discovery_query returned error: %v\n%s", result.Error, result.Output))
+
+		packet := readDiscoveryQueryPacket(root, result.Output)
+		gomega.Expect(packet.ContextIndexID).NotTo(gomega.Equal(""), fmt.Sprintf("expected context index id to remain visible, got %#v", packet))
+		gomega.Expect(packet.ContextFreshness).NotTo(gomega.BeNil(), fmt.Sprintf("expected discovery_query to refresh stale context before graph backing, got %#v", packet.ContextFreshness))
+		gomega.Expect(packet.ContextFreshness.FreshForScope).To(gomega.BeTrue(), fmt.Sprintf("expected discovery_query to refresh stale context before graph backing, got %#v", packet.ContextFreshness))
+		gomega.Expect(packet.ContextFreshness.Refresh).NotTo(gomega.BeNil(), fmt.Sprintf("expected discovery_query to refresh stale context before graph backing, got %#v", packet.ContextFreshness))
+		gomega.Expect(packet.ContextFreshness.Refresh.Attempted).To(gomega.BeTrue(), fmt.Sprintf("expected discovery_query to refresh stale context before graph backing, got %#v", packet.ContextFreshness))
+		gomega.Expect(packetHasLayer(packet, "context_pack")).To(gomega.BeTrue(), fmt.Sprintf("refreshed context graph should generate context_pack layer, got layers %#v", packetLayerNames(packet)))
+		gomega.Expect(packetHasLayer(packet, "target_listing")).To(gomega.BeFalse(), fmt.Sprintf("refreshed context graph should replace live target listing, got layers %#v", packetLayerNames(packet)))
+
 	})
-	if result.Error != "" {
-		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
-	}
+	ginkgo.It("discovery query auto refreshes bounded stale context", func() {
+		root := seedDiscoveryQueryGoRepo()
+		mgr := NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			CommandTimeoutSeconds: 30,
+			MaxOutputBytes:        65536,
+			MaxFileBytes:          65536,
+			EnableShell:           true,
+			EnableWrites:          true,
+		})
 
-	packet := readDiscoveryQueryPacket(t, root, result.Output)
-	if packet.ContextIndexID == "" {
-		t.Fatalf("expected context index id to remain visible, got %#v", packet)
-	}
+		if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+			ginkgo.Fail(fmt.Sprintf("context_index returned error: %v\n%s", result.Error, result.Output))
+		}
 
-	if packet.ContextFreshness == nil || !packet.ContextFreshness.FreshForScope || packet.ContextFreshness.Refresh == nil || !packet.ContextFreshness.Refresh.Attempted {
-		t.Fatalf("expected discovery_query to refresh stale context before graph backing, got %#v", packet.ContextFreshness)
-	}
-
-	if !packetHasLayer(packet, "context_pack") {
-		t.Fatalf("refreshed context graph should generate context_pack layer, got layers %#v", packetLayerNames(packet))
-	}
-
-	if packetHasLayer(packet, "target_listing") {
-		t.Fatalf("refreshed context graph should replace live target listing, got layers %#v", packetLayerNames(packet))
-	}
-}
-
-func TestDiscoveryQueryAutoRefreshesBoundedStaleContext(t *testing.T) {
-	root := seedDiscoveryQueryGoRepo(t)
-	mgr := NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		CommandTimeoutSeconds: 30,
-		MaxOutputBytes:        65536,
-		MaxFileBytes:          65536,
-		EnableShell:           true,
-		EnableWrites:          true,
-	})
-
-	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
-		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
-	}
-
-	writeWorkspaceFile(t, filepath.Join(root, "service", "service.go"), `package service
+		writeWorkspaceFile(filepath.Join(root, "service", "service.go"), `package service
 
 func Target(v string) string {
 	return v + "changed"
 }
 `)
 
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:     "discovery_query",
-		Purpose:  "impact_analysis",
-		Path:     "service",
-		Pattern:  "Target",
-		Language: "go",
-		MaxDepth: 2,
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:     "discovery_query",
+			Purpose:  "impact_analysis",
+			Path:     "service",
+			Pattern:  "Target",
+			Language: "go",
+			MaxDepth: 2,
+		})
+		gomega.Expect(result.Error).To(gomega.Equal(""), fmt.Sprintf("discovery_query returned error: %v\n%s", result.Error, result.Output))
+
+		packet := readDiscoveryQueryPacket(root, result.Output)
+		gomega.Expect(packetHasLayer(packet, "context_pack")).To(gomega.BeTrue(), fmt.Sprintf("bounded stale context should attempt context_pack refresh, got layers %#v", packetLayerNames(packet)))
+		gomega.Expect(packetHasLayer(packet, "target_listing")).To(gomega.BeFalse(), fmt.Sprintf("bounded stale context should refresh and use context graph orientation, got layers %#v", packetLayerNames(packet)))
+		gomega.Expect(packetGapsContain(packet, "fresh context graph supplied target orientation")).To(gomega.BeTrue(), fmt.Sprintf("expected refreshed context orientation gap, got %#v", packet.Gaps))
+
 	})
-	if result.Error != "" {
-		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
-	}
+	ginkgo.It("discovery query security review runs security recipe without external tools", func() {
+		root := seedDiscoveryQueryGoRepo()
+		mgr := NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			CommandTimeoutSeconds: 30,
+			MaxOutputBytes:        65536,
+			MaxFileBytes:          65536,
+			EnableShell:           true,
+			EnableWrites:          true,
+		})
+		ginkgo.GinkgoT().Setenv("PATH", "")
 
-	packet := readDiscoveryQueryPacket(t, root, result.Output)
-	if !packetHasLayer(packet, "context_pack") {
-		t.Fatalf("bounded stale context should attempt context_pack refresh, got layers %#v", packetLayerNames(packet))
-	}
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:     "discovery_query",
+			Purpose:  "security_review",
+			Path:     ".",
+			Language: "go",
+		})
+		gomega.Expect(result.Error).To(gomega.Equal(""), fmt.Sprintf("discovery_query returned error: %v\n%s", result.Error, result.Output))
 
-	if packetHasLayer(packet, "target_listing") {
-		t.Fatalf("bounded stale context should refresh and use context graph orientation, got layers %#v", packetLayerNames(packet))
-	}
+		packet := readDiscoveryQueryPacket(root, result.Output)
+		for _, want := range []string{"target_listing", "dependency_graph", "security_text_sweep", "semgrep_scan", "joern_scan"} {
+			gomega.Expect(packetHasLayer(packet, want)).To(gomega.BeTrue(), fmt.Sprintf("expected security discovery query layer %q, got layers %#v", want, packetLayerNames(packet)))
 
-	if !packetGapsContain(packet, "fresh context graph supplied target orientation") {
-		t.Fatalf("expected refreshed context orientation gap, got %#v", packet.Gaps)
-	}
-}
-
-func TestDiscoveryQuerySecurityReviewRunsSecurityRecipeWithoutExternalTools(t *testing.T) {
-	root := seedDiscoveryQueryGoRepo(t)
-	mgr := NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		CommandTimeoutSeconds: 30,
-		MaxOutputBytes:        65536,
-		MaxFileBytes:          65536,
-		EnableShell:           true,
-		EnableWrites:          true,
-	})
-
-	t.Setenv("PATH", "")
-
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:     "discovery_query",
-		Purpose:  "security_review",
-		Path:     ".",
-		Language: "go",
-	})
-	if result.Error != "" {
-		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
-	}
-
-	packet := readDiscoveryQueryPacket(t, root, result.Output)
-	for _, want := range []string{"target_listing", "dependency_graph", "security_text_sweep", "semgrep_scan", "joern_scan"} {
-		if !packetHasLayer(packet, want) {
-			t.Fatalf("expected security discovery query layer %q, got layers %#v", want, packetLayerNames(packet))
 		}
-	}
+		gomega.Expect(packetLayerHasError(packet, "semgrep_scan")).To(gomega.BeTrue(), fmt.Sprintf("expected unavailable external security scans to be recorded as layer errors, got %#v", packet.Layers))
+		gomega.Expect(packetLayerHasError(packet, "joern_scan")).To(gomega.BeTrue(), fmt.Sprintf("expected unavailable external security scans to be recorded as layer errors, got %#v", packet.Layers))
 
-	if !packetLayerHasError(packet, "semgrep_scan") || !packetLayerHasError(packet, "joern_scan") {
-		t.Fatalf("expected unavailable external security scans to be recorded as layer errors, got %#v", packet.Layers)
-	}
-}
-
-func TestDiscoveryQueryRejectsUnknownPurpose(t *testing.T) {
-	mgr := NewManager(testWorkspaceConfig(t))
-	result := mgr.Execute(context.Background(), ToolRequest{Tool: "discovery_query", Purpose: "wander", Path: "."})
-
-	if result.Error == "" || !strings.Contains(result.Error, "purpose must be") {
-		t.Fatalf("expected unknown purpose rejection, got %#v", result)
-	}
-}
-
-func TestDiscoveryQueryCheckpointsArtifactAfterCompletedLayer(t *testing.T) {
-	root := t.TempDir()
-	writeWorkspaceFile(t, filepath.Join(root, "service.go"), "package main\nfunc Target() {}\n")
-	mgr := NewManager(config.Workspace{
-		Root:           root,
-		CWD:            root,
-		MaxOutputBytes: 65536,
-		MaxFileBytes:   65536,
 	})
+	ginkgo.It("discovery query rejects unknown purpose", func() {
+		mgr := NewManager(testWorkspaceConfig())
+		result := mgr.Execute(context.Background(), ToolRequest{Tool: "discovery_query", Purpose: "wander", Path: "."})
+		gomega.Expect(result.Error).NotTo(gomega.BeEmpty(), fmt.Sprintf("expected unknown purpose rejection, got %#v", result))
+		gomega.Expect(result.Error).To(gomega.ContainSubstring("purpose must be"), fmt.Sprintf("expected unknown purpose rejection, got %#v", result))
 
-	runner := &discoveryQueryRunner{
-		manager: mgr,
-		ctx:     context.Background(),
-		seen:    make(map[string]struct{}),
-		packet: discoveryQueryPacket{
-			SchemaVersion: discoveryQuerySchemaVersion,
-			ID:            "checkpoint-test",
-			Purpose:       DiscoveryQueryPurposeImpactAnalysis,
-			Target:        ".",
-			ArtifactPath:  ".idiom/discovery/queries/checkpoint-test.json",
-		},
-	}
-
-	if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "."}); !ok || result.Error != "" {
-		t.Fatalf("expected first layer to complete, ok=%t result=%#v", ok, result)
-	}
-
-	packet := readDiscoveryQueryPacket(t, root, runner.summaryJSON())
-	if !packetHasLayer(packet, DiscoveryLayerTargetListing) {
-		t.Fatalf("checkpoint artifact should preserve completed layers: %#v", packet.Layers)
-	}
-	if packet.Status != "" {
-		t.Fatalf("completed checkpoint should not classify a long-running query as failure/interruption: %#v", packet)
-	}
-}
-
-func TestDiscoveryQueryFactsRankTextAnchorCandidates(t *testing.T) {
-	requireContentSearchBackend(t)
-
-	root := t.TempDir()
-	writeWorkspaceFile(t, filepath.Join(root, "internal", "runtime", "agent", "runner.go"), "package agent\nfunc TargetSourceOnly() {}\n")
-	writeWorkspaceFile(t, filepath.Join(root, "internal", "runtime", "agent", "runner_test.go"), "package agent\nfunc TestRunner() {}\n")
-	writeWorkspaceFile(t, filepath.Join(root, "internal", "runtime", "modepolicy", "modes.go"), "package modepolicy\n")
-	mgr := NewManager(config.Workspace{
-		Root:                  root,
-		CWD:                   root,
-		CommandTimeoutSeconds: 30,
-		MaxOutputBytes:        65536,
-		MaxFileBytes:          65536,
 	})
-	runner := &discoveryQueryRunner{
-		manager: mgr,
-		ctx:     context.Background(),
-		seen:    make(map[string]struct{}),
-		packet: discoveryQueryPacket{
-			SchemaVersion: discoveryQuerySchemaVersion,
-			ID:            "facts-test",
-			Purpose:       DiscoveryQueryPurposeArchitectureBoundary,
-			Target:        ".",
-			ArtifactPath:  ".idiom/discovery/queries/facts-test.json",
-		},
-	}
+	ginkgo.It("discovery query checkpoints artifact after completed layer", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeWorkspaceFile(filepath.Join(root, "service.go"), "package main\nfunc Target() {}\n")
+		mgr := NewManager(config.Workspace{
+			Root:           root,
+			CWD:            root,
+			MaxOutputBytes: 65536,
+			MaxFileBytes:   65536,
+		})
 
-	if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "internal", Recursive: true, MaxDepth: 4}); !ok || result.Error != "" {
-		t.Fatalf("target listing layer failed, ok=%t result=%#v", ok, result)
-	}
-	if result, ok := runner.addLayerResult(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: ".", Pattern: "TargetSourceOnly"}); !ok || result.Error != "" {
-		t.Fatalf("text anchor layer failed, ok=%t result=%#v", ok, result)
-	}
-
-	facts := runner.toolResultFacts()
-	if facts == nil {
-		t.Fatal("discovery_query facts were nil")
-	}
-	if facts.DiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner || !facts.SourceOwnerFound {
-		t.Fatalf("discovery_query facts should identify source-owner candidates, got %#v", facts)
-	}
-	if got, want := facts.CandidatePaths[0], "internal/runtime/agent/runner.go"; got != want {
-		t.Fatalf("expected text-anchor source file to rank first, got paths=%#v ranked=%#v raw=%#v", facts.CandidatePaths, facts.RankedDiscoveryCandidates, runner.candidates)
-	}
-	if got := facts.RankedDiscoveryCandidates[0]; got.Path != "internal/runtime/agent/runner.go" || got.LayerName != DiscoveryLayerTextAnchorSearch {
-		t.Fatalf("ranked discovery candidate = %#v, want text-anchor runner.go first", got)
-	}
-	if slices.Contains(facts.CandidatePaths, ".idiom/discovery/queries/facts-test.json") {
-		t.Fatalf("discovery artifact should not become a source candidate: %#v", facts.CandidatePaths)
-	}
-}
-
-func TestDiscoveryQueryRecordsSkippedLayerAfterParentCancellation(t *testing.T) {
-	root := t.TempDir()
-	writeWorkspaceFile(t, filepath.Join(root, "service.go"), "package main\nfunc Target() {}\n")
-	mgr := NewManager(config.Workspace{
-		Root:           root,
-		CWD:            root,
-		MaxOutputBytes: 65536,
-		MaxFileBytes:   65536,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	runner := &discoveryQueryRunner{
-		manager: mgr,
-		ctx:     ctx,
-		seen:    make(map[string]struct{}),
-		packet: discoveryQueryPacket{
-			SchemaVersion: discoveryQuerySchemaVersion,
-			ID:            "parent-canceled-test",
-			Purpose:       DiscoveryQueryPurposeImpactAnalysis,
-			Target:        ".",
-			ArtifactPath:  ".idiom/discovery/queries/parent-canceled-test.json",
-		},
-	}
-
-	if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "."}); !ok || result.Error != "" {
-		t.Fatalf("expected first layer to complete, ok=%t result=%#v", ok, result)
-	}
-	cancel()
-	if _, ok := runner.addLayerResult(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: ".", Pattern: "Target"}); ok {
-		t.Fatal("layer scheduled after parent cancellation should be skipped")
-	}
-	if err := runner.writeArtifact(); err != nil {
-		t.Fatalf("write interrupted artifact: %v", err)
-	}
-
-	packet := readDiscoveryQueryPacket(t, root, runner.summaryJSON())
-	if packet.Status != "partial_interrupted" || packet.TimeoutOwner != "parent_context" {
-		t.Fatalf("expected parent interruption metadata, got %#v", packet)
-	}
-	if !packetHasLayer(packet, DiscoveryLayerTargetListing) {
-		t.Fatalf("interrupted artifact should preserve completed layers: %#v", packet.Layers)
-	}
-	if !slices.Contains(packet.SkippedLayers, DiscoveryLayerTextAnchorSearch) {
-		t.Fatalf("interrupted artifact should record skipped layer, got %#v", packet.SkippedLayers)
-	}
-	if !packetGapsContain(packet, "canceled") {
-		t.Fatalf("interrupted artifact should explain parent cancellation gap, got %#v", packet.Gaps)
-	}
-}
-
-func TestDiscoveryQueryNormalizesArchitectureUsefulnessAliases(t *testing.T) {
-	for _, purpose := range []string{
-		"tool_usefulness",
-		"discovery_tools",
-		"usefulness",
-		"Run a deterministic layered discovery recipe to identify subagent definitions and orchestration patterns.",
-	} {
-		if got := NormalizeDiscoveryQueryPurpose(purpose); got != "architecture_boundary" {
-			t.Fatalf("NormalizeDiscoveryQueryPurpose(%q) = %q, want architecture_boundary", purpose, got)
-		}
-	}
-}
-
-func TestDiscoveryQueryLanguageCoverageFollowsRegistry(t *testing.T) {
-	for _, lang := range semanticlanguage.LanguageRegistry() {
-		glob := globForDiscoveryLanguage(lang.Name)
-		if glob == "" {
-			t.Fatalf("%s should have a discovery glob", lang.Name)
+		runner := &discoveryQueryRunner{
+			manager: mgr,
+			ctx:     context.Background(),
+			seen:    make(map[string]struct{}),
+			packet: discoveryQueryPacket{
+				SchemaVersion: discoveryQuerySchemaVersion,
+				ID:            "checkpoint-test",
+				Purpose:       DiscoveryQueryPurposeImpactAnalysis,
+				Target:        ".",
+				ArtifactPath:  ".idiom/discovery/queries/checkpoint-test.json",
+			},
 		}
 
-		for _, ext := range lang.Extensions {
-			suffix := strings.TrimPrefix(ext, ".")
-			if !strings.Contains(glob, suffix) {
-				t.Fatalf("%s discovery glob %q missing extension %q", lang.Name, glob, ext)
+		if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "."}); !ok || result.Error != "" {
+			ginkgo.Fail(fmt.Sprintf("expected first layer to complete, ok=%t result=%#v", ok, result))
+		}
+
+		packet := readDiscoveryQueryPacket(root, runner.summaryJSON())
+		gomega.Expect(packetHasLayer(packet, DiscoveryLayerTargetListing)).To(gomega.BeTrue(), fmt.Sprintf("checkpoint artifact should preserve completed layers: %#v", packet.Layers))
+		gomega.Expect(packet.Status).To(gomega.Equal(""), fmt.Sprintf("completed checkpoint should not classify a long-running query as failure/interruption: %#v", packet))
+
+	})
+	ginkgo.It("discovery query facts rank text anchor candidates", func() {
+		requireContentSearchBackend()
+
+		root := ginkgo.GinkgoT().TempDir()
+		writeWorkspaceFile(filepath.Join(root, "internal", "runtime", "agent", "runner.go"), "package agent\nfunc TargetSourceOnly() {}\n")
+		writeWorkspaceFile(filepath.Join(root, "internal", "runtime", "agent", "runner_test.go"), "package agent\nfunc TestRunner() {}\n")
+		writeWorkspaceFile(filepath.Join(root, "internal", "runtime", "modepolicy", "modes.go"), "package modepolicy\n")
+		mgr := NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			CommandTimeoutSeconds: 30,
+			MaxOutputBytes:        65536,
+			MaxFileBytes:          65536,
+		})
+		runner := &discoveryQueryRunner{
+			manager: mgr,
+			ctx:     context.Background(),
+			seen:    make(map[string]struct{}),
+			packet: discoveryQueryPacket{
+				SchemaVersion: discoveryQuerySchemaVersion,
+				ID:            "facts-test",
+				Purpose:       DiscoveryQueryPurposeArchitectureBoundary,
+				Target:        ".",
+				ArtifactPath:  ".idiom/discovery/queries/facts-test.json",
+			},
+		}
+
+		if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "internal", Recursive: true, MaxDepth: 4}); !ok || result.Error != "" {
+			ginkgo.Fail(fmt.Sprintf("target listing layer failed, ok=%t result=%#v", ok, result))
+		}
+		if result, ok := runner.addLayerResult(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: ".", Pattern: "TargetSourceOnly"}); !ok || result.Error != "" {
+			ginkgo.Fail(fmt.Sprintf("text anchor layer failed, ok=%t result=%#v", ok, result))
+		}
+
+		facts := runner.toolResultFacts()
+		gomega.Expect(facts).NotTo(gomega.BeNil(), "discovery_query facts were nil")
+		gomega.Expect(facts.DiscoveryStrength).To(gomega.Equal(toolfacts.DiscoveryStrengthSourceOwner), fmt.Sprintf("discovery_query facts should identify source-owner candidates, got %#v", facts))
+		gomega.Expect(facts.SourceOwnerFound).To(gomega.BeTrue(), fmt.Sprintf("discovery_query facts should identify source-owner candidates, got %#v", facts))
+		gomega.Expect(facts.ArtifactIDs).To(gomega.ConsistOf("facts-test", ".idiom/discovery/queries/facts-test.json"))
+
+		if got, want := facts.CandidatePaths[0], "internal/runtime/agent/runner.go"; got != want {
+			ginkgo.Fail(fmt.Sprintf("expected text-anchor source file to rank first, got paths=%#v ranked=%#v raw=%#v", facts.CandidatePaths, facts.RankedDiscoveryCandidates, runner.candidates))
+		}
+		if got := facts.RankedDiscoveryCandidates[0]; got.Path != "internal/runtime/agent/runner.go" || got.LayerName != DiscoveryLayerTextAnchorSearch {
+			ginkgo.Fail(fmt.Sprintf("ranked discovery candidate = %#v, want text-anchor runner.go first", got))
+		}
+		gomega.Expect(slices.Contains(facts.CandidatePaths, ".idiom/discovery/queries/facts-test.json")).To(gomega.BeFalse(), fmt.Sprintf("discovery artifact should not become a source candidate: %#v", facts.CandidatePaths))
+
+	})
+	ginkgo.It("discovery query records skipped layer after parent cancellation", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeWorkspaceFile(filepath.Join(root, "service.go"), "package main\nfunc Target() {}\n")
+		mgr := NewManager(config.Workspace{
+			Root:           root,
+			CWD:            root,
+			MaxOutputBytes: 65536,
+			MaxFileBytes:   65536,
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		runner := &discoveryQueryRunner{
+			manager: mgr,
+			ctx:     ctx,
+			seen:    make(map[string]struct{}),
+			packet: discoveryQueryPacket{
+				SchemaVersion: discoveryQuerySchemaVersion,
+				ID:            "parent-canceled-test",
+				Purpose:       DiscoveryQueryPurposeImpactAnalysis,
+				Target:        ".",
+				ArtifactPath:  ".idiom/discovery/queries/parent-canceled-test.json",
+			},
+		}
+
+		if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "."}); !ok || result.Error != "" {
+			ginkgo.Fail(fmt.Sprintf("expected first layer to complete, ok=%t result=%#v", ok, result))
+		}
+		cancel()
+		if _, ok := runner.addLayerResult(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: ".", Pattern: "Target"}); ok {
+			ginkgo.Fail("layer scheduled after parent cancellation should be skipped")
+		}
+		gomega.Expect(runner.writeArtifact()).To(gomega.Succeed())
+
+		packet := readDiscoveryQueryPacket(root, runner.summaryJSON())
+		gomega.Expect(packet.Status).To(gomega.Equal("partial_interrupted"), fmt.Sprintf("expected parent interruption metadata, got %#v", packet))
+		gomega.Expect(packet.TimeoutOwner).To(gomega.Equal("parent_context"), fmt.Sprintf("expected parent interruption metadata, got %#v", packet))
+		gomega.Expect(packetHasLayer(packet, DiscoveryLayerTargetListing)).To(gomega.BeTrue(), fmt.Sprintf("interrupted artifact should preserve completed layers: %#v", packet.Layers))
+		gomega.Expect(slices.Contains(packet.SkippedLayers, DiscoveryLayerTextAnchorSearch)).To(gomega.BeTrue(), fmt.Sprintf("interrupted artifact should record skipped layer, got %#v", packet.SkippedLayers))
+		gomega.Expect(packetGapsContain(packet, "canceled")).To(gomega.BeTrue(), fmt.Sprintf("interrupted artifact should explain parent cancellation gap, got %#v", packet.Gaps))
+
+	})
+	ginkgo.It("discovery query normalizes architecture usefulness aliases", func() {
+		for _, purpose := range []string{
+			"tool_usefulness",
+			"discovery_tools",
+			"usefulness",
+			"Run a deterministic layered discovery recipe to identify subagent definitions and orchestration patterns.",
+		} {
+			if got := NormalizeDiscoveryQueryPurpose(purpose); got != "architecture_boundary" {
+				ginkgo.Fail(fmt.Sprintf("NormalizeDiscoveryQueryPurpose(%q) = %q, want architecture_boundary", purpose, got))
 			}
 		}
-	}
+	})
+	ginkgo.It("discovery query language coverage follows registry", func() {
+		for _, lang := range semanticlanguage.LanguageRegistry() {
+			glob := globForDiscoveryLanguage(lang.Name)
+			gomega.Expect(glob).NotTo(gomega.Equal(""), fmt.Sprintf("%s should have a discovery glob", lang.Name))
 
-	for _, alias := range []string{"tsx", ".mts", "d.cts", "jsx", "mjs", "javascript"} {
-		if got := normalizeDiscoveryQueryLanguage(alias); got != "typescript" {
-			t.Fatalf("normalizeDiscoveryQueryLanguage(%q) = %q, want typescript", alias, got)
+			for _, ext := range lang.Extensions {
+				suffix := strings.TrimPrefix(ext, ".")
+				gomega.Expect(glob).To(gomega.ContainSubstring(suffix), fmt.Sprintf("%s discovery glob %q missing extension %q", lang.Name, glob, ext))
+
+			}
 		}
-	}
-}
 
-func seedDiscoveryQueryGoRepo(t *testing.T) string {
-	t.Helper()
+		for _, alias := range []string{"tsx", ".mts", "d.cts", "jsx", "mjs", "javascript"} {
+			if got := normalizeDiscoveryQueryLanguage(alias); got != "typescript" {
+				ginkgo.Fail(fmt.Sprintf("normalizeDiscoveryQueryLanguage(%q) = %q, want typescript", alias, got))
+			}
+		}
+	})
+})
 
-	root := t.TempDir()
-	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/discoveryquery\n\ngo 1.22\n")
-	writeWorkspaceFile(t, filepath.Join(root, "service", "service.go"), `package service
+func seedDiscoveryQueryGoRepo() string {
+	ginkgo.GinkgoHelper()
+
+	root := ginkgo.GinkgoT().TempDir()
+	writeWorkspaceFile(filepath.Join(root, "go.mod"), "module example.com/discoveryquery\n\ngo 1.22\n")
+	writeWorkspaceFile(filepath.Join(root, "service", "service.go"), `package service
 
 func Target(v string) string {
 	return helper(v)
@@ -490,7 +418,7 @@ func helper(v string) string {
 	return v
 }
 `)
-	writeWorkspaceFile(t, filepath.Join(root, "service", "service_test.go"), `package service
+	writeWorkspaceFile(filepath.Join(root, "service", "service_test.go"), `package service
 
 import "testing"
 
@@ -502,35 +430,27 @@ func TestTarget(t *testing.T) {
 `)
 
 	if _, err := exec.LookPath("git"); err == nil {
-		runTestCommand(t, root, "git", "init")
-		runTestCommand(t, root, "git", "config", "user.email", "test@example.com")
-		runTestCommand(t, root, "git", "config", "user.name", "Test User")
-		runTestCommand(t, root, "git", "add", ".")
-		runTestCommand(t, root, "git", "commit", "-m", "initial")
+		runTestCommand(root, "git", "init")
+		runTestCommand(root, "git", "config", "user.email", "test@example.com")
+		runTestCommand(root, "git", "config", "user.name", "Test User")
+		runTestCommand(root, "git", "add", ".")
+		runTestCommand(root, "git", "commit", "-m", "initial")
 	}
 
 	return root
 }
 
-func readDiscoveryQueryPacket(t *testing.T, root string, summaryText string) discoveryQueryPacket {
-	t.Helper()
+func readDiscoveryQueryPacket(root string, summaryText string) discoveryQueryPacket {
+	ginkgo.GinkgoHelper()
 
 	var summary discoveryQuerySummary
-
-	if err := json.Unmarshal([]byte(summaryText), &summary); err != nil {
-		t.Fatalf("decode summary: %v\n%s", err, summaryText)
-	}
+	gomega.Expect(json.Unmarshal([]byte(summaryText), &summary)).To(gomega.Succeed())
 
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(summary.ArtifactPath)))
-	if err != nil {
-		t.Fatalf("read artifact: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read artifact: %v", err))
 
 	var packet discoveryQueryPacket
-
-	if err := json.Unmarshal(data, &packet); err != nil {
-		t.Fatalf("decode artifact: %v\n%s", err, string(data))
-	}
+	gomega.Expect(json.Unmarshal(data, &packet)).To(gomega.Succeed())
 
 	return packet
 }

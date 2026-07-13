@@ -1,8 +1,12 @@
 package eval
 
-import "testing"
+import (
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
+)
 
-func TestBuildFailingScenarioSuiteCopiesFailedTasksWithRecords(t *testing.T) {
+var _ = ginkgo.It("build failing scenario suite copies failed tasks with records", func() {
 	source := SWESuite{
 		Name:    "source suite",
 		Version: 2,
@@ -41,35 +45,29 @@ func TestBuildFailingScenarioSuiteCopiesFailedTasksWithRecords(t *testing.T) {
 	}
 
 	got := BuildFailingScenarioSuite("", source, report, recordsByTask)
-	if got.Name != "source suite generated regressions" || got.Version != 2 {
-		t.Fatalf("unexpected suite identity: %#v", got)
-	}
+	gomega.Expect(got.Name).To(gomega.BeEquivalentTo("source suite generated regressions"), fmt.Sprintf("unexpected suite identity: %#v", got))
+	gomega.Expect(got.Version).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected suite identity: %#v", got))
 
-	if len(got.Tasks) != 1 {
-		t.Fatalf("expected one generated regression task, got %#v", got.Tasks)
-	}
+	gomega.Expect(got.Tasks).To(gomega.HaveLen(1), fmt.Sprintf("expected one generated regression task, got %#v", got.Tasks))
 
 	task := got.Tasks[0]
-	if task.ID != "failed-regression" || task.Family != "behavior" || task.Prompt != "latest user prompt" {
-		t.Fatalf("unexpected generated task identity: %#v", task)
-	}
+	gomega.Expect(task.ID).To(gomega.BeEquivalentTo("failed-regression"), fmt.Sprintf("unexpected generated task identity: %#v", task))
+	gomega.Expect(task.Family).To(gomega.BeEquivalentTo("behavior"), fmt.Sprintf("unexpected generated task identity: %#v", task))
+	gomega.Expect(task.Prompt).To(gomega.BeEquivalentTo("latest user prompt"), fmt.Sprintf("unexpected generated task identity: %#v", task))
 
-	if len(task.Turns) != 2 || task.Fixture != "fixture-repo" || !task.Oracle.RequireNoShell {
-		t.Fatalf("expected source task fields to be preserved: %#v", task)
-	}
+	gomega.Expect(task.Turns).To(gomega.HaveLen(2), fmt.Sprintf("expected source task fields to be preserved: %#v", task))
+	gomega.Expect(task.Fixture).To(gomega.BeEquivalentTo("fixture-repo"), fmt.Sprintf("expected source task fields to be preserved: %#v", task))
+	gomega.Expect(task.Oracle.RequireNoShell).To(gomega.BeTrue(), fmt.Sprintf("expected source task fields to be preserved: %#v", task))
 
-	if !containsStringFold(task.Tags, "existing") || !containsStringFold(task.Tags, "generated-regression") {
-		t.Fatalf("expected source and generated tags, got %#v", task.Tags)
-	}
+	gomega.Expect(containsStringFold(task.Tags, "existing")).To(gomega.BeTrue(), fmt.Sprintf("expected source and generated tags, got %#v", task.Tags))
+	gomega.Expect(containsStringFold(task.Tags, "generated-regression")).To(gomega.BeTrue(), fmt.Sprintf("expected source and generated tags, got %#v", task.Tags))
 
-	if task.Scenario.Name == "" || !containsStringFold(task.Scenario.RequireTools, "read_file") {
-		t.Fatalf("expected generated scenario from records, got %#v", task.Scenario)
-	}
-}
-
-func TestNonEmptyStringsDropsWhitespace(t *testing.T) {
+	gomega.Expect(task.Scenario.Name).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("expected generated scenario from records, got %#v", task.Scenario))
+	gomega.Expect(containsStringFold(task.Scenario.RequireTools, "read_file")).To(gomega.BeTrue(), fmt.Sprintf("expected generated scenario from records, got %#v", task.Scenario))
+})
+var _ = ginkgo.It("non empty strings drops whitespace", func() {
 	got := nonEmptyStrings([]string{"", " keep ", "\t", "also-keep"})
-	if len(got) != 2 || got[0] != " keep " || got[1] != "also-keep" {
-		t.Fatalf("nonEmptyStrings = %#v, want non-empty original values", got)
-	}
-}
+	gomega.Expect(got).To(gomega.HaveLen(2), fmt.Sprintf("nonEmptyStrings = %#v, want non-empty original values", got))
+	gomega.Expect(got[0]).To(gomega.BeEquivalentTo(" keep "), fmt.Sprintf("nonEmptyStrings = %#v, want non-empty original values", got))
+	gomega.Expect(got[1]).To(gomega.BeEquivalentTo("also-keep"), fmt.Sprintf("nonEmptyStrings = %#v, want non-empty original values", got))
+})

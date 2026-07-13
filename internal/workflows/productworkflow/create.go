@@ -2,6 +2,7 @@ package productworkflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,24 +12,95 @@ import (
 	"idiom/internal/platform/atomicfile"
 )
 
+// CreationPhase identifies a valid phase in the artifact creation lifecycle.
+type CreationPhase string
+
 // Phase constants for the artifact creation workflow.
 const (
-	PhasePRDDrafting  = "prd_drafting"
-	PhasePRDReview    = "prd_review"
-	PhaseADRDrafting  = "adr_drafting"
-	PhaseADRReview    = "adr_review"
-	PhaseTDDSynthesis = "tdd_synthesis"
-	PhaseComplete     = "complete"
+	PhasePRDDrafting  CreationPhase = "prd_drafting"
+	PhasePRDReview    CreationPhase = "prd_review"
+	PhaseADRDrafting  CreationPhase = "adr_drafting"
+	PhaseADRReview    CreationPhase = "adr_review"
+	PhaseTDDSynthesis CreationPhase = "tdd_synthesis"
+	PhaseComplete     CreationPhase = "complete"
 )
 
-// validNextCreationPhases constrains phase transitions. A phase not in this
-// map has no valid next phase (e.g. PhaseComplete is terminal).
-var validNextCreationPhases = map[string][]string{
-	PhasePRDDrafting:  {PhasePRDReview},
-	PhasePRDReview:    {PhaseADRDrafting},
-	PhaseADRDrafting:  {PhaseADRReview},
-	PhaseADRReview:    {PhaseTDDSynthesis},
-	PhaseTDDSynthesis: {PhaseComplete},
+type creationTransitionAuthority uint8
+
+const (
+	creationTransitionNoGate creationTransitionAuthority = iota
+	creationTransitionPRDApproval
+	creationTransitionADRApproval
+)
+
+type creationPhaseTransition struct {
+	Next              CreationPhase
+	RequiredAuthority creationTransitionAuthority
+}
+
+// validNextCreationPhases constrains phase transitions and records which
+// forward edges are owned by approval gates. A phase not in this map has no
+// valid next phase (e.g. PhaseComplete is terminal).
+var validNextCreationPhases = map[CreationPhase]creationPhaseTransition{
+	PhasePRDDrafting:  {Next: PhasePRDReview, RequiredAuthority: creationTransitionNoGate},
+	PhasePRDReview:    {Next: PhaseADRDrafting, RequiredAuthority: creationTransitionPRDApproval},
+	PhaseADRDrafting:  {Next: PhaseADRReview, RequiredAuthority: creationTransitionNoGate},
+	PhaseADRReview:    {Next: PhaseTDDSynthesis, RequiredAuthority: creationTransitionADRApproval},
+	PhaseTDDSynthesis: {Next: PhaseComplete, RequiredAuthority: creationTransitionNoGate},
+}
+
+var createChangesTargetPhases = map[CreationPhase]CreationPhase{
+	PhasePRDReview: PhasePRDDrafting,
+	PhaseADRReview: PhaseADRDrafting,
+}
+
+type creationPhaseProjection struct {
+	StatusBucket     string
+	CurrentState     string
+	NextValidActions []string
+}
+
+type creationTransitionEvent string
+
+const (
+	creationTransitionAdvanced          creationTransitionEvent = "phase"
+	creationTransitionPRDApproved       creationTransitionEvent = "prd-approved"
+	creationTransitionADRApproved       creationTransitionEvent = "adr-approved"
+	creationTransitionChangesRequested  creationTransitionEvent = "request-changes"
+	creationTransitionSynthesisRecovery creationTransitionEvent = "tdd-synthesis-recovery"
+)
+
+var creationPhaseProjections = map[CreationPhase]creationPhaseProjection{
+	PhasePRDDrafting: {
+		StatusBucket:     WorkflowStatusBucketStarted,
+		CurrentState:     WorkflowStatePlanned,
+		NextValidActions: []string{"approve_prd", "edit_requirements"},
+	},
+	PhasePRDReview: {
+		StatusBucket:     WorkflowStatusBucketStarted,
+		CurrentState:     WorkflowStateHumanVerification,
+		NextValidActions: []string{"approve_prd", "request_prd_changes"},
+	},
+	PhaseADRDrafting: {
+		StatusBucket:     WorkflowStatusBucketStarted,
+		CurrentState:     WorkflowStatePlanned,
+		NextValidActions: []string{"approve_adrs", "edit_adrs"},
+	},
+	PhaseADRReview: {
+		StatusBucket:     WorkflowStatusBucketStarted,
+		CurrentState:     WorkflowStateHumanVerification,
+		NextValidActions: []string{"approve_adrs", "request_adr_changes"},
+	},
+	PhaseTDDSynthesis: {
+		StatusBucket:     WorkflowStatusBucketStarted,
+		CurrentState:     WorkflowStatePlanned,
+		NextValidActions: []string{"finalize"},
+	},
+	PhaseComplete: {
+		StatusBucket:     WorkflowStatusBucketClosed,
+		CurrentState:     WorkflowStateClosed,
+		NextValidActions: []string{"view_status"},
+	},
 }
 
 // CreateEffortOptions holds the inputs for InitializeEffort.
@@ -43,9 +115,21 @@ type CreateResult struct {
 	Status          ProductWorkflowStatus `json:"status"`
 	EffortRoot      string                `json:"effort_root"`
 	EffortID        string                `json:"effort_id"`
-	CurrentPhase    string                `json:"current_phase"`
+	CurrentPhase    CreationPhase         `json:"current_phase"`
 	Blockers        []string              `json:"blockers,omitempty"`
 	NextValidAction string                `json:"next_valid_action"`
+}
+
+type existingCreateStateStatus uint8
+
+const (
+	existingCreateStateAbsent existingCreateStateStatus = iota
+	existingCreateStateResumable
+)
+
+type existingCreateState struct {
+	Status existingCreateStateStatus
+	Result CreateResult
 }
 
 // InitializeEffort creates the effort directory structure and a
@@ -55,11 +139,23 @@ type CreateResult struct {
 func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 	absRoot, err := filepath.Abs(opts.EffortRoot)
 	if err != nil {
-		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: opts.EffortRoot}, fmt.Errorf("resolve effort root: %w", err)
+		return CreateResult{EffortRoot: opts.EffortRoot}, fmt.Errorf("resolve effort root: %w", err)
 	}
+	if err := os.MkdirAll(absRoot, 0o755); err != nil {
+		return CreateResult{EffortRoot: absRoot}, fmt.Errorf("create effort root: %w", err)
+	}
+	lease, err := openProductWorkflowMutationLease(absRoot)
+	if err != nil {
+		return CreateResult{EffortRoot: absRoot}, fmt.Errorf("acquire effort initialization lease: %w", err)
+	}
+	defer lease.Close()
 
-	if existing, ok := loadExistingCreatePhase(absRoot); ok {
-		return existing, nil
+	existing, err := loadExistingCreateStateRoot(lease.root, absRoot)
+	if err != nil {
+		return CreateResult{EffortRoot: absRoot}, err
+	}
+	if existing.Status == existingCreateStateResumable {
+		return existing.Result, nil
 	}
 
 	effortID := strings.TrimSpace(opts.EffortID)
@@ -72,20 +168,30 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 		title = effortID
 	}
 
-	dirs := []string{
-		absRoot,
-		filepath.Join(absRoot, "adrs"),
-		filepath.Join(absRoot, "evidence"),
-		filepath.Join(absRoot, "briefs"),
-		filepath.Join(absRoot, "reports"),
+	if err := lease.ValidatePathIdentity(); err != nil {
+		return CreateResult{EffortRoot: absRoot}, fmt.Errorf("validate effort initialization root: %w", err)
 	}
-	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("create directory %s: %w", d, err)
+	for _, relPath := range []string{"adrs", "evidence", "briefs", "reports"} {
+		info, statErr := lease.root.Lstat(relPath)
+		if errors.Is(statErr, os.ErrNotExist) {
+			if err := lease.root.Mkdir(relPath, 0o755); err != nil {
+				return CreateResult{EffortRoot: absRoot}, fmt.Errorf("create directory %s: %w", filepath.Join(absRoot, relPath), err)
+			}
+			if err := atomicfile.SyncDirRoot(lease.root, "."); err != nil {
+				return CreateResult{EffortRoot: absRoot}, fmt.Errorf("sync directory %s: %w", filepath.Join(absRoot, relPath), err)
+			}
+			info, statErr = lease.root.Lstat(relPath)
+		}
+		if statErr != nil {
+			return CreateResult{EffortRoot: absRoot}, fmt.Errorf("inspect directory %s: %w", filepath.Join(absRoot, relPath), statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return CreateResult{EffortRoot: absRoot}, fmt.Errorf("effort directory %s must be a directory and must not be a symlink", filepath.Join(absRoot, relPath))
 		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	projection := creationPhaseProjections[PhasePRDDrafting]
 	ws := WorkflowState{
 		SchemaVersion: "idiom.product_workflow_state.v1",
 		EffortID:      effortID,
@@ -95,11 +201,12 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 		UpdatedAt:     now,
 		StateRevision: 0,
 		LastEventID:   "evt-create-init-" + now,
-		StatusBucket:  WorkflowStatusBucketStarted,
-		CurrentPhase:  PhasePRDDrafting,
-		CurrentState:  WorkflowStatePlanned,
+		StatusBucket:  projection.StatusBucket,
+		CurrentPhase:  string(PhasePRDDrafting),
+		CurrentState:  projection.CurrentState,
 		ArtifactPaths: map[string]string{
-			"prd": "prd.md",
+			"prd":    "prd.md",
+			"events": productWorkflowDefaultEventsPath,
 		},
 		Context: WorkflowContext{
 			ContextPackID:  "create-" + effortID,
@@ -113,11 +220,25 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 		},
 		DurabilityLevel:  "standard",
 		FolderPath:       filepath.ToSlash(absRoot),
-		NextValidActions: []string{"approve_prd", "edit_requirements"},
+		NextValidActions: append([]string(nil), projection.NextValidActions...),
 	}
 
-	if err := atomicWriteWorkflowState(absRoot, ws); err != nil {
-		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("write %s: %w", WorkflowStateFileName, err)
+	if err := lease.ValidatePathIdentity(); err != nil {
+		return CreateResult{EffortRoot: absRoot, EffortID: effortID}, fmt.Errorf("validate effort initialization root: %w", err)
+	}
+	eventsPath, err := productWorkflowEventsPath(ws)
+	if err != nil {
+		return CreateResult{EffortRoot: absRoot, EffortID: effortID}, fmt.Errorf("resolve effort event ledger: %w", err)
+	}
+	if _, present, err := readWorkflowArtifactSnapshot(lease.root, eventsPath); err != nil {
+		return CreateResult{EffortRoot: absRoot, EffortID: effortID}, fmt.Errorf("inspect effort event ledger: %w", err)
+	} else if !present {
+		if err := writeEffortArtifactAtomicRoot(lease.root, eventsPath, nil, 0o644); err != nil {
+			return CreateResult{EffortRoot: absRoot, EffortID: effortID}, fmt.Errorf("initialize effort event ledger: %w", err)
+		}
+	}
+	if err := atomicWriteWorkflowStateRoot(lease.root, ws); err != nil {
+		return CreateResult{EffortRoot: absRoot, EffortID: effortID}, fmt.Errorf("write %s: %w", WorkflowStateFileName, err)
 	}
 
 	return CreateResult{
@@ -125,72 +246,206 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 		EffortRoot:      absRoot,
 		EffortID:        effortID,
 		CurrentPhase:    PhasePRDDrafting,
-		NextValidAction: "approve_prd",
+		NextValidAction: firstAction(projection.NextValidActions),
 	}, nil
 }
 
-// AdvanceCreatePhase writes a phase transition to workflow_state.json.
-// It rejects transitions not in validNextCreationPhases.
-func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) {
-	ws, err := LoadWorkflowState(absRoot)
+// SubmitPRDForReview moves a completed PRD draft to its review gate.
+func SubmitPRDForReview(absRoot string) (CreateResult, error) {
+	return advanceCreatePhase(absRoot, PhasePRDReview, creationTransitionNoGate, creationTransitionAdvanced)
+}
+
+// SubmitADRsForReview moves a completed ADR draft generation to its review gate.
+func SubmitADRsForReview(absRoot string) (CreateResult, error) {
+	return advanceCreatePhase(absRoot, PhaseADRReview, creationTransitionNoGate, creationTransitionAdvanced)
+}
+
+func advanceCreatePhase(
+	absRoot string,
+	nextPhase CreationPhase,
+	authority creationTransitionAuthority,
+	event creationTransitionEvent,
+) (CreateResult, error) {
+	batch, err := openProductWorkflowMutationLease(absRoot)
 	if err != nil {
-		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("load workflow state: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("acquire creation phase lease: %w", err)
+	}
+	defer batch.Close()
+
+	ws, currentPhase, err := inspectWorkflowAuthority(batch.root)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, err
 	}
 
-	allowed, ok := validNextCreationPhases[ws.CurrentPhase]
+	transition, ok := validNextCreationPhases[currentPhase]
 	if !ok {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot},
-			fmt.Errorf("cannot advance from terminal phase %q", ws.CurrentPhase)
+			fmt.Errorf("cannot advance from terminal phase %q", currentPhase)
 	}
 
-	found := false
-
-	for _, p := range allowed {
-		if p == nextPhase {
-			found = true
-			break
-		}
-	}
-
-	if !found {
+	if transition.Next != nextPhase {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase,
-			Blockers:     []string{"cannot transition from " + ws.CurrentPhase + " to " + nextPhase},
+			CurrentPhase: currentPhase,
+			Blockers:     []string{fmt.Sprintf("cannot transition from %s to %s", currentPhase, nextPhase)},
+		}, nil
+	}
+	if transition.RequiredAuthority != authority {
+		return CreateResult{
+			Status:          ProductWorkflowStatusBlocked,
+			EffortRoot:      absRoot,
+			EffortID:        ws.EffortID,
+			CurrentPhase:    currentPhase,
+			Blockers:        []string{creationTransitionAuthorityBlocker(currentPhase, nextPhase, transition.RequiredAuthority)},
+			NextValidAction: firstAction(ws.NextValidActions),
 		}, nil
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	return commitCreationPhaseTransition(batch, ws, nextPhase, event)
+}
 
-	ws.UpdatedAt = now
-	ws.StateRevision++
-
-	ws.CurrentPhase = nextPhase
-	ws.LastEventID = "evt-create-phase-" + nextPhase + "-" + now
-
-	switch nextPhase {
-	case PhasePRDDrafting:
-		ws.CurrentState = WorkflowStatePlanned
-		ws.NextValidActions = []string{"approve_prd", "edit_requirements"}
-	case PhasePRDReview:
-		ws.CurrentState = WorkflowStateHumanVerification
-		ws.NextValidActions = []string{"approve_prd", "request_prd_changes"}
-	case PhaseADRDrafting:
-		ws.CurrentState = WorkflowStatePlanned
-		ws.NextValidActions = []string{"approve_adrs", "edit_adrs"}
-	case PhaseADRReview:
-		ws.CurrentState = WorkflowStateHumanVerification
-		ws.NextValidActions = []string{"approve_adrs", "request_adr_changes"}
-	case PhaseTDDSynthesis:
-		ws.CurrentState = WorkflowStatePlanned
-		ws.NextValidActions = []string{"finalize"}
-	case PhaseComplete:
-		ws.StatusBucket = WorkflowStatusBucketClosed
-		ws.CurrentState = WorkflowStateClosed
-		ws.NextValidActions = []string{"view_status"}
+func creationTransitionAuthorityBlocker(
+	currentPhase CreationPhase,
+	nextPhase CreationPhase,
+	authority creationTransitionAuthority,
+) string {
+	gate := "the owning approval gate"
+	switch authority {
+	case creationTransitionPRDApproval:
+		gate = "ApprovePRDGate"
+	case creationTransitionADRApproval:
+		gate = "ApproveADRGate"
 	}
 
-	if err := atomicWriteWorkflowState(absRoot, ws); err != nil {
+	return fmt.Sprintf("transition from %s to %s requires %s", currentPhase, nextPhase, gate)
+}
+
+// RequestCreateChanges performs the only supported backward creation
+// transitions: PRD review to PRD drafting and ADR review to ADR drafting.
+func RequestCreateChanges(absRoot string) (CreateResult, error) {
+	batch, err := openProductWorkflowMutationLease(absRoot)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("acquire creation changes lease: %w", err)
+	}
+	defer batch.Close()
+
+	ws, currentPhase, err := inspectWorkflowAuthority(batch.root)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, err
+	}
+	nextPhase, ok := createChangesTargetPhases[currentPhase]
+	if !ok {
+		return CreateResult{
+			Status:          ProductWorkflowStatusBlocked,
+			EffortRoot:      absRoot,
+			EffortID:        ws.EffortID,
+			CurrentPhase:    currentPhase,
+			Blockers:        []string{fmt.Sprintf("cannot request creation changes from %s", currentPhase)},
+			NextValidAction: firstAction(ws.NextValidActions),
+		}, nil
+	}
+	if currentPhase == PhaseADRReview {
+		indexBody, err := readEffortArtifactRoot(batch.root, "adrs/index.json")
+		if err != nil {
+			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("read ADR index before requesting changes: %w", err)
+		}
+		index, err := ParseADRIndexJSON(indexBody)
+		if err != nil {
+			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("parse ADR index before requesting changes: %w", err)
+		}
+		for _, entry := range index.ADRs {
+			if strings.TrimSpace(entry.Status) != string(ArtifactStateDraft) {
+				return CreateResult{
+					Status:          ProductWorkflowStatusBlocked,
+					EffortRoot:      absRoot,
+					EffortID:        ws.EffortID,
+					CurrentPhase:    currentPhase,
+					Blockers:        []string{"ADR review generation is no longer draft; finish or recover the owning approval transition before requesting new changes"},
+					NextValidAction: "approve_adrs",
+				}, nil
+			}
+		}
+	}
+	if currentPhase == PhasePRDReview {
+		generation, body, _, err := inspectPRDGeneration(batch.root)
+		if err != nil {
+			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("inspect PRD before requesting changes: %w", err)
+		}
+		if generation.generation.state == workflowArtifactGenerationPresent {
+			prd, parseErr := ParsePRDMarkdown(body)
+			if parseErr == nil && strings.TrimSpace(prd.FrontMatter.Status) != string(ArtifactStateDraft) {
+				return CreateResult{
+					Status:          ProductWorkflowStatusBlocked,
+					EffortRoot:      absRoot,
+					EffortID:        ws.EffortID,
+					CurrentPhase:    currentPhase,
+					Blockers:        []string{"PRD review generation is no longer draft; finish or recover the owning approval transition before requesting new changes"},
+					NextValidAction: "approve_prd",
+				}, nil
+			}
+		}
+	}
+
+	return commitCreationPhaseTransition(batch, ws, nextPhase, creationTransitionChangesRequested)
+}
+
+// RecoverTDDSynthesis returns a failed or blocked TDD synthesis/planning phase
+// to ADR drafting so durable workflow state and the interactive drafting route
+// remain aligned.
+func RecoverTDDSynthesis(absRoot string) (CreateResult, error) {
+	batch, err := openProductWorkflowMutationLease(absRoot)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("acquire TDD recovery lease: %w", err)
+	}
+	defer batch.Close()
+
+	ws, currentPhase, err := inspectWorkflowAuthority(batch.root)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, err
+	}
+	if currentPhase != PhaseTDDSynthesis {
+		return CreateResult{
+			Status:          ProductWorkflowStatusBlocked,
+			EffortRoot:      absRoot,
+			EffortID:        ws.EffortID,
+			CurrentPhase:    currentPhase,
+			Blockers:        []string{fmt.Sprintf("cannot recover TDD synthesis from %s", currentPhase)},
+			NextValidAction: firstAction(ws.NextValidActions),
+		}, nil
+	}
+
+	return commitCreationPhaseTransition(batch, ws, PhaseADRDrafting, creationTransitionSynthesisRecovery)
+}
+
+func commitCreationPhaseTransition(
+	lease *productWorkflowMutationLease,
+	ws WorkflowState,
+	nextPhase CreationPhase,
+	event creationTransitionEvent,
+) (CreateResult, error) {
+	absRoot := ""
+	if lease != nil {
+		absRoot = lease.effortRoot
+	}
+	projection, ok := creationPhaseProjections[nextPhase]
+	if !ok {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot},
+			fmt.Errorf("unknown target creation phase %q", nextPhase)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	ws.UpdatedAt = now
+	ws.StateRevision++
+	ws.LastEventID = fmt.Sprintf("evt-create-%s-%s-%s", event, nextPhase, now)
+	ws.StatusBucket = projection.StatusBucket
+	ws.CurrentPhase = string(nextPhase)
+	ws.CurrentState = projection.CurrentState
+	ws.NextValidActions = append([]string(nil), projection.NextValidActions...)
+
+	if err := lease.ValidatePathIdentity(); err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("validate creation transition effort root: %w", err)
+	}
+	if err := atomicWriteWorkflowStateRoot(lease.root, ws); err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("write %s: %w", WorkflowStateFileName, err)
 	}
 
@@ -198,45 +453,115 @@ func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) 
 		Status:          ProductWorkflowStatusOK,
 		EffortRoot:      absRoot,
 		EffortID:        ws.EffortID,
-		CurrentPhase:    ws.CurrentPhase,
+		CurrentPhase:    nextPhase,
 		NextValidAction: firstAction(ws.NextValidActions),
 	}, nil
 }
 
-// ApprovePRDGate runs the PRD intake validator and advances to PhaseADRDrafting.
-func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
-	ws, err := LoadWorkflowState(absRoot)
-	if err != nil {
-		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("load workflow state: %w", err)
+func creationPhaseFromStored(value string) (CreationPhase, bool) {
+	phase := CreationPhase(strings.TrimSpace(value))
+	_, ok := creationPhaseProjections[phase]
+
+	return phase, ok
+}
+
+func validateCreationWorkflowAuthority(ws WorkflowState) (CreationPhase, error) {
+	phase, ok := creationPhaseFromStored(ws.CurrentPhase)
+	if !ok {
+		return "", fmt.Errorf("workflow state has unknown creation phase %q", ws.CurrentPhase)
+	}
+	projection := creationPhaseProjections[phase]
+	if strings.TrimSpace(ws.StatusBucket) != projection.StatusBucket {
+		return "", fmt.Errorf(
+			"workflow phase %q requires status_bucket %q, got %q",
+			phase,
+			projection.StatusBucket,
+			ws.StatusBucket,
+		)
+	}
+	if strings.TrimSpace(ws.CurrentState) != projection.CurrentState {
+		return "", fmt.Errorf(
+			"workflow phase %q requires current_state %q, got %q",
+			phase,
+			projection.CurrentState,
+			ws.CurrentState,
+		)
+	}
+	if !equalCreationActions(ws.NextValidActions, projection.NextValidActions) {
+		return "", fmt.Errorf(
+			"workflow phase %q requires next_valid_actions %v, got %v",
+			phase,
+			projection.NextValidActions,
+			ws.NextValidActions,
+		)
+	}
+	if ws.SourceSatisfiedDelivery != nil && phase != PhaseComplete {
+		return "", fmt.Errorf("source-satisfied delivery requires workflow phase %q, got %q", PhaseComplete, phase)
 	}
 
-	if ws.CurrentPhase != PhasePRDReview {
+	return phase, nil
+}
+
+func equalCreationActions(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for index := range expected {
+		if strings.TrimSpace(actual[index]) != expected[index] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ApprovePRDGate runs the PRD intake validator and advances to PhaseADRDrafting.
+func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
+	lease, err := openProductWorkflowMutationLease(absRoot)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{},
+			fmt.Errorf("acquire PRD approval lease: %w", err)
+	}
+	defer lease.Close()
+
+	generation, data, ws, err := inspectPRDGeneration(lease.root)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{},
+			fmt.Errorf("inspect PRD approval generation: %w", err)
+	}
+	currentPhase := generation.generation.phase
+
+	if currentPhase != PhasePRDReview {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase,
-			Blockers:     []string{"current phase " + ws.CurrentPhase + " is not prd_review"},
+			CurrentPhase: currentPhase,
+			Blockers:     []string{fmt.Sprintf("current phase %s is not %s", currentPhase, PhasePRDReview)},
 		}, IntakeResult{}, nil
 	}
 
-	prdPath := filepath.Join(absRoot, "prd.md")
-
-	data, err := os.ReadFile(prdPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return CreateResult{
-				Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-				CurrentPhase: ws.CurrentPhase, Blockers: []string{"prd.md not found"},
-			}, IntakeResult{}, nil
-		}
-
-		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("read prd.md: %w", err)
+	if generation.generation.state == workflowArtifactGenerationAbsent {
+		return CreateResult{
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
+			CurrentPhase: currentPhase, Blockers: []string{"prd.md not found"},
+		}, IntakeResult{}, nil
 	}
 
 	prd, err := ParsePRDMarkdown(data)
 	if err != nil {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase, Blockers: []string{"prd.md parse error: " + err.Error()},
+			CurrentPhase: currentPhase, Blockers: []string{"prd.md parse error: " + err.Error()},
+		}, IntakeResult{}, nil
+	}
+	if strings.TrimSpace(prd.FrontMatter.TaskID) != strings.TrimSpace(ws.TaskID) {
+		return CreateResult{
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
+			CurrentPhase: currentPhase,
+			Blockers: []string{fmt.Sprintf(
+				"prd.md task_id %q does not match workflow state task_id %q",
+				prd.FrontMatter.TaskID,
+				ws.TaskID,
+			)},
 		}, IntakeResult{}, nil
 	}
 
@@ -249,7 +574,7 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase, Blockers: blockers,
+			CurrentPhase: currentPhase, Blockers: blockers,
 		}, intake, nil
 	}
 
@@ -260,11 +585,20 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 	prd.FrontMatter.AcceptedBy = "operator"
 	prd.FrontMatter.AcceptanceProfile = "product_workflow_create"
 
-	if err := WritePRDMarkdown(absRoot, prd); err != nil {
+	if err := lease.ValidatePathIdentity(); err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, intake,
+			fmt.Errorf("validate PRD approval effort root: %w", err)
+	}
+	if _, err := persistPRDDocument(lease.root, prd); err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, intake, fmt.Errorf("write accepted prd.md: %w", err)
 	}
 
-	result, err := AdvanceCreatePhase(absRoot, PhaseADRDrafting)
+	result, err := commitCreationPhaseTransition(
+		lease,
+		ws,
+		PhaseADRDrafting,
+		creationTransitionPRDApproved,
+	)
 
 	return result, intake, err
 }
@@ -273,30 +607,45 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 // PhaseTDDSynthesis. All ADRs are validated before any are written to avoid
 // partial acceptance on late failures.
 func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
-	ws, err := LoadWorkflowState(absRoot)
+	batch, err := openProductWorkflowMutationLease(absRoot)
 	if err != nil {
-		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil, fmt.Errorf("load workflow state: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil,
+			fmt.Errorf("recover ADR batch transaction: %w", err)
+	}
+	batchOpen := true
+	defer func() {
+		if batchOpen {
+			batch.Close()
+		}
+	}()
+	expectedGeneration, err := batch.ADRGeneration()
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil,
+			fmt.Errorf("inspect ADR generation: %w", err)
 	}
 
-	if ws.CurrentPhase != PhaseADRReview {
+	ws, currentPhase, err := inspectWorkflowAuthority(batch.root)
+	if err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil, err
+	}
+
+	if currentPhase != PhaseADRReview {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase,
-			Blockers:     []string{"current phase " + ws.CurrentPhase + " is not adr_review"},
+			CurrentPhase: currentPhase,
+			Blockers:     []string{fmt.Sprintf("current phase %s is not %s", currentPhase, PhaseADRReview)},
 		}, nil, nil
 	}
 
 	var allIntakes []IntakeResult
 
 	// Load and validate ADR index.
-	idxPath := filepath.Join(absRoot, "adrs", "index.json")
-
-	idxData, err := os.ReadFile(idxPath)
+	idxData, err := readEffortArtifactRoot(batch.root, "adrs/index.json")
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return CreateResult{
 				Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-				CurrentPhase: ws.CurrentPhase, Blockers: []string{"adrs/index.json not found"},
+				CurrentPhase: currentPhase, Blockers: []string{"adrs/index.json not found"},
 			}, nil, nil
 		}
 
@@ -307,7 +656,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 	if err != nil {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase, Blockers: []string{"adrs/index.json parse error: " + err.Error()},
+			CurrentPhase: currentPhase, Blockers: []string{"adrs/index.json parse error: " + err.Error()},
 		}, nil, nil
 	}
 
@@ -320,7 +669,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase, Blockers: blockers,
+			CurrentPhase: currentPhase, Blockers: blockers,
 		}, allIntakes, nil
 	}
 
@@ -340,9 +689,17 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 
 	for _, entry := range idx.ADRs {
 		ar := adrResult{entry: entry}
-		adrPath := filepath.Join(absRoot, "adrs", entry.Path)
+		entryPath, ok := cleanEffortRelativePath(entry.Path)
+		if !ok {
+			ar.blocked = true
+			ar.reason = "read " + entry.Path + ": ADR index path must be effort-relative and must not contain path traversal"
+			adrBlockers = append(adrBlockers, ar.reason)
+			allIntakes = append(allIntakes, IntakeResult{})
+			adrResults = append(adrResults, ar)
 
-		data, readErr := os.ReadFile(adrPath)
+			continue
+		}
+		data, readErr := readEffortArtifactRoot(batch.root, filepath.Join("adrs", entryPath))
 		if readErr != nil {
 			ar.blocked = true
 			ar.reason = "read " + entry.Path + ": " + readErr.Error()
@@ -380,86 +737,114 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 	if len(adrBlockers) > 0 {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase, Blockers: adrBlockers,
+			CurrentPhase: currentPhase, Blockers: adrBlockers,
 		}, allIntakes, nil
 	}
 
-	// Phase 2: all passed — write accepted status to every ADR.
+	// Phase 2: all passed — prepare the complete accepted write set. The shared
+	// persistence use case validates every rendered document, path, and index
+	// relationship before it performs the first write.
 	now := time.Now().UTC().Format(time.RFC3339)
-
+	acceptedDocuments := make([]ADRDocument, 0, len(adrResults))
 	for _, ar := range adrResults {
 		ar.doc.FrontMatter.Status = string(ArtifactStateAccepted)
 		ar.doc.FrontMatter.AcceptedAt = now
 		ar.doc.FrontMatter.AcceptedBy = "operator"
 		ar.doc.FrontMatter.AcceptanceProfile = "product_workflow_create"
-
-		if writeErr := WriteADRMarkdown(absRoot, ar.entry.Path, ar.doc); writeErr != nil {
-			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, allIntakes,
-				fmt.Errorf("write %s: %w", ar.entry.Path, writeErr)
-		}
+		acceptedDocuments = append(acceptedDocuments, ar.doc)
 	}
 
-	// Mark index entries accepted.
 	for i := range idx.ADRs {
 		idx.ADRs[i].Status = string(ArtifactStateAccepted)
 	}
 
-	if err := WriteADRIndexJSON(absRoot, idx); err != nil {
+	batch.Close()
+	batchOpen = false
+	if _, err := persistAcceptedADRs(ADRDraftPersistenceRequest{
+		EffortRoot:         absRoot,
+		Documents:          acceptedDocuments,
+		IndexEntries:       idx.ADRs,
+		ExpectedGeneration: expectedGeneration,
+	}); err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, allIntakes,
-			fmt.Errorf("write adrs/index.json: %w", err)
+			fmt.Errorf("persist accepted ADRs: %w", err)
 	}
 
-	result, err := AdvanceCreatePhase(absRoot, PhaseTDDSynthesis)
+	result, err := advanceCreatePhase(
+		absRoot,
+		PhaseTDDSynthesis,
+		creationTransitionADRApproval,
+		creationTransitionADRApproved,
+	)
 
 	return result, allIntakes, err
 }
 
 // CompleteEffort advances the effort to PhaseComplete.
 func CompleteEffort(absRoot string) (CreateResult, error) {
-	ws, err := LoadWorkflowState(absRoot)
+	lease, err := openProductWorkflowMutationLease(absRoot)
 	if err != nil {
-		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("load workflow state: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("acquire completion lease: %w", err)
 	}
+	defer lease.Close()
 
-	if ws.CurrentPhase != PhaseTDDSynthesis {
+	recorder := newWorkflowCompletionInputRecorder()
+	input, loadBlockers := loadBriefGenerationInputRoot(lease.effortRoot, lease, recorder)
+	ws := input.WorkflowState
+	currentPhase, ok := creationPhaseFromStored(ws.CurrentPhase)
+	if !ok {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("workflow state has unknown creation phase %q", ws.CurrentPhase)
+	}
+	if currentPhase != PhaseTDDSynthesis {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
-			CurrentPhase: ws.CurrentPhase,
-			Blockers:     []string{"cannot complete from phase " + ws.CurrentPhase},
+			CurrentPhase: currentPhase,
+			Blockers:     []string{fmt.Sprintf("cannot complete from phase %s", currentPhase)},
+		}, nil
+	}
+	if blockers := briefGenerationInputParseBlockers(loadBlockers); len(blockers) > 0 {
+		return CreateResult{
+			Status:          ProductWorkflowStatusBlocked,
+			EffortRoot:      absRoot,
+			EffortID:        ws.EffortID,
+			CurrentPhase:    currentPhase,
+			Blockers:        append([]string(nil), blockers...),
+			NextValidAction: firstAction(ws.NextValidActions),
+		}, nil
+	}
+	if err := input.adrGeneration.validate(); err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("validate completion ADR generation: %w", err)
+	}
+	if err := input.tddGeneration.validate(); err != nil {
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("validate completion TDD generation: %w", err)
+	}
+	if CoverageGateHasBlockers(input.CoverageEvaluation) &&
+		!CoverageGateHasOnlyTDDEvidenceBlockers(input.CoverageEvaluation) {
+		blockers := coverageBlockerMessages(input.CoverageEvaluation)
+		if len(blockers) == 0 {
+			blockers = []string{"coverage gate evaluation is blocked"}
+		}
+		return CreateResult{
+			Status:          ProductWorkflowStatusBlocked,
+			EffortRoot:      absRoot,
+			EffortID:        ws.EffortID,
+			CurrentPhase:    currentPhase,
+			Blockers:        blockers,
+			NextValidAction: firstAction(ws.NextValidActions),
+		}, nil
+	}
+	if err := recorder.Verify(lease.root); err != nil {
+		return CreateResult{
+			Status:          ProductWorkflowStatusBlocked,
+			EffortRoot:      lease.effortRoot,
+			EffortID:        ws.EffortID,
+			CurrentPhase:    currentPhase,
+			Blockers:        []string{err.Error() + "; reload and retry"},
+			NextValidAction: firstAction(ws.NextValidActions),
 		}, nil
 	}
 
-	return AdvanceCreatePhase(absRoot, PhaseComplete)
-}
-
-// WritePRDMarkdown serializes a PRDDocument to prd.md.
-func WritePRDMarkdown(absRoot string, doc PRDDocument) error {
-	content := RenderPRDMarkdown(doc)
-	return os.WriteFile(filepath.Join(absRoot, "prd.md"), []byte(content), 0o644)
-}
-
-// WriteADRMarkdown serializes an ADRDocument.
-func WriteADRMarkdown(absRoot, relPath string, doc ADRDocument) error {
-	fullPath := filepath.Join(absRoot, "adrs", relPath)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		return err
-	}
-
-	content := RenderADRMarkdown(doc)
-
-	return os.WriteFile(fullPath, []byte(content), 0o644)
-}
-
-// WriteADRIndexJSON serializes an ADRIndex to adrs/index.json.
-func WriteADRIndexJSON(absRoot string, idx ADRIndex) error {
-	data, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode ADR index: %w", err)
-	}
-
-	data = append(data, '\n')
-
-	return os.WriteFile(filepath.Join(absRoot, "adrs", "index.json"), data, 0o644)
+	return commitCreationPhaseTransition(lease, ws, PhaseComplete, creationTransitionAdvanced)
 }
 
 // RenderPRDMarkdown produces markdown matching the ParsePRDMarkdown expected format.
@@ -612,38 +997,49 @@ func RenderADRMarkdown(doc ADRDocument) string {
 	return b.String()
 }
 
-func loadExistingCreatePhase(absRoot string) (CreateResult, bool) {
-	wsPath := filepath.Join(absRoot, WorkflowStateFileName)
-
-	data, err := os.ReadFile(wsPath)
+func loadExistingCreateStateRoot(root *os.Root, absRoot string) (existingCreateState, error) {
+	data, present, err := readWorkflowArtifactSnapshot(root, WorkflowStateFileName)
 	if err != nil {
-		return CreateResult{}, false
+		return existingCreateState{}, fmt.Errorf("read existing %s: %w", WorkflowStateFileName, err)
+	}
+	if !present {
+		return existingCreateState{Status: existingCreateStateAbsent}, nil
 	}
 
 	ws, err := ParseWorkflowStateJSON(data)
 	if err != nil {
-		return CreateResult{}, false
+		return existingCreateState{}, fmt.Errorf("parse existing %s: %w", WorkflowStateFileName, err)
 	}
 
-	switch ws.CurrentPhase {
-	case PhasePRDDrafting, PhasePRDReview, PhaseADRDrafting, PhaseADRReview, PhaseTDDSynthesis, PhaseComplete:
-		return CreateResult{
+	phase, err := validateCreationWorkflowAuthority(ws)
+	if err != nil {
+		return existingCreateState{}, fmt.Errorf("existing %s is not valid creation authority: %w", WorkflowStateFileName, err)
+	}
+	eventsPath, err := productWorkflowEventsPath(ws)
+	if err != nil {
+		return existingCreateState{}, fmt.Errorf("existing %s has invalid event-ledger authority: %w", WorkflowStateFileName, err)
+	}
+	if _, present, err := readWorkflowArtifactSnapshot(root, eventsPath); err != nil {
+		return existingCreateState{}, fmt.Errorf("read existing event ledger %s: %w", filepath.ToSlash(eventsPath), err)
+	} else if !present {
+		return existingCreateState{}, fmt.Errorf("existing event ledger %s is required", filepath.ToSlash(eventsPath))
+	}
+
+	return existingCreateState{
+		Status: existingCreateStateResumable,
+		Result: CreateResult{
 			Status:          ProductWorkflowStatusResumed,
 			EffortRoot:      absRoot,
 			EffortID:        ws.EffortID,
-			CurrentPhase:    ws.CurrentPhase,
+			CurrentPhase:    phase,
 			NextValidAction: firstAction(ws.NextValidActions),
-		}, true
-	default:
-		return CreateResult{}, false
-	}
+		},
+	}, nil
 }
 
-// atomicWriteWorkflowState writes workflow_state.json through the shared
-// atomic writer after applying product-workflow JSON formatting.
-func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
-	workflowPath := filepath.Join(absRoot, WorkflowStateFileName)
-
+// atomicWriteWorkflowStateRoot writes workflow_state.json relative to the root
+// inode owned by the surrounding product-workflow transaction.
+func atomicWriteWorkflowStateRoot(root *os.Root, ws WorkflowState) error {
 	data, err := json.MarshalIndent(ws, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", WorkflowStateFileName, err)
@@ -651,7 +1047,7 @@ func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
 
 	data = append(data, '\n')
 
-	if err := atomicfile.WriteFile(workflowPath, data, 0o644); err != nil {
+	if err := writeEffortArtifactAtomicRoot(root, WorkflowStateFileName, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", WorkflowStateFileName, err)
 	}
 

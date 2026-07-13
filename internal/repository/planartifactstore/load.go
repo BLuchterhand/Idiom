@@ -10,7 +10,14 @@ import (
 )
 
 func Load(path string) (planartifact.PlanArtifact, error) {
-	body, err := os.ReadFile(path)
+	baseDir := filepath.Dir(path)
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return planartifact.PlanArtifact{}, fmt.Errorf("open plan artifact directory %q: %w", baseDir, err)
+	}
+	defer root.Close()
+
+	body, err := root.ReadFile(filepath.Base(path))
 	if err != nil {
 		return planartifact.PlanArtifact{}, err
 	}
@@ -24,7 +31,11 @@ func Load(path string) (planartifact.PlanArtifact, error) {
 		return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q is empty", path)
 	}
 
-	if err := HydrateRefs(filepath.Dir(path), &artifact); err != nil {
+	if _, err := validateEditsAndCheckRefHydration(&artifact); err != nil {
+		return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
+	}
+
+	if err := hydrateRefs(root, &artifact); err != nil {
 		return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
 	}
 
@@ -40,10 +51,28 @@ func HydrateRefs(baseDir string, artifact *planartifact.PlanArtifact) error {
 		return nil
 	}
 
+	needsHydration, err := validateEditsAndCheckRefHydration(artifact)
+	if err != nil {
+		return err
+	}
+	if !needsHydration {
+		return nil
+	}
+
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return fmt.Errorf("open plan artifact directory %q: %w", baseDir, err)
+	}
+	defer root.Close()
+
+	return hydrateRefs(root, artifact)
+}
+
+func hydrateRefs(root *os.Root, artifact *planartifact.PlanArtifact) error {
 	for i := range artifact.Edits {
 		edit := &artifact.Edits[i]
 		if strings.TrimSpace(edit.NewText) == "" && strings.TrimSpace(edit.NewTextRef) != "" {
-			content, err := readEditBodyRef(baseDir, edit.NewTextRef)
+			content, err := readEditBodyRef(root, edit.NewTextRef)
 			if err != nil {
 				return fmt.Errorf("edits[%d].new_text_ref: %w", i, err)
 			}
@@ -52,7 +81,7 @@ func HydrateRefs(baseDir string, artifact *planartifact.PlanArtifact) error {
 		}
 
 		if strings.TrimSpace(edit.Content) == "" && strings.TrimSpace(edit.ContentRef) != "" {
-			content, err := readEditBodyRef(baseDir, edit.ContentRef)
+			content, err := readEditBodyRef(root, edit.ContentRef)
 			if err != nil {
 				return fmt.Errorf("edits[%d].content_ref: %w", i, err)
 			}
@@ -60,15 +89,28 @@ func HydrateRefs(baseDir string, artifact *planartifact.PlanArtifact) error {
 			edit.Content = content
 		}
 
-		if err := planartifact.ValidatePlanEditShape(*edit); err != nil {
-			return fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err)
-		}
 	}
 
 	return nil
 }
 
-func readEditBodyRef(baseDir string, ref string) (string, error) {
+func validateEditsAndCheckRefHydration(artifact *planartifact.PlanArtifact) (bool, error) {
+	needsHydration := false
+	for i := range artifact.Edits {
+		edit := artifact.Edits[i]
+		if err := planartifact.ValidatePlanEditShape(edit); err != nil {
+			return false, fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err)
+		}
+
+		needsHydration = needsHydration ||
+			(strings.TrimSpace(edit.NewText) == "" && strings.TrimSpace(edit.NewTextRef) != "") ||
+			(strings.TrimSpace(edit.Content) == "" && strings.TrimSpace(edit.ContentRef) != "")
+	}
+
+	return needsHydration, nil
+}
+
+func readEditBodyRef(root *os.Root, ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return "", fmt.Errorf("empty ref")
@@ -83,14 +125,7 @@ func readEditBodyRef(baseDir string, ref string) (string, error) {
 		return "", fmt.Errorf("ref escapes plan artifact directory")
 	}
 
-	path := filepath.Join(baseDir, clean)
-	rel, err := filepath.Rel(baseDir, path)
-
-	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-		return "", fmt.Errorf("ref escapes plan artifact directory")
-	}
-
-	body, err := os.ReadFile(path)
+	body, err := root.ReadFile(clean)
 	if err != nil {
 		return "", err
 	}

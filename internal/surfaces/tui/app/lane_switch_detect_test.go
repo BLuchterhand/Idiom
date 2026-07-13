@@ -1,11 +1,16 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"strings"
-	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestLaneSwitchReferralFromReplyMatchesConservativePatterns(t *testing.T) {
+var _ = ginkgo.It("lane switch referral from reply matches conservative patterns", func() {
 	cases := []struct {
 		name       string
 		reply      string
@@ -77,20 +82,18 @@ func TestLaneSwitchReferralFromReplyMatchesConservativePatterns(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		ginkgo.By(fmt.Sprint(tc.name), func() {
 			rec, ok := laneSwitchReferralFromReply(tc.reply)
-			if ok != tc.wantMatch {
-				t.Fatalf("laneSwitchReferralFromReply match = %v, want %v (reply=%q)", ok, tc.wantMatch, tc.reply)
-			}
+			gomega.Expect(ok).To(gomega.Equal(tc.wantMatch), fmt.Sprintf("laneSwitchReferralFromReply match = %v, want %v (reply=%q)", ok, tc.wantMatch, tc.reply))
 
-			if ok && rec != tc.wantRecKey {
-				t.Errorf("recommended key = %q, want %q (reply=%q)", rec, tc.wantRecKey, tc.reply)
+			if ok {
+				gomega.Expect(rec).To(gomega.Equal(tc.wantRecKey), fmt.Sprintf("recommended key = %q, want %q (reply=%q)", rec, tc.wantRecKey, tc.reply))
 			}
 		})
 	}
-}
+})
 
-func TestLaneSwitchHeadlessReplyContainsAllOptions(t *testing.T) {
+var _ = ginkgo.It("lane switch headless reply contains all options", func() {
 	reply := laneSwitchHeadlessReply("fix the bug", laneSwitchImplement)
 
 	required := []string{
@@ -102,56 +105,50 @@ func TestLaneSwitchHeadlessReplyContainsAllOptions(t *testing.T) {
 	}
 
 	for _, want := range required {
-		if !strings.Contains(reply, want) {
-			t.Errorf("headless reply missing %q\n----\n%s", want, reply)
-		}
+		gomega.Expect(strings.Contains(reply, want)).To(gomega.BeTrue(), fmt.Sprintf("headless reply missing %q\n----\n%s", want, reply))
 	}
-}
+})
 
-func TestLaneSwitchHeadlessReplyClampsUnknownRecommended(t *testing.T) {
+var _ = ginkgo.It("lane switch headless reply clamps unknown recommended", func() {
 	reply := laneSwitchHeadlessReply("obj", "bogus")
-	if !strings.Contains(reply, "Recommended: /implement") {
-		t.Fatalf("expected unknown recommended to clamp to /implement, got:\n%s", reply)
-	}
-}
+	gomega.Expect(strings.Contains(reply, "Recommended: /implement")).To(gomega.BeTrue(), fmt.Sprintf("expected unknown recommended to clamp to /implement, got:\n%s", reply))
+})
 
-func TestApplyLaneSwitchReferralOpensPopupInTUI(t *testing.T) {
-	m := &Model{} // no event stream, no suppress flags → TUI (interactive)
+var _ = ginkgo.It("apply lane switch referral opens popup in tui", func() {
+	m := &Model{events: make(chan tea.Msg, 1)} // no event stream, no suppress flags → TUI (interactive)
+	session := newPromptExecutionSession(context.Background(), m, m.events, false)
 
-	reply := m.applyLaneSwitchReferralIfAny(
+	reply := session.applyLaneSwitchReferralIfAny(
 		"update the README",
 		"I'm in read-only mode and cannot edit files. Use /implement to switch.",
 	)
+	var popup laneSwitchPopupMsg
+	gomega.Expect(m.events).To(gomega.Receive(&popup))
+	updated, _ := m.Update(popup)
+	m = updated.(*Model)
 
-	if !m.laneSwitchPopup.open {
-		t.Fatal("expected popup to open for lane-refusal reply in TUI mode")
-	}
+	gomega.Expect(m.laneSwitchPopup.open).To(gomega.BeTrue(), fmt.Sprint("expected popup to open for lane-refusal reply in TUI mode"))
 
 	// Reply is preserved unchanged in TUI mode; the popup overlays.
-	if !strings.Contains(reply, "read-only mode") {
-		t.Errorf("expected original reply preserved in TUI mode, got %q", reply)
-	}
+	gomega.Expect(strings.Contains(reply, "read-only mode")).To(gomega.BeTrue(), fmt.Sprintf("expected original reply preserved in TUI mode, got %q", reply))
 
-	if m.laneSwitchPopup.objective != "update the README" {
-		t.Errorf("expected popup to carry original objective, got %q", m.laneSwitchPopup.objective)
-	}
-}
+	gomega.Expect(m.laneSwitchPopup.objective).To(gomega.Equal("update the README"), fmt.Sprintf("expected popup to carry original objective, got %q", m.laneSwitchPopup.objective))
+})
 
-func TestApplyLaneSwitchReferralAppendsOptionsInHeadless(t *testing.T) {
-	m := &Model{suppressPromptTranscript: true} // headless
+var _ = ginkgo.It("apply lane switch referral appends options in headless", func() {
+	m := &Model{events: make(chan tea.Msg, 1), promptRuntimeState: promptRuntimeState{
+		promptRuntimeSnapshotState: promptRuntimeSnapshotState{suppressPromptTranscript: true},
+	}} // headless
+	session := newPromptExecutionSession(context.Background(), m, m.events, false)
 
-	reply := m.applyLaneSwitchReferralIfAny(
+	reply := session.applyLaneSwitchReferralIfAny(
 		"fix the bug in pkg/auth",
 		"I'm in read-only mode; please switch to the plan-execute lane.",
 	)
 
-	if m.laneSwitchPopup.open {
-		t.Error("expected popup NOT to open in headless mode")
-	}
+	gomega.Expect(m.laneSwitchPopup.open).To(gomega.BeFalse(), fmt.Sprint("expected popup NOT to open in headless mode"))
 
-	if !strings.Contains(reply, "I'm in read-only mode") {
-		t.Errorf("expected original refusal preserved in headless reply, got %q", reply)
-	}
+	gomega.Expect(strings.Contains(reply, "I'm in read-only mode")).To(gomega.BeTrue(), fmt.Sprintf("expected original refusal preserved in headless reply, got %q", reply))
 
 	required := []string{
 		"/implement fix the bug in pkg/auth",
@@ -160,23 +157,18 @@ func TestApplyLaneSwitchReferralAppendsOptionsInHeadless(t *testing.T) {
 		"Recommended: /plan-execute",
 	}
 	for _, want := range required {
-		if !strings.Contains(reply, want) {
-			t.Errorf("headless reply missing %q\n----\n%s", want, reply)
-		}
+		gomega.Expect(strings.Contains(reply, want)).To(gomega.BeTrue(), fmt.Sprintf("headless reply missing %q\n----\n%s", want, reply))
 	}
-}
+})
 
-func TestApplyLaneSwitchReferralNoOpOnNonRefusal(t *testing.T) {
-	m := &Model{}
+var _ = ginkgo.It("apply lane switch referral no op on non refusal", func() {
+	m := &Model{events: make(chan tea.Msg, 1)}
+	session := newPromptExecutionSession(context.Background(), m, m.events, false)
 
 	original := "The auth middleware validates tokens before delegating to the session store."
-	reply := m.applyLaneSwitchReferralIfAny("explain auth", original)
+	reply := session.applyLaneSwitchReferralIfAny("explain auth", original)
 
-	if reply != original {
-		t.Errorf("expected reply unchanged for non-refusal, got %q", reply)
-	}
+	gomega.Expect(reply).To(gomega.Equal(original), fmt.Sprintf("expected reply unchanged for non-refusal, got %q", reply))
 
-	if m.laneSwitchPopup.open {
-		t.Error("expected popup NOT to open for non-refusal reply")
-	}
-}
+	gomega.Expect(m.laneSwitchPopup.open).To(gomega.BeFalse(), fmt.Sprint("expected popup NOT to open for non-refusal reply"))
+})

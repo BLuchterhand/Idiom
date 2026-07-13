@@ -11,7 +11,8 @@
       "implementation",
       "verification_only",
       "plan_then_execute_planner",
-      "feature_planner"
+      "feature_planner",
+      "product_workflow"
     ],
     "required_tags": [
       "deterministic",
@@ -57,7 +58,377 @@
       "formal-verification",
       "product-workflow",
       "prd",
-      "adr"
+      "adr",
+      "read-success",
+      "read-denial",
+      "mutation-success",
+      "mutation-denial",
+      "multi-path",
+      "tool-surface-transition",
+      "pending-verification-write-surface",
+      "lane-main",
+      "lane-locate",
+      "lane-explore",
+      "lane-review",
+      "lane-architecture",
+      "security-review",
+      "additive-read-surface",
+      "request-identity",
+      "submit-ready-read",
+      "typed-prerequisite-denial",
+      "fresh-request-recovery",
+      "typed-terminal-authority",
+      "task-ledger",
+      "evidence-spoof",
+      "zero-write-closeout",
+      "plan-submitted-terminal",
+      "shell-admission",
+      "mutating-shell-denial",
+      "read-only-shell",
+      "model-authored-final",
+      "source-window-freshness",
+      "privacy-safe-source-window",
+      "ranged-citation",
+      "directory-citation",
+      "stale-source-window-recovery"
+    ],
+    "required_initial_lanes": [
+      "main",
+      "locate",
+      "explore",
+      "review",
+      "architecture",
+      "implement"
+    ],
+    "required_followup_lanes": [
+      "implement"
+    ],
+    "required_cross_products": [
+      {
+        "name": "main-read-success",
+        "runner_mode": "auto",
+        "required_tags": [
+          "lane-main",
+          "read-success"
+        ],
+        "required_scenario_assertions": [
+          "route_plan",
+          "tools",
+          "evidence_paths",
+          "final_assistant_contains"
+        ]
+      },
+      {
+        "name": "main-read-denial-blocker",
+        "runner_mode": "auto",
+        "required_tags": [
+          "read-denial",
+          "typed-blocker"
+        ],
+        "required_scenario_assertions": [
+          "tools",
+          "run_events",
+          "final_assistant_contains"
+        ]
+      },
+      {
+        "name": "locate-read-success",
+        "runner_mode": "auto",
+        "required_tags": [
+          "lane-locate",
+          "read-success"
+        ],
+        "required_scenario_assertions": [
+          "route_plan",
+          "tools",
+          "evidence_paths"
+        ]
+      },
+      {
+        "name": "explore-mutation-route",
+        "runner_mode": "auto",
+        "required_tags": [
+          "lane-explore",
+          "edit-intent",
+          "mutation-success",
+          "model-authored-final"
+        ],
+        "required_scenario_assertions": [
+          "route_plan",
+          "changed_files",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "final_assistant_contains",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "review-read-success",
+        "runner_mode": "auto",
+        "required_tags": [
+          "lane-review",
+          "security-review",
+          "read-success"
+        ],
+        "required_scenario_assertions": [
+          "route_plan",
+          "tools",
+          "evidence_paths"
+        ]
+      },
+      {
+        "name": "architecture-read-success",
+        "runner_mode": "auto",
+        "required_tags": [
+          "lane-architecture",
+          "read-success"
+        ],
+        "required_scenario_assertions": [
+          "route_plan",
+          "tools",
+          "evidence_paths"
+        ]
+      },
+      {
+        "name": "implement-auto-route",
+        "runner_mode": "auto",
+        "required_tags": [
+          "classifier-routing",
+          "edit-intent",
+          "natural-language",
+          "mutation-success",
+          "model-authored-final"
+        ],
+        "required_scenario_assertions": [
+          "route_plan",
+          "changed_files",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "final_assistant_contains",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "implement-multi-path-pending-verification",
+        "runner_mode": "implement",
+        "required_tags": [
+          "multi-path",
+          "mutation-success",
+          "tool-surface-transition",
+          "pending-verification-write-surface"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "typed_facts",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "implement-mutation-denial-recovery",
+        "runner_mode": "implement",
+        "required_tags": [
+          "mutation-denial",
+          "recovery"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "rejected_tools",
+          "ordered_events",
+          "model_requests",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "plan-submit-ready-additive-read-identity",
+        "runner_mode": "plan-execute",
+        "required_tags": [
+          "additive-read-surface",
+          "request-identity",
+          "submit-ready-read"
+        ],
+        "required_scenario_assertions": [
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "implementation-typed-prerequisite-fresh-request",
+        "runner_mode": "implement",
+        "required_tags": [
+          "typed-prerequisite-denial",
+          "fresh-request-recovery"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "rejected_tools",
+          "ordered_events",
+          "model_requests",
+          "typed_facts",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "implementation-typed-terminal-authority",
+        "runner_mode": "implement",
+        "required_tags": [
+          "typed-terminal-authority",
+          "task-ledger",
+          "evidence-spoof"
+        ],
+        "required_scenario_assertions": [
+          "tools",
+          "rejected_tools",
+          "ordered_events",
+          "model_requests",
+          "final_assistant_contains"
+        ]
+      },
+      {
+        "name": "implementation-shell-admission",
+        "runner_mode": "implement",
+        "required_tags": [
+          "shell-admission",
+          "mutating-shell-denial",
+          "read-only-shell",
+          "model-authored-final"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "rejected_tools",
+          "ordered_events",
+          "model_requests",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "implementation-source-window-freshness",
+        "runner_mode": "implement",
+        "required_tags": [
+          "source-window-freshness",
+          "privacy-safe-source-window",
+          "request-identity"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "implementation-ranged-citation-currentness",
+        "runner_mode": "implement",
+        "required_tags": [
+          "ranged-citation",
+          "stale-source-window-recovery",
+          "privacy-safe-source-window",
+          "model-authored-final"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "rejected_tools",
+          "ordered_events",
+          "model_requests",
+          "final_assistant_contains",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "information-directory-ranged-citation",
+        "runner_mode": "auto",
+        "required_tags": [
+          "read-success",
+          "directory-citation",
+          "ranged-citation",
+          "privacy-safe-source-window"
+        ],
+        "required_scenario_assertions": [
+          "tools",
+          "evidence_paths",
+          "final_assistant_contains",
+          "typed_facts"
+        ]
+      },
+      {
+        "name": "implementation-model-owned-read-strategy",
+        "runner_mode": "implement",
+        "required_tags": [
+          "additive-read-surface",
+          "request-identity",
+          "model-owned-strategy"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "plan-multi-source-additive-read-strategy",
+        "runner_mode": "plan-execute",
+        "required_tags": [
+          "additive-read-surface",
+          "request-identity",
+          "multi-path"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "feature-planner-multi-atom-plan-execute",
+        "runner_mode": "feature-planner",
+        "required_tags": [
+          "feature-planner",
+          "multi-atom",
+          "tdd",
+          "sdd"
+        ],
+        "required_scenario_assertions": [
+          "run_events",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "verification_expected"
+        ]
+      },
+      {
+        "name": "feature-planner-tui-mutation-delivery",
+        "runner_mode": "tui",
+        "required_tags": [
+          "feature-planner",
+          "feature-planner-mutation-delivery",
+          "mutation-success",
+          "post-write-verification"
+        ],
+        "required_scenario_assertions": [
+          "changed_files",
+          "run_events",
+          "tools",
+          "ordered_events",
+          "model_requests",
+          "final_assistant_contains",
+          "verification_expected"
+        ]
+      }
     ],
     "required_scenario_assertions": [
       "prompt_contains",
@@ -67,7 +438,10 @@
       "final_assistant_contains",
       "contract_replay",
       "route_plan",
-      "assistant_for_each_user"
+      "assistant_for_each_user",
+      "ordered_events",
+      "model_requests",
+      "typed_facts"
     ],
     "required_oracle_assertions": [
       "changed_files",
@@ -150,6 +524,7 @@
       "tags": [
         "frozen-repo",
         "read-only",
+        "read-denial",
         "information",
         "tool-rules",
         "typed-blocker",
@@ -167,11 +542,15 @@
           "using read_file"
         ],
         "final_assistant_contains": [
-          "workspace `tool_rules` deny `read_file`",
-          "No file contents were returned"
+          "<<QUESTION>>: Permission policy denied the requested tool.",
+          "Denied tool: `read_file`",
+          "Denied target: `.idiom/deny-read-test.txt`",
+          "No denied tool output was used as evidence."
         ],
         "forbid_final_assistant_contains": [
-          "SECRET_SENTINEL_DO_NOT_LEAK"
+          "SECRET_SENTINEL_DO_NOT_LEAK",
+          "Completion gate",
+          "gate retry"
         ],
         "require_tools": [
           "read_file"
@@ -201,6 +580,18 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "expected_recoveries": [
+          {
+            "kind": "workspace_tool_rules_read_denied",
+            "tool": "read_file",
+            "error_contains": [
+              "permission policy denied read_file"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
         "max_tool_requests": 1,
         "max_errors": 1,
         "max_duration_millis": 120000
@@ -214,6 +605,7 @@
       "tags": [
         "frozen-repo",
         "read-only",
+        "read-success",
         "information",
         "grounded-answer",
         "rollback"
@@ -265,6 +657,77 @@
             "This repository exists only for deterministic Idiom scripted-contract tests. It gives the harness a tiny real Git workspace where a fake model can drive the real binary through workspace mutation, verification, and rollback."
           ]
         },
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-information-directory-ranged-citation",
+      "family": "information_request",
+      "runner_mode": "auto",
+      "prompt": "Inspect the label helper and explain its current behavior. Cite the package directory `internal/labels/` and the exact source range `internal/labels/labels.go:1-5`. Do not edit files.",
+      "tags": [
+        "frozen-repo",
+        "read-only",
+        "read-success",
+        "information",
+        "grounded-answer",
+        "directory-citation",
+        "ranged-citation",
+        "privacy-safe-source-window",
+        "model-authored-final",
+        "rollback"
+      ],
+      "scenario": {
+        "name": "scripted-information-directory-ranged-citation",
+        "prompt_contains": [
+          "package directory `internal/labels/`",
+          "exact source range `internal/labels/labels.go:1-5`"
+        ],
+        "final_assistant_contains": [
+          "`internal/labels/`",
+          "`internal/labels/labels.go:1-5`",
+          "ShortLabel returns `Save changes`"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_typed_facts": {
+          "tool_executions": [
+            {
+              "tool": "read_file",
+              "exact_count": 1
+            }
+          ]
+        },
+        "require_verification": "none"
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 1,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -390,6 +853,56 @@
           "idiom.live_contract.resolved_config",
           "idiom.scripted_model.requests"
         ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "logs/conversations/debug-loop.jsonl",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "logs/conversations/debug-loop.jsonl",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "logs/conversations/debug-loop.jsonl",
+            "outcome": "rejected"
+          }
+        ],
+        "require_typed_facts": {
+          "diagnostic_log_reads": [
+            {
+              "tool": "read_file",
+              "canonical_id": "logs/conversations/debug-loop.jsonl",
+              "policy_subject": "logs/conversations/debug-loop.jsonl",
+              "policy_decision": "",
+              "start_line": 1,
+              "end_line": 61,
+              "total_lines": 61,
+              "truncated": false,
+              "require_private_fields_absent": true,
+              "require_source_window_absent": true,
+              "exact_count": 1
+            },
+            {
+              "tool": "read_file",
+              "canonical_id": "logs/conversations/debug-loop.jsonl",
+              "policy_subject": "logs/conversations/debug-loop.jsonl",
+              "policy_decision": "",
+              "start_line": 1,
+              "end_line": 51,
+              "total_lines": 61,
+              "truncated": false,
+              "require_private_fields_absent": true,
+              "require_source_window_absent": true,
+              "exact_count": 1
+            }
+          ]
+        },
         "require_verification": "none"
       },
       "oracle": {
@@ -539,7 +1052,7 @@
       }
     },
     {
-      "id": "scripted-direct-answer-exact-search-replay-closeout",
+      "id": "scripted-direct-answer-varied-search-model-closeout",
       "family": "information_request",
       "runner_mode": "auto",
       "prompt": "Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.",
@@ -548,11 +1061,12 @@
         "read-only",
         "information",
         "grounded-answer",
-        "repeated-rejection",
+        "request-identity",
+        "model-authored-final",
         "rollback"
       ],
       "scenario": {
-        "name": "scripted-direct-answer-exact-search-replay-closeout",
+        "name": "scripted-direct-answer-varied-search-model-closeout",
         "prompt_contains": [
           "ShortLabel",
           "source evidence"
@@ -589,8 +1103,51 @@
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
           "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed",
           "final_answer_critic",
           "turn_summary"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "search_files",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "search_files",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "ShortLabel returns"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "search_files"
+            ]
+          },
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "search_files"
+            ]
+          }
         ],
         "require_verification": "none"
       },
@@ -667,6 +1224,8 @@
       "tags": [
         "frozen-repo",
         "read-only",
+        "read-success",
+        "lane-main",
         "rollback",
         "classifier-routing",
         "ambiguous-question"
@@ -767,10 +1326,192 @@
       }
     },
     {
+      "id": "scripted-implement-multi-path-pending-verification-writes",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement both new label helpers in the frozen fixture.\n\nRequired edit paths:\n- internal/labels/multi_save_label.go\n- internal/labels/multi_status_label.go\n\nAdd MultiSaveLabel returning \"Save\" and MultiStatusLabel returning \"Ready\". Apply both authorized new-file writes while verification is pending, then run source-aware verification across the final changed set before reporting completion.",
+      "env": {
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"internal/labels/multi_save_label.go\",\"internal/labels/multi_status_label.go\"]"
+      },
+      "tags": [
+        "frozen-repo",
+        "go",
+        "implement",
+        "multi-path",
+        "new-file",
+        "mutation-success",
+        "post-write-verification",
+        "rollback",
+        "tool-surface-transition",
+        "pending-verification-write-surface"
+      ],
+      "scenario": {
+        "name": "scripted-implement-multi-path-pending-verification-writes",
+        "prompt_contains": [
+          "Implement both new label helpers",
+          "internal/labels/multi_save_label.go",
+          "internal/labels/multi_status_label.go",
+          "source-aware verification"
+        ],
+        "final_assistant_contains": [
+          "Implemented both label helpers",
+          "internal/labels/multi_save_label.go",
+          "internal/labels/multi_status_label.go",
+          "Source sanity passed"
+        ],
+        "require_changed_files": [
+          "internal/labels/multi_save_label.go",
+          "internal/labels/multi_status_label.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "post_write_verification_required",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_tools": [
+          "read_file",
+          "apply_patch",
+          "source_sanity"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "run_event",
+            "role": "autonomy_event",
+            "contains": [
+              "\"gate\":\"write_gate\"",
+              "\"decision\":\"allow\"",
+              "internal/labels/multi_save_label.go"
+            ]
+          },
+          {
+            "type": "run_event",
+            "role": "autonomy_event",
+            "contains": [
+              "\"gate\":\"write_gate\"",
+              "\"decision\":\"allow\"",
+              "internal/labels/multi_status_label.go"
+            ]
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/multi_save_label.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/multi_status_label.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/multi_save_label.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/multi_status_label.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Implemented both label helpers"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "apply_patch",
+              "edit_file",
+              "source_sanity"
+            ]
+          },
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "apply_patch",
+              "edit_file",
+              "source_sanity"
+            ]
+          }
+        ],
+        "require_typed_facts": {
+          "tool_executions": [
+            {
+              "tool": "apply_patch",
+              "exact_count": 2
+            },
+            {
+              "tool": "read_file",
+              "exact_count": 3
+            },
+            {
+              "tool": "source_sanity",
+              "exact_count": 2
+            }
+          ]
+        },
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/multi_save_label.go",
+          "internal/labels/multi_status_label.go"
+        ],
+        "require_file_content": [
+          {
+            "path": "internal/labels/multi_save_label.go",
+            "contains": [
+              "func MultiSaveLabel() string",
+              "return \"Save\""
+            ]
+          },
+          {
+            "path": "internal/labels/multi_status_label.go",
+            "contains": [
+              "func MultiStatusLabel() string",
+              "return \"Ready\""
+            ]
+          }
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_tool_requests": 7,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
       "id": "scripted-implement-new-md-file-no-history",
       "family": "implementation",
       "runner_mode": "implement",
       "prompt": "Please write the contents \"temp\" to a new markdown file anywhere.",
+      "env": {
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"created.md\"]"
+      },
+      "fixture": "fixtures/temp-file-repo",
       "tags": [
         "frozen-repo",
         "implement",
@@ -784,7 +1525,7 @@
           "\"temp\""
         ],
         "require_changed_files": [
-          "temp.md"
+          "created.md"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
@@ -792,43 +1533,78 @@
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
-          "write_file"
+          "write_file",
+          "shell",
+          "read_file"
         ],
         "forbid_tools": [
-          "read_file",
           "history_range",
           "history_symbol",
           "blame_range",
-          "source_sanity",
-          "shell"
+          "source_sanity"
         ],
         "final_assistant_contains": [
           "Changed paths:",
-          "temp.md",
-          "Verification: not run"
+          "created.md",
+          "Verification: go test ./... passed"
         ],
-        "require_verification": "none"
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "write_file",
+            "path": "created.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "created.md",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Created created.md",
+              "Verification: go test ./... passed"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "shell"
+            ]
+          }
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
-          "temp.md"
+          "created.md"
         ],
         "require_file_content": [
           {
-            "path": "temp.md",
+            "path": "created.md",
             "contains": [
               "temp"
             ]
           }
         ],
         "require_no_approval": true,
-        "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_runner_rejections": true,
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
-        "max_tool_requests": 1,
+        "max_tool_requests": 3,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -860,14 +1636,17 @@
         ],
         "require_tools": [
           "read_file",
-          "apply_patch"
+          "history_range",
+          "apply_patch",
+          "shell"
         ],
         "final_assistant_contains": [
+          "Deleted the requested tracked file",
           "Changed paths:",
-          "temp.md",
-          "Verification: not run"
+          "temp.md (unverified after deletion)",
+          "Verification: go test ./... passed"
         ],
-        "require_verification": "none"
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -877,98 +1656,35 @@
           "write_file"
         ],
         "require_no_approval": true,
-        "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_runner_rejections": true,
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
-        "max_tool_requests": 3,
+        "max_tool_requests": 4,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
     {
-      "id": "scripted-implement-delete-file-redundant-verification",
+      "id": "scripted-implement-delete-file-post-delete-read-hygiene",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Can you delete the recently created temp file?",
+      "prompt": "Delete the tracked temp file, inspect README.md after the deletion, then run patch-hygiene verification for the removed path before reporting completion.",
       "tags": [
         "implement",
         "delete-file",
         "verification",
-        "recovery",
+        "post-delete-read-surface",
+        "model-authored-final",
         "rollback"
       ],
       "fixture": "fixtures/temp-file-repo",
       "scenario": {
-        "name": "scripted-implement-delete-file-redundant-verification",
+        "name": "scripted-implement-delete-file-post-delete-read-hygiene",
         "prompt_contains": [
-          "delete the recently created temp file"
-        ],
-        "require_changed_files": [
-          "temp.md"
-        ],
-        "require_run_events": [
-          "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.resolved_config",
-          "idiom.scripted_model.requests"
-        ],
-        "require_tools": [
-          "read_file",
-          "apply_patch",
-          "source_sanity"
-        ],
-        "final_assistant_contains": [
-          "Changed paths:",
-          "temp.md",
-          "source_sanity unavailable because temp.md was deleted"
-        ],
-        "require_verification": "none"
-      },
-      "oracle": {
-        "require_changed_files": [
-          "temp.md"
-        ],
-        "require_no_approval": true,
-        "require_no_shell": true,
-        "require_clean_rollback": true,
-        "require_no_runner_rejections": true,
-        "require_no_timeout": true,
-        "forbid_typed_blocker": true,
-        "forbid_source_satisfied": true,
-        "expected_recoveries": [
-          {
-            "kind": "source_sanity_rejected_after_delete_closeout_ready",
-            "tool": "source_sanity",
-            "accounts_for_runner_rejection": true,
-            "error_contains": [
-              "not in the current allowed tool surface"
-            ]
-          }
-        ],
-        "max_tool_requests": 5,
-        "max_errors": 0,
-        "max_duration_millis": 120000
-      }
-    },
-    {
-      "id": "scripted-implement-delete-file-shell-blocker-closeout",
-      "family": "implementation",
-      "runner_mode": "implement",
-      "prompt": "Can you delete the recently created temp file?",
-      "tags": [
-        "implement",
-        "delete-file",
-        "verification",
-        "recovery",
-        "rollback"
-      ],
-      "fixture": "fixtures/temp-file-repo",
-      "scenario": {
-        "name": "scripted-implement-delete-file-shell-blocker-closeout",
-        "prompt_contains": [
-          "delete the recently created temp file"
+          "inspect README.md after the deletion",
+          "patch-hygiene verification"
         ],
         "require_changed_files": [
           "temp.md"
@@ -985,16 +1701,165 @@
           "shell"
         ],
         "final_assistant_contains": [
+          "Deleted the requested tracked file",
           "Changed paths:",
           "temp.md",
-          "Verification:"
+          "README.md was inspected and remained unchanged",
+          "Verification: go test ./... passed"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "temp.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "temp.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "apply_patch",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "README.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Deleted the requested tracked file",
+              "Changed paths:",
+              "temp.md"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "shell"
+            ]
+          }
+        ],
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_tool_requests": 5,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-delete-file-project-verification",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Delete the tracked temp file and run project-level patch-hygiene verification appropriate for a removed file before reporting completion.",
+      "tags": [
+        "implement",
+        "delete-file",
+        "verification",
+        "post-write-verification",
+        "model-authored-final",
+        "rollback"
+      ],
+      "fixture": "fixtures/temp-file-repo",
+      "scenario": {
+        "name": "scripted-implement-delete-file-project-verification",
+        "prompt_contains": [
+          "project-level patch-hygiene verification",
+          "removed file"
+        ],
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "apply_patch",
+          "shell"
+        ],
+        "final_assistant_contains": [
+          "Deleted the requested tracked file",
+          "Changed paths:",
+          "temp.md",
+          "Verification: go test ./... passed for the removed-file project"
         ],
         "forbid_final_assistant_contains": [
           "Blocker:",
           "Tool not available in current runtime contract",
           "current allowed tool surface"
         ],
-        "require_verification": "none"
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "temp.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "temp.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "apply_patch",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Deleted the requested tracked file",
+              "Changed paths:",
+              "temp.md"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "shell"
+            ]
+          }
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1005,53 +1870,138 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
-        "expected_recoveries": [
-          {
-            "kind": "shell_rejected_after_delete_closeout_ready",
-            "tool": "shell",
-            "accounts_for_runner_rejection": true,
-            "error_contains": [
-              "not in the current allowed tool surface"
-            ]
-          }
-        ],
-        "max_tool_requests": 5,
+        "max_tool_requests": 4,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
     {
-      "id": "scripted-implement-new-target-read-after-write-ready",
+      "id": "scripted-implement-source-prerequisite-fresh-request",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". The first source file inspected may be a nearby test, but the final edit must be grounded in labels.go before it is applied.",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nRequired edit paths:\n- internal/labels/labels.go\n\nInspect a nearby test first, attempt the target edit, then satisfy any exact typed source prerequisite and issue a fresh target read and fresh write through normal dispatch.",
       "tags": [
         "frozen-repo",
         "go",
         "implement",
         "recovery",
+        "typed-prerequisite-denial",
+        "fresh-request-recovery",
+        "request-identity",
         "rollback",
         "target-source-recovery"
       ],
       "scenario": {
-        "name": "scripted-implement-new-target-read-after-write-ready",
+        "name": "scripted-implement-source-prerequisite-fresh-request",
         "prompt_contains": [
-          "first source file inspected may be a nearby test",
-          "grounded in labels.go"
+          "Inspect a nearby test first",
+          "exact typed source prerequisite",
+          "fresh target read and fresh write"
         ],
         "require_changed_files": [
           "internal/labels/labels.go"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "implementation_target_write_ready_source_refresh_allowed",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "read_file",
+          "history_range",
           "edit_file",
           "source_sanity"
         ],
+        "require_rejected_tools": [
+          "edit_file"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels_test.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file"
+            ]
+          }
+        ],
+        "require_typed_facts": {
+          "tool_rejections": [
+            {
+              "tool": "edit_file",
+              "disposition": "deferred_by_prerequisite",
+              "pending_write_paths": [
+                "internal/labels/labels.go"
+              ],
+              "pending_source_paths": [
+                "internal/labels/labels.go"
+              ],
+              "exact_count": 1
+            }
+          ],
+          "tool_executions": [
+            {
+              "tool": "read_file",
+              "exact_count": 3
+            },
+            {
+              "tool": "history_range",
+              "exact_count": 1
+            },
+            {
+              "tool": "edit_file",
+              "exact_count": 2
+            },
+            {
+              "tool": "source_sanity",
+              "exact_count": 1
+            }
+          ]
+        },
         "require_verification": "passed"
       },
       "oracle": {
@@ -1061,7 +2011,18 @@
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
-        "forbid_typed_blocker": true,
+        "expected_recoveries": [
+          {
+            "kind": "write_deferred_by_source_prerequisite",
+            "tool": "edit_file",
+            "summary_contains": [
+              "Write rejected before source-body evidence"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
         "forbid_source_satisfied": true,
         "max_errors": 1,
         "forbid_changed_files": [
@@ -1094,7 +2055,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "implementation_target_write_ready_source_refresh_allowed",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1205,7 +2165,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "implementation_target_write_ready_source_refresh_allowed",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1215,6 +2174,56 @@
         ],
         "forbid_tools": [
           "shell"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/surfaces/tui/app/app.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/surfaces/tui/app/app.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -1263,7 +2272,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "implementation_target_write_ready_source_refresh_allowed",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1301,42 +2309,101 @@
       }
     },
     {
-      "id": "scripted-implement-redirected-outline-after-write-ready",
+      "id": "scripted-implement-authorized-outline-before-write",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement this feature in the frozen fixture: update internal/redirect/large.go by marking the first padding line as visible. If the large target is redirected to code navigation after write-ready, the runner should allow the same-path outline and symbol-body follow-up before the edit.",
+      "prompt": "Implement this feature in the frozen fixture: update internal/redirect/large.go by marking the first padding line as visible. Execute each authorized bounded read, outline, and symbol-body request exactly as issued before applying the grounded edit.",
       "tags": [
         "frozen-repo",
         "go",
         "implement",
-        "recovery",
-        "repeated-rejection",
+        "request-identity",
+        "additive-read-surface",
         "rollback",
-        "target-source-recovery"
+        "source-grounded-write"
       ],
       "scenario": {
-        "name": "scripted-implement-redirected-outline-after-write-ready",
+        "name": "scripted-implement-authorized-outline-before-write",
         "prompt_contains": [
           "internal/redirect/large.go",
-          "same-path outline and symbol-body follow-up"
+          "authorized bounded read, outline, and symbol-body request",
+          "exactly as issued"
         ],
         "require_changed_files": [
           "internal/redirect/large.go"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "tool_request_rewrite",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
-          "context_pack",
           "read_file",
           "code_navigate",
+          "history_range",
           "edit_file",
           "source_sanity"
         ],
         "forbid_tools": [
           "shell"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "code_navigate",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "code_navigate",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "edit_file"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -1361,41 +2428,115 @@
       }
     },
     {
-      "id": "scripted-implement-redundant-same-path-read-after-write-ready",
+      "id": "scripted-implement-repeated-target-reads-remain-callable",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the model tries to inspect the same fully read target again after write-ready, recover it into the write instead of allowing redundant source reads.",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". Execute the model's bounded read, same-path outline, and refreshed read exactly as issued before the write; the harness must not substitute a preferred strategy.",
       "tags": [
         "frozen-repo",
         "go",
         "implement",
-        "recovery",
-        "repeated-rejection",
+        "additive-read-surface",
+        "request-identity",
         "rollback",
-        "target-source-recovery"
+        "model-owned-strategy"
       ],
       "scenario": {
-        "name": "scripted-implement-redundant-same-path-read-after-write-ready",
+        "name": "scripted-implement-repeated-target-reads-remain-callable",
         "prompt_contains": [
-          "same fully read target again",
-          "recover it into the write"
+          "same-path outline",
+          "exactly as issued",
+          "must not substitute"
         ],
         "require_changed_files": [
           "internal/labels/labels.go"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "implementation_target_write_ready_recovery",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "read_file",
+          "code_navigate",
+          "history_range",
           "edit_file",
           "source_sanity"
         ],
         "forbid_tools": [
-          "search_content",
           "shell"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "code_navigate",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "code_navigate",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "edit_file"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -1411,28 +2552,30 @@
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
-        "max_errors": 2,
+        "require_no_runner_rejections": true,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
     {
-      "id": "scripted-implement-redirected-code-navigate-after-write-ready",
+      "id": "scripted-implement-authorized-discovery-before-write",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". After one source body is known, a large related Go source may redirect from read_file to code_navigate; follow the redirected route exactly, do not allow unrelated reads to replace the write, then run the language-appropriate validation command.",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". Execute the requested target read, large-file read, symbol navigation, and README read unchanged before the edit, then run the language-appropriate validation command.",
       "tags": [
         "frozen-repo",
         "go",
         "implement",
-        "recovery",
+        "request-identity",
+        "additive-read-surface",
         "rollback",
-        "target-source-recovery",
+        "model-owned-strategy",
         "post-write-verification"
       ],
       "scenario": {
-        "name": "scripted-implement-redirected-code-navigate-after-write-ready",
+        "name": "scripted-implement-authorized-discovery-before-write",
         "prompt_contains": [
-          "redirect from read_file to code_navigate",
+          "large-file read, symbol navigation, and README read unchanged",
           "language-appropriate validation command"
         ],
         "require_changed_files": [
@@ -1440,20 +2583,88 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "discovery_redirect",
-          "implementation_target_write_ready_source_refresh_allowed",
-          "implementation_target_write_ready_recovery",
           "post_write_verification_required",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "read_file",
           "code_navigate",
+          "history_range",
           "edit_file",
           "shell"
         ],
         "forbid_tools": [
           "source_sanity"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "code_navigate",
+            "path": "internal/redirect/large.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "README.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "code_navigate",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "edit_file"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -1464,6 +2675,7 @@
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "require_no_runner_rejections": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
@@ -1471,7 +2683,7 @@
           "internal/redirect/large.go",
           "internal/labels/labels_test.go"
         ],
-        "max_errors": 1,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
@@ -1479,7 +2691,7 @@
       "id": "scripted-implement-repeated-no-write-terminal-recovery",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the model twice claims it can do the change after reading source but emits no write, the recovery lane must force a terminal write or blocker instead of allowing more discovery.",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the model twice claims it can do the change after reading source but emits no write, recovery must preserve lawful read/search availability while unchanged global progress bounds require a write, exact blocker, or incomplete closeout.",
       "tags": [
         "frozen-repo",
         "go",
@@ -1493,7 +2705,8 @@
         "name": "scripted-implement-repeated-no-write-terminal-recovery",
         "prompt_contains": [
           "twice claims it can do the change",
-          "force a terminal write or blocker"
+          "preserve lawful read/search availability",
+          "unchanged global progress bounds"
         ],
         "require_changed_files": [
           "internal/labels/labels.go"
@@ -1509,7 +2722,6 @@
           "source_sanity"
         ],
         "forbid_tools": [
-          "search_content",
           "shell"
         ],
         "require_verification": "passed"
@@ -1696,10 +2908,10 @@
       }
     },
     {
-      "id": "scripted-implement-missing-description-typed-blocker",
+      "id": "scripted-implement-invalid-write-zero-change-closeout",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the required write cannot be made, return a typed blocker.",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- An invalid write without the required description must not count as a mutation or become a fabricated blocker; if no valid write lands, close with typed incomplete status.",
       "tags": [
         "frozen-repo",
         "go",
@@ -1707,14 +2919,17 @@
         "rollback",
         "control-rails",
         "dynamic-validator",
+        "zero-write-closeout",
+        "invalid-request",
         "negative"
       ],
       "scenario": {
-        "name": "scripted-implement-missing-description-typed-blocker",
+        "name": "scripted-implement-invalid-write-zero-change-closeout",
         "prompt_contains": [
           "Required edit paths:",
           "- internal/labels/labels.go",
-          "typed blocker"
+          "invalid write without the required description",
+          "typed incomplete status"
         ],
         "require_control_rails": {
           "lane": "implement",
@@ -1727,13 +2942,47 @@
         },
         "final_assistant_contains": [
           "<<QUESTION>>",
-          "description"
+          "successful workspace write",
+          "internal/labels/labels.go",
+          "no successful write was recorded",
+          "no no-op evidence or exact blocker was produced"
+        ],
+        "forbid_final_assistant_contains": [
+          "Implemented the label change"
         ],
         "require_run_events": [
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "edit_file"
+        ],
+        "require_rejected_tools": [
+          "edit_file"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "rejected"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "no successful write was recorded"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file"
+            ]
+          }
         ],
         "require_verification": "none"
       },
@@ -1743,6 +2992,28 @@
         "require_clean_rollback": true,
         "require_no_timeout": true,
         "forbid_source_satisfied": true,
+        "expected_recoveries": [
+          {
+            "kind": "invalid_write_description_rejected",
+            "tool": "edit_file",
+            "summary_contains": [
+              "description"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          },
+          {
+            "kind": "source_prerequisite_final_rejected",
+            "tool": "completion_gate",
+            "error_contains": [
+              "required source-body evidence is still pending"
+            ],
+            "accounts_for_completion_rejection": true,
+            "min_count": 3,
+            "max_count": 3
+          }
+        ],
         "forbid_changed_files": [
           "internal/labels/labels.go",
           "internal/labels/labels_test.go"
@@ -1802,26 +3073,25 @@
       }
     },
     {
-      "id": "scripted-implement-empty-path-read-blocker",
+      "id": "scripted-implement-empty-path-read-fresh-recovery",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the required edit target cannot be read safely, return a typed blocker instead of repeating the same invalid read.",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If an initial read request is invalid, issue a fresh valid request for the exact target before writing.",
       "tags": [
         "frozen-repo",
         "go",
         "implement",
         "rollback",
         "control-rails",
-        "typed-blocker",
-        "repeated-rejection",
-        "negative"
+        "fresh-request",
+        "invalid-request-recovery"
       ],
       "scenario": {
-        "name": "scripted-implement-empty-path-read-blocker",
+        "name": "scripted-implement-empty-path-read-fresh-recovery",
         "prompt_contains": [
           "Required edit paths:",
           "- internal/labels/labels.go",
-          "typed blocker"
+          "issue a fresh valid request"
         ],
         "require_control_rails": {
           "lane": "implement",
@@ -1833,27 +3103,38 @@
           ]
         },
         "final_assistant_contains": [
-          "<<QUESTION>>",
-          "scoped implementation recovery rejected the same read_file request twice",
-          "internal/labels/labels.go"
+          "Implemented the label change after correcting the invalid empty-path read",
+          "internal/labels/labels.go",
+          "Verification: Source sanity passed"
         ],
         "require_run_events": [
-          "completion_status",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none"
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
-        "allow_no_write": true,
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
-          "internal/labels/labels.go",
           "internal/labels/labels_test.go"
         ],
-        "max_errors": 2,
+        "max_tool_requests": 6,
+        "max_errors": 1,
         "max_duration_millis": 120000
       }
     },
@@ -1924,7 +3205,10 @@
       "id": "scripted-implement-out-of-scope-write-recovers",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Do not edit related tests or other files.",
+      "prompt": "Add the scoped label helper.\n\nRequired edit paths:\n- internal/labels/scoped_label.go\n\nAcceptance:\n- Add ScopedLabel returning \"Scoped\".\n- Do not edit related tests or other files.",
+      "env": {
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"internal/labels/scoped_label.go\"]"
+      },
       "tags": [
         "frozen-repo",
         "go",
@@ -1932,13 +3216,14 @@
         "rollback",
         "control-rails",
         "recovery",
+        "mutation-denial",
         "negative"
       ],
       "scenario": {
         "name": "scripted-implement-out-of-scope-write-recovers",
         "prompt_contains": [
           "Required edit paths:",
-          "- internal/labels/labels.go",
+          "- internal/labels/scoped_label.go",
           "Do not edit related tests"
         ],
         "require_control_rails": {
@@ -1947,24 +3232,79 @@
           "task_family": "implementation",
           "permission_profile": "guarded_workspace_write",
           "require_edit_paths": [
-            "internal/labels/labels.go"
+            "internal/labels/scoped_label.go"
           ]
         },
         "require_changed_files": [
-          "internal/labels/labels.go"
+          "internal/labels/scoped_label.go"
         ],
         "require_run_events": [
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "edit_file",
+          "write_file",
           "source_sanity"
+        ],
+        "require_rejected_tools": [
+          "edit_file"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels_test.go",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "write_file",
+            "path": "internal/labels/scoped_label.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/scoped_label.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/scoped_label.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Implemented the scoped label helper"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 0,
+            "transport": "textual",
+            "require_tools": [
+              "edit_file"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
-          "internal/labels/labels.go"
+          "internal/labels/scoped_label.go"
+        ],
+        "require_file_content": [
+          {
+            "path": "internal/labels/scoped_label.go",
+            "contains": [
+              "func ScopedLabel() string",
+              "return \"Scoped\""
+            ]
+          }
         ],
         "require_no_approval": true,
         "require_clean_rollback": true,
@@ -1974,12 +3314,24 @@
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
+        "expected_recoveries": [
+          {
+            "kind": "out_of_scope_write_rejected",
+            "tool": "edit_file",
+            "summary_contains": [
+              "Mutation target outside bound scope"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
         "max_errors": 1,
         "max_duration_millis": 120000
       }
     },
     {
-      "id": "scripted-implement-partial-required-paths-blocker",
+      "id": "scripted-implement-multi-path-doc-completion",
       "family": "implementation",
       "runner_mode": "implement",
       "prompt": "Implement this documentation atom in the frozen fixture.\n\nRequired edit paths:\n- README.md\n- AGENTS.md\n\nAcceptance:\n- Update README.md to describe the fixture as deterministic.\n- Update AGENTS.md to keep the fixture guidance consistent.\n- Do not claim completion until both required paths are written.",
@@ -1988,12 +3340,13 @@
         "implement",
         "rollback",
         "control-rails",
-        "typed-blocker",
-        "repeated-rejection",
-        "negative"
+        "multi-path",
+        "post-write-verification",
+        "model-authored-final"
       ],
+      "fixture": "fixtures/temp-file-repo",
       "scenario": {
-        "name": "scripted-implement-partial-required-paths-blocker",
+        "name": "scripted-implement-multi-path-doc-completion",
         "prompt_contains": [
           "Required edit paths:",
           "- README.md",
@@ -2010,38 +3363,42 @@
           ]
         },
         "final_assistant_contains": [
-          "<<QUESTION>>",
-          "Required edit paths not changed",
+          "Updated both required documentation paths",
+          "README.md",
           "AGENTS.md",
-          "README.md"
+          "Verification: go test ./... passed"
         ],
         "require_changed_files": [
-          "README.md"
+          "README.md",
+          "AGENTS.md"
         ],
         "require_run_events": [
-          "completion_gate_recovery",
-          "completion_status",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
-          "edit_file"
+          "read_file",
+          "history_range",
+          "edit_file",
+          "shell"
         ],
-        "require_verification": "none"
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
-          "README.md"
+          "README.md",
+          "AGENTS.md"
         ],
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
-          "AGENTS.md",
           "internal/labels/labels.go",
           "internal/labels/labels_test.go"
         ],
-        "max_errors": 2,
+        "max_tool_requests": 10,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
@@ -2167,24 +3524,207 @@
       }
     },
     {
-      "id": "scripted-implement-post-write-invalid-tool-recovers",
+      "id": "scripted-implement-stale-ranged-citation-refresh",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the model attempts a read or edit instead of post-write verification, recover and report completion only after source-aware verification passes.",
+      "prompt": "Update internal/labels/labels.go so ShortLabel returns \"Save\". Cite both the package directory `internal/labels/` and the exact current source range `internal/labels/labels.go:1-5`. A pre-write source window becomes stale after mutation, so refresh that exact range through a fresh model request before the final cited answer.",
+      "tags": [
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "request-identity",
+        "source-window-freshness",
+        "privacy-safe-source-window",
+        "ranged-citation",
+        "stale-source-window-recovery",
+        "post-write-verification",
+        "model-authored-final"
+      ],
+      "scenario": {
+        "name": "scripted-implement-stale-ranged-citation-refresh",
+        "prompt_contains": [
+          "package directory `internal/labels/`",
+          "exact current source range `internal/labels/labels.go:1-5`",
+          "pre-write source window becomes stale"
+        ],
+        "final_assistant_contains": [
+          "`internal/labels/`",
+          "`internal/labels/labels.go:1-5`",
+          "ShortLabel as returning `Save`",
+          "source_sanity passed"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "post_write_verification_required",
+          "completion_gate_recovery_state",
+          "final_answer_recovery_required",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_rejected_tools": [
+          "completion_gate"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "completion_gate",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "`internal/labels/labels.go:1-5`"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "source_sanity"
+            ]
+          },
+          {
+            "index": 5,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "source_sanity"
+            ]
+          }
+        ],
+        "require_typed_facts": {
+          "source_windows": [
+            {
+              "tool": "read_file",
+              "canonical_id": "internal/labels/labels.go",
+              "start_line": 1,
+              "end_line": 5,
+              "mutation_epoch": 2,
+              "require_digests": true,
+              "require_durable_body_absent": true,
+              "exact_count": 1
+            }
+          ],
+          "completion_recoveries": [
+            {
+              "role": "completion_gate_recovery_state",
+              "class": "source_grounding",
+              "attempts_since_progress": 1,
+              "exact_count": 1
+            }
+          ],
+          "tool_executions": [
+            {
+              "tool": "read_file",
+              "outcome": "success",
+              "exact_count": 2
+            },
+            {
+              "tool": "history_range",
+              "outcome": "success",
+              "exact_count": 1
+            },
+            {
+              "tool": "edit_file",
+              "outcome": "success",
+              "exact_count": 1
+            },
+            {
+              "tool": "source_sanity",
+              "outcome": "success",
+              "exact_count": 1
+            },
+            {
+              "tool": "completion_gate",
+              "outcome": "rejected",
+              "exact_count": 1
+            }
+          ]
+        },
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-post-write-read-before-verification",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- After the write, execute one bounded read of the changed source exactly as requested, then run source-aware verification and report completion.",
       "tags": [
         "frozen-repo",
         "go",
         "implement",
         "rollback",
         "control-rails",
-        "recovery",
+        "additive-read-surface",
+        "request-identity",
+        "source-window-freshness",
+        "privacy-safe-source-window",
         "post-write-verification",
-        "repeated-rejection"
+        "model-authored-final"
       ],
       "scenario": {
-        "name": "scripted-implement-post-write-invalid-tool-recovers",
+        "name": "scripted-implement-post-write-read-before-verification",
         "prompt_contains": [
-          "post-write verification",
+          "execute one bounded read of the changed source exactly as requested",
           "internal/labels/labels.go"
         ],
         "require_control_rails": {
@@ -2200,17 +3740,81 @@
           "Implemented the label change",
           "Verification: Source sanity passed"
         ],
+        "forbid_final_assistant_contains": [
+          "Workspace changes were recorded",
+          "Missing completion evidence"
+        ],
         "require_changed_files": [
           "internal/labels/labels.go"
         ],
         "require_run_events": [
           "post_write_verification_required",
-          "tool_request_rewrite",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "edit_file",
+          "read_file",
+          "history_range",
           "source_sanity"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Implemented the label change"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "source_sanity"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "source_sanity"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -2221,12 +3825,13 @@
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "require_no_runner_rejections": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
-        "max_errors": 2,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
@@ -2266,12 +3871,81 @@
         ],
         "require_run_events": [
           "post_write_verification_required",
-          "completion_gate_recovery",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "final_assistant_contains": [
+          "Implemented the Python label change",
+          "Verification: python3 -B -m unittest passed"
         ],
         "require_tools": [
+          "read_file",
+          "history_range",
           "edit_file",
           "shell"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "labels/labels.py",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "labels/labels.py",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "labels/labels.py",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "labels/labels.py",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Verification: python3 -B -m unittest passed"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range"
+            ]
+          },
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "shell"
+            ]
+          },
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "shell"
+            ]
+          }
         ],
         "forbid_tools": [
           "source_sanity"
@@ -2290,7 +3964,8 @@
         "forbid_changed_files": [
           "test_labels.py"
         ],
-        "max_errors": 1,
+        "max_tool_requests": 5,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
@@ -2460,6 +4135,337 @@
       }
     },
     {
+      "id": "scripted-classifier-locate-short-label",
+      "family": "direct_question",
+      "runner_mode": "auto",
+      "prompt": "Locate the exact definition of ShortLabel in this fixture and report its path and line. Do not edit files.",
+      "tags": [
+        "frozen-repo",
+        "read-only",
+        "read-success",
+        "classifier-routing",
+        "lane-locate",
+        "rollback"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "scenario": {
+        "name": "scripted-classifier-locate-short-label",
+        "prompt_contains": [
+          "Locate the exact definition of ShortLabel",
+          "path and line",
+          "Do not edit files"
+        ],
+        "require_route_plan": {
+          "initial_lane": "locate",
+          "reason": "locate_request",
+          "contract": "locate_targets"
+        },
+        "final_assistant_contains": [
+          "internal/labels/labels.go:3",
+          "ShortLabel"
+        ],
+        "require_tools": [
+          "search_content"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none"
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 1,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-architecture-fixture-boundary",
+      "family": "direct_question",
+      "runner_mode": "auto",
+      "prompt": "Assess the architecture boundary of this deterministic fixture using repository evidence. Do not edit files.",
+      "tags": [
+        "frozen-repo",
+        "read-only",
+        "read-success",
+        "classifier-routing",
+        "lane-architecture",
+        "rollback"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "scenario": {
+        "name": "scripted-classifier-architecture-fixture-boundary",
+        "prompt_contains": [
+          "architecture boundary",
+          "repository evidence",
+          "Do not edit files"
+        ],
+        "require_route_plan": {
+          "initial_lane": "architecture",
+          "reason": "architecture_request",
+          "contract": "architecture_assessment"
+        },
+        "final_assistant_contains": [
+          "deterministic test fixture",
+          "README.md",
+          "disposable local Git workspace"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity"
+        ],
+        "require_evidence_paths": [
+          "README.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none"
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 1,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-security-review-label",
+      "family": "direct_question",
+      "runner_mode": "auto",
+      "prompt": "Perform a bounded security review of ShortLabel in internal/labels/labels.go using source evidence. Do not edit files.",
+      "tags": [
+        "frozen-repo",
+        "read-only",
+        "read-success",
+        "classifier-routing",
+        "lane-review",
+        "security-review",
+        "rollback"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "scenario": {
+        "name": "scripted-classifier-security-review-label",
+        "prompt_contains": [
+          "bounded security review",
+          "internal/labels/labels.go",
+          "Do not edit files"
+        ],
+        "require_route_plan": {
+          "initial_lane": "review",
+          "reason": "security_review",
+          "contract": "review_findings"
+        },
+        "final_assistant_contains": [
+          "accepts no input",
+          "no security finding",
+          "trust-boundary crossing"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none"
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 1,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-explore-then-implement-route",
+      "family": "direct_question",
+      "runner_mode": "auto",
+      "prompt": "Explore how ShortLabel is implemented, then change it to return \"Save\". This is a natural-language mutation request.",
+      "tags": [
+        "frozen-repo",
+        "go",
+        "edit-intent",
+        "classifier-routing",
+        "lane-explore",
+        "mutation-success",
+        "post-write-verification",
+        "model-authored-final",
+        "rollback"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "scenario": {
+        "name": "scripted-classifier-explore-then-implement-route",
+        "prompt_contains": [
+          "Explore how ShortLabel is implemented",
+          "change it to return \"Save\""
+        ],
+        "require_route_plan": {
+          "initial_lane": "explore",
+          "followup_lane": "implement",
+          "reason": "explore_request",
+          "contract": "implementation_result"
+        },
+        "final_assistant_contains": [
+          "Explored and implemented the label change",
+          "Source sanity passed"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "post_write_verification_required",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Explored and implemented the label change"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "source_sanity"
+            ]
+          }
+        ],
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_tool_requests": 5,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
       "id": "scripted-classifier-natural-language-implement-short-label",
       "family": "direct_question",
       "runner_mode": "auto",
@@ -2467,11 +4473,13 @@
       "tags": [
         "frozen-repo",
         "go",
-        "read-only",
         "edit-intent",
         "natural-language",
         "rollback",
-        "classifier-routing"
+        "classifier-routing",
+        "mutation-success",
+        "post-write-verification",
+        "model-authored-final"
       ],
       "env": {
         "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
@@ -2488,27 +4496,95 @@
           "contract": "implementation_result"
         },
         "final_assistant_contains": [
-          "Do you want me to switch",
-          "/implement <objective>"
+          "Implemented the natural-language label change",
+          "Source sanity passed"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "route_classifier_decision",
-          "idiom.scripted_model.requests"
+          "post_write_verification_required",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
-        "forbid_tools": [
+        "require_tools": [
+          "read_file",
+          "history_range",
           "edit_file",
-          "write_file",
           "source_sanity"
-        ]
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Implemented the natural-language label change"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "source_sanity"
+            ]
+          }
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
-        "require_no_changed_files": true,
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_shell": true,
+        "require_no_runner_rejections": true,
         "require_no_timeout": true,
-        "max_tool_requests": 0,
+        "max_tool_requests": 5,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "max_errors": 0,
@@ -2525,10 +4601,11 @@
       "prompt": "The user chat input shifts upwards on a new line, but it hides the top lines, only showing the most recent, bottom-most text in the prompt input. Fix the TUI input layout so wrapped prompts grow upward without clipping the earlier lines.",
       "tags": [
         "go",
-        "read-only",
         "edit-intent",
         "natural-language",
         "classifier-routing",
+        "post-write-verification",
+        "model-authored-final",
         "rollback"
       ],
       "env": {
@@ -2546,30 +4623,72 @@
           "reason": "classifier_directive",
           "contract": "implementation_result"
         },
+        "require_changed_files": [
+          "internal/app/model_state.go"
+        ],
         "final_assistant_contains": [
-          "Do you want me to switch",
-          "/implement <objective>"
+          "Fixed the wrapped prompt input height calculation",
+          "internal/app/model_state.go",
+          "Verification: go test ./... passed"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "route_classifier_decision",
           "idiom.scripted_model.requests"
         ],
-        "forbid_tools": [
+        "require_tools": [
+          "read_file",
+          "history_range",
           "edit_file",
-          "write_file",
-          "source_sanity"
-        ]
+          "shell"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/app/model_state.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/app/model_state.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/app/model_state.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/app/model_state.go",
+            "outcome": "success"
+          }
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
-        "require_no_changed_files": true,
+        "require_changed_files": [
+          "internal/app/model_state.go"
+        ],
         "require_no_approval": true,
         "require_clean_rollback": true,
-        "require_no_shell": true,
         "require_no_timeout": true,
-        "max_tool_requests": 0,
+        "require_no_runner_rejections": true,
         "forbid_typed_blocker": true,
+        "max_tool_requests": 5,
         "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/app/model_state_test.go"
+        ],
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -2600,17 +4719,84 @@
           "reason": "typed_implement_command",
           "contract": "implementation_result"
         },
+        "final_assistant_contains": [
+          "Implemented the label change",
+          "Verification: Source sanity passed"
+        ],
+        "forbid_final_assistant_contains": [
+          "Workspace changes were recorded",
+          "Missing completion evidence"
+        ],
         "require_changed_files": [
           "internal/labels/labels.go"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "read_file",
+          "history_range",
           "edit_file",
           "source_sanity"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Implemented the label change"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "edit_file"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "edit_file",
+              "source_sanity"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -2641,12 +4827,12 @@
       "tags": [
         "frozen-repo",
         "go",
-        "read-only",
         "edit-intent",
         "rollback",
         "classifier-routing",
         "ambiguous-question",
-        "multi-turn"
+        "multi-turn",
+        "post-write-verification"
       ],
       "env": {
         "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
@@ -2663,31 +4849,38 @@
           "contract": "implementation_result"
         },
         "require_assistant_for_each_user": true,
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
         "final_assistant_contains": [
-          "Do you want me to switch",
-          "/implement <objective>"
+          "Implemented the shorter save label on the second turn",
+          "internal/labels/labels.go",
+          "Verification: Source sanity passed"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "route_classifier_decision",
           "idiom.scripted_model.requests"
         ],
-        "forbid_tools": [
+        "require_tools": [
+          "read_file",
+          "history_range",
           "edit_file",
-          "write_file",
           "source_sanity"
-        ]
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
-        "require_no_changed_files": true,
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
         "min_user_turns": 2,
         "min_assistant_turns": 2,
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_shell": true,
         "require_no_timeout": true,
-        "max_tool_requests": 1,
-        "forbid_typed_blocker": true,
+        "max_tool_requests": 6,
         "forbid_source_satisfied": true,
         "max_errors": 0,
         "forbid_changed_files": [
@@ -2782,6 +4975,8 @@
           ]
         },
         "require_tools": [
+          "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_verification": "passed"
@@ -2797,6 +4992,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 3,
         "max_errors": 0,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
@@ -2877,6 +5073,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 3,
         "max_errors": 0,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
@@ -2958,6 +5155,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 1,
         "max_errors": 0,
         "forbid_changed_files": [
           "internal/labels/labels.go",
@@ -2967,53 +5165,94 @@
       }
     },
     {
-      "id": "scripted-plan-execute-unspecified-new-file-blocker",
+      "id": "scripted-plan-execute-authorized-new-file-reference-read",
       "family": "plan_then_execute_planner",
       "runner_mode": "plan-execute",
-      "prompt": "Use plan-execute to create a new Go helper file for a generated label, but no path has been selected yet. Do not invent a file path and do not edit any other files.",
+      "prompt": "Use plan-execute to read internal/labels/labels.go as reference evidence, then create the explicitly authorized new file internal/labels/generated_from_reference.go with GeneratedFromReference returning \"Generated\". Do not edit the reference file.\n\nrequired_edit_paths:\n- internal/labels/generated_from_reference.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
         "frozen-repo",
         "go",
         "plan-execute",
         "new-file",
-        "approval-required",
         "closed-scope",
         "rollback",
-        "typed-blocker"
+        "reference-read"
       ],
+      "env": {
+        "IDIOM_EXTRA_ARGS": "-authorized-new-file internal/labels/generated_from_reference.go",
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"internal/labels/generated_from_reference.go\"]"
+      },
       "fixture": "fixtures/already-save-label-repo",
       "scenario": {
-        "name": "scripted-plan-execute-unspecified-new-file-blocker",
+        "name": "scripted-plan-execute-authorized-new-file-reference-read",
         "prompt_contains": [
-          "create a new Go helper file",
-          "Do not invent a file path",
-          "do not edit any other files"
+          "read internal/labels/labels.go as reference evidence",
+          "internal/labels/generated_from_reference.go",
+          "Do not edit the reference file"
+        ],
+        "require_changed_files": [
+          "internal/labels/generated_from_reference.go"
         ],
         "final_assistant_contains": [
-          "<<QUESTION>>",
-          "concrete file path"
-        ],
-        "forbid_tools": [
-          "edit_file",
-          "write_file",
-          "append_file",
-          "apply_patch",
-          "submit_plan"
+          "Decision: pass"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.scripted_model.requests"
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.executor_complete",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
-        "require_verification": "none"
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Decision: pass"
+            ]
+          }
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
-        "require_no_changed_files": true,
-        "allow_no_write": true,
+        "require_changed_files": [
+          "internal/labels/generated_from_reference.go"
+        ],
         "require_no_approval": true,
         "require_clean_rollback": true,
+        "require_executor_handoff": true,
         "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_tool_requests": 2,
         "max_errors": 0,
-        "max_duration_millis": 120000
+        "max_duration_millis": 180000
       }
     },
     {
@@ -3056,6 +5295,7 @@
         },
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_verification": "passed"
@@ -3071,6 +5311,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 4,
         "max_errors": 0,
         "forbid_changed_files": [
           "README.md",
@@ -3088,7 +5329,9 @@
         "frozen-repo",
         "go",
         "plan-execute",
-        "recovery",
+        "multi-path",
+        "additive-read-surface",
+        "request-identity",
         "rollback"
       ],
       "scenario": {
@@ -3121,7 +5364,59 @@
         },
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "README.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "README.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "success"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -3137,6 +5432,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 5,
         "max_errors": 0,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
@@ -3189,54 +5485,98 @@
         "require_clean_rollback": true,
         "require_no_runner_rejections": true,
         "require_no_timeout": true,
+        "max_tool_requests": 1,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
     {
-      "id": "scripted-plan-execute-typed-blocker",
+      "id": "scripted-plan-execute-authorized-new-file-after-missing-read",
       "family": "plan_then_execute_planner",
       "runner_mode": "plan-execute",
-      "prompt": "Use plan-execute to update internal/labels/missing.go so MissingLabel returns \"Save\".\n\nrequired_edit_paths: internal/labels/missing.go",
+      "prompt": "Use plan-execute to create the explicitly authorized new file internal/labels/missing.go so MissingLabel returns \"Save\". Confirm the target is absent before submitting the plan.\n\nrequired_edit_paths: internal/labels/missing.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
         "frozen-repo",
         "plan-execute",
+        "new-file",
         "rollback",
-        "typed-blocker"
+        "missing-target-read"
       ],
+      "env": {
+        "IDIOM_EXTRA_ARGS": "-authorized-new-file internal/labels/missing.go",
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"internal/labels/missing.go\"]"
+      },
+      "fixture": "fixtures/already-save-label-repo",
       "scenario": {
-        "name": "scripted-plan-execute-typed-blocker",
+        "name": "scripted-plan-execute-authorized-new-file-after-missing-read",
         "prompt_contains": [
           "internal/labels/missing.go",
+          "Confirm the target is absent",
           "required_edit_paths"
         ],
-        "final_assistant_contains": [
-          "<<QUESTION>>",
+        "require_changed_files": [
           "internal/labels/missing.go"
         ],
-        "forbid_tools": [
-          "edit_file",
-          "write_file",
-          "append_file",
-          "apply_patch"
+        "final_assistant_contains": [
+          "Decision: pass"
         ],
         "require_tools": [
-          "read_file"
+          "read_file",
+          "submit_plan"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.scripted_model.requests"
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.executor_complete",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
-        "require_verification": "none"
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/missing.go",
+            "outcome": "error"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Decision: pass"
+            ]
+          }
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
-        "require_no_changed_files": true,
-        "allow_no_write": true,
+        "require_changed_files": [
+          "internal/labels/missing.go"
+        ],
         "require_no_approval": true,
         "require_clean_rollback": true,
+        "require_executor_handoff": true,
         "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_tool_requests": 2,
         "max_errors": 1,
-        "max_duration_millis": 120000
+        "max_duration_millis": 180000
       }
     },
     {
@@ -3269,6 +5609,7 @@
         ],
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_verification": "passed"
@@ -3282,6 +5623,7 @@
         "require_executor_handoff": true,
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
+        "max_tool_requests": 4,
         "max_errors": 2,
         "max_duration_millis": 180000
       }
@@ -3314,6 +5656,7 @@
         ],
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_verification": "passed"
@@ -3327,6 +5670,7 @@
         "require_executor_handoff": true,
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
+        "max_tool_requests": 4,
         "max_errors": 1,
         "max_duration_millis": 180000
       }
@@ -3361,6 +5705,7 @@
         ],
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_verification": "passed"
@@ -3374,6 +5719,7 @@
         "require_executor_handoff": true,
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
+        "max_tool_requests": 3,
         "max_errors": 0,
         "max_duration_millis": 180000
       }
@@ -3421,6 +5767,7 @@
         },
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_verification": "passed"
@@ -3436,6 +5783,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 3,
         "max_errors": 0,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
@@ -3468,15 +5816,51 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "plan_then_execute_empty_submit_plan_recovery",
           "idiom.plan_execute.plan_artifact_loaded",
           "idiom.plan_execute.executor_complete",
-          "idiom.scripted_model.requests"
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_tools": [
           "context_pack",
           "read_file",
+          "history_range",
           "submit_plan"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "context_pack",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Decision: pass"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -3490,6 +5874,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 5,
         "max_errors": 1,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
@@ -3508,6 +5893,7 @@
         "plan-execute",
         "recovery",
         "open-candidate",
+        "fresh-request-recovery",
         "rollback"
       ],
       "scenario": {
@@ -3529,7 +5915,57 @@
         "require_tools": [
           "context_pack",
           "read_file",
+          "history_range",
           "submit_plan"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "context_pack",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Decision: pass"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "submit_plan"
+            ]
+          }
         ],
         "require_verification": "passed"
       },
@@ -3543,6 +5979,7 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
+        "max_tool_requests": 4,
         "max_errors": 1,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
@@ -3582,6 +6019,7 @@
         ],
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_verification": "passed"
@@ -3595,12 +6033,13 @@
         "require_executor_handoff": true,
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
+        "max_tool_requests": 4,
         "max_errors": 1,
         "max_duration_millis": 180000
       }
     },
     {
-      "id": "scripted-plan-execute-repeated-invalid-plan-blocker",
+      "id": "scripted-plan-execute-repeated-invalid-plan-recovery",
       "family": "plan_then_execute_planner",
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go",
@@ -3610,43 +6049,94 @@
         "recovery",
         "repeated-rejection",
         "rollback",
-        "typed-blocker"
+        "fresh-request-recovery"
       ],
       "scenario": {
-        "name": "scripted-plan-execute-repeated-invalid-plan-blocker",
+        "name": "scripted-plan-execute-repeated-invalid-plan-recovery",
         "prompt_contains": [
           "ShortLabel returns \"Save\"",
           "required_edit_paths"
         ],
-        "final_assistant_contains": [
-          "<<QUESTION>>",
-          "required_edit_paths: internal/labels/labels.go"
+        "require_changed_files": [
+          "internal/labels/labels.go"
         ],
-        "forbid_tools": [
-          "edit_file",
-          "write_file",
-          "append_file",
-          "apply_patch"
+        "final_assistant_contains": [
+          "Decision: pass"
         ],
         "require_tools": [
           "read_file",
+          "history_range",
           "submit_plan"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "completion_status",
-          "idiom.scripted_model.requests"
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.executor_complete",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
-        "require_verification": "none"
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Decision: pass"
+            ]
+          }
+        ],
+        "require_verification": "passed"
       },
       "oracle": {
-        "require_no_changed_files": true,
-        "allow_no_write": true,
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
         "require_no_approval": true,
         "require_clean_rollback": true,
+        "require_executor_handoff": true,
         "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "README.md",
+          "internal/labels/labels_test.go"
+        ],
+        "max_tool_requests": 5,
         "max_errors": 2,
-        "max_duration_millis": 120000
+        "max_duration_millis": 180000
       }
     },
     {
@@ -3698,46 +6188,55 @@
       }
     },
     {
-      "id": "scripted-feature-planner-tdd-sdd-atom-plan",
+      "id": "scripted-feature-planner-single-question-open",
       "family": "feature_planner",
       "runner_mode": "feature-planner",
-      "prompt": "Plan a headless feature slice for the frozen label fixture. Produce a feature-planner atom plan that includes TDD and SDD atoms before implementation. Do not edit files.",
+      "prompt": "Plan a feature for the frozen label fixture, but ask one concrete question if the TDD baseline is ambiguous.",
       "tags": [
         "frozen-repo",
         "feature-planner",
         "tdd",
-        "sdd",
         "rollback"
       ],
       "scenario": {
-        "name": "scripted-feature-planner-tdd-sdd-atom-plan",
-        "prompt_history_contains": [
-          "feature-planner atom plan",
-          "TDD and SDD atoms"
-        ],
-        "final_assistant_contains": [
-          "TDD-ShortLabel",
-          "SDD-ShortLabel",
-          "atom-tdd-baseline",
-          "atom-sdd-contract",
-          "atom-short-label"
-        ],
-        "forbid_tools": [
-          "edit_file",
-          "write_file",
-          "append_file",
-          "apply_patch",
-          "shell"
-        ],
+        "name": "scripted-feature-planner-single-question-open",
+        "prompt_sha256": "sha256:9b6bb3437a7dc6f1dff741b27113e373baf4c1dbf0c1c818177e72f1ce680d71",
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
-          "idiom.feature_planner.tdd_pre_execution_checked",
-          "idiom.feature_planner.plan_accepted",
-          "idiom.feature_planner.atom_dispatched",
-          "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete"
+          "idiom.feature_planner.planner_question_opened",
+          "idiom.feature_planner.complete",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "idiom.feature_planner.start"
+          },
+          {
+            "type": "idiom.feature_planner.planner_question_opened",
+            "contains": [
+              "What should count as the TDD baseline for ShortLabel"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.complete",
+            "contains": [
+              "planning-question-open"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 0,
+            "kind": "structured_text",
+            "transport": "textual",
+            "forbid_tools": [
+              "edit_file",
+              "apply_patch",
+              "shell"
+            ]
+          }
         ],
         "require_verification": "none"
       },
@@ -3748,6 +6247,116 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 0,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tdd-sdd-atom-plan",
+      "family": "feature_planner",
+      "runner_mode": "feature-planner",
+      "prompt": "Plan a headless feature slice for the frozen label fixture. Produce a feature-planner atom plan that includes TDD and SDD atoms before implementation. Do not edit files.",
+      "tags": [
+        "frozen-repo",
+        "feature-planner",
+        "multi-atom",
+        "tdd",
+        "sdd",
+        "rollback"
+      ],
+      "scenario": {
+        "name": "scripted-feature-planner-tdd-sdd-atom-plan",
+        "prompt_sha256": "sha256:f427a95ee78f1e1d6d7d81d0d799992d35d313e474fcb1c6efb140fe8c472b16",
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_source_satisfied",
+          "idiom.feature_planner.complete"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "idiom.feature_planner.plan_accepted",
+            "contains": [
+              "feature-short-label-tdd-sdd"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_dispatched",
+            "contains": [
+              "atom-tdd-baseline"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_source_satisfied",
+            "contains": [
+              "atom-tdd-baseline"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_dispatched",
+            "contains": [
+              "atom-sdd-contract"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_source_satisfied",
+            "contains": [
+              "atom-sdd-contract"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_dispatched",
+            "contains": [
+              "atom-short-label"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_source_satisfied",
+            "contains": [
+              "atom-short-label"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.complete"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          }
+        ],
+        "require_verification": "none"
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 6,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -3769,13 +6378,7 @@
       ],
       "scenario": {
         "name": "scripted-feature-planner-question-loop-answer",
-        "prompt_history_contains": [
-          "continue the plan"
-        ],
-        "final_assistant_contains": [
-          "question:",
-          "atom-short-label"
-        ],
+        "prompt_sha256": "sha256:7351149a13c2fafc43bce2e63b619cbabeab01020f367031221f87cea1c25a31",
         "forbid_tools": [
           "edit_file",
           "write_file",
@@ -3783,15 +6386,48 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
           "idiom.feature_planner.planner_question_opened",
           "idiom.feature_planner.plan_accepted",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete",
           "idiom.scripted_model.requests"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "idiom.feature_planner.planner_question_opened",
+            "contains": [
+              "TDD baseline"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.plan_accepted",
+            "contains": [
+              "feature-short-label-question-loop"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_dispatched",
+            "contains": [
+              "atom-short-label"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.atom_source_satisfied",
+            "contains": [
+              "atom-short-label"
+            ]
+          },
+          {
+            "type": "idiom.feature_planner.complete"
+          }
         ],
         "require_assistant_for_each_user": true,
         "require_verification": "none"
@@ -3805,6 +6441,7 @@
         "require_no_timeout": true,
         "min_user_turns": 2,
         "min_assistant_turns": 2,
+        "max_tool_requests": 2,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -3823,14 +6460,7 @@
       ],
       "scenario": {
         "name": "scripted-feature-planner-missing-tdd-baseline-blocks-implementation",
-        "prompt_contains": [
-          "no TDD baseline exists",
-          "Block implementation"
-        ],
-        "final_assistant_contains": [
-          "blockers:",
-          "TDD"
-        ],
+        "prompt_sha256": "sha256:2ab26fd401fe6ac259b1cc9c3242be05ac5b4edb4a3a7564716b0c12479b6c93",
         "forbid_tools": [
           "edit_file",
           "write_file",
@@ -3842,7 +6472,10 @@
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
           "idiom.feature_planner.tdd_pre_execution_blocked",
-          "idiom.scripted_model.requests"
+          "idiom.feature_planner.blocked",
+          "idiom.feature_planner.complete",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_verification": "none"
       },
@@ -3853,6 +6486,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 0,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -3883,8 +6517,7 @@
           "Approved."
         ],
         "final_assistant_contains": [
-          "feature-planner: planning-repair",
-          "missing sdd_refs"
+          "feature-planner: planning-repair"
         ],
         "forbid_tools": [
           "edit_file",
@@ -3897,8 +6530,11 @@
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
           "idiom.feature_planner.planner_question_opened",
+          "idiom.feature_planner.standalone_context_blocked",
           "idiom.feature_planner.plan_tab_updated",
-          "idiom.scripted_model.requests"
+          "idiom.feature_planner.terminal",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
         ],
         "require_assistant_for_each_user": true,
         "require_verification": "none"
@@ -3912,6 +6548,7 @@
         "require_no_timeout": true,
         "min_user_turns": 3,
         "min_assistant_turns": 3,
+        "max_tool_requests": 0,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -3928,6 +6565,10 @@
         "tdd",
         "sdd",
         "slash-command",
+        "typed-prerequisite-denial",
+        "fresh-request-recovery",
+        "completion-gate-recovery",
+        "recovery",
         "rollback"
       ],
       "scenario": {
@@ -3937,10 +6578,7 @@
           "delegates atom execution to plan-execute"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tui-unverified-completion",
-          "TDD-TUIUnverifiedCompletion",
-          "SDD-TUIUnverifiedCompletion"
+          "feature-planner: complete"
         ],
         "forbid_tools": [
           "edit_file",
@@ -3949,6 +6587,13 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
+        "require_rejected_tools": [
+          "completion_gate"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
@@ -3956,10 +6601,79 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete",
+          "completion_gate_recovery_state",
+          "completion_gate_recovery_progress",
           "idiom.scripted_model.requests"
         ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "completion_gate",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/workflows/featureplanner/validate_test.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/workflows/featureplanner/validate_test.go",
+            "outcome": "success"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          }
+        ],
+        "require_typed_facts": {
+          "tool_rejections": [
+            {
+              "tool": "completion_gate",
+              "disposition": "deferred_by_prerequisite",
+              "pending_source_paths": [
+                "internal/workflows/featureplanner/validate_test.go"
+              ],
+              "exact_count": 1
+            }
+          ],
+          "completion_recoveries": [
+            {
+              "role": "completion_gate_recovery_state",
+              "class": "source_evidence",
+              "attempts_since_progress": 1,
+              "exact_count": 1
+            }
+          ],
+          "tool_executions": [
+            {
+              "tool": "completion_gate",
+              "outcome": "rejected",
+              "exact_count": 1
+            },
+            {
+              "tool": "read_file",
+              "outcome": "success",
+              "exact_count": 1
+            },
+            {
+              "tool": "history_range",
+              "outcome": "success",
+              "exact_count": 1
+            }
+          ]
+        },
         "require_verification": "none"
       },
       "oracle": {
@@ -3969,7 +6683,20 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
-        "max_errors": 0,
+        "max_tool_requests": 2,
+        "max_errors": 1,
+        "expected_recoveries": [
+          {
+            "kind": "source_prerequisite_final_rejected",
+            "tool": "completion_gate",
+            "error_contains": [
+              "required source-body evidence is still pending"
+            ],
+            "accounts_for_completion_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
         "max_duration_millis": 120000
       }
     },
@@ -3977,7 +6704,10 @@
       "id": "scripted-feature-planner-tui-plan-execute-delivery",
       "family": "feature_planner",
       "runner_mode": "tui",
-      "prompt": "/feature-planner Plan and deliver a tiny source package plus test through nested plan-execute.",
+      "turns": [
+        "/feature-planner Plan and deliver a tiny source package plus test through nested plan-execute.",
+        "Approved."
+      ],
       "tags": [
         "frozen-repo",
         "feature-planner",
@@ -3986,27 +6716,34 @@
         "sdd",
         "slash-command",
         "plan-execute",
+        "multi-turn",
+        "approval-required",
+        "feature-planner-mutation-delivery",
+        "mutation-success",
+        "post-write-verification",
         "rollback"
       ],
       "scenario": {
         "name": "scripted-feature-planner-tui-plan-execute-delivery",
-        "prompt_contains": [
+        "prompt_history_contains": [
           "/feature-planner",
-          "nested plan-execute"
+          "nested plan-execute",
+          "Approved."
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tui-plan-execute-delivery",
-          "TDD-TUIPlanExecuteDelivery",
-          "SDD-TUIPlanExecuteDelivery"
+          "feature-planner: complete"
         ],
         "require_changed_files": [
           "internal/fpdelivery/probe.go",
           "internal/fpdelivery/probe_test.go"
         ],
+        "require_tools": [
+          "submit_plan"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
+          "idiom.feature_planner.planner_question_opened",
           "idiom.feature_planner.tdd_pre_execution_checked",
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
@@ -4015,7 +6752,52 @@
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete"
         ],
-        "require_verification": "none"
+        "require_ordered_events": [
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.planner_question_opened"
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.planner_question_answered"
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.plan_accepted"
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.atom_dispatched",
+            "contains": [
+              "atom-tui-plan-execute-delivery"
+            ]
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.atom_completed",
+            "contains": [
+              "atom-tui-plan-execute-delivery",
+              "\"verification_status\":\"passed\""
+            ]
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.complete"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          }
+        ],
+        "require_assistant_for_each_user": true,
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -4026,6 +6808,8 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "min_user_turns": 2,
+        "max_tool_requests": 1,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -4045,6 +6829,9 @@
         "slash-command",
         "plan-execute",
         "large-testbed",
+        "mutation-denial",
+        "recovery",
+        "workspace-approval-denial",
         "rollback"
       ],
       "fixture": "fixtures/redis-clone-repo",
@@ -4056,14 +6843,12 @@
           "Redis clone"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-redis-clone-mget",
-          "TDD-RedisCloneMGET",
-          "SDD-RedisCloneMGET"
+          "feature-planner: recovery-open"
         ],
-        "require_changed_files": [
-          "internal/server/server.go",
-          "internal/server/server_test.go"
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "submit_plan"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
@@ -4072,21 +6857,55 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "idiom.feature_planner.plan_execute_git_history_requirement",
-          "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete"
+          "internal_idiom.plan_execute.blocked",
+          "idiom.feature_planner.plan_execute_completion_rejected",
+          "idiom.feature_planner.recovery_open"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.plan_accepted"
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.atom_dispatched",
+            "contains": [
+              "atom-redis-clone-mget"
+            ]
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.plan_execute_completion_rejected",
+            "contains": [
+              "atom-redis-clone-mget"
+            ]
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.recovery_open"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          }
         ],
         "require_verification": "none"
       },
       "oracle": {
-        "require_changed_files": [
-          "internal/server/server.go",
-          "internal/server/server_test.go"
-        ],
+        "require_no_changed_files": true,
+        "allow_no_write": true,
         "require_no_approval": true,
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 5,
         "max_errors": 0,
         "max_duration_millis": 180000
       }
@@ -4112,10 +6931,7 @@
           "TUI feature-planner smoke"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tui-feature-planner",
-          "TDD-TUIFeaturePlanner",
-          "SDD-TUIFeaturePlanner"
+          "feature-planner: complete"
         ],
         "forbid_tools": [
           "edit_file",
@@ -4124,6 +6940,10 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
@@ -4131,7 +6951,7 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete"
         ],
         "require_verification": "none"
@@ -4143,6 +6963,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 2,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -4169,10 +6990,7 @@
           "state-machine coverage"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tdd-state-machine-coverage",
-          "TDD-StateMachineCoverage",
-          "SDD-TDD-StateMachineCoverage"
+          "feature-planner: complete"
         ],
         "forbid_tools": [
           "edit_file",
@@ -4181,6 +6999,10 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
@@ -4188,7 +7010,7 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete"
         ],
         "require_verification": "none"
@@ -4200,6 +7022,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 2,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -4226,10 +7049,7 @@
           "boundary-value coverage"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tdd-boundary-value-coverage",
-          "TDD-BoundaryValueCoverage",
-          "SDD-TDD-BoundaryValueCoverage"
+          "feature-planner: complete"
         ],
         "forbid_tools": [
           "edit_file",
@@ -4238,6 +7058,10 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
@@ -4245,7 +7069,7 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete"
         ],
         "require_verification": "none"
@@ -4257,6 +7081,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 2,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -4283,10 +7108,7 @@
           "fault-tree coverage"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tdd-fault-tree-coverage",
-          "TDD-FaultTreeCoverage",
-          "SDD-TDD-FaultTreeCoverage"
+          "feature-planner: complete"
         ],
         "forbid_tools": [
           "edit_file",
@@ -4295,6 +7117,10 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
@@ -4302,7 +7128,7 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete"
         ],
         "require_verification": "none"
@@ -4314,6 +7140,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 2,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -4340,10 +7167,7 @@
           "post-mortem feedback coverage"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tdd-post-mortem-coverage",
-          "TDD-PostMortemCoverage",
-          "SDD-TDD-PostMortemCoverage"
+          "feature-planner: complete"
         ],
         "forbid_tools": [
           "edit_file",
@@ -4352,6 +7176,10 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
@@ -4359,7 +7187,7 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete"
         ],
         "require_verification": "none"
@@ -4371,6 +7199,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 2,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -4397,10 +7226,7 @@
           "optional formal verification coverage"
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-tdd-formal-verification-coverage",
-          "TDD-FormalVerificationCoverage",
-          "SDD-TDD-FormalVerificationCoverage"
+          "feature-planner: complete"
         ],
         "forbid_tools": [
           "edit_file",
@@ -4409,6 +7235,10 @@
           "apply_patch",
           "shell"
         ],
+        "require_tools": [
+          "read_file",
+          "history_range"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
@@ -4416,7 +7246,7 @@
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
-          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.atom_source_satisfied",
           "idiom.feature_planner.complete"
         ],
         "require_verification": "none"
@@ -4428,6 +7258,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "max_tool_requests": 2,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -4515,14 +7346,14 @@
       "runner_mode": "tui",
       "prompt": "Can you investigate why resizing the TUI mid-answer leaves the conversation with stale wrapped lines? Answer from repository evidence and do not edit files.",
       "env": {
-        "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"I do not have a supported answer\"]"
+        "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"The stale wrapping risk comes from\"]"
       },
       "tags": [
         "frozen-repo",
         "read-only",
         "rollback",
-        "blocked-answer",
-        "fallback-guard",
+        "source-grounding-recovery",
+        "model-authored-final",
         "tui",
         "conversation"
       ],
@@ -4545,10 +7376,19 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.scripted_model.requests"
+          "completion_gate_recovery_state",
+          "final_answer_recovery_required",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_tools": [
+          "read_file"
         ],
         "final_assistant_contains": [
-          "I do not have a supported answer"
+          "The stale wrapping risk comes from",
+          "internal/app/model_state.go",
+          "internal/app/model_state_test.go",
+          "No files were edited"
         ],
         "forbid_final_assistant_contains": [
           "Question:",
@@ -4564,8 +7404,8 @@
         ],
         "require_final_answer_critic": {
           "contract": "direct_answer",
-          "passed": false,
-          "action": "block"
+          "passed": true,
+          "action": "accept"
         },
         "require_verification": "none",
         "require_assistant_for_each_user": true
@@ -4576,8 +7416,20 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
-        "max_tool_requests": 0,
-        "max_errors": 0,
+        "max_tool_requests": 2,
+        "max_errors": 1,
+        "expected_recoveries": [
+          {
+            "kind": "unsupported_scaffold_final_rejected",
+            "tool": "completion_gate",
+            "error_contains": [
+              "transport-level noise"
+            ],
+            "accounts_for_completion_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
         "max_duration_millis": 120000,
         "min_user_turns": 1,
         "min_assistant_turns": 1
@@ -4590,7 +7442,10 @@
       "id": "scripted-feature-planner-tui-direct-greeting-plan-execute",
       "family": "feature_planner",
       "runner_mode": "tui",
-      "prompt": "/feature-planner Add an internal/greeting package with Hello function through nested plan-execute.",
+      "turns": [
+        "/feature-planner Add an internal/greeting package with Hello function through nested plan-execute.",
+        "Approved."
+      ],
       "tags": [
         "frozen-repo",
         "feature-planner",
@@ -4599,27 +7454,33 @@
         "sdd",
         "slash-command",
         "plan-execute",
+        "multi-turn",
+        "approval-required",
+        "mutation-success",
+        "post-write-verification",
         "rollback"
       ],
       "scenario": {
         "name": "scripted-feature-planner-tui-direct-greeting-plan-execute",
-        "prompt_contains": [
+        "prompt_history_contains": [
           "/feature-planner",
-          "nested plan-execute"
+          "nested plan-execute",
+          "Approved."
         ],
         "final_assistant_contains": [
-          "feature-planner: complete",
-          "atom-direct-greeting-package",
-          "TDD-DirectGreetingHello",
-          "SDD-DirectGreetingPackage"
+          "feature-planner: complete"
         ],
         "require_changed_files": [
           "internal/greeting/greeting.go",
           "internal/greeting/greeting_test.go"
         ],
+        "require_tools": [
+          "submit_plan"
+        ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
+          "idiom.feature_planner.planner_question_opened",
           "idiom.feature_planner.tdd_pre_execution_checked",
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
@@ -4627,7 +7488,52 @@
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete"
         ],
-        "require_verification": "none"
+        "require_ordered_events": [
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.planner_question_opened"
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.planner_question_answered"
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.plan_accepted"
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.atom_dispatched",
+            "contains": [
+              "atom-direct-greeting-package"
+            ]
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.atom_completed",
+            "contains": [
+              "atom-direct-greeting-package",
+              "\"verification_status\":\"passed\""
+            ]
+          },
+          {
+            "type": "run_event",
+            "role": "idiom.feature_planner.complete"
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range",
+              "submit_plan"
+            ]
+          }
+        ],
+        "require_assistant_for_each_user": true,
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -4638,6 +7544,8 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
+        "min_user_turns": 2,
+        "max_tool_requests": 1,
         "max_errors": 0,
         "max_duration_millis": 180000
       }
@@ -4722,6 +7630,431 @@
         "max_errors": 1,
         "max_duration_millis": 120000
       }
+    },
+    {
+      "id": "scripted-plan-execute-submit-ready-read-remains-callable",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\". After reading the edit target and reaching submit readiness, read README.md as additional authorized context, then submit the grounded plan. After execution, report the model-authored review result.",
+      "tags": [
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "rollback",
+        "additive-read-surface",
+        "request-identity",
+        "submit-ready-read",
+        "plan-submitted-terminal",
+        "model-authored-final"
+      ],
+      "scenario": {
+        "name": "scripted-plan-execute-submit-ready-read-remains-callable",
+        "prompt_contains": [
+          "reaching submit readiness",
+          "read README.md as additional authorized context",
+          "submit the grounded plan"
+        ],
+        "final_assistant_contains": [
+          "Decision: pass",
+          "ShortLabel returns \"Save\""
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_complete",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "submit_plan"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "README.md",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "submit_plan",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Decision: pass"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "submit_plan"
+            ]
+          },
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "submit_plan"
+            ]
+          },
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "submit_plan"
+            ]
+          }
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "README.md",
+          "internal/labels/labels_test.go"
+        ],
+        "expected_recoveries": [
+          {
+            "kind": "submit_plan_deferred_by_history_prerequisite",
+            "tool": "submit_plan",
+            "summary_contains": [
+              "edit paths lack git history evidence"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
+        "max_tool_requests": 5,
+        "max_errors": 1,
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-implement-task-ledger-typed-blocker-replaces-spoof",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Attempt the requested implementation only if IDIOM_SCRIPTED_MISSING_TOKEN is available. It is intentionally absent in this fixture. Record the exact blocker in task_ledger. Evidence prose must not substitute for typed blocker metadata, and the final user-facing status must come from the validated ledger rather than arbitrary model prose.",
+      "tags": [
+        "frozen-repo",
+        "implement",
+        "rollback",
+        "typed-blocker",
+        "typed-terminal-authority",
+        "task-ledger",
+        "evidence-spoof",
+        "model-authored-final",
+        "negative"
+      ],
+      "scenario": {
+        "name": "scripted-implement-task-ledger-typed-blocker-replaces-spoof",
+        "prompt_contains": [
+          "IDIOM_SCRIPTED_MISSING_TOKEN",
+          "Evidence prose must not substitute",
+          "validated ledger"
+        ],
+        "final_assistant_contains": [
+          "<<QUESTION>>: Task ledger is blocked by validated external constraints.",
+          "id=\"token-dependent-work\"",
+          "kind=\"environment\"",
+          "subject_namespace=\"environment_variable\"",
+          "subject_id=\"IDIOM_SCRIPTED_MISSING_TOKEN\"",
+          "reason=\"the required fixture token is not configured\""
+        ],
+        "forbid_final_assistant_contains": [
+          "unrelated fabricated model blocker text"
+        ],
+        "require_no_changed_files": true,
+        "require_run_events": [
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_tools": [
+          "task_ledger"
+        ],
+        "require_rejected_tools": [
+          "task_ledger"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "task_ledger",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "task_ledger",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "Task ledger is blocked by validated external constraints"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "task_ledger",
+              "read_file"
+            ]
+          },
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "task_ledger",
+              "read_file"
+            ]
+          }
+        ],
+        "require_verification": "none"
+      },
+      "oracle": {
+        "allow_no_write": true,
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_source_satisfied": true,
+        "expected_recoveries": [
+          {
+            "kind": "task_ledger_evidence_spoof_rejected",
+            "tool": "task_ledger",
+            "error_contains": [
+              "instead of evidence prose"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
+        "max_tool_requests": 2,
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-shell-admission-deny-mutate-allow-read",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Update internal/labels/labels.go so ShortLabel returns \"Save\". A mutation-capable shell attempt must be denied without changing the file. Recover through a fresh typed edit, run source_sanity, then execute the exact read-only rg request after verification and let the model author the final answer.",
+      "tags": [
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "shell-admission",
+        "mutating-shell-denial",
+        "read-only-shell",
+        "recovery",
+        "post-write-verification",
+        "model-authored-final",
+        "negative"
+      ],
+      "scenario": {
+        "name": "scripted-implement-shell-admission-deny-mutate-allow-read",
+        "prompt_contains": [
+          "mutation-capable shell attempt must be denied",
+          "fresh typed edit",
+          "exact read-only rg request after verification"
+        ],
+        "final_assistant_contains": [
+          "Implemented the label change",
+          "source_sanity passed",
+          "read-only rg confirmed the updated return value"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "post_write_verification_required",
+          "idiom.scripted_model.requests",
+          "idiom.scripted_model.script_fully_consumed"
+        ],
+        "require_tools": [
+          "shell",
+          "read_file",
+          "history_range",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_rejected_tools": [
+          "shell"
+        ],
+        "require_ordered_events": [
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "rejected"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "history_range",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "edit_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "source_sanity",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "shell",
+            "outcome": "success"
+          },
+          {
+            "type": "tool_result",
+            "tool": "read_file",
+            "path": "internal/labels/labels.go",
+            "outcome": "success"
+          },
+          {
+            "role": "assistant",
+            "contains": [
+              "read-only rg confirmed"
+            ]
+          }
+        ],
+        "require_model_requests": [
+          {
+            "index": 1,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "shell"
+            ]
+          },
+          {
+            "index": 2,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "history_range"
+            ]
+          },
+          {
+            "index": 3,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "shell"
+            ]
+          },
+          {
+            "index": 4,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "edit_file",
+              "source_sanity",
+              "shell"
+            ]
+          },
+          {
+            "index": 5,
+            "transport": "textual",
+            "require_tools": [
+              "read_file",
+              "shell"
+            ]
+          }
+        ],
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "expected_recoveries": [
+          {
+            "kind": "mutation_capable_shell_rejected",
+            "tool": "shell",
+            "summary_contains": [
+              "Mutation-capable shell rejected"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 1,
+            "max_count": 1
+          }
+        ],
+        "max_tool_requests": 7,
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
     }
   ],
   "defaults": {
@@ -4732,7 +8065,8 @@
     "fixture": "fixtures/frozen-label-repo",
     "scenario": {
       "require_run_events": [
-        "idiom.live_contract.rollback"
+        "idiom.live_contract.rollback",
+        "idiom.scripted_model.script_fully_consumed"
       ]
     }
   }

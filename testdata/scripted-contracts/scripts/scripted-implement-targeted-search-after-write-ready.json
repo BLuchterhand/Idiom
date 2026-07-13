@@ -3,9 +3,11 @@
   "{\"tool\":\"context_query\",\"query\":\"what files implement the session pane UI, cursor movement, or scroll boundary logic\",\"resolution\":\"symbol\",\"include_evidence\":true}",
   "{\"tool\":\"search_files\",\"pattern\":\"sessions_panel.go\"}",
   "{\"tool\":\"read_file\",\"path\":\"internal/surfaces/tui/app/sessions_panel.go\",\"named_gap\":\"read session panel source before changing scroll boundary behavior\",\"why_not_answering\":\"need source-body evidence before editing\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/surfaces/tui/app/sessions_panel.go\"}",
   "{\"tool\":\"search_content\",\"path\":\"internal/surfaces/tui/app\",\"pattern\":\"type sessionsModel\",\"named_gap\":\"find session model state that informs the panel scroll offset\",\"why_not_answering\":\"need one targeted localization fact before selecting the edit shape\"}",
   "{\"tool\":\"read_file\",\"path\":\"internal/surfaces/tui/app/sessions.go\",\"start_line\":1,\"end_line\":80,\"named_gap\":\"read session model state before editing the panel scroll calculation\",\"why_not_answering\":\"need source-body evidence for the related state used by the edit\"}",
   "{\"tool\":\"edit_file\",\"path\":\"internal/surfaces/tui/app/sessions_panel.go\",\"old_text\":\"if cursor >= height {\\n\\t\\treturn 0\\n\\t}\\n\\treturn 0\",\"new_text\":\"if cursor >= height {\\n\\t\\treturn cursor - height + 1\\n\\t}\\n\\treturn 0\",\"description\":\"keep the session pane cursor visible when it moves past the viewport edge\"}",
   "{\"tool\":\"source_sanity\",\"path\":\"internal/surfaces/tui/app/sessions_panel.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/surfaces/tui/app/sessions_panel.go\",\"named_gap\":\"refresh the changed session panel source before final completion\"}",
   "Implemented the session pane scroll-boundary fix.\\n\\nChanged paths:\\n- internal/surfaces/tui/app/sessions_panel.go\\n\\nVerification: Source sanity passed for internal/surfaces/tui/app/sessions_panel.go."
 ]

@@ -8,8 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/runtime/localops"
 )
@@ -73,32 +74,27 @@ type p710ExpectedOutputShape struct {
 	StdoutExcludes []string          `json:"stdout_excludes"`
 }
 
-func TestP710ClientDemoTranscripts(t *testing.T) {
+var _ = ginkgo.It("p710 client demo transcripts", func() {
+	t := ginkgo.GinkgoT()
 	t.Setenv("IDIOM_TELEMETRY", "0")
 
-	repoRoot := sidecarValidationRepoRoot(t)
+	repoRoot := sidecarValidationRepoRoot()
 	transcriptPath := filepath.Join(repoRoot, "testdata", "sidecar", "client-demo-transcripts.json")
 
 	data, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		t.Fatalf("read P7.10 transcripts: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read P7.10 transcripts: %v", err))
 
-	assertP710NoForbiddenFixtureEvidence(t, string(data))
+	assertP710NoForbiddenFixtureEvidence(string(data))
 
 	transcriptSet, err := decodeP710ClientDemoTranscriptSet(data)
-	if err != nil {
-		t.Fatalf("decode P7.10 transcripts: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode P7.10 transcripts: %v", err))
 
-	if err := validateP710TranscriptSetIdentityAndClassifications(transcriptSet); err != nil {
-		t.Fatalf("validate P7.10 transcript set: %v", err)
-	}
+	gomega.Expect(validateP710TranscriptSetIdentityAndClassifications(transcriptSet)).To(gomega.Succeed(), "validate P7.10 transcript set")
 
-	assertP710SharedContract(t, transcriptSet.Shared)
+	assertP710SharedContract(transcriptSet.Shared)
 
 	examples := p76ClassificationExamples()
-	assertP76CoversDefaultClientClassifications(t, examples)
+	assertP76CoversDefaultClientClassifications(examples)
 
 	p76ByClassification := map[autonomy.ClientClassification]p76ClassificationExample{}
 	for _, example := range examples {
@@ -106,36 +102,29 @@ func TestP710ClientDemoTranscripts(t *testing.T) {
 	}
 
 	docData, err := os.ReadFile(filepath.Join(repoRoot, "docs", "client-demo-transcripts.md"))
-	if err != nil {
-		t.Fatalf("read P7.10 docs: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read P7.10 docs: %v", err))
 
 	doc := string(docData)
-	if !strings.Contains(doc, "testdata/sidecar/client-demo-transcripts.json") ||
-		!strings.Contains(doc, "TestP710ClientDemoTranscripts") {
-
-		t.Fatalf("P7.10 docs do not point to executable transcript validation")
-	}
+	gomega.Expect(doc).To(gomega.ContainSubstring("testdata/sidecar/client-demo-transcripts.json"), fmt.Sprintf("P7.10 docs do not point to executable transcript validation"))
+	gomega.Expect(doc).To(gomega.ContainSubstring("-ginkgo.focus='p710 client demo transcripts'"), fmt.Sprintf("P7.10 docs do not point to the current transcript spec"))
+	gomega.Expect(doc).To(gomega.ContainSubstring("-ginkgo.fail-on-empty"), fmt.Sprintf("P7.10 docs allow a stale transcript selector to pass without executing a spec"))
 
 	for _, transcript := range transcriptSet.Transcripts {
-		t.Run(string(transcript.Classification), func(t *testing.T) {
-			assertP710TranscriptShape(t, transcript, doc)
+		ginkgo.By(string(transcript.Classification))
+		func() {
+			assertP710TranscriptShape(transcript, doc)
 
 			example, ok := p76ByClassification[transcript.Classification]
-			if !ok {
-				t.Fatalf("transcript uses classification without P7.6 fixture coverage: %q", transcript.Classification)
-			}
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("transcript uses classification without P7.6 fixture coverage: %q", transcript.Classification))
 
-			if transcript.P76CommandID != example.commandID {
-				t.Fatalf("transcript %s command coverage = %q, want P7.6 command %q", transcript.ID, transcript.P76CommandID, example.commandID)
-			}
+			gomega.Expect(transcript.P76CommandID).To(gomega.BeEquivalentTo(example.commandID), fmt.Sprintf("transcript %s command coverage = %q, want P7.6 command %q", transcript.ID, transcript.P76CommandID, example.commandID))
 
 			root := t.TempDir()
-			writeP76ClassificationWorkspace(t, root)
+			writeP76ClassificationWorkspace(root)
 
-			configPath := writeMainConfigRoot(t, root)
+			configPath := writeMainConfigRoot(root)
 			if transcript.Classification == autonomy.ClientLocalModel {
-				stageDoctorConfigWithBudget(t, root, 4096, 512)
+				stageDoctorConfigWithBudget(root, 4096, 512)
 
 				configPath = filepath.Join(root, ".idiom", "config.json")
 			}
@@ -145,72 +134,56 @@ func TestP710ClientDemoTranscripts(t *testing.T) {
 
 				code := runMain(p710DemoArgs(command.Argv, configPath), &stdout, &stderr)
 
-				if code != command.ExitCode {
-					t.Fatalf("%s exit code = %d, want %d\nstdout=%s\nstderr=%s", command.ID, code, command.ExitCode, stdout.String(), stderr.String())
-				}
+				gomega.Expect(code).To(gomega.BeEquivalentTo(command.ExitCode), fmt.Sprintf("%s exit code = %d, want %d\nstdout=%s\nstderr=%s", command.ID, code, command.ExitCode, stdout.String(), stderr.String()))
 
-				assertP710NoForbiddenExecutedEvidence(t, command.ID, "stdout", stdout.String())
-				assertP710NoForbiddenExecutedEvidence(t, command.ID, "stderr", stderr.String())
+				assertP710NoForbiddenExecutedEvidence(command.ID, "stdout", stdout.String())
+				assertP710NoForbiddenExecutedEvidence(command.ID, "stderr", stderr.String())
 
-				if stderr.Len() != 0 {
-					t.Fatalf("%s should keep diagnostics in structured stdout, stderr=%s", command.ID, stderr.String())
-				}
+				gomega.Expect(stderr.Len()).To(gomega.BeEquivalentTo(0), fmt.Sprintf("%s should keep diagnostics in structured stdout, stderr=%s", command.ID, stderr.String()))
 
-				assertP710StdoutExpectations(t, command, stdout.String())
+				assertP710StdoutExpectations(command, stdout.String())
 
 				if command.JSON {
-					assertP710ExpectedJSONShape(t, command, stdout.Bytes(), transcript.Classification)
+					assertP710ExpectedJSONShape(command, stdout.Bytes(), transcript.Classification)
 				}
 			}
-		})
+		}()
 	}
-}
-
-func TestP717ClientDemoTranscriptSchemaStrictness(t *testing.T) {
-	repoRoot := sidecarValidationRepoRoot(t)
+})
+var _ = ginkgo.It("p717 client demo transcript schema strictness", func() {
+	repoRoot := sidecarValidationRepoRoot()
 
 	data, err := os.ReadFile(filepath.Join(repoRoot, "testdata", "sidecar", "client-demo-transcripts.json"))
-	if err != nil {
-		t.Fatalf("read P7.10 transcripts: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read P7.10 transcripts: %v", err))
 
 	transcriptSet, err := decodeP710ClientDemoTranscriptSet(data)
-	if err != nil {
-		t.Fatalf("decode valid P7.10 transcripts: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode valid P7.10 transcripts: %v", err))
 
-	if err := validateP710TranscriptSetIdentityAndClassifications(transcriptSet); err != nil {
-		t.Fatalf("valid transcript set failed validation: %v", err)
-	}
+	gomega.Expect(validateP710TranscriptSetIdentityAndClassifications(transcriptSet)).To(gomega.Succeed(), "validate valid transcript set")
 
 	withUnknownField := bytes.Replace(data, []byte(`"description":`), []byte(`"unexpected_field": true, "description":`), 1)
-	if _, err := decodeP710ClientDemoTranscriptSet(withUnknownField); err == nil {
-		t.Fatalf("P7.17 strict decoder accepted an unknown top-level field")
+	{
+		_, err := decodeP710ClientDemoTranscriptSet(withUnknownField)
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("P7.17 strict decoder accepted an unknown top-level field"))
 	}
 
 	wrongIdentity := transcriptSet
 
 	wrongIdentity.SchemaVersion = "idiom.client_demo_transcripts.v0"
 
-	if err := validateP710TranscriptSetIdentityAndClassifications(wrongIdentity); err == nil {
-		t.Fatalf("P7.17 validation accepted an unexpected schema_version")
-	}
+	gomega.Expect(validateP710TranscriptSetIdentityAndClassifications(wrongIdentity)).NotTo(gomega.Succeed(), fmt.Sprintf("P7.17 validation accepted an unexpected schema_version"))
 
 	wrongIdentity = transcriptSet
 	wrongIdentity.Name = "renamed-demo-transcripts"
 
-	if err := validateP710TranscriptSetIdentityAndClassifications(wrongIdentity); err == nil {
-		t.Fatalf("P7.17 validation accepted an unexpected name")
-	}
+	gomega.Expect(validateP710TranscriptSetIdentityAndClassifications(wrongIdentity)).NotTo(gomega.Succeed(), fmt.Sprintf("P7.17 validation accepted an unexpected name"))
 
 	duplicate := transcriptSet
 
 	duplicate.Transcripts = append(append([]p710ClientDemoTranscript(nil), transcriptSet.Transcripts...), transcriptSet.Transcripts[0])
 
-	if err := validateP710TranscriptSetIdentityAndClassifications(duplicate); err == nil {
-		t.Fatalf("P7.17 validation accepted a duplicate classification")
-	}
-}
+	gomega.Expect(validateP710TranscriptSetIdentityAndClassifications(duplicate)).NotTo(gomega.Succeed(), fmt.Sprintf("P7.17 validation accepted a duplicate classification"))
+})
 
 func validateP710TranscriptSetIdentityAndClassifications(transcriptSet p710ClientDemoTranscriptSet) error {
 	if transcriptSet.SchemaVersion != "idiom.client_demo_transcripts.v1" || transcriptSet.Name != "p7.10-client-demo-transcripts" {
@@ -266,20 +239,16 @@ func decodeP710ClientDemoTranscriptSet(data []byte) (p710ClientDemoTranscriptSet
 	return transcriptSet, nil
 }
 
-func assertP710SharedContract(t *testing.T, shared p710SharedDemoContract) {
-	t.Helper()
+func assertP710SharedContract(shared p710SharedDemoContract) {
+	ginkgo.GinkgoHelper()
 
-	if shared.SidecarSchemaVersion != "idiom.tool.v1" {
-		t.Fatalf("P7.10 demos are not tied to sidecar v1: %#v", shared)
-	}
+	gomega.Expect(shared.SidecarSchemaVersion).To(gomega.BeEquivalentTo("idiom.tool.v1"), fmt.Sprintf("P7.10 demos are not tied to sidecar v1: %#v", shared))
 
 	for _, required := range []string{
 		"model owns strategy",
 		"harness owns",
 	} {
-		if !strings.Contains(strings.ToLower(shared.DecisionBoundary), required) {
-			t.Fatalf("shared decision boundary missing %q: %q", required, shared.DecisionBoundary)
-		}
+		gomega.Expect(strings.ToLower(shared.DecisionBoundary)).To(gomega.ContainSubstring(required), fmt.Sprintf("shared decision boundary missing %q: %q", required, shared.DecisionBoundary))
 	}
 
 	for _, required := range []string{
@@ -288,9 +257,7 @@ func assertP710SharedContract(t *testing.T, shared p710SharedDemoContract) {
 		"discovery_profile_policy",
 		"context_pack",
 	} {
-		if !stringSliceContains(shared.GenericPrimitives, required) {
-			t.Fatalf("shared primitives missing %q: %#v", required, shared.GenericPrimitives)
-		}
+		gomega.Expect(stringSliceContains(shared.GenericPrimitives, required)).To(gomega.BeTrue(), fmt.Sprintf("shared primitives missing %q: %#v", required, shared.GenericPrimitives))
 	}
 
 	for _, required := range []string{
@@ -299,9 +266,7 @@ func assertP710SharedContract(t *testing.T, shared p710SharedDemoContract) {
 		"sidecar.audit_event_ids",
 		"sidecar.error",
 	} {
-		if !stringSliceContains(shared.SharedSecurityContracts, required) {
-			t.Fatalf("shared security contract missing %q: %#v", required, shared.SharedSecurityContracts)
-		}
+		gomega.Expect(stringSliceContains(shared.SharedSecurityContracts, required)).To(gomega.BeTrue(), fmt.Sprintf("shared security contract missing %q: %#v", required, shared.SharedSecurityContracts))
 	}
 
 	for _, forbidden := range []string{
@@ -312,27 +277,24 @@ func assertP710SharedContract(t *testing.T, shared p710SharedDemoContract) {
 		"unredacted_log_excerpt",
 		"customer_identifier",
 	} {
-		if !stringSliceContains(shared.ForbiddenEvidenceFields, forbidden) {
-			t.Fatalf("shared forbidden evidence fields missing %q: %#v", forbidden, shared.ForbiddenEvidenceFields)
-		}
+		gomega.Expect(stringSliceContains(shared.ForbiddenEvidenceFields, forbidden)).To(gomega.BeTrue(), fmt.Sprintf("shared forbidden evidence fields missing %q: %#v", forbidden, shared.ForbiddenEvidenceFields))
 	}
 }
 
-func assertP710TranscriptShape(t *testing.T, transcript p710ClientDemoTranscript, doc string) {
-	t.Helper()
+func assertP710TranscriptShape(transcript p710ClientDemoTranscript, doc string) {
+	ginkgo.GinkgoHelper()
 
-	if transcript.ID == "" || transcript.ClassificationLabel == "" || transcript.Stance == "" || transcript.P76CommandID == "" {
-		t.Fatalf("transcript missing identity fields: %#v", transcript)
-	}
+	gomega.Expect(transcript.ID).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript missing identity fields: %#v", transcript))
+	gomega.Expect(transcript.ClassificationLabel).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript missing identity fields: %#v", transcript))
+	gomega.Expect(transcript.Stance).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript missing identity fields: %#v", transcript))
+	gomega.Expect(transcript.P76CommandID).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript missing identity fields: %#v", transcript))
 
 	for _, requiredText := range []string{
 		transcript.ID,
 		string(transcript.Classification),
 		transcript.P76CommandID,
 	} {
-		if !strings.Contains(doc, requiredText) {
-			t.Fatalf("P7.10 docs missing %q for transcript %s", requiredText, transcript.ID)
-		}
+		gomega.Expect(doc).To(gomega.ContainSubstring(requiredText), fmt.Sprintf("P7.10 docs missing %q for transcript %s", requiredText, transcript.ID))
 	}
 
 	for fieldName, value := range map[string]string{
@@ -343,63 +305,52 @@ func assertP710TranscriptShape(t *testing.T, transcript p710ClientDemoTranscript
 		"privacy_posture":       transcript.PrivacyPosture,
 		"release_claim_impact":  transcript.ReleaseClaimImpact,
 	} {
-		if strings.TrimSpace(value) == "" {
-			t.Fatalf("transcript %s missing %s", transcript.ID, fieldName)
-		}
+		gomega.Expect(strings.TrimSpace(value)).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript %s missing %s", transcript.ID, fieldName))
 	}
 
 	for _, required := range []string{"no raw prompt", "no raw file", "secret", "private"} {
-		if !strings.Contains(strings.ToLower(transcript.PrivacyPosture), required) {
-			t.Fatalf("transcript %s privacy posture missing %q: %q", transcript.ID, required, transcript.PrivacyPosture)
-		}
+		gomega.Expect(strings.ToLower(transcript.PrivacyPosture)).To(gomega.ContainSubstring(required), fmt.Sprintf("transcript %s privacy posture missing %q: %q", transcript.ID, required, transcript.PrivacyPosture))
 	}
 
-	if len(transcript.GenericPrimitives) == 0 || len(transcript.SharedSecurityContracts) == 0 || len(transcript.EvidenceFields) == 0 {
-		t.Fatalf("transcript %s must cite primitives, security contracts, and evidence fields", transcript.ID)
-	}
+	gomega.Expect(transcript.GenericPrimitives).NotTo(gomega.HaveLen(0), fmt.Sprintf("transcript %s must cite primitives, security contracts, and evidence fields", transcript.ID))
+	gomega.Expect(transcript.SharedSecurityContracts).NotTo(gomega.HaveLen(0), fmt.Sprintf("transcript %s must cite primitives, security contracts, and evidence fields", transcript.ID))
+	gomega.Expect(transcript.EvidenceFields).NotTo(gomega.HaveLen(0), fmt.Sprintf("transcript %s must cite primitives, security contracts, and evidence fields", transcript.ID))
 
-	assertP710NonBlankList(t, transcript.ID, "generic_primitives", transcript.GenericPrimitives)
-	assertP710NonBlankList(t, transcript.ID, "shared_security_contracts", transcript.SharedSecurityContracts)
-	assertP710NonBlankList(t, transcript.ID, "evidence_fields", transcript.EvidenceFields)
+	assertP710NonBlankList(transcript.ID, "generic_primitives", transcript.GenericPrimitives)
+	assertP710NonBlankList(transcript.ID, "shared_security_contracts", transcript.SharedSecurityContracts)
+	assertP710NonBlankList(transcript.ID, "evidence_fields", transcript.EvidenceFields)
 
-	if len(transcript.PassNoGoCriteria.Pass) == 0 || len(transcript.PassNoGoCriteria.NoGo) == 0 {
-		t.Fatalf("transcript %s missing pass/no-go criteria: %#v", transcript.ID, transcript.PassNoGoCriteria)
-	}
+	gomega.Expect(transcript.PassNoGoCriteria.Pass).NotTo(gomega.HaveLen(0), fmt.Sprintf("transcript %s missing pass/no-go criteria: %#v", transcript.ID, transcript.PassNoGoCriteria))
+	gomega.Expect(transcript.PassNoGoCriteria.NoGo).NotTo(gomega.HaveLen(0), fmt.Sprintf("transcript %s missing pass/no-go criteria: %#v", transcript.ID, transcript.PassNoGoCriteria))
 
-	assertP710NonBlankList(t, transcript.ID, "pass_no_go_criteria.pass", transcript.PassNoGoCriteria.Pass)
-	assertP710NonBlankList(t, transcript.ID, "pass_no_go_criteria.no_go", transcript.PassNoGoCriteria.NoGo)
+	assertP710NonBlankList(transcript.ID, "pass_no_go_criteria.pass", transcript.PassNoGoCriteria.Pass)
+	assertP710NonBlankList(transcript.ID, "pass_no_go_criteria.no_go", transcript.PassNoGoCriteria.NoGo)
 
-	if len(transcript.Commands) == 0 {
-		t.Fatalf("transcript %s has no runnable commands", transcript.ID)
-	}
+	gomega.Expect(transcript.Commands).NotTo(gomega.BeEmpty(), fmt.Sprintf("transcript %s has no runnable commands", transcript.ID))
 
 	for _, command := range transcript.Commands {
-		if command.ID == "" || !strings.HasPrefix(command.Command, "idiom ") || len(command.Argv) == 0 {
-			t.Fatalf("transcript %s has non-runnable command structure: %#v", transcript.ID, command)
-		}
+		gomega.Expect(command.ID).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript %s has non-runnable command structure: %#v", transcript.ID, command))
+		gomega.Expect(strings.HasPrefix(command.Command, "idiom ")).To(gomega.BeTrue(), fmt.Sprintf("transcript %s has non-runnable command structure: %#v", transcript.ID, command))
+		gomega.Expect(command.Argv).NotTo(gomega.HaveLen(0), fmt.Sprintf("transcript %s has non-runnable command structure: %#v", transcript.ID, command))
 
-		assertP710NonBlankList(t, transcript.ID, "commands."+command.ID+".argv", command.Argv)
+		assertP710NonBlankList(transcript.ID, "commands."+command.ID+".argv", command.Argv)
 
-		if len(command.ExpectedOutputShape.StableFields) == 0 {
-			t.Fatalf("transcript %s command %s does not declare stable expected fields", transcript.ID, command.ID)
-		}
+		gomega.Expect(command.ExpectedOutputShape.StableFields).NotTo(gomega.BeEmpty(), fmt.Sprintf("transcript %s command %s does not declare stable expected fields", transcript.ID, command.ID))
 
-		assertP710ExpectedOutputShapeNonBlank(t, transcript.ID, command.ID, command.ExpectedOutputShape)
+		assertP710ExpectedOutputShapeNonBlank(transcript.ID, command.ID, command.ExpectedOutputShape)
 	}
 }
 
-func assertP710NonBlankList(t *testing.T, transcriptID string, fieldName string, values []string) {
-	t.Helper()
+func assertP710NonBlankList(transcriptID string, fieldName string, values []string) {
+	ginkgo.GinkgoHelper()
 
 	for index, value := range values {
-		if strings.TrimSpace(value) == "" {
-			t.Fatalf("transcript %s has blank %s[%d]", transcriptID, fieldName, index)
-		}
+		gomega.Expect(strings.TrimSpace(value)).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript %s has blank %s[%d]", transcriptID, fieldName, index))
 	}
 }
 
-func assertP710ExpectedOutputShapeNonBlank(t *testing.T, transcriptID string, commandID string, shape p710ExpectedOutputShape) {
-	t.Helper()
+func assertP710ExpectedOutputShapeNonBlank(transcriptID string, commandID string, shape p710ExpectedOutputShape) {
+	ginkgo.GinkgoHelper()
 
 	for _, list := range []struct {
 		name   string
@@ -412,115 +363,96 @@ func assertP710ExpectedOutputShapeNonBlank(t *testing.T, transcriptID string, co
 		{name: "stdout_includes", values: shape.StdoutIncludes},
 		{name: "stdout_excludes", values: shape.StdoutExcludes},
 	} {
-		assertP710NonBlankList(t, transcriptID, "commands."+commandID+".expected_output_shape."+list.name, list.values)
+		assertP710NonBlankList(transcriptID, "commands."+commandID+".expected_output_shape."+list.name, list.values)
 	}
 
 	for key, value := range shape.JSONString {
-		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
-			t.Fatalf("transcript %s command %s has blank expected_output_shape.json_string entry", transcriptID, commandID)
-		}
+		gomega.Expect(strings.TrimSpace(key)).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript %s command %s has blank expected_output_shape.json_string entry", transcriptID, commandID))
+		gomega.Expect(strings.TrimSpace(value)).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("transcript %s command %s has blank expected_output_shape.json_string entry", transcriptID, commandID))
 	}
 }
 
-func assertP710StdoutExpectations(t *testing.T, command p710ClientDemoCommand, stdout string) {
-	t.Helper()
+func assertP710StdoutExpectations(command p710ClientDemoCommand, stdout string) {
+	ginkgo.GinkgoHelper()
 
 	for _, want := range command.ExpectedOutputShape.StdoutIncludes {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("%s stdout missing %q:\n%s", command.ID, want, stdout)
-		}
+		gomega.Expect(stdout).To(gomega.ContainSubstring(want), fmt.Sprintf("%s stdout missing %q:\n%s", command.ID, want, stdout))
 	}
 
 	for _, forbidden := range command.ExpectedOutputShape.StdoutExcludes {
-		if strings.Contains(stdout, forbidden) {
-			t.Fatalf("%s stdout unexpectedly contains %q:\n%s", command.ID, forbidden, stdout)
-		}
+		gomega.Expect(stdout).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("%s stdout unexpectedly contains %q:\n%s", command.ID, forbidden, stdout))
 	}
 }
 
-func assertP710ExpectedJSONShape(t *testing.T, command p710ClientDemoCommand, stdout []byte, classification autonomy.ClientClassification) {
-	t.Helper()
+func assertP710ExpectedJSONShape(command p710ClientDemoCommand, stdout []byte, classification autonomy.ClientClassification) {
+	ginkgo.GinkgoHelper()
 
 	var payload any
 
-	if err := json.Unmarshal(stdout, &payload); err != nil {
-		t.Fatalf("%s did not emit JSON: %v\n%s", command.ID, err, string(stdout))
-	}
+	gomega.Expect(json.Unmarshal(stdout, &payload)).To(gomega.Succeed(), "%s did not emit JSON:\n%s", command.ID, string(stdout))
 
 	for _, path := range command.ExpectedOutputShape.StableFields {
-		if _, ok := jsonValueAtDottedPath(payload, path); !ok {
-			t.Fatalf("%s missing stable expected JSON field %s in %s", command.ID, path, string(stdout))
+		{
+			_, ok := jsonValueAtDottedPath(payload, path)
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("%s missing stable expected JSON field %s in %s", command.ID, path, string(stdout)))
 		}
 	}
 
 	for path, want := range command.ExpectedOutputShape.JSONString {
 		got, ok := jsonValueAtDottedPath(payload, path)
-		if !ok {
-			t.Fatalf("%s missing JSON path %s in %s", command.ID, path, string(stdout))
-		}
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("%s missing JSON path %s in %s", command.ID, path, string(stdout)))
 
-		if fmt.Sprint(got) != want {
-			t.Fatalf("%s JSON path %s = %q, want %q", command.ID, path, fmt.Sprint(got), want)
-		}
+		gomega.Expect(fmt.Sprint(got)).To(gomega.BeEquivalentTo(want), fmt.Sprintf("%s JSON path %s = %q, want %q", command.ID, path, fmt.Sprint(got), want))
 	}
 
 	for _, path := range command.ExpectedOutputShape.JSONPresent {
-		if _, ok := jsonValueAtDottedPath(payload, path); !ok {
-			t.Fatalf("%s missing JSON path %s in %s", command.ID, path, string(stdout))
+		{
+			_, ok := jsonValueAtDottedPath(payload, path)
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("%s missing JSON path %s in %s", command.ID, path, string(stdout)))
 		}
 	}
 
 	for _, path := range command.ExpectedOutputShape.JSONNonEmpty {
 		got, ok := jsonValueAtDottedPath(payload, path)
-		if !ok {
-			t.Fatalf("%s missing JSON path %s in %s", command.ID, path, string(stdout))
-		}
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("%s missing JSON path %s in %s", command.ID, path, string(stdout)))
 
-		if jsonValueEmpty(got) {
-			t.Fatalf("%s JSON path %s is empty: %#v", command.ID, path, got)
-		}
+		gomega.Expect(jsonValueEmpty(got)).To(gomega.BeFalse(), fmt.Sprintf("%s JSON path %s is empty: %#v", command.ID, path, got))
 	}
 
 	for _, path := range command.ExpectedOutputShape.JSONNull {
 		got, ok := jsonValueAtDottedPath(payload, path)
-		if !ok {
-			t.Fatalf("%s missing JSON path %s in %s", command.ID, path, string(stdout))
-		}
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("%s missing JSON path %s in %s", command.ID, path, string(stdout)))
 
-		if got != nil {
-			t.Fatalf("%s JSON path %s = %#v, want null", command.ID, path, got)
-		}
+		gomega.Expect(got).To(gomega.BeNil(), fmt.Sprintf("%s JSON path %s = %#v, want null", command.ID, path, got))
 	}
 
 	if strings.HasPrefix(command.ID, "tooling-vendor") {
-		assertP710SchemaExportCoversClassifications(t, payload, classification)
+		assertP710SchemaExportCoversClassifications(payload, classification)
 
 		return
 	}
 
 	if strings.HasPrefix(command.ID, "local-model") {
-		assertP710LocalOpsPrivacyShape(t, payload)
+		assertP710LocalOpsPrivacyShape(payload)
 
 		return
 	}
 
 	if strings.HasPrefix(command.ID, "open-source") {
-		assertP710OpenSourceQuickstartShape(t, payload)
+		assertP710OpenSourceQuickstartShape(payload)
 
 		return
 	}
 
 	if values, ok := p76StringSliceAtPath(payload.(map[string]any), "sidecar.contract.metadata.client_classifications"); ok {
 		for _, want := range autonomy.DefaultClientClassifications() {
-			if !p76ContainsString(values, string(want)) {
-				t.Fatalf("%s sidecar metadata missing classification %q: %#v", command.ID, want, values)
-			}
+			gomega.Expect(p76ContainsString(values, string(want))).To(gomega.BeTrue(), fmt.Sprintf("%s sidecar metadata missing classification %q: %#v", command.ID, want, values))
 		}
 	}
 }
 
-func assertP710OpenSourceQuickstartShape(t *testing.T, payload any) {
-	t.Helper()
+func assertP710OpenSourceQuickstartShape(payload any) {
+	ginkgo.GinkgoHelper()
 
 	for _, path := range []string{
 		"quickstart_smoke.first_useful_packet.packet_id",
@@ -533,8 +465,9 @@ func assertP710OpenSourceQuickstartShape(t *testing.T, payload any) {
 		"quickstart_smoke.suggested_verification.suggested_commands",
 		"quickstart_smoke.privacy_redaction_status.forbidden_field_check",
 	} {
-		if _, ok := jsonValueAtDottedPath(payload, path); !ok {
-			t.Fatalf("open-source quickstart output missing %s: %#v", path, payload)
+		{
+			_, ok := jsonValueAtDottedPath(payload, path)
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("open-source quickstart output missing %s: %#v", path, payload))
 		}
 	}
 
@@ -547,47 +480,34 @@ func assertP710OpenSourceQuickstartShape(t *testing.T, payload any) {
 		"quickstart_smoke.product_evidence_safe_output.forbidden_field_check": "pass",
 	} {
 		got, ok := jsonValueAtDottedPath(payload, path)
-		if !ok {
-			t.Fatalf("open-source quickstart output missing %s: %#v", path, payload)
-		}
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("open-source quickstart output missing %s: %#v", path, payload))
 
-		if fmt.Sprint(got) != want {
-			t.Fatalf("open-source quickstart %s = %q, want %q", path, fmt.Sprint(got), want)
-		}
+		gomega.Expect(fmt.Sprint(got)).To(gomega.BeEquivalentTo(want), fmt.Sprintf("open-source quickstart %s = %q, want %q", path, fmt.Sprint(got), want))
 	}
 }
 
-func assertP710SchemaExportCoversClassifications(t *testing.T, payload any, classification autonomy.ClientClassification) {
-	t.Helper()
+func assertP710SchemaExportCoversClassifications(payload any, classification autonomy.ClientClassification) {
+	ginkgo.GinkgoHelper()
 
 	root, ok := payload.(map[string]any)
-	if !ok {
-		t.Fatalf("schema export payload is not an object: %#v", payload)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("schema export payload is not an object: %#v", payload))
 
 	values, ok := p76StringSliceAtPath(root, "metadata.client_classifications")
-	if !ok {
-		t.Fatalf("schema export missing classification metadata: %#v", root)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("schema export missing classification metadata: %#v", root))
 
 	for _, want := range autonomy.DefaultClientClassifications() {
-		if !p76ContainsString(values, string(want)) {
-			t.Fatalf("schema export missing classification %q: %#v", want, values)
-		}
+		gomega.Expect(p76ContainsString(values, string(want))).To(gomega.BeTrue(), fmt.Sprintf("schema export missing classification %q: %#v", want, values))
 	}
 
-	if !p76ContainsString(values, string(classification)) {
-		t.Fatalf("schema export missing current classification %q: %#v", classification, values)
-	}
+	gomega.Expect(p76ContainsString(values, string(classification))).To(gomega.BeTrue(), fmt.Sprintf("schema export missing current classification %q: %#v", classification, values))
 
 	signals, ok := p76StringSliceAtPath(root, "metadata.product_signals")
-	if !ok || !p76ContainsString(signals, string(autonomy.ProductIntegrationProof)) {
-		t.Fatalf("schema export missing integration product signal: %#v", root)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("schema export missing integration product signal: %#v", root))
+	gomega.Expect(p76ContainsString(signals, string(autonomy.ProductIntegrationProof))).To(gomega.BeTrue(), fmt.Sprintf("schema export missing integration product signal: %#v", root))
 }
 
-func assertP710LocalOpsPrivacyShape(t *testing.T, payload any) {
-	t.Helper()
+func assertP710LocalOpsPrivacyShape(payload any) {
+	ginkgo.GinkgoHelper()
 
 	for path, want := range map[string]string{
 		"privacy.metadata_only":          "true",
@@ -596,13 +516,9 @@ func assertP710LocalOpsPrivacyShape(t *testing.T, payload any) {
 		"privacy.secret_capture_allowed": "false",
 	} {
 		got, ok := jsonValueAtDottedPath(payload, path)
-		if !ok {
-			t.Fatalf("local-ops output missing %s: %#v", path, payload)
-		}
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("local-ops output missing %s: %#v", path, payload))
 
-		if fmt.Sprint(got) != want {
-			t.Fatalf("local-ops %s = %q, want %q", path, fmt.Sprint(got), want)
-		}
+		gomega.Expect(fmt.Sprint(got)).To(gomega.BeEquivalentTo(want), fmt.Sprintf("local-ops %s = %q, want %q", path, fmt.Sprint(got), want))
 	}
 }
 
@@ -617,8 +533,8 @@ func p710DemoArgs(args []string, configPath string) []string {
 	return copied
 }
 
-func assertP710NoForbiddenFixtureEvidence(t *testing.T, text string) {
-	t.Helper()
+func assertP710NoForbiddenFixtureEvidence(text string) {
+	ginkgo.GinkgoHelper()
 
 	for _, forbidden := range []string{
 		"/Users/",
@@ -635,9 +551,7 @@ func assertP710NoForbiddenFixtureEvidence(t *testing.T, text string) {
 		"logs/telemetry/",
 		"logs/conversations/",
 	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("P7.10 transcript fixture contains forbidden privacy pattern %q", forbidden)
-		}
+		gomega.Expect(text).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("P7.10 transcript fixture contains forbidden privacy pattern %q", forbidden))
 	}
 
 	for _, phrase := range []string{
@@ -650,21 +564,20 @@ func assertP710NoForbiddenFixtureEvidence(t *testing.T, text string) {
 		"FedRAMP ready",
 		"MCP protocol support",
 	} {
-		if strings.Contains(strings.ToLower(text), strings.ToLower(phrase)) {
-			t.Fatalf("P7.10 transcript fixture contains unsupported or strategy-prescriptive phrase %q", phrase)
-		}
+		gomega.Expect(strings.ToLower(text)).NotTo(gomega.ContainSubstring(strings.ToLower(phrase)), fmt.Sprintf("P7.10 transcript fixture contains unsupported or strategy-prescriptive phrase %q", phrase))
 	}
 }
 
-func assertP710NoForbiddenExecutedEvidence(t *testing.T, commandID string, streamName string, text string) {
-	t.Helper()
+func assertP710NoForbiddenExecutedEvidence(commandID string, streamName string, text string) {
+	ginkgo.GinkgoHelper()
 
 	if strings.TrimSpace(text) == "" {
 		return
 	}
 
-	if finding := localops.ForbiddenEvidenceLeak(text); finding != "" {
-		t.Fatalf("%s %s leaked forbidden evidence class %q:\n%s", commandID, streamName, finding, text)
+	{
+		finding := localops.ForbiddenEvidenceLeak(text)
+		gomega.Expect(finding).To(gomega.BeEquivalentTo(""), fmt.Sprintf("%s %s leaked forbidden evidence class %q:\n%s", commandID, streamName, finding, text))
 	}
 
 	for _, forbidden := range []string{
@@ -680,13 +593,12 @@ func assertP710NoForbiddenExecutedEvidence(t *testing.T, commandID string, strea
 		"account_number:",
 		"unredacted_telemetry_path",
 	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s %s contains forbidden privacy pattern %q:\n%s", commandID, streamName, forbidden, text)
-		}
+		gomega.Expect(text).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("%s %s contains forbidden privacy pattern %q:\n%s", commandID, streamName, forbidden, text))
 	}
 
-	if token := p710CredentialToken(text); token != "" {
-		t.Fatalf("%s %s contains credential-shaped token %q:\n%s", commandID, streamName, token, text)
+	{
+		token := p710CredentialToken(text)
+		gomega.Expect(token).To(gomega.BeEquivalentTo(""), fmt.Sprintf("%s %s contains credential-shaped token %q:\n%s", commandID, streamName, token, text))
 	}
 
 	for _, forbidden := range []string{
@@ -700,9 +612,7 @@ func assertP710NoForbiddenExecutedEvidence(t *testing.T, commandID string, strea
 		`"hosted_telemetry_required": true`,
 		`"raw_task_captured": true`,
 	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s %s reports forbidden capture flag %q:\n%s", commandID, streamName, forbidden, text)
-		}
+		gomega.Expect(text).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("%s %s reports forbidden capture flag %q:\n%s", commandID, streamName, forbidden, text))
 	}
 
 	for _, marker := range []string{
@@ -711,9 +621,7 @@ func assertP710NoForbiddenExecutedEvidence(t *testing.T, commandID string, strea
 		"\\logs\\telemetry\\",
 		"\\logs\\conversations\\",
 	} {
-		if strings.Contains(text, marker) {
-			t.Fatalf("%s %s contains unredacted telemetry/log path marker %q:\n%s", commandID, streamName, marker, text)
-		}
+		gomega.Expect(text).NotTo(gomega.ContainSubstring(marker), fmt.Sprintf("%s %s contains unredacted telemetry/log path marker %q:\n%s", commandID, streamName, marker, text))
 	}
 }
 

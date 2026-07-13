@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
 	"idiom/internal/repository/semantic/languagetools"
@@ -177,19 +178,33 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		return rejection
 	}
 
+	shellWorkdir := normalizeVerificationScope(m.pathAccess.DisplayPath(execution.workdir))
+	if shellWorkdir == "" {
+		shellWorkdir = "."
+	}
 	result := ToolResult{
 		Tool:    ToolNameShell,
 		Summary: fmt.Sprintf("Ran shell command in %s", m.pathAccess.DisplayPath(execution.workdir)),
 		Output:  "$ " + execution.command + "\n" + strings.TrimSpace(execution.displayOutput),
-		Facts:   &toolfacts.ToolResultFacts{ShellCommand: execution.command},
+		Facts: &toolfacts.ToolResultFacts{
+			ShellCommand: execution.command,
+			ShellWorkdir: shellWorkdir,
+		},
+	}
+	analysis := AnalyzeShellCommand(execution.command)
+	if analysis.SideEffect != autonomy.SideEffectReadOnly {
+		m.mutationEpoch.Add(1)
 	}
 
 	if execution.failure != "" {
 		result.Error = execution.failure
 	} else if reason := zeroSelectedTestFailureReason(execution.command, execution.rawOutput); reason != "" {
 		result.Error = reason
-	} else if m.Mode() != ModeExplore {
-		m.resetLanguageTools()
+	} else {
+		result.Facts.VerificationEvidence = m.successfulShellVerificationEvidence(ctx, execution.command, execution.workdir, shellWorkdir)
+		if m.Mode() != ModeExplore {
+			m.resetLanguageTools()
+		}
 	}
 
 	return result
@@ -198,6 +213,12 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 func zeroSelectedTestFailureReason(command string, output string) string {
 	if !AnalyzeShellCommand(command).BuildOrTest {
 		return ""
+	}
+	fields := shellCommandFields(command)
+	if len(fields) > 0 && normalizeShellHead(fields[0]) == "go" {
+		if reason := goVerificationNonExecutionReason(fields[1:]); reason != "" {
+			return "verification command did not execute despite exiting 0 (" + reason + "). Run a command that performs the intended verification."
+		}
 	}
 
 	if signal := zeroSelectedTestSignal(output); signal != "" {
@@ -218,6 +239,8 @@ func zeroSelectedTestSignal(output string) string {
 		return "pytest collected 0 items"
 	case strings.Contains(lower, "no tests ran"):
 		return "reported no tests ran"
+	case strings.Contains(lower, "no tests to run"):
+		return "reported no tests to run"
 	case strings.Contains(lower, "ran 0 tests"):
 		return "reported ran 0 tests"
 	default:

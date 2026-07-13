@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"idiom/internal/platform/textutil"
 )
 
 type goParsedFile struct {
@@ -233,89 +231,189 @@ func goMovePatternTag(pattern string) string {
 }
 
 func (m *Manager) goMoveDeclarations(req ToolRequest) ToolResult {
-	if len(req.Moves) > 0 {
-		return m.goMoveDeclarationBatch(req)
-	}
-
 	if !m.host.WritesEnabled() {
 		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration move rejected", Error: "workspace writes are disabled"}
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration batch move rejected", Error: "path is required"}
 	}
 
 	sourcePath, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to resolve source path", Error: err.Error()}
 	}
-
-	destPath, err := m.resolvePath(req.Destination, req.Workdir)
-	if err != nil {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to resolve destination path", Error: err.Error()}
+	planning := newGoMovePlanningSession(m, sourcePath, req.MutationPreimages)
+	moves := req.Moves
+	if len(moves) == 0 {
+		moves = []GoDeclarationMove{{Destination: req.Destination, Pattern: req.Pattern, Declarations: append([]string(nil), req.Declarations...)}}
 	}
 
-	requested := normalizedGoDeclarationSet(req.Declarations)
-	if len(requested) == 0 && strings.TrimSpace(req.Pattern) != "" {
-		if !strings.Contains(strings.ToLower(req.Pattern), "tag:") && !strings.Contains(strings.ToLower(req.Pattern), "responsibility:") {
-			requested = normalizedGoDeclarationSet(strings.Split(req.Pattern, ","))
+	lines := make([]string, 0, len(moves))
+	var single goMoveResult
+	for _, move := range moves {
+		destPath, resolveErr := m.resolvePath(move.Destination, req.Workdir)
+		if resolveErr != nil {
+			return ToolResult{Tool: "go_move_declarations", Summary: "Failed to resolve destination path", Error: resolveErr.Error()}
+		}
+		moveResult, moveErr := planning.apply(destPath, move.Pattern, move.Declarations)
+		if moveErr != nil {
+			return ToolResult{Tool: "go_move_declarations", Summary: moveErr.summary, Error: moveErr.err.Error()}
+		}
+		single = moveResult
+		lines = append(lines, moveResult.summary)
+	}
+
+	plan, targetPaths := planning.plan()
+	if len(req.Moves) == 0 {
+		return ToolResult{
+			Tool:         "go_move_declarations",
+			Summary:      single.summary,
+			Output:       fmt.Sprintf("moved declarations: %s\nplanned files:\n- %s", strings.Join(single.movedNames, ", "), strings.Join(targetPaths, "\n- ")),
+			MutationPlan: plan,
 		}
 	}
 
-	tag := goMovePatternTag(req.Pattern)
+	return ToolResult{
+		Tool:         "go_move_declarations",
+		Summary:      fmt.Sprintf("Applied %d Go declaration move batch(es)", len(req.Moves)),
+		Output:       strings.Join(append(lines, "planned files:", "- "+strings.Join(targetPaths, "\n- ")), "\n"),
+		MutationPlan: plan,
+	}
+}
+
+type goMovePlanningFile struct {
+	path           string
+	display        string
+	expectedExists bool
+	expectedBody   []byte
+	body           []byte
+}
+
+type goMovePlanningSession struct {
+	manager           *Manager
+	sourcePath        string
+	files             map[string]*goMovePlanningFile
+	boundPreimages    map[string]FileMutationPreimage
+	preimagesSupplied bool
+}
+
+type goMoveResult struct {
+	summary    string
+	movedNames []string
+}
+
+type goMovePlanningError struct {
+	summary string
+	err     error
+}
+
+func newGoMovePlanningSession(manager *Manager, sourcePath string, preimages []FileMutationPreimage) *goMovePlanningSession {
+	bound := make(map[string]FileMutationPreimage, len(preimages))
+	for _, preimage := range preimages {
+		preimage.Path = filepath.Clean(preimage.Path)
+		preimage.Body = append([]byte(nil), preimage.Body...)
+		bound[preimage.Path] = preimage
+	}
+	return &goMovePlanningSession{
+		manager:           manager,
+		sourcePath:        filepath.Clean(sourcePath),
+		files:             make(map[string]*goMovePlanningFile),
+		boundPreimages:    bound,
+		preimagesSupplied: preimages != nil,
+	}
+}
+
+func (p *goMovePlanningSession) load(path string) (*goMovePlanningFile, error) {
+	path = filepath.Clean(path)
+	if file := p.files[path]; file != nil {
+		return file, nil
+	}
+
+	var body []byte
+	var exists bool
+	if p.preimagesSupplied {
+		preimage, ok := p.boundPreimages[path]
+		if !ok {
+			return nil, fmt.Errorf("rooted mutation preimage for %s was not supplied", p.manager.displayPath(path))
+		}
+		body = append([]byte(nil), preimage.Body...)
+		exists = preimage.Exists
+	} else {
+		return nil, fmt.Errorf("rooted mutation preimages are required for Go declaration moves")
+	}
+	file := &goMovePlanningFile{
+		path:           path,
+		display:        p.manager.displayPath(path),
+		expectedExists: exists,
+		expectedBody:   append([]byte(nil), body...),
+		body:           append([]byte(nil), body...),
+	}
+	p.files[path] = file
+	return file, nil
+}
+
+func (p *goMovePlanningSession) apply(destPath string, pattern string, declarations []string) (goMoveResult, *goMovePlanningError) {
+	destPath = filepath.Clean(destPath)
+	if p.sourcePath == destPath {
+		return goMoveResult{}, &goMovePlanningError{summary: "Go declaration move rejected", err: fmt.Errorf("destination must be different from source path")}
+	}
+
+	requested := normalizedGoDeclarationSet(declarations)
+	if len(requested) == 0 && strings.TrimSpace(pattern) != "" && !strings.Contains(strings.ToLower(pattern), "tag:") && !strings.Contains(strings.ToLower(pattern), "responsibility:") {
+		requested = normalizedGoDeclarationSet(strings.Split(pattern, ","))
+	}
+	tag := goMovePatternTag(pattern)
 	if len(requested) == 0 && tag == "" {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration move rejected", Error: "declarations or pattern:\"tag:<responsibility>\" is required"}
+		return goMoveResult{}, &goMovePlanningError{summary: "Go declaration move rejected", err: fmt.Errorf("declarations or pattern:\"tag:<responsibility>\" is required")}
 	}
 
-	if filepath.Clean(sourcePath) == filepath.Clean(destPath) {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration move rejected", Error: "destination must be different from source path"}
+	sourceState, err := p.load(p.sourcePath)
+	if err != nil || !sourceState.expectedExists {
+		if err == nil {
+			err = os.ErrNotExist
+		}
+		return goMoveResult{}, &goMovePlanningError{summary: "Failed to parse source Go file", err: err}
 	}
-
-	source, err := m.parseGoFileForRefactor(sourcePath)
+	source, err := p.manager.parseGoSourceForRefactor(sourceState.path, sourceState.body)
 	if err != nil {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to parse source Go file", Error: err.Error()}
+		return goMoveResult{}, &goMovePlanningError{summary: "Failed to parse source Go file", err: err}
 	}
-
+	destState, err := p.load(destPath)
+	if err != nil {
+		return goMoveResult{}, &goMovePlanningError{summary: "Failed to read destination Go file", err: err}
+	}
 	var dest *goParsedFile
-
-	if _, statErr := os.Stat(destPath); statErr == nil {
-		dest, err = m.parseGoFileForRefactor(destPath)
+	if destState.expectedExists || len(destState.body) > 0 {
+		dest, err = p.manager.parseGoSourceForRefactor(destState.path, destState.body)
 		if err != nil {
-			return ToolResult{Tool: "go_move_declarations", Summary: "Failed to parse destination Go file", Error: err.Error()}
+			return goMoveResult{}, &goMovePlanningError{summary: "Failed to parse destination Go file", err: err}
 		}
-
 		if source.file.Name.Name != dest.file.Name.Name {
-			return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration move rejected", Error: fmt.Sprintf("source package %q does not match destination package %q", source.file.Name.Name, dest.file.Name.Name)}
+			return goMoveResult{}, &goMovePlanningError{summary: "Go declaration move rejected", err: fmt.Errorf("source package %q does not match destination package %q", source.file.Name.Name, dest.file.Name.Name)}
 		}
-	} else if !os.IsNotExist(statErr) {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to stat destination Go file", Error: statErr.Error()}
 	}
 
 	sourceDecls := make([]goTopDecl, 0, len(source.decls))
 	movedDecls := make([]goTopDecl, 0, len(requested))
 	matched := make(map[string]struct{}, len(requested))
-
 	for _, decl := range source.decls {
-		matches := false
+		matches := goDeclMatchesRequested(decl, requested, matched)
 		if tag != "" {
 			matches = goDeclHasResponsibilityTag(decl, tag)
-		} else {
-			matches = goDeclMatchesRequested(decl, requested, matched)
 		}
-
 		if matches {
 			movedDecls = append(movedDecls, decl)
-			continue
+		} else {
+			sourceDecls = append(sourceDecls, decl)
 		}
-
-		sourceDecls = append(sourceDecls, decl)
 	}
-
 	if len(movedDecls) == 0 {
-		want := strings.Join(req.Declarations, ", ")
+		want := strings.Join(declarations, ", ")
 		if tag != "" {
 			want = "tag:" + tag
 		}
-
-		return ToolResult{Tool: "go_move_declarations", Summary: "No matching Go declarations found", Error: fmt.Sprintf("no source declarations matched %s", want)}
+		return goMoveResult{}, &goMovePlanningError{summary: "No matching Go declarations found", err: fmt.Errorf("no source declarations matched %s", want)}
 	}
-
 	if tag == "" && len(matched) != len(requested) {
 		missing := make([]string, 0, len(requested)-len(matched))
 		for requestedName := range requested {
@@ -323,35 +421,28 @@ func (m *Manager) goMoveDeclarations(req ToolRequest) ToolResult {
 				missing = append(missing, requestedName)
 			}
 		}
-
 		slices.Sort(missing)
-
-		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration move rejected", Error: "source declarations not found: " + strings.Join(missing, ", ")}
+		return goMoveResult{}, &goMovePlanningError{summary: "Go declaration move rejected", err: fmt.Errorf("source declarations not found: %s", strings.Join(missing, ", "))}
 	}
 
 	destDecls := movedDecls
 	destImports := cloneGoImports(source.imports)
-
 	if dest != nil {
 		destNames := make(map[string]struct{})
-
 		for _, decl := range dest.decls {
 			for _, name := range decl.names {
 				destNames[normalizeGoDeclarationName(name)] = struct{}{}
 			}
 		}
-
 		for _, decl := range movedDecls {
 			for _, name := range decl.names {
 				if _, exists := destNames[normalizeGoDeclarationName(name)]; exists {
-					return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration move rejected", Error: fmt.Sprintf("destination already declares %s", name)}
+					return goMoveResult{}, &goMovePlanningError{summary: "Go declaration move rejected", err: fmt.Errorf("destination already declares %s", name)}
 				}
 			}
 		}
-
 		destDecls = append(append([]goTopDecl(nil), dest.decls...), movedDecls...)
 		destImports = cloneGoImports(dest.imports)
-
 		for name, imp := range source.imports {
 			destImports[name] = imp
 		}
@@ -359,89 +450,62 @@ func (m *Manager) goMoveDeclarations(req ToolRequest) ToolResult {
 
 	sourceBytes, err := renderGoDeclFile(source.file.Name.Name, source.imports, sourceDecls)
 	if err != nil {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to render source Go file", Error: err.Error()}
+		return goMoveResult{}, &goMovePlanningError{summary: "Failed to render source Go file", err: err}
 	}
-
 	destBytes, err := renderGoDeclFile(source.file.Name.Name, destImports, destDecls)
 	if err != nil {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to render destination Go file", Error: err.Error()}
+		return goMoveResult{}, &goMovePlanningError{summary: "Failed to render destination Go file", err: err}
 	}
-
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to create destination directory", Error: err.Error()}
-	}
-
-	if err := os.WriteFile(sourcePath, sourceBytes, 0o644); err != nil {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to write source Go file", Error: err.Error()}
-	}
-
-	if err := os.WriteFile(destPath, destBytes, 0o644); err != nil {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Failed to write destination Go file", Error: err.Error()}
-	}
-
-	m.invalidateGoIndex()
+	sourceState.body = sourceBytes
+	destState.body = destBytes
 
 	movedNames := make([]string, 0, len(movedDecls))
 	for _, decl := range movedDecls {
 		movedNames = append(movedNames, decl.names...)
 	}
-
-	return ToolResult{
-		Tool:         "go_move_declarations",
-		Summary:      fmt.Sprintf("Moved %d Go declaration block(s) from %s to %s", len(movedDecls), source.display, m.displayPath(destPath)),
-		Output:       fmt.Sprintf("moved declarations: %s\nchanged files:\n- %s\n- %s", strings.Join(movedNames, ", "), source.display, m.displayPath(destPath)),
-		ChangedPaths: []string{source.display, m.displayPath(destPath)},
-	}
+	return goMoveResult{
+		summary:    fmt.Sprintf("Moved %d Go declaration block(s) from %s to %s", len(movedDecls), source.display, destState.display),
+		movedNames: movedNames,
+	}, nil
 }
 
-func (m *Manager) goMoveDeclarationBatch(req ToolRequest) ToolResult {
-	if !m.host.WritesEnabled() {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration batch move rejected", Error: "workspace writes are disabled"}
-	}
-
-	if strings.TrimSpace(req.Path) == "" {
-		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration batch move rejected", Error: "path is required"}
-	}
-
-	lines := make([]string, 0, len(req.Moves))
+func (p *goMovePlanningSession) plan() (*MutationPlan, []string) {
+	var destinations []*goMovePlanningFile
+	var source *goMovePlanningFile
 	var changedPaths []string
-
-	for _, move := range req.Moves {
-		next := ToolRequest{
-			Tool:         "go_move_declarations",
-			Path:         req.Path,
-			Workdir:      req.Workdir,
-			Destination:  move.Destination,
-			Pattern:      move.Pattern,
-			Declarations: append([]string(nil), move.Declarations...),
+	for _, file := range p.files {
+		if slices.Equal(file.expectedBody, file.body) && file.expectedExists {
+			continue
 		}
-		result := m.goMoveDeclarations(next)
-
-		if result.Error != "" {
-			if len(lines) > 0 {
-				return ToolResult{
-					Tool:    "go_move_declarations",
-					Summary: "Go declaration batch move partially applied",
-					Output:  strings.Join(lines, "\n"),
-					Error:   result.Error,
-				}
-			}
-
-			return result
+		changedPaths = append(changedPaths, file.display)
+		if file.path == p.sourcePath {
+			source = file
+		} else {
+			destinations = append(destinations, file)
 		}
-
-		lines = append(lines, result.Summary)
-		changedPaths = textutil.AppendUniqueMulti(changedPaths, result.ChangedPaths...)
 	}
-
 	slices.Sort(changedPaths)
-
-	return ToolResult{
-		Tool:         "go_move_declarations",
-		Summary:      fmt.Sprintf("Applied %d Go declaration move batch(es)", len(req.Moves)),
-		Output:       strings.Join(append(lines, "changed files:", "- "+strings.Join(changedPaths, "\n- ")), "\n"),
-		ChangedPaths: changedPaths,
+	slices.SortFunc(destinations, func(a, b *goMovePlanningFile) int { return strings.Compare(a.display, b.display) })
+	ordered := destinations
+	if source != nil {
+		ordered = append(ordered, source)
 	}
+	plan := &MutationPlan{TargetPaths: append([]string(nil), changedPaths...), Files: make([]FileMutationPlan, 0, len(ordered))}
+	for _, file := range ordered {
+		description := "write Go move destination " + file.display
+		if file.path == p.sourcePath {
+			description = "rewrite Go move source " + file.display
+		}
+		plan.Files = append(plan.Files, FileMutationPlan{
+			Path:           file.path,
+			DisplayPath:    file.display,
+			Description:    description,
+			ExpectedExists: file.expectedExists,
+			ExpectedBody:   append([]byte(nil), file.expectedBody...),
+			RenderedBody:   append([]byte(nil), file.body...),
+		})
+	}
+	return plan, changedPaths
 }
 
 func (m *Manager) parseGoFileForRefactor(path string) (*goParsedFile, error) {
@@ -449,7 +513,10 @@ func (m *Manager) parseGoFileForRefactor(path string) (*goParsedFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	return m.parseGoSourceForRefactor(path, source)
+}
 
+func (m *Manager) parseGoSourceForRefactor(path string, source []byte) (*goParsedFile, error) {
 	fset := token.NewFileSet()
 
 	file, err := parser.ParseFile(fset, path, source, parser.ParseComments)

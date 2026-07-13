@@ -1,92 +1,93 @@
 package productworkflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestLintEffortFolderRejectsSymlinkedRequiredFile(t *testing.T) {
-	root := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "workflow_state.json")
+var _ = ginkgo.Describe("lint", func() {
+	ginkgo.It("LintEffortFolderRejectsSymlinkedRequiredFile", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		outside := filepath.Join(ginkgo.GinkgoT().TempDir(), "workflow_state.json")
+		{
 
-	if err := os.WriteFile(outside, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+			err := os.WriteFile(outside, []byte("{}\n"), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+		}
+		{
 
-	if err := os.Symlink(outside, filepath.Join(root, "workflow_state.json")); err != nil {
-		t.Fatal(err)
-	}
+			err := os.Symlink(outside, filepath.Join(root, "workflow_state.json"))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+		}
 
-	result := LintEffortFolder(root)
-	if !lintSummaryHasFinding(result, "symlink_file", "workflow_state.json") {
-		t.Fatalf("expected symlink_file finding for workflow_state.json, got %#v", result.Findings)
-	}
-}
+		result := LintEffortFolder(root)
+		gomega.Expect(result.Findings).To(gomega.ContainElement(gomega.SatisfyAll(
+			gomega.HaveField("Code", "read_error"),
+			gomega.HaveField("Path", "workflow_state.json"),
+			gomega.HaveField("Message", gomega.ContainSubstring("must not be a symlink")),
+		)), fmt.Sprintf("expected a symlink read rejection for workflow_state.json, got %#v", result.Findings))
 
-func TestLintEffortFolderRejectsSymlinkedReportFile(t *testing.T) {
-	root := t.TempDir()
-	reportsDir := filepath.Join(root, "reports")
+	})
+	ginkgo.It("LintEffortFolderRejectsSymlinkedReportFile", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		reportsDir := filepath.Join(root, "reports")
+		{
 
-	if err := os.MkdirAll(reportsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+			err := os.MkdirAll(reportsDir, 0o755)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+		}
 
-	outside := filepath.Join(t.TempDir(), "review.report.json")
-	if err := os.WriteFile(outside, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+		outside := filepath.Join(ginkgo.GinkgoT().TempDir(), "review.report.json")
+		{
+			err := os.WriteFile(outside, []byte("{}\n"), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+		}
+		{
 
-	if err := os.Symlink(outside, filepath.Join(reportsDir, "review.report.json")); err != nil {
-		t.Fatal(err)
-	}
+			err := os.Symlink(outside, filepath.Join(reportsDir, "review.report.json"))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+		}
 
-	result := LintEffortFolder(root)
-	if !lintSummaryHasFinding(result, "symlink_file", filepath.Join("reports", "review.report.json")) {
-		t.Fatalf("expected symlink_file finding for report, got %#v", result.Findings)
-	}
-}
+		result := LintEffortFolder(root)
+		gomega.Expect(!lintSummaryHasFinding(result, "symlink_file", filepath.Join("reports", "review.report.json"))).To(gomega.BeFalse(), fmt.Sprintf("expected symlink_file finding for report, got %#v", result.Findings))
 
-func TestLintEffortFolderReportTypeParsing(t *testing.T) {
-	root := t.TempDir()
-	writeLintFixtureFile(t, root, "reports/bad-review.json", `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"effort","task_id":"task","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"surprise","findings":[],"checks":{},"reviewed_at":"","commands_reviewed":[],"created_at":"2026-05-17T00:00:00Z"}`)
-	writeLintFixtureFile(t, root, "reports/unknown-invalid.json", `{`)
-	writeLintFixtureFile(t, root, "reports/unknown-valid.json", `{"notes":"free-form report"}`)
+	})
+	ginkgo.It("LintEffortFolderReportTypeParsing", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeLintFixtureFile(root, "reports/bad-review.json", `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"effort","task_id":"task","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"surprise","findings":[],"checks":{},"reviewed_at":"","commands_reviewed":[],"created_at":"2026-05-17T00:00:00Z"}`)
+		writeLintFixtureFile(root, "reports/unknown-invalid.json", `{`)
+		writeLintFixtureFile(root, "reports/unknown-valid.json", `{"notes":"free-form report"}`)
 
-	result := LintEffortFolder(root)
-	if !lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "bad-review.json")) {
-		t.Fatalf("expected known review report to use typed parser, got %#v", result.Findings)
-	}
-	if !lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "unknown-invalid.json")) {
-		t.Fatalf("expected unknown invalid JSON report to fail JSON parsing, got %#v", result.Findings)
-	}
-	if lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "unknown-valid.json")) {
-		t.Fatalf("expected unknown valid JSON report to avoid typed parsing, got %#v", result.Findings)
-	}
-}
+		result := LintEffortFolder(root)
+		gomega.Expect(!lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "bad-review.json"))).To(gomega.BeFalse(), fmt.Sprintf("expected known review report to use typed parser, got %#v", result.Findings))
+		gomega.Expect(!lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "unknown-invalid.json"))).To(gomega.BeFalse(), fmt.Sprintf("expected unknown invalid JSON report to fail JSON parsing, got %#v", result.Findings))
+		gomega.Expect(lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "unknown-valid.json"))).To(gomega.BeFalse(), fmt.Sprintf("expected unknown valid JSON report to avoid typed parsing, got %#v", result.Findings))
 
-func TestLintEffortFolderDetectsADRIndexFrontMatterDivergence(t *testing.T) {
-	root := t.TempDir()
-	writeLintFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-INDEX"]}]}`)
-	writeLintFixtureFile(t, root, "adrs/ADR-001-test.md", strings.ReplaceAll(validLintADRMarkdown(), "REQ-TEST-001", "REQ-MARKDOWN"))
+	})
+	ginkgo.It("LintEffortFolderDetectsADRIndexFrontMatterDivergence", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeLintFixtureFile(root, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-INDEX"]}]}`)
+		writeLintFixtureFile(root, "adrs/ADR-001-test.md", strings.ReplaceAll(validLintADRMarkdown(), "REQ-TEST-001", "REQ-MARKDOWN"))
 
-	result := LintEffortFolder(root)
-	if !lintSummaryHasFinding(result, "adr_index_frontmatter_mismatch", "adrs/index.json") {
-		t.Fatalf("expected adr_index_frontmatter_mismatch finding, got %#v", result.Findings)
-	}
-}
+		result := LintEffortFolder(root)
+		gomega.Expect(!lintSummaryHasFinding(result, "adr_index_frontmatter_mismatch", "adrs/index.json")).To(gomega.BeFalse(), fmt.Sprintf("expected adr_index_frontmatter_mismatch finding, got %#v", result.Findings))
 
-func TestLintEffortFolderFlagsUngroundedImplementationAffectingClaims(t *testing.T) {
-	root := t.TempDir()
-	writeLintFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]}]}`)
-	writeLintFixtureFile(t, root, "adrs/ADR-001-test.md", strings.Replace(validLintADRMarkdown(), "Test decision.", "Use the ExampleCloud platform for implementation.", 1))
+	})
+	ginkgo.It("LintEffortFolderFlagsUngroundedImplementationAffectingClaims", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeLintFixtureFile(root, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]}]}`)
+		writeLintFixtureFile(root, "adrs/ADR-001-test.md", strings.Replace(validLintADRMarkdown(), "Test decision.", "Use the ExampleCloud platform for implementation.", 1))
 
-	result := LintEffortFolder(root)
-	if !lintSummaryHasFinding(result, "ungrounded_implementation_claim", "adrs/ADR-001-test.md") {
-		t.Fatalf("expected ungrounded_implementation_claim finding, got %#v", result.Findings)
-	}
-}
+		result := LintEffortFolder(root)
+		gomega.Expect(!lintSummaryHasFinding(result, "ungrounded_implementation_claim", "adrs/ADR-001-test.md")).To(gomega.BeFalse(), fmt.Sprintf("expected ungrounded_implementation_claim finding, got %#v", result.Findings))
+
+	})
+})
 
 func lintSummaryHasFinding(result LintSummaryResult, code, path string) bool {
 	for _, finding := range result.Findings {
@@ -98,17 +99,20 @@ func lintSummaryHasFinding(result LintSummaryResult, code, path string) bool {
 	return false
 }
 
-func writeLintFixtureFile(t *testing.T, root, relPath, body string) {
-	t.Helper()
+func writeLintFixtureFile(root, relPath, body string) {
+	ginkgo.GinkgoHelper()
 
 	fullPath := filepath.Join(root, relPath)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", relPath, err)
+	{
+		err := os.MkdirAll(filepath.Dir(fullPath), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir %s: %v", relPath, err))
+	}
+	{
+
+		err := os.WriteFile(fullPath, []byte(body), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write %s: %v", relPath, err))
 	}
 
-	if err := os.WriteFile(fullPath, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", relPath, err)
-	}
 }
 
 func validLintADRMarkdown() string {

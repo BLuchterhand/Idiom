@@ -2,7 +2,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-base_config="${IDIOM_CONFIG:-"$repo_root/config.json"}"
+default_config="$repo_root/config.json"
+if [[ ! -f "$default_config" ]]; then
+  default_config="$repo_root/config.example.json"
+fi
+base_config="${IDIOM_CONFIG:-"$default_config"}"
 fixture_source="${IDIOM_SWE_FIXTURE:-}"
 fixture_git_ref="${IDIOM_SWE_FIXTURE_GIT_REF:-}"
 fixture_git_repo="${IDIOM_SWE_FIXTURE_GIT_REPO:-$repo_root}"
@@ -216,6 +220,7 @@ import sys
 
 log_path, runner_mode, family, turn_count_raw = sys.argv[1:]
 plan_execute = runner_mode == "plan-execute" or family.startswith("plan_then_execute") or family.startswith("plan_execute")
+feature_planner = runner_mode in {"feature-planner", "tui"} and family.startswith("feature_planner")
 try:
     turn_count = int(turn_count_raw)
 except ValueError:
@@ -240,13 +245,29 @@ for line in open(log_path, encoding="utf-8", errors="replace"):
         verification = str(record.get("verification_status") or "").strip().lower()
         if source_sanity not in {"failed", "blocked"} and verification not in {"failed", "blocked"}:
             raise SystemExit(0)
+    if feature_planner and typ == "idiom.feature_planner.complete":
+        status = str(record.get("status") or "").strip().lower()
+        if turn_count > 1 and status in {"planning-question-open", "question-open", "question_open"}:
+            continue
+        raise SystemExit(0)
+    if feature_planner and typ in {
+        "idiom.feature_planner.recovery_open",
+        "idiom.feature_planner.planning_stuck",
+        "idiom.feature_planner.failed",
+        "idiom.feature_planner.terminal",
+    }:
+        raise SystemExit(0)
+    if feature_planner and turn_count == 1 and typ == "idiom.feature_planner.question_open":
+        raise SystemExit(0)
     if typ == "session_summary":
         seen_session_summary = True
     if typ == "turn_summary":
         seen_turn_summary = True
-    if not plan_execute and user_messages >= turn_count and seen_turn_summary and (typ == "final" or (typ == "message" and record.get("role") == "assistant")):
+    if not plan_execute and not feature_planner and user_messages >= turn_count and seen_turn_summary and (typ == "final" or (typ == "message" and record.get("role") == "assistant")):
         raise SystemExit(0)
 if plan_execute:
+    raise SystemExit(1)
+if feature_planner:
     raise SystemExit(1)
 raise SystemExit(0 if seen_session_summary else 1)
 PY
@@ -643,7 +664,7 @@ terminal_marker_by_command = {
     "/product-create": [b"product create:"],
     "/product-approve": [b"product workflow transition:"],
 }
-terminal_markers = terminal_marker_by_command.get(primary_command, [b"feature-planner:"])
+terminal_markers = terminal_marker_by_command.get(primary_command, [])
 turn_index = 0
 deadline = time.time() + timeout
 completed = False
@@ -657,35 +678,94 @@ def debug_log_completed():
     if not logs:
         return False
     try:
-        text = logs[-1].read_text(encoding="utf-8", errors="replace")
+        lines = logs[-1].read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return False
-    terminal_roles_by_command = {
-        "/product-create": ("idiom.product_workflow.create",),
-        "/product-approve": ("idiom.product_workflow.transition_applied",),
-    }
-    terminal_roles = terminal_roles_by_command.get(
-        primary_command,
-        (
-            "idiom.feature_planner.complete",
-            "idiom.feature_planner.recovery_open",
-            "idiom.feature_planner.question_open",
-            "idiom.feature_planner.planning_stuck",
-            "idiom.feature_planner.failed",
-            "idiom.feature_planner.terminal",
-        ),
-    )
-    if any(role in text for role in terminal_roles):
-        return True
+
     raw_done_markers = os.environ.get("IDIOM_LIVE_TUI_DONE_CONTAINS", "").strip()
+    done_markers = []
     if raw_done_markers:
         try:
             parsed = json.loads(raw_done_markers)
-            markers = [str(item) for item in parsed] if isinstance(parsed, list) else [raw_done_markers]
+            done_markers = [str(item) for item in parsed] if isinstance(parsed, list) else [raw_done_markers]
         except json.JSONDecodeError:
-            markers = [raw_done_markers]
-        if all(marker and marker in text for marker in markers):
+            done_markers = [raw_done_markers]
+
+    terminal_event_by_command = {
+        "/product-create": "idiom.product_workflow.create",
+        "/product-approve": "idiom.product_workflow.transition_applied",
+    }
+    feature_terminal_events = {
+        "idiom.feature_planner.recovery_open",
+        "idiom.feature_planner.planning_stuck",
+        "idiom.feature_planner.failed",
+        "idiom.feature_planner.terminal",
+    }
+    question_statuses = {
+        "planning-question-open",
+        "planning_question_open",
+        "question-open",
+        "question_open",
+    }
+
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+
+        event_name = str(record.get("role") or record.get("type") or "").strip()
+        nested = {}
+        content = record.get("content")
+        if isinstance(content, str):
+            try:
+                parsed_content = json.loads(content)
+            except json.JSONDecodeError:
+                parsed_content = None
+            if isinstance(parsed_content, dict):
+                nested = parsed_content
+        elif isinstance(content, dict):
+            nested = content
+
+        expected_event = terminal_event_by_command.get(primary_command)
+        if expected_event and event_name == expected_event:
             return True
+
+        if event_name == "idiom.feature_planner.complete":
+            status = str(record.get("status") or nested.get("status") or "").strip().lower()
+            for payload in (record, nested):
+                fields = payload.get("fields")
+                if not status and isinstance(fields, dict):
+                    status = str(fields.get("status") or "").strip().lower()
+            if not status and isinstance(content, str):
+                first_line = content.strip().splitlines()[0].strip().lower() if content.strip() else ""
+                if first_line.startswith("feature-planner:"):
+                    status = first_line.split(":", 1)[1].strip()
+            if len(turns) > 1 and status in question_statuses:
+                continue
+            return True
+
+        if event_name in feature_terminal_events:
+            return True
+
+        # A question completes one feature-planner turn, not a scripted
+        # multi-turn conversation. Only a single-turn task may stop here.
+        if len(turns) == 1 and event_name in {
+            "idiom.feature_planner.question_open",
+            "idiom.feature_planner.planner_question_opened",
+        }:
+            return True
+
+        if done_markers:
+            record_text_parts = []
+            for value in (content, record.get("message")):
+                if isinstance(value, str):
+                    record_text_parts.append(value)
+            record_text = "\n".join(record_text_parts)
+            if all(marker and marker in record_text for marker in done_markers):
+                return True
     return False
 
 def should_send_next_turn():

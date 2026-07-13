@@ -107,14 +107,22 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 	if result, terminal := resumeIncompleteCycle(cfg, opts, promptRun, rec, stdout, stderr, &state); result.Status != "" {
 		return result
 	} else if terminal != nil {
-		_, _ = SaveState(cfg.Workspace.Root, &state)
+		savedStatePath, saveErr := SaveState(cfg.Workspace.Root, &state)
+		if saveErr != nil {
+			return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, saveErr, stderr)
+		}
+		statePath = savedStatePath
 	}
 
 	if opts.DetectExternalScopedChanges {
 		if reason := externalScopedChangeReason(cfg.Workspace.Root, state); reason != "" {
 			state.Status = intentloopcontract.StatusBlocked
 			state.TerminationReason = reason
-			statePath, _ = SaveState(cfg.Workspace.Root, &state)
+			savedStatePath, saveErr := SaveState(cfg.Workspace.Root, &state)
+			if saveErr != nil {
+				return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, saveErr, stderr)
+			}
+			statePath = savedStatePath
 			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 				"session_id": state.SessionID,
 				"reason":     reason,
@@ -128,14 +136,22 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 	for cycle := state.CurrentCycle + 1; cycle <= state.MaxCycles; cycle++ {
 		state.CurrentCycle = cycle
 		result, terminal, completionPath := runOneCycle(cfg, opts, promptRun, rec, stdout, stderr, &state, cycle)
-		_, _ = SaveState(cfg.Workspace.Root, &state)
+		savedStatePath, saveErr := SaveState(cfg.Workspace.Root, &state)
+		if saveErr != nil {
+			return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, saveErr, stderr)
+		}
+		statePath = savedStatePath
 		if result.Status != "" {
 			return result
 		}
 		if terminal == nil {
 			state.Status = intentloopcontract.StatusBlocked
 			state.TerminationReason = "missing_terminal_record"
-			statePath, _ = SaveState(cfg.Workspace.Root, &state)
+			savedStatePath, saveErr = SaveState(cfg.Workspace.Root, &state)
+			if saveErr != nil {
+				return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, saveErr, stderr)
+			}
+			statePath = savedStatePath
 			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 				"session_id":      state.SessionID,
 				"cycle_number":    cycle,
@@ -149,8 +165,7 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 
 	state.Status = intentloopcontract.StatusMaxCyclesExceeded
 	state.TerminationReason = "max cycles exceeded"
-	statePath, _ = SaveState(cfg.Workspace.Root, &state)
-	return resultFromState(state, statePath, 1, nil, "")
+	return persistStateResult(cfg.Workspace.Root, &state, 1, nil, "", stderr)
 }
 
 func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer, state *IntentLoopState, cycle int) (IntentLoopResult, *plancontract.PlanExecuteTerminalCompletionRecord, string) {
@@ -170,7 +185,10 @@ func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecut
 	state.Cycles = append(state.Cycles, record)
 	cycleIndex := len(state.Cycles) - 1
 	state.Status = intentloopcontract.StatusRunning
-	_, _ = SaveState(cfg.Workspace.Root, state)
+	statePath, err := SaveState(cfg.Workspace.Root, state)
+	if err != nil {
+		return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, err, stderr), nil, ""
+	}
 
 	cyclePrompt := BuildCyclePrompt(state.OriginalPrompt, *state)
 	promptPath, promptHash, err := SaveCyclePrompt(cfg.Workspace.Root, state.SessionID, cycle, cyclePrompt)
@@ -179,7 +197,10 @@ func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecut
 	}
 	state.Cycles[cycleIndex].CyclePromptPath = promptPath
 	state.Cycles[cycleIndex].CyclePromptSHA256 = promptHash
-	_, _ = SaveState(cfg.Workspace.Root, state)
+	statePath, err = SaveState(cfg.Workspace.Root, state)
+	if err != nil {
+		return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, err, stderr), nil, ""
+	}
 
 	if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventCycleStart, map[string]any{
 		"session_id":          state.SessionID,
@@ -242,8 +263,7 @@ func foldCompletedCycle(cfg config.Config, opts IntentLoopOptions, stdout io.Wri
 		}); err != nil {
 			return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
 		}
-		statePath, _ := SaveState(cfg.Workspace.Root, state)
-		return resultFromState(*state, statePath, 0, terminal, completionPath), true
+		return persistStateResult(cfg.Workspace.Root, state, 0, terminal, completionPath, stderr), true
 	}
 
 	outcome := ClassifyCycleOutcome(state.Cycles[cycleIndex], identity)
@@ -258,8 +278,7 @@ func foldCompletedCycle(cfg config.Config, opts IntentLoopOptions, stdout io.Wri
 		}); err != nil {
 			return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
 		}
-		statePath, _ := SaveState(cfg.Workspace.Root, state)
-		return resultFromState(*state, statePath, 1, terminal, completionPath), true
+		return persistStateResult(cfg.Workspace.Root, state, 1, terminal, completionPath, stderr), true
 	}
 
 	failureSet := GapFingerprint(gaps)
@@ -274,8 +293,7 @@ func foldCompletedCycle(cfg config.Config, opts IntentLoopOptions, stdout io.Wri
 			}); err != nil {
 				return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
 			}
-			statePath, _ := SaveState(cfg.Workspace.Root, state)
-			return resultFromState(*state, statePath, 1, terminal, completionPath), true
+			return persistStateResult(cfg.Workspace.Root, state, 1, terminal, completionPath, stderr), true
 		}
 		state.SeenFailureSets[failureSet] = true
 	}
@@ -306,12 +324,14 @@ func foldCompletedCycle(cfg config.Config, opts IntentLoopOptions, stdout io.Wri
 			}); err != nil {
 				return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
 			}
-			statePath, _ := SaveState(cfg.Workspace.Root, state)
-			return resultFromState(*state, statePath, 1, terminal, completionPath), true
+			return persistStateResult(cfg.Workspace.Root, state, 1, terminal, completionPath, stderr), true
 		}
 	}
 
-	_, _ = SaveState(cfg.Workspace.Root, state)
+	statePath, err := SaveState(cfg.Workspace.Root, state)
+	if err != nil {
+		return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, err, stderr), true
+	}
 	return IntentLoopResult{}, false
 }
 
@@ -587,6 +607,19 @@ func intentLoopJSONEventFailureResult(sessionID string, statePath string, err er
 	return failedResult(sessionID, statePath, intentloopcontract.StatusFailed, fmt.Sprintf("json_event_write_failed: %v", err), stderr)
 }
 
+func intentLoopStatePersistenceFailureResult(sessionID string, statePath string, err error, stderr io.Writer) IntentLoopResult {
+	return failedResult(sessionID, statePath, intentloopcontract.StatusFailed, fmt.Sprintf("intent_loop_state_write_failed: %v", err), stderr)
+}
+
+func persistStateResult(root string, state *IntentLoopState, exitCode int, completion *plancontract.PlanExecuteTerminalCompletionRecord, completionPath string, stderr io.Writer) IntentLoopResult {
+	statePath, err := SaveState(root, state)
+	if err != nil {
+		return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, err, stderr)
+	}
+
+	return resultFromState(*state, statePath, exitCode, completion, completionPath)
+}
+
 func failedResult(sessionID string, statePath string, status intentloopcontract.Status, reason string, stderr io.Writer) IntentLoopResult {
 	if reason != "" && stderr != nil {
 		fmt.Fprintln(stderr, reason)
@@ -614,7 +647,10 @@ func finishLoopFailure(cfg config.Config, opts IntentLoopOptions, stdout io.Writ
 	}); err != nil {
 		return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr)
 	}
-	statePath, _ := SaveState(cfg.Workspace.Root, state)
+	statePath, err := SaveState(cfg.Workspace.Root, state)
+	if err != nil {
+		return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, err, stderr)
+	}
 	if stderr != nil && reason != "" {
 		fmt.Fprintln(stderr, reason)
 	}

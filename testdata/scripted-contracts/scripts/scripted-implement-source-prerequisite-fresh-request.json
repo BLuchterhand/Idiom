@@ -1,0 +1,10 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels_test.go\",\"start_line\":1,\"end_line\":80,\"named_gap\":\"inspect the nearby label test first\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"attempt the target edit before its source prerequisite\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"satisfy the exact pending source-body prerequisite\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"satisfy the established-logic history prerequisite\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"fresh grounded edit after exact source evidence\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"refresh the changed source before the final report\"}",
+  "Implemented the label change through a fresh request after satisfying the typed source prerequisite.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed."
+]

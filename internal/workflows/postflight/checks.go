@@ -1,5 +1,7 @@
 package postflight
 
+//go:generate go tool mockgen -source=checks.go -destination=mock_check_test.go -package=postflight -typed
+
 import (
 	"fmt"
 	"path/filepath"

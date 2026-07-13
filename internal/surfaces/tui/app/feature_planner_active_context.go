@@ -19,7 +19,7 @@ type featurePlannerPlanArtifactPayload struct {
 	ProposedPaths []string `json:"proposed_paths,omitempty"`
 }
 
-func (m *Model) activeFeaturePlannerPlanContext() string {
+func (m *promptExecutionSession) activeFeaturePlannerPlanContext() string {
 	state, statePath, plan, ok := m.activeFeaturePlannerPlanState()
 	if !ok {
 		return ""
@@ -58,7 +58,7 @@ func (m *Model) activeFeaturePlannerPlanContext() string {
 	return strings.TrimSpace(b.String())
 }
 
-func (m *Model) activeFeaturePlannerPlanSeedResult() (workspace.ToolResult, bool) {
+func (m *promptExecutionSession) activeFeaturePlannerPlanSeedResult() (workspace.ToolResult, bool) {
 	state, statePath, plan, ok := m.activeFeaturePlannerPlanState()
 	if !ok {
 		return workspace.ToolResult{}, false
@@ -87,7 +87,7 @@ func (m *Model) activeFeaturePlannerPlanSeedResult() (workspace.ToolResult, bool
 	}, true
 }
 
-func (m *Model) activeFeaturePlannerPlanState() (featureplanner.FeatureState, string, featureplanner.FeaturePlan, bool) {
+func (m *promptExecutionSession) activeFeaturePlannerPlanState() (featureplanner.FeatureState, string, featureplanner.FeaturePlan, bool) {
 	if m == nil {
 		return featureplanner.FeatureState{}, "", featureplanner.FeaturePlan{}, false
 	}
@@ -97,7 +97,7 @@ func (m *Model) activeFeaturePlannerPlanState() (featureplanner.FeatureState, st
 		return featureplanner.FeatureState{}, "", featureplanner.FeaturePlan{}, false
 	}
 
-	state, statePath, err := featureplanner.LoadState(m.projectRoot(), sessionID)
+	state, statePath, err := featureplanner.LoadState(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), sessionID)
 	if err != nil || featureplanner.CountOpenPlannerQuestions(state) == 0 {
 		return featureplanner.FeatureState{}, "", featureplanner.FeaturePlan{}, false
 	}

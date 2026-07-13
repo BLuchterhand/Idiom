@@ -1,20 +1,25 @@
 package productworkflow
 
-import "testing"
+import (
+	"fmt"
 
-func TestProductWorkflowIDSetsTrimAndSkipBlankIDs(t *testing.T) {
-	evidence := EvidenceCardIDSet([]EvidenceCard{{CardID: " EV-1 "}, {CardID: ""}})
-	if !evidence["EV-1"] || len(evidence) != 1 {
-		t.Fatalf("unexpected evidence IDs: %#v", evidence)
-	}
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
+)
 
-	requirements := PRDRequirementIDSet([]PRDRequirement{{ID: " REQ-1 "}, {ID: ""}})
-	if !requirements["REQ-1"] || len(requirements) != 1 {
-		t.Fatalf("unexpected requirement IDs: %#v", requirements)
-	}
+var _ = ginkgo.Describe("id sets", func() {
+	ginkgo.It("ProductWorkflowIDSetsTrimAndSkipBlankIDs", func() {
+		evidence := EvidenceCardIDSet([]EvidenceCard{{CardID: " EV-1 "}, {CardID: ""}})
+		gomega.Expect(evidence["EV-1"]).To(gomega.BeTrue(), fmt.Sprintf("unexpected evidence IDs: %#v", evidence))
+		gomega.Expect(evidence).To(gomega.HaveLen(1), fmt.Sprintf("unexpected evidence IDs: %#v", evidence))
 
-	adrs := ADRIndexIDSet(ADRIndex{ADRs: []ADRIndexEntry{{ADRID: " ADR-1 "}, {ADRID: ""}}})
-	if !adrs["ADR-1"] || len(adrs) != 1 {
-		t.Fatalf("unexpected ADR IDs: %#v", adrs)
-	}
-}
+		requirements := PRDRequirementIDSet([]PRDRequirement{{ID: " REQ-1 "}, {ID: ""}})
+		gomega.Expect(requirements["REQ-1"]).To(gomega.BeTrue(), fmt.Sprintf("unexpected requirement IDs: %#v", requirements))
+		gomega.Expect(requirements).To(gomega.HaveLen(1), fmt.Sprintf("unexpected requirement IDs: %#v", requirements))
+
+		adrs := ADRIndexIDSet(ADRIndex{ADRs: []ADRIndexEntry{{ADRID: " ADR-1 "}, {ADRID: ""}}})
+		gomega.Expect(adrs["ADR-1"]).To(gomega.BeTrue(), fmt.Sprintf("unexpected ADR IDs: %#v", adrs))
+		gomega.Expect(adrs).To(gomega.HaveLen(1), fmt.Sprintf("unexpected ADR IDs: %#v", adrs))
+
+	})
+})

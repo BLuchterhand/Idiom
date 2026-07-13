@@ -116,7 +116,7 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 	if err != nil {
 		statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, ResumeBlockAssessmentFailed, err.Error())
 		if saveErr != nil {
-			return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
+			return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
 		}
 		return resultFromState(*state, statePath, 1, nil, ""), nil
 	}
@@ -126,7 +126,7 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 	if assessment.Blocked {
 		statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, assessment.BlockReason, assessment.BlockDetail)
 		if saveErr != nil {
-			return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
+			return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
 		}
 		if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 			"session_id":       state.SessionID,
@@ -152,7 +152,7 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 		if err != nil {
 			statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, ResumeBlockTerminalCompletionLoad, err.Error())
 			if saveErr != nil {
-				return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
+				return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
 			}
 			return resultFromState(*state, statePath, 1, nil, completionPath), nil
 		}
@@ -189,7 +189,7 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 	if assessment.ChildProgressPath != "" && !assessment.CanResumeChild {
 		statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, ResumeBlockChildProgressNotResumable, assessment.ChildProgressPath)
 		if saveErr != nil {
-			return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
+			return intentLoopStatePersistenceFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
 		}
 		if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 			"session_id":       state.SessionID,
@@ -213,8 +213,7 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 		state.Cycles[assessment.CycleIndex].FailureReason = completionErr.Error()
 		state.Cycles[assessment.CycleIndex].Status = intentloopcontract.CycleStatusFailed
 		state.Cycles[assessment.CycleIndex].ExitCode = 1
-		statePath, _ := SaveState(cfg.Workspace.Root, state)
-		return resultFromState(*state, statePath, 1, nil, completionPath), nil
+		return persistStateResult(cfg.Workspace.Root, state, 1, nil, completionPath, stderr), nil
 	}
 
 	gaps := AnalyzeEvidenceGaps(state.Contract, *terminal)

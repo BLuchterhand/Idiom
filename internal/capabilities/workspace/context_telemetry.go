@@ -322,7 +322,8 @@ func addContextAutoRefreshTelemetry(payload map[string]any, fields map[string]an
 	copyTelemetryString(value, fields, "partial_refresh_reason", "context_auto_refresh_partial_refresh_reason")
 	copyTelemetryString(value, fields, "full_rebuild_reason", "context_auto_refresh_full_rebuild_reason")
 	copyTelemetryBool(value, fields, "fresh_after", "context_auto_refresh_fresh_after")
-	copyTelemetryArrayLen(value, fields, "refreshed_files", "context_auto_refresh_refreshed_files")
+	copyTelemetryInventoryCount(value, fields, "refreshed_file_count", "refreshed_files", "context_auto_refresh_refreshed_files", "context_auto_refresh_refreshed_file_samples")
+	copyTelemetryNumber(value, fields, "refreshed_files_omitted", "context_auto_refresh_refreshed_files_omitted")
 }
 
 func addContextFreshnessTelemetry(payload map[string]any, fields map[string]any) {
@@ -376,7 +377,8 @@ func addContextFreshnessTelemetry(payload map[string]any, fields map[string]any)
 	copyTelemetryString(refresh, fields, "error", "context_freshness_refresh_error")
 	copyTelemetryString(refresh, fields, "full_rebuild_reason", "context_freshness_full_rebuild_reason")
 	copyTelemetryNumber(refresh, fields, "files_indexed", "context_freshness_refresh_files_indexed")
-	copyTelemetryArrayLen(refresh, fields, "refreshed_files", "context_freshness_refresh_refreshed_files")
+	copyTelemetryInventoryCount(refresh, fields, "refreshed_file_count", "refreshed_files", "context_freshness_refresh_refreshed_files", "context_freshness_refresh_refreshed_file_samples")
+	copyTelemetryNumber(refresh, fields, "refreshed_files_omitted", "context_freshness_refresh_refreshed_files_omitted")
 }
 
 func addContextStaleEvidenceTelemetry(payload map[string]any, fields map[string]any) {
@@ -582,11 +584,33 @@ func copyTelemetryBool(source map[string]any, target map[string]any, sourceKey s
 }
 
 func copyTelemetryNumber(source map[string]any, target map[string]any, sourceKey string, targetKey string) {
-	switch value := source[sourceKey].(type) {
-	case float64:
-		target[targetKey] = int(value)
-	case int:
+	if value, ok := telemetryNumber(source, sourceKey); ok {
 		target[targetKey] = value
+	}
+}
+
+func copyTelemetryInventoryCount(source map[string]any, target map[string]any, countKey string, arrayKey string, targetCountKey string, targetSampleCountKey string) {
+	if count, ok := telemetryNumber(source, countKey); ok {
+		target[targetCountKey] = count
+
+		if values, ok := source[arrayKey].([]any); ok {
+			target[targetSampleCountKey] = len(values)
+		}
+
+		return
+	}
+
+	copyTelemetryArrayLen(source, target, arrayKey, targetCountKey)
+}
+
+func telemetryNumber(source map[string]any, key string) (int, bool) {
+	switch value := source[key].(type) {
+	case float64:
+		return int(value), true
+	case int:
+		return value, true
+	default:
+		return 0, false
 	}
 }
 

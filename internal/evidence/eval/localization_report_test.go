@@ -2,58 +2,47 @@ package eval
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
 	"time"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/repository/comprehension"
 )
 
-func TestBuildLocalizationUnifiedReportCombinesEvidenceSurfaces(t *testing.T) {
+var _ = ginkgo.It("build localization unified report combines evidence surfaces", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeLocalizationReportFile(t, filepath.Join(root, "go.mod"), "module example.com/localreport\n\ngo 1.22\n")
-	writeLocalizationReportFile(t, filepath.Join(root, "x.go"), "package localreport\n\nfunc X() string { return \"x\" }\n")
+	writeLocalizationReportFile(filepath.Join(root, "go.mod"), "module example.com/localreport\n\ngo 1.22\n")
+	writeLocalizationReportFile(filepath.Join(root, "x.go"), "package localreport\n\nfunc X() string { return \"x\" }\n")
 
 	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Build: %v", err))
 
 	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "localize report", Mode: "plan"}
-	if err := comprehension.SaveView(root, key, comprehension.PackResult{PackID: key.ID(), IndexID: build.IndexID, CandidateFiles: []comprehension.PackFile{{Path: "go.mod"}}}); err != nil {
-		t.Fatalf("SaveView current: %v", err)
-	}
+	gomega.Expect(comprehension.SaveView(root, key, comprehension.PackResult{PackID: key.ID(), IndexID: build.IndexID, CandidateFiles: []comprehension.PackFile{{Path: "go.mod"}}})).To(gomega.Succeed(), "save current view")
 
 	oldKey := comprehension.ViewKey{IndexID: "old-index", Task: "old report", Mode: "plan"}
-	if err := comprehension.SaveView(root, oldKey, comprehension.PackResult{PackID: oldKey.ID(), IndexID: "old-index", CandidateFiles: []comprehension.PackFile{{Path: "go.mod"}}}); err != nil {
-		t.Fatalf("SaveView old: %v", err)
-	}
+	gomega.Expect(comprehension.SaveView(root, oldKey, comprehension.PackResult{PackID: oldKey.ID(), IndexID: "old-index", CandidateFiles: []comprehension.PackFile{{Path: "go.mod"}}})).To(gomega.Succeed(), "save old view")
 
-	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
-		EventID: "ranker_accept",
-		Source:  "eval",
-		Action:  "boost",
-		State:   "accepted",
-		Reason:  "swe_groundedness_oracle",
-		Files:   []string{"go.mod"},
-	}); err != nil {
-		t.Fatalf("append accepted: %v", err)
-	}
+	_, err = comprehension.RecordVerifiedRankerEvidence(t.Context(), root, comprehension.VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Files:    []string{"go.mod"},
+		Verified: true,
+		Reason:   "swe_groundedness_oracle",
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "append accepted feedback")
 
-	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
-		EventID: "ranker_reject",
-		Source:  "eval",
-		Action:  "no_op",
-		State:   "rejected",
-		Reason:  "unverified_evidence",
-	}); err != nil {
-		t.Fatalf("append rejected: %v", err)
-	}
+	_, _, err = comprehension.ApplyVerifiedRankerLearning(t.Context(), root, comprehension.VerifiedRankerLearningRequest{
+		Source: "eval",
+		Action: "no_op",
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "append rejected feedback")
 
 	logPath := filepath.Join(root, "verify.jsonl")
-	writeLocalizationVerificationLog(t, logPath)
+	writeLocalizationVerificationLog(logPath)
 
 	report := BuildLocalizationUnifiedReport(localizationClientClassificationCorpusForTest(), LocalizationUnifiedReportOptions{
 		WorkspaceRoot:       root,
@@ -62,51 +51,49 @@ func TestBuildLocalizationUnifiedReportCombinesEvidenceSurfaces(t *testing.T) {
 		Now:                 time.Date(2026, 5, 13, 19, 0, 0, 0, time.UTC),
 	})
 
-	if report.SchemaVersion != LocalizationUnifiedReportSchemaVersion || !report.Passed {
-		t.Fatalf("unexpected report identity: %#v", report)
-	}
+	gomega.Expect(report.SchemaVersion).To(gomega.BeEquivalentTo(LocalizationUnifiedReportSchemaVersion), fmt.Sprintf("unexpected report identity: %#v", report))
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("unexpected report identity: %#v", report))
 
-	if report.Outcome.SampleCount != len(localizationClientClassifications) || len(report.Outcome.TopKEditPathCoverage) != 1 {
-		t.Fatalf("outcome missing corpus metrics: %#v", report.Outcome)
-	}
+	gomega.Expect(localizationClientClassifications).To(gomega.HaveLen(report.Outcome.SampleCount), fmt.Sprintf("outcome missing corpus metrics: %#v", report.Outcome))
+	gomega.Expect(report.Outcome.TopKEditPathCoverage).To(gomega.HaveLen(1), fmt.Sprintf("outcome missing corpus metrics: %#v", report.Outcome))
 
-	if report.Trajectory.Baseline.State != "not_available" || !report.Trajectory.Current.Available || report.Trajectory.Delta.State != "not_available" {
-		t.Fatalf("trajectory should expose neutral baseline/delta and current evidence: %#v", report.Trajectory)
-	}
+	gomega.Expect(report.Trajectory.Baseline.State).To(gomega.BeEquivalentTo("not_available"), fmt.Sprintf("trajectory should expose neutral baseline/delta and current evidence: %#v", report.Trajectory))
+	gomega.Expect(report.Trajectory.Current.Available).To(gomega.BeTrue(), fmt.Sprintf("trajectory should expose neutral baseline/delta and current evidence: %#v", report.Trajectory))
+	gomega.Expect(report.Trajectory.Delta.State).To(gomega.BeEquivalentTo("not_available"), fmt.Sprintf("trajectory should expose neutral baseline/delta and current evidence: %#v", report.Trajectory))
 
-	if !report.CacheFreshness.Available || !report.CacheFreshness.Fresh || report.CacheFreshness.Rows != 2 || report.CacheFreshness.NonCurrentRows != 1 {
-		t.Fatalf("cache/freshness missing row freshness evidence: %#v", report.CacheFreshness)
-	}
+	gomega.Expect(report.CacheFreshness.Available).To(gomega.BeTrue(), fmt.Sprintf("cache/freshness missing row freshness evidence: %#v", report.CacheFreshness))
+	gomega.Expect(report.CacheFreshness.Fresh).To(gomega.BeTrue(), fmt.Sprintf("cache/freshness missing row freshness evidence: %#v", report.CacheFreshness))
+	gomega.Expect(report.CacheFreshness.Rows).To(gomega.BeEquivalentTo(2), fmt.Sprintf("cache/freshness missing row freshness evidence: %#v", report.CacheFreshness))
+	gomega.Expect(report.CacheFreshness.NonCurrentRows).To(gomega.BeEquivalentTo(2), fmt.Sprintf("ranker audit events must make pre-generation cache rows non-current: %#v", report.CacheFreshness))
 
-	if report.Ranker.LearningSummary == nil || report.Ranker.LearningSummary.TotalEvents != 2 || report.Ranker.LearningSummary.AcceptedCount != 1 || report.Ranker.LearningSummary.RejectedCount != 1 {
-		t.Fatalf("ranker learning summary missing accepted/rejected evidence: %#v", report.Ranker)
-	}
+	gomega.Expect(report.Ranker.LearningSummary).NotTo(gomega.BeNil(), fmt.Sprintf("ranker learning summary missing accepted/rejected evidence: %#v", report.Ranker))
+	gomega.Expect(report.Ranker.LearningSummary.TotalEvents).To(gomega.BeEquivalentTo(2), fmt.Sprintf("ranker learning summary missing accepted/rejected evidence: %#v", report.Ranker))
+	gomega.Expect(report.Ranker.LearningSummary.AcceptedCount).To(gomega.BeEquivalentTo(1), fmt.Sprintf("ranker learning summary missing accepted/rejected evidence: %#v", report.Ranker))
+	gomega.Expect(report.Ranker.LearningSummary.RejectedCount).To(gomega.BeEquivalentTo(1), fmt.Sprintf("ranker learning summary missing accepted/rejected evidence: %#v", report.Ranker))
 
-	if !report.Verification.Available || report.Verification.Status != "passed" || report.Verification.CheckCount != 1 || !report.Verification.FullSuitePlanObserved {
-		t.Fatalf("verification summary missing bounded status: %#v", report.Verification)
-	}
+	gomega.Expect(report.Verification.Available).To(gomega.BeTrue(), fmt.Sprintf("verification summary missing bounded status: %#v", report.Verification))
+	gomega.Expect(report.Verification.Status).To(gomega.BeEquivalentTo("passed"), fmt.Sprintf("verification summary missing bounded status: %#v", report.Verification))
+	gomega.Expect(report.Verification.CheckCount).To(gomega.BeEquivalentTo(1), fmt.Sprintf("verification summary missing bounded status: %#v", report.Verification))
+	gomega.Expect(report.Verification.FullSuitePlanObserved).To(gomega.BeTrue(), fmt.Sprintf("verification summary missing bounded status: %#v", report.Verification))
 
-	if !report.AuditMetrics.JoinCoverage.Outcome || !report.AuditMetrics.JoinCoverage.CacheFreshness || !report.AuditMetrics.JoinCoverage.Ranker || !report.AuditMetrics.JoinCoverage.Verification {
-		t.Fatalf("audit join coverage missing report sections: %#v", report.AuditMetrics.JoinCoverage)
-	}
+	gomega.Expect(report.AuditMetrics.JoinCoverage.Outcome).To(gomega.BeTrue(), fmt.Sprintf("audit join coverage missing report sections: %#v", report.AuditMetrics.JoinCoverage))
+	gomega.Expect(report.AuditMetrics.JoinCoverage.CacheFreshness).To(gomega.BeTrue(), fmt.Sprintf("audit join coverage missing report sections: %#v", report.AuditMetrics.JoinCoverage))
+	gomega.Expect(report.AuditMetrics.JoinCoverage.Ranker).To(gomega.BeTrue(), fmt.Sprintf("audit join coverage missing report sections: %#v", report.AuditMetrics.JoinCoverage))
+	gomega.Expect(report.AuditMetrics.JoinCoverage.Verification).To(gomega.BeTrue(), fmt.Sprintf("audit join coverage missing report sections: %#v", report.AuditMetrics.JoinCoverage))
 
-	if len(report.ClientProduct.MissingClassifications) != 0 || !report.ClientProduct.GenericSupport || report.ClientProduct.ClientSpecificBranches {
-		t.Fatalf("client classification support is incomplete or branched: %#v", report.ClientProduct)
-	}
+	gomega.Expect(report.ClientProduct.MissingClassifications).To(gomega.HaveLen(0), fmt.Sprintf("client classification support is incomplete or branched: %#v", report.ClientProduct))
+	gomega.Expect(report.ClientProduct.GenericSupport).To(gomega.BeTrue(), fmt.Sprintf("client classification support is incomplete or branched: %#v", report.ClientProduct))
+	gomega.Expect(report.ClientProduct.ClientSpecificBranches).To(gomega.BeFalse(), fmt.Sprintf("client classification support is incomplete or branched: %#v", report.ClientProduct))
 
-	if len(report.ClientProduct.ClassificationRows) != len(localizationClientClassifications) {
-		t.Fatalf("client classification rows should cover every required class: %#v", report.ClientProduct.ClassificationRows)
-	}
+	gomega.Expect(report.ClientProduct.ClassificationRows).To(gomega.HaveLen(len(localizationClientClassifications)), fmt.Sprintf("client classification rows should cover every required class: %#v", report.ClientProduct.ClassificationRows))
 
 	for _, row := range report.ClientProduct.ClassificationRows {
-		if row.Status != "pass" || row.SampleCount != 1 || row.Reason != "classification_sample_present" {
-			t.Fatalf("expected covered client classification row, got %#v", row)
-		}
+		gomega.Expect(row.Status).To(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected covered client classification row, got %#v", row))
+		gomega.Expect(row.SampleCount).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected covered client classification row, got %#v", row))
+		gomega.Expect(row.Reason).To(gomega.BeEquivalentTo("classification_sample_present"), fmt.Sprintf("expected covered client classification row, got %#v", row))
 	}
 
-	if len(report.ProductSuccess) != 9 {
-		t.Fatalf("expected all product-success gates, got %#v", report.ProductSuccess)
-	}
+	gomega.Expect(report.ProductSuccess).To(gomega.HaveLen(9), fmt.Sprintf("expected all product-success gates, got %#v", report.ProductSuccess))
 
 	for _, want := range []string{
 		"icp",
@@ -120,106 +107,97 @@ func TestBuildLocalizationUnifiedReportCombinesEvidenceSurfaces(t *testing.T) {
 		"local_product_evidence_export",
 	} {
 		gate := localizationGateByIDForTest(report.ProductSuccess, want)
-		if gate.Gate == "" {
-			t.Fatalf("missing product-success gate %q in %#v", want, report.ProductSuccess)
-		}
+		gomega.Expect(gate.Gate).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("missing product-success gate %q in %#v", want, report.ProductSuccess))
 
-		if gate.Status == "" || gate.Reason == "" || gate.Evidence == "" {
-			t.Fatalf("gate %q should include status, reason, and evidence: %#v", want, gate)
-		}
+		gomega.Expect(gate.Status).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("gate %q should include status, reason, and evidence: %#v", want, gate))
+		gomega.Expect(gate.Reason).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("gate %q should include status, reason, and evidence: %#v", want, gate))
+		gomega.Expect(gate.Evidence).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("gate %q should include status, reason, and evidence: %#v", want, gate))
 	}
 
-	if gate := localizationGateByIDForTest(report.ProductSuccess, "icp"); gate.Status != "pass" {
-		t.Fatalf("expected ICP to pass when every required class has a sample: %#v", gate)
+	{
+		gate := localizationGateByIDForTest(report.ProductSuccess, "icp")
+		gomega.Expect(gate.Status).To(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected ICP to pass when every required class has a sample: %#v", gate))
 	}
 
-	if gate := localizationGateByIDForTest(report.ProductSuccess, "client_demo_proof"); gate.Status != "pass" {
-		t.Fatalf("expected client demo proof to pass when every required class has a sample: %#v", gate)
+	{
+		gate := localizationGateByIDForTest(report.ProductSuccess, "client_demo_proof")
+		gomega.Expect(gate.Status).To(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected client demo proof to pass when every required class has a sample: %#v", gate))
 	}
 
-	if gate := localizationGateByIDForTest(report.ProductSuccess, "competitive_proof"); gate.Status != "pass" || gate.Reason != "competitive_conditions_covered" {
-		t.Fatalf("expected competitive proof to pass only with covered competitive conditions, got %#v", gate)
+	{
+		gate := localizationGateByIDForTest(report.ProductSuccess, "competitive_proof")
+		gomega.Expect(gate.Status).To(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected competitive proof to pass only with covered competitive conditions, got %#v", gate))
+		gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo("competitive_conditions_covered"), fmt.Sprintf("expected competitive proof to pass only with covered competitive conditions, got %#v", gate))
 	}
 
 	for _, id := range []string{"retained_use", "integration_proof", "local_product_evidence_export"} {
 		gate := localizationGateByIDForTest(report.ProductSuccess, id)
-		if gate.Status == "pass" || gate.Reason != "cache_non_current" || !strings.Contains(gate.Evidence, "cache_non_current=1") {
-			t.Fatalf("expected gate %q to downgrade from same-report non-current cache evidence, got %#v", id, gate)
-		}
+		gomega.Expect(gate.Status).NotTo(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected gate %q to downgrade from same-report non-current cache evidence, got %#v", id, gate))
+		gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo("cache_non_current"), fmt.Sprintf("expected gate %q to downgrade from same-report non-current cache evidence, got %#v", id, gate))
+		gomega.Expect(gate.Evidence).To(gomega.ContainSubstring("cache_non_current=2"), fmt.Sprintf("expected gate %q to downgrade from same-report non-current cache evidence, got %#v", id, gate))
 	}
 
-	if report.Privacy.PromptTextIncluded || report.Privacy.FileBodiesIncluded || report.Privacy.LogExcerptsIncluded || report.Privacy.SecretsIncluded {
-		t.Fatalf("privacy flags must exclude raw content: %#v", report.Privacy)
-	}
-}
-
-func TestEvaluateLocalizationUnifiedReportFileSetsWorkspaceRoot(t *testing.T) {
+	gomega.Expect(report.Privacy.PromptTextIncluded).To(gomega.BeFalse(), fmt.Sprintf("privacy flags must exclude raw content: %#v", report.Privacy))
+	gomega.Expect(report.Privacy.FileBodiesIncluded).To(gomega.BeFalse(), fmt.Sprintf("privacy flags must exclude raw content: %#v", report.Privacy))
+	gomega.Expect(report.Privacy.LogExcerptsIncluded).To(gomega.BeFalse(), fmt.Sprintf("privacy flags must exclude raw content: %#v", report.Privacy))
+	gomega.Expect(report.Privacy.SecretsIncluded).To(gomega.BeFalse(), fmt.Sprintf("privacy flags must exclude raw content: %#v", report.Privacy))
+})
+var _ = ginkgo.It("evaluate localization unified report file sets workspace root", func() {
+	t := ginkgo.GinkgoT()
 	corpus := validLocalizationCorpusForTest()
 	path := filepath.Join(t.TempDir(), "corpus.json")
 
 	data, err := json.Marshal(corpus)
-	if err != nil {
-		t.Fatalf("marshal corpus: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal corpus: %v", err))
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write corpus: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, data, 0o644)).To(gomega.Succeed(), "write corpus")
 
-	report, err := EvaluateLocalizationUnifiedReportFile(path, evalTestRepoRoot(t), LocalizationUnifiedReportOptions{
+	report, err := EvaluateLocalizationUnifiedReportFile(path, evalTestRepoRoot(), LocalizationUnifiedReportOptions{
 		Benchmark: LocalizationBenchmarkOptions{TopK: []int{1}},
 		Now:       time.Date(2026, 5, 13, 19, 0, 0, 0, time.UTC),
 	})
-	if err != nil {
-		t.Fatalf("EvaluateLocalizationUnifiedReportFile: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("EvaluateLocalizationUnifiedReportFile: %v", err))
 
-	if report.Name != corpus.Name || report.Outcome.SampleCount != 1 {
-		t.Fatalf("unexpected report identity: %#v", report)
-	}
+	gomega.Expect(report.Name).To(gomega.BeEquivalentTo(corpus.Name), fmt.Sprintf("unexpected report identity: %#v", report))
+	gomega.Expect(report.Outcome.SampleCount).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected report identity: %#v", report))
 
-	if !report.CacheFreshness.Available {
-		t.Fatalf("root argument should populate workspace-root-backed cache report: %#v", report.CacheFreshness)
-	}
-}
-
-func TestLocalizationUnifiedReportExplainsMissingCurrentCorpusClientSamples(t *testing.T) {
-	corpusPath := evalTestdataPath(t, "localization", "recent-implementation-corpus.json")
+	gomega.Expect(report.CacheFreshness.Available).To(gomega.BeTrue(), fmt.Sprintf("root argument should populate workspace-root-backed cache report: %#v", report.CacheFreshness))
+})
+var _ = ginkgo.It("localization unified report explains missing current corpus client samples", func() {
+	corpusPath := evalTestdataPath("localization", "recent-implementation-corpus.json")
 
 	corpus, err := ReadLocalizationCorpus(corpusPath)
-	if err != nil {
-		t.Fatalf("ReadLocalizationCorpus: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ReadLocalizationCorpus: %v", err))
 
 	report := BuildLocalizationUnifiedReport(corpus, LocalizationUnifiedReportOptions{
 		Benchmark: LocalizationBenchmarkOptions{TopK: []int{1}},
 		Now:       time.Date(2026, 5, 13, 19, 0, 0, 0, time.UTC),
 	})
 
-	if len(report.ClientProduct.ClassificationRows) != len(localizationClientClassifications) {
-		t.Fatalf("expected one row per required classification, got %#v", report.ClientProduct.ClassificationRows)
-	}
+	gomega.Expect(report.ClientProduct.ClassificationRows).To(gomega.HaveLen(len(localizationClientClassifications)), fmt.Sprintf("expected one row per required classification, got %#v", report.ClientProduct.ClassificationRows))
 
 	for _, row := range report.ClientProduct.ClassificationRows {
-		if row.Status != "not_available" || row.SampleCount != 0 || row.Reason != "classification_sample_missing" {
-			t.Fatalf("expected explicit missing-classification row, got %#v", row)
-		}
+		gomega.Expect(row.Status).To(gomega.BeEquivalentTo("not_available"), fmt.Sprintf("expected explicit missing-classification row, got %#v", row))
+		gomega.Expect(row.SampleCount).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected explicit missing-classification row, got %#v", row))
+		gomega.Expect(row.Reason).To(gomega.BeEquivalentTo("classification_sample_missing"), fmt.Sprintf("expected explicit missing-classification row, got %#v", row))
 
-		if row.Label == "" || row.Evidence != "required_classification_enumerated" {
-			t.Fatalf("expected useful bounded row evidence, got %#v", row)
-		}
+		gomega.Expect(row.Label).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("expected useful bounded row evidence, got %#v", row))
+		gomega.Expect(row.Evidence).To(gomega.BeEquivalentTo("required_classification_enumerated"), fmt.Sprintf("expected useful bounded row evidence, got %#v", row))
 	}
 
-	if gate := localizationGateByIDForTest(report.ProductSuccess, "icp"); gate.Status != "partial" || gate.Reason != "classification_statuses_enumerate_missing_coverage" {
-		t.Fatalf("expected ICP to be partial with explicit missing coverage reason, got %#v", gate)
+	{
+		gate := localizationGateByIDForTest(report.ProductSuccess, "icp")
+		gomega.Expect(gate.Status).To(gomega.BeEquivalentTo("partial"), fmt.Sprintf("expected ICP to be partial with explicit missing coverage reason, got %#v", gate))
+		gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo("classification_statuses_enumerate_missing_coverage"), fmt.Sprintf("expected ICP to be partial with explicit missing coverage reason, got %#v", gate))
 	}
 
-	if gate := localizationGateByIDForTest(report.ProductSuccess, "client_demo_proof"); gate.Status != "not_available" || gate.Reason != "client_classification_samples_missing" {
-		t.Fatalf("expected client-demo proof to explain missing classification samples, got %#v", gate)
+	{
+		gate := localizationGateByIDForTest(report.ProductSuccess, "client_demo_proof")
+		gomega.Expect(gate.Status).To(gomega.BeEquivalentTo("not_available"), fmt.Sprintf("expected client-demo proof to explain missing classification samples, got %#v", gate))
+		gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo("client_classification_samples_missing"), fmt.Sprintf("expected client-demo proof to explain missing classification samples, got %#v", gate))
 	}
-}
-
-func TestLocalizationProductSuccessGatesDegradeStaleAndNonCurrentCacheEvidence(t *testing.T) {
+})
+var _ = ginkgo.Describe("localization product success gates with degraded cache evidence", func() {
 	tests := []struct {
 		name       string
 		cache      LocalizationCacheFreshnessReport
@@ -271,7 +249,8 @@ func TestLocalizationProductSuccessGatesDegradeStaleAndNonCurrentCacheEvidence(t
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		tt := tt
+		ginkgo.It(tt.name, func() {
 			gates := buildLocalizationProductSuccessGates(
 				LocalizationOutcomeReport{SampleCount: 7},
 				LocalizationTrajectoryReport{},
@@ -306,27 +285,19 @@ func TestLocalizationProductSuccessGatesDegradeStaleAndNonCurrentCacheEvidence(t
 
 			for _, id := range []string{"retained_use", "integration_proof", "local_product_evidence_export"} {
 				gate := localizationGateByIDForTest(gates, id)
-				if gate.Gate == "" {
-					t.Fatalf("missing product-success gate %q in %#v", id, gates)
-				}
+				gomega.Expect(gate.Gate).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("missing product-success gate %q in %#v", id, gates))
 
-				if gate.Status == "pass" {
-					t.Fatalf("gate %q passed despite degraded cache evidence: %#v", id, gate)
-				}
+				gomega.Expect(gate.Status).NotTo(gomega.BeEquivalentTo("pass"), fmt.Sprintf("gate %q passed despite degraded cache evidence: %#v", id, gate))
 
-				if gate.Reason != tt.wantReason {
-					t.Fatalf("gate %q should expose degraded cache reason %q, got %#v", id, tt.wantReason, gate)
-				}
+				gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo(tt.wantReason), fmt.Sprintf("gate %q should expose degraded cache reason %q, got %#v", id, tt.wantReason, gate))
 
-				if !strings.Contains(gate.Evidence, "cache_stale=") || !strings.Contains(gate.Evidence, "cache_non_current=") {
-					t.Fatalf("gate %q should include bounded cache row evidence, got %#v", id, gate)
-				}
+				gomega.Expect(gate.Evidence).To(gomega.ContainSubstring("cache_stale="), fmt.Sprintf("gate %q should include bounded cache row evidence, got %#v", id, gate))
+				gomega.Expect(gate.Evidence).To(gomega.ContainSubstring("cache_non_current="), fmt.Sprintf("gate %q should include bounded cache row evidence, got %#v", id, gate))
 			}
 		})
 	}
-}
-
-func TestLocalizationCompetitiveProofGateRequiresCompetitiveConditions(t *testing.T) {
+})
+var _ = ginkgo.It("localization competitive proof gate requires competitive conditions", func() {
 	outcome := LocalizationOutcomeReport{
 		SampleCount:          1,
 		TopKEditPathCoverage: []LocalizationTopKCoverageMetric{{K: 1, Available: true, Numerator: 1, Denominator: 1}},
@@ -336,9 +307,8 @@ func TestLocalizationCompetitiveProofGateRequiresCompetitiveConditions(t *testin
 	}
 	gate := localizationCompetitiveProofGate(outcome, LocalizationTrajectoryReport{Current: LocalizationTrajectorySnapshot{Available: true}})
 
-	if gate.Status == "pass" || gate.Reason != "competitive_conditions_missing" {
-		t.Fatalf("expected competitive proof to reject self-referential metrics without condition coverage, got %#v", gate)
-	}
+	gomega.Expect(gate.Status).NotTo(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected competitive proof to reject self-referential metrics without condition coverage, got %#v", gate))
+	gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo("competitive_conditions_missing"), fmt.Sprintf("expected competitive proof to reject self-referential metrics without condition coverage, got %#v", gate))
 
 	corpus := validLocalizationCorpusForTest()
 	task := localizationBenchmarkTaskForTest("competitive-task", []string{"go.mod"}, []LocalizationCandidateFile{{Path: "go.mod"}}, ptrInt(0), ptrInt(0))
@@ -350,12 +320,11 @@ func TestLocalizationCompetitiveProofGateRequiresCompetitiveConditions(t *testin
 
 	gate = localizationGateByIDForTest(report.ProductSuccess, "competitive_proof")
 
-	if gate.Status != "pass" || gate.Reason != "competitive_conditions_covered" || !strings.Contains(gate.Evidence, "competitive_external_covered=2") {
-		t.Fatalf("expected measured/documented external competitive conditions to satisfy the gate, got %#v", gate)
-	}
-}
-
-func TestLocalizationCompetitiveProofGateRejectsPoisonedClientClassification(t *testing.T) {
+	gomega.Expect(gate.Status).To(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected measured/documented external competitive conditions to satisfy the gate, got %#v", gate))
+	gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo("competitive_conditions_covered"), fmt.Sprintf("expected measured/documented external competitive conditions to satisfy the gate, got %#v", gate))
+	gomega.Expect(gate.Evidence).To(gomega.ContainSubstring("competitive_external_covered=2"), fmt.Sprintf("expected measured/documented external competitive conditions to satisfy the gate, got %#v", gate))
+})
+var _ = ginkgo.It("localization competitive proof gate rejects poisoned client classification", func() {
 	corpus := validLocalizationCorpusForTest()
 	task := localizationBenchmarkTaskForTest("competitive-task", []string{"go.mod"}, []LocalizationCandidateFile{{Path: "go.mod"}}, ptrInt(0), ptrInt(0))
 
@@ -365,37 +334,28 @@ func TestLocalizationCompetitiveProofGateRejectsPoisonedClientClassification(t *
 	report := BuildLocalizationUnifiedReport(corpus, LocalizationUnifiedReportOptions{Now: time.Date(2026, 5, 13, 19, 0, 0, 0, time.UTC)})
 	gate := localizationGateByIDForTest(report.ProductSuccess, "competitive_proof")
 
-	if gate.Status == "pass" || gate.Reason != "competitive_condition_client_classification_invalid" {
-		t.Fatalf("expected competitive proof to reject poisoned client classification, got %#v", gate)
-	}
+	gomega.Expect(gate.Status).NotTo(gomega.BeEquivalentTo("pass"), fmt.Sprintf("expected competitive proof to reject poisoned client classification, got %#v", gate))
+	gomega.Expect(gate.Reason).To(gomega.BeEquivalentTo("competitive_condition_client_classification_invalid"), fmt.Sprintf("expected competitive proof to reject poisoned client classification, got %#v", gate))
 
-	if !strings.Contains(gate.Evidence, "competitive_invalid_client_classifications=6") {
-		t.Fatalf("expected bounded invalid-classification evidence, got %#v", gate)
-	}
+	gomega.Expect(gate.Evidence).To(gomega.ContainSubstring("competitive_invalid_client_classifications=6"), fmt.Sprintf("expected bounded invalid-classification evidence, got %#v", gate))
 
 	data, err := json.Marshal(report)
-	if err != nil {
-		t.Fatalf("marshal report: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal report: %v", err))
 
 	for _, forbidden := range []string{"customer-acme-session", "customer_acme_session"} {
-		if strings.Contains(string(data), forbidden) {
-			t.Fatalf("unified report leaked customer-like classification %q: %s", forbidden, string(data))
-		}
+		gomega.Expect(string(data)).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("unified report leaked customer-like classification %q: %s", forbidden, string(data)))
 	}
-}
-
-func TestLocalizationUnifiedReportDoesNotEchoRawPromptOrBodyText(t *testing.T) {
+})
+var _ = ginkgo.It("localization unified report does not echo raw prompt or body text", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	logPath := filepath.Join(root, "verify.jsonl")
 
 	const sentinel = "PROMPT_SENTINEL BEGIN OPENSSH PRIVATE KEY BODY_SENTINEL"
 
-	if err := os.WriteFile(logPath, []byte(`{"type":"message","role":"user","content":"`+sentinel+`"}
+	gomega.Expect(os.WriteFile(logPath, []byte(`{"type":"message","role":"user","content":"`+sentinel+`"}
 {"type":"tool_result","agent":"implement_verify","summary":"ok","error":""}
-`), 0o644); err != nil {
-		t.Fatalf("write log: %v", err)
-	}
+`), 0o644)).To(gomega.Succeed(), "write log")
 
 	report := BuildLocalizationUnifiedReport(validLocalizationCorpusForTest(), LocalizationUnifiedReportOptions{
 		WorkspaceRoot:       root,
@@ -404,16 +364,12 @@ func TestLocalizationUnifiedReportDoesNotEchoRawPromptOrBodyText(t *testing.T) {
 	})
 
 	data, err := json.Marshal(report)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal: %v", err))
 
 	for _, forbidden := range []string{"PROMPT_SENTINEL", "BEGIN OPENSSH PRIVATE KEY", "BODY_SENTINEL"} {
-		if strings.Contains(string(data), forbidden) {
-			t.Fatalf("unified report echoed forbidden raw content %q: %s", forbidden, string(data))
-		}
+		gomega.Expect(string(data)).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("unified report echoed forbidden raw content %q: %s", forbidden, string(data)))
 	}
-}
+})
 
 func localizationGateByIDForTest(gates []LocalizationProductSuccessGate, id string) LocalizationProductSuccessGate {
 	for _, gate := range gates {
@@ -443,27 +399,21 @@ func localizationClientClassificationCorpusForTest() LocalizationCorpus {
 	return corpus
 }
 
-func writeLocalizationVerificationLog(t *testing.T, path string) {
-	t.Helper()
+func writeLocalizationVerificationLog(path string) {
+	ginkgo.GinkgoHelper()
 
 	const log = `{"type":"message","role":"verification_plan","content":"{\"commands\":[\"go test ./...\"],\"uses_full_suite\":true,\"coverage\":\"full-suite\",\"confidence\":\"high\",\"risk_level\":\"medium\"}"}
 {"type":"tool_result","agent":"implement_verify","summary":"go test ./... passed","error":""}
 {"type":"message","role":"verification_feedback","content":"{\"commands\":[\"go test ./...\"],\"failed_commands\":[],\"confidence\":\"high\"}"}
 `
 
-	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
-		t.Fatalf("write log: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(log), 0o644)).To(gomega.Succeed(), "write localization verification log")
 }
 
-func writeLocalizationReportFile(t *testing.T, path string, body string) {
-	t.Helper()
+func writeLocalizationReportFile(path string, body string) {
+	ginkgo.GinkgoHelper()
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(gomega.Succeed(), "create localization report directory")
 
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(body), 0o644)).To(gomega.Succeed(), "write localization report file")
 }

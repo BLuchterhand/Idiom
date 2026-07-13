@@ -4,25 +4,22 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestRunMainRoutesAtomCommand(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatalf("write foo: %v", err)
-	}
+var _ = ginkgo.Describe("Atom command routing", func() {
+	ginkgo.It("routes atom intake through the root command", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n"), 0o644)).To(gomega.Succeed())
 
-	specPath := filepath.Join(root, "spec.md")
-	if err := os.WriteFile(specPath, []byte("# Atom\n\nStatus: planned\n\n## Scope\n\n- `foo.go`\n"), 0o644); err != nil {
-		t.Fatalf("write spec: %v", err)
-	}
+		specPath := filepath.Join(root, "spec.md")
+		gomega.Expect(os.WriteFile(specPath, []byte("# Atom\n\nStatus: planned\n\n## Scope\n\n- `foo.go`\n"), 0o644)).To(gomega.Succeed())
 
-	var stdout, stderr bytes.Buffer
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"atom", "intake", "--spec", specPath, "--project-root", root, "--json"}, &stdout, &stderr)
 
-	code := runMain([]string{"atom", "intake", "--spec", specPath, "--project-root", root, "--json"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected routed atom intake exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-}
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s stdout=%s", stderr.String(), stdout.String())
+	})
+})

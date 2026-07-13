@@ -1,16 +1,18 @@
 package eval
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/contracts/autonomy"
 	planartifactcontract "idiom/internal/contracts/planartifact"
 )
 
-func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
+var _ = ginkgo.It("analyze extracts metrics from records", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "please edit the banner"}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=locate followup=implement reason=locate_request contract=locate_targets mode=plan workflow=optimization_refactor phase=awaiting_approval thoroughness=medium"}},
@@ -39,134 +41,112 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.LastUser != "please edit the banner" {
-		t.Fatalf("unexpected last user: %q", metrics.LastUser)
-	}
+	gomega.Expect(metrics.LastUser).To(gomega.BeEquivalentTo("please edit the banner"), fmt.Sprintf("unexpected last user: %q", metrics.LastUser))
 
-	if metrics.Tools["edit_file"] != 1 {
-		t.Fatalf("expected edit_file tool count, got %#v", metrics.Tools)
-	}
+	gomega.Expect(metrics.Tools["edit_file"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected edit_file tool count, got %#v", metrics.Tools))
 
-	if !metrics.VerificationPassed {
-		t.Fatal("expected verification to pass")
-	}
+	gomega.Expect(metrics.VerificationPassed).To(gomega.BeTrue(), fmt.Sprint("expected verification to pass"))
 
-	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "internal/surfaces/tui/app/app.go" {
-		t.Fatalf("unexpected changed files: %#v", metrics.ChangedFiles)
-	}
+	gomega.Expect(metrics.ChangedFiles).To(gomega.HaveLen(1), fmt.Sprintf("unexpected changed files: %#v", metrics.ChangedFiles))
+	gomega.Expect(metrics.ChangedFiles[0]).To(gomega.BeEquivalentTo("internal/surfaces/tui/app/app.go"), fmt.Sprintf("unexpected changed files: %#v", metrics.ChangedFiles))
 
-	if len(metrics.RoutePlans) != 1 {
-		t.Fatalf("expected one route plan, got %#v", metrics.RoutePlans)
-	}
+	gomega.Expect(metrics.RoutePlans).To(gomega.HaveLen(1), fmt.Sprintf("expected one route plan, got %#v", metrics.RoutePlans))
 
 	plan := metrics.RoutePlans[0]
-	if plan.InitialLane != "locate" || plan.FollowupLane != "implement" || plan.Reason != "locate_request" || plan.Contract != "locate_targets" || plan.AgentMode != "plan" || plan.WorkflowKind != "optimization_refactor" || plan.WorkflowPhase != "awaiting_approval" || plan.Thoroughness != "medium" {
-		t.Fatalf("unexpected route plan: %#v", plan)
-	}
+	gomega.Expect(plan.InitialLane).To(gomega.BeEquivalentTo("locate"), fmt.Sprintf("unexpected route plan: %#v", plan))
+	gomega.Expect(plan.FollowupLane).To(gomega.BeEquivalentTo("implement"), fmt.Sprintf("unexpected route plan: %#v", plan))
+	gomega.Expect(plan.Reason).To(gomega.BeEquivalentTo("locate_request"), fmt.Sprintf("unexpected route plan: %#v", plan))
+	gomega.Expect(plan.Contract).To(gomega.BeEquivalentTo("locate_targets"), fmt.Sprintf("unexpected route plan: %#v", plan))
+	gomega.Expect(plan.AgentMode).To(gomega.BeEquivalentTo("plan"), fmt.Sprintf("unexpected route plan: %#v", plan))
+	gomega.Expect(plan.WorkflowKind).To(gomega.BeEquivalentTo("optimization_refactor"), fmt.Sprintf("unexpected route plan: %#v", plan))
+	gomega.Expect(plan.WorkflowPhase).To(gomega.BeEquivalentTo("awaiting_approval"), fmt.Sprintf("unexpected route plan: %#v", plan))
+	gomega.Expect(plan.Thoroughness).To(gomega.BeEquivalentTo("medium"), fmt.Sprintf("unexpected route plan: %#v", plan))
 
-	if !containsStringFold(metrics.EvidencePaths, "internal/surfaces/tui/app/app.go") {
-		t.Fatalf("expected evidence path from tool result summary, got %#v", metrics.EvidencePaths)
-	}
+	gomega.Expect(containsStringFold(metrics.EvidencePaths, "internal/surfaces/tui/app/app.go")).To(gomega.BeTrue(), fmt.Sprintf("expected evidence path from tool result summary, got %#v", metrics.EvidencePaths))
 
-	if len(metrics.Replans) != 1 || metrics.Replans[0].FromLane != "review" || metrics.Replans[0].ToLane != "architecture" {
-		t.Fatalf("unexpected replan recommendation: %#v", metrics.Replans)
-	}
+	gomega.Expect(metrics.Replans).To(gomega.HaveLen(1), fmt.Sprintf("unexpected replan recommendation: %#v", metrics.Replans))
+	gomega.Expect(metrics.Replans[0].FromLane).To(gomega.BeEquivalentTo("review"), fmt.Sprintf("unexpected replan recommendation: %#v", metrics.Replans))
+	gomega.Expect(metrics.Replans[0].ToLane).To(gomega.BeEquivalentTo("architecture"), fmt.Sprintf("unexpected replan recommendation: %#v", metrics.Replans))
 
-	if !languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "go.mod"}) {
-		t.Fatalf("expected Go language capability, got %#v", metrics.LanguageCapabilities)
-	}
+	gomega.Expect(languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "go.mod"})).To(gomega.BeTrue(), fmt.Sprintf("expected Go language capability, got %#v", metrics.LanguageCapabilities))
 
-	if !languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "shell", Tool: "read_file", Signal: "scripts/run.sh"}) {
-		t.Fatalf("expected shell language capability, got %#v", metrics.LanguageCapabilities)
-	}
+	gomega.Expect(languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "shell", Tool: "read_file", Signal: "scripts/run.sh"})).To(gomega.BeTrue(), fmt.Sprintf("expected shell language capability, got %#v", metrics.LanguageCapabilities))
 
-	if len(metrics.VerificationPlans) != 1 {
-		t.Fatalf("expected one verification plan, got %#v", metrics.VerificationPlans)
-	}
+	gomega.Expect(metrics.VerificationPlans).To(gomega.HaveLen(1), fmt.Sprintf("expected one verification plan, got %#v", metrics.VerificationPlans))
 
 	verifyPlan := metrics.VerificationPlans[0]
-	if verifyPlan.RiskLevel != "high" || verifyPlan.Confidence != "medium" || verifyPlan.Coverage != "targeted package verification" {
-		t.Fatalf("unexpected verification plan: %#v", verifyPlan)
-	}
+	gomega.Expect(verifyPlan.RiskLevel).To(gomega.BeEquivalentTo("high"), fmt.Sprintf("unexpected verification plan: %#v", verifyPlan))
+	gomega.Expect(verifyPlan.Confidence).To(gomega.BeEquivalentTo("medium"), fmt.Sprintf("unexpected verification plan: %#v", verifyPlan))
+	gomega.Expect(verifyPlan.Coverage).To(gomega.BeEquivalentTo("targeted package verification"), fmt.Sprintf("unexpected verification plan: %#v", verifyPlan))
 
-	if !containsStringFold(verifyPlan.Commands, "go test -vet=off ./internal/surfaces/tui/app") || !containsStringFold(verifyPlan.ExpectedFailures, "routing or prompt assembly regressions") {
-		t.Fatalf("expected verification command and failure mode, got %#v", verifyPlan)
-	}
+	gomega.Expect(containsStringFold(verifyPlan.Commands, "go test -vet=off ./internal/surfaces/tui/app")).To(gomega.BeTrue(), fmt.Sprintf("expected verification command and failure mode, got %#v", verifyPlan))
+	gomega.Expect(containsStringFold(verifyPlan.ExpectedFailures, "routing or prompt assembly regressions")).To(gomega.BeTrue(), fmt.Sprintf("expected verification command and failure mode, got %#v", verifyPlan))
 
-	if metrics.SummaryRejections != 1 || !containsStringFold(metrics.SummaryRejectionLanes, "review") {
-		t.Fatalf("expected review summary rejection metric, got count=%d lanes=%#v", metrics.SummaryRejections, metrics.SummaryRejectionLanes)
-	}
+	gomega.Expect(metrics.SummaryRejections).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected review summary rejection metric, got count=%d lanes=%#v", metrics.SummaryRejections, metrics.SummaryRejectionLanes))
+	gomega.Expect(containsStringFold(metrics.SummaryRejectionLanes, "review")).To(gomega.BeTrue(), fmt.Sprintf("expected review summary rejection metric, got count=%d lanes=%#v", metrics.SummaryRejections, metrics.SummaryRejectionLanes))
 
-	if len(metrics.ReadinessChecks) != 1 || !metrics.ReadinessChecks[0].Ready || metrics.ReadinessChecks[0].Confidence != "high" {
-		t.Fatalf("expected readiness check metric, got %#v", metrics.ReadinessChecks)
-	}
+	gomega.Expect(metrics.ReadinessChecks).To(gomega.HaveLen(1), fmt.Sprintf("expected readiness check metric, got %#v", metrics.ReadinessChecks))
+	gomega.Expect(metrics.ReadinessChecks[0].Ready).To(gomega.BeTrue(), fmt.Sprintf("expected readiness check metric, got %#v", metrics.ReadinessChecks))
+	gomega.Expect(metrics.ReadinessChecks[0].Confidence).To(gomega.BeEquivalentTo("high"), fmt.Sprintf("expected readiness check metric, got %#v", metrics.ReadinessChecks))
 
-	if len(metrics.DeepeningAttempts) != 1 || !metrics.DeepeningAttempts[0].Attempted || metrics.DeepeningAttempts[0].Action != "retry_with_evidence" {
-		t.Fatalf("expected deepening attempt metric, got %#v", metrics.DeepeningAttempts)
-	}
+	gomega.Expect(metrics.DeepeningAttempts).To(gomega.HaveLen(1), fmt.Sprintf("expected deepening attempt metric, got %#v", metrics.DeepeningAttempts))
+	gomega.Expect(metrics.DeepeningAttempts[0].Attempted).To(gomega.BeTrue(), fmt.Sprintf("expected deepening attempt metric, got %#v", metrics.DeepeningAttempts))
+	gomega.Expect(metrics.DeepeningAttempts[0].Action).To(gomega.BeEquivalentTo("retry_with_evidence"), fmt.Sprintf("expected deepening attempt metric, got %#v", metrics.DeepeningAttempts))
 
-	if len(metrics.FinalAnswerCritics) != 1 || !metrics.FinalAnswerCritics[0].Passed || metrics.FinalAnswerCritics[0].Action != "accept" {
-		t.Fatalf("expected final answer critic metric, got %#v", metrics.FinalAnswerCritics)
-	}
+	gomega.Expect(metrics.FinalAnswerCritics).To(gomega.HaveLen(1), fmt.Sprintf("expected final answer critic metric, got %#v", metrics.FinalAnswerCritics))
+	gomega.Expect(metrics.FinalAnswerCritics[0].Passed).To(gomega.BeTrue(), fmt.Sprintf("expected final answer critic metric, got %#v", metrics.FinalAnswerCritics))
+	gomega.Expect(metrics.FinalAnswerCritics[0].Action).To(gomega.BeEquivalentTo("accept"), fmt.Sprintf("expected final answer critic metric, got %#v", metrics.FinalAnswerCritics))
 
-	if len(metrics.EffortPolicies) != 1 || metrics.EffortPolicies[0].Level != "thorough" || metrics.EffortPolicies[0].DeepeningPasses != 2 {
-		t.Fatalf("expected effort policy metric, got %#v", metrics.EffortPolicies)
-	}
+	gomega.Expect(metrics.EffortPolicies).To(gomega.HaveLen(1), fmt.Sprintf("expected effort policy metric, got %#v", metrics.EffortPolicies))
+	gomega.Expect(metrics.EffortPolicies[0].Level).To(gomega.BeEquivalentTo("thorough"), fmt.Sprintf("expected effort policy metric, got %#v", metrics.EffortPolicies))
+	gomega.Expect(metrics.EffortPolicies[0].DeepeningPasses).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected effort policy metric, got %#v", metrics.EffortPolicies))
 
-	if len(metrics.LongHorizonStates) != 1 || metrics.LongHorizonStates[0].Action != "persist" || !metrics.LongHorizonStates[0].Resumable {
-		t.Fatalf("expected long-horizon state metric, got %#v", metrics.LongHorizonStates)
-	}
+	gomega.Expect(metrics.LongHorizonStates).To(gomega.HaveLen(1), fmt.Sprintf("expected long-horizon state metric, got %#v", metrics.LongHorizonStates))
+	gomega.Expect(metrics.LongHorizonStates[0].Action).To(gomega.BeEquivalentTo("persist"), fmt.Sprintf("expected long-horizon state metric, got %#v", metrics.LongHorizonStates))
+	gomega.Expect(metrics.LongHorizonStates[0].Resumable).To(gomega.BeTrue(), fmt.Sprintf("expected long-horizon state metric, got %#v", metrics.LongHorizonStates))
 
-	if len(metrics.WorkflowStates) != 1 || metrics.WorkflowStates[0].Phase != "awaiting_approval" || !metrics.WorkflowStates[0].Resumable {
-		t.Fatalf("expected workflow state metric, got %#v", metrics.WorkflowStates)
-	}
+	gomega.Expect(metrics.WorkflowStates).To(gomega.HaveLen(1), fmt.Sprintf("expected workflow state metric, got %#v", metrics.WorkflowStates))
+	gomega.Expect(metrics.WorkflowStates[0].Phase).To(gomega.BeEquivalentTo("awaiting_approval"), fmt.Sprintf("expected workflow state metric, got %#v", metrics.WorkflowStates))
+	gomega.Expect(metrics.WorkflowStates[0].Resumable).To(gomega.BeTrue(), fmt.Sprintf("expected workflow state metric, got %#v", metrics.WorkflowStates))
 
-	if !containsStringFold(metrics.WorkflowStates[0].EditableTargets, "internal/surfaces/tui/app/app.go") || !containsStringFold(metrics.WorkflowStates[0].Verification, "go test ./internal/surfaces/tui/app") {
-		t.Fatalf("expected workflow target and verification metrics, got %#v", metrics.WorkflowStates[0])
-	}
+	gomega.Expect(containsStringFold(metrics.WorkflowStates[0].EditableTargets, "internal/surfaces/tui/app/app.go")).To(gomega.BeTrue(), fmt.Sprintf("expected workflow target and verification metrics, got %#v", metrics.WorkflowStates[0]))
+	gomega.Expect(containsStringFold(metrics.WorkflowStates[0].Verification, "go test ./internal/surfaces/tui/app")).To(gomega.BeTrue(), fmt.Sprintf("expected workflow target and verification metrics, got %#v", metrics.WorkflowStates[0]))
 
-	if len(metrics.BudgetLedgers) != 1 || !metrics.BudgetLedgers[0].BudgetExhausted {
-		t.Fatalf("expected budget ledger metric, got %#v", metrics.BudgetLedgers)
-	}
+	gomega.Expect(metrics.BudgetLedgers).To(gomega.HaveLen(1), fmt.Sprintf("expected budget ledger metric, got %#v", metrics.BudgetLedgers))
+	gomega.Expect(metrics.BudgetLedgers[0].BudgetExhausted).To(gomega.BeTrue(), fmt.Sprintf("expected budget ledger metric, got %#v", metrics.BudgetLedgers))
 
-	if len(metrics.EvidenceDeltas) != 1 || metrics.EvidenceDeltas[0].MarginalValue != "medium" {
-		t.Fatalf("expected evidence delta metric, got %#v", metrics.EvidenceDeltas)
-	}
+	gomega.Expect(metrics.EvidenceDeltas).To(gomega.HaveLen(1), fmt.Sprintf("expected evidence delta metric, got %#v", metrics.EvidenceDeltas))
+	gomega.Expect(metrics.EvidenceDeltas[0].MarginalValue).To(gomega.BeEquivalentTo("medium"), fmt.Sprintf("expected evidence delta metric, got %#v", metrics.EvidenceDeltas))
 
-	if len(metrics.ClaimConfidences) != 1 || metrics.ClaimConfidences[0].Confidence != "high" {
-		t.Fatalf("expected claim confidence metric, got %#v", metrics.ClaimConfidences)
-	}
+	gomega.Expect(metrics.ClaimConfidences).To(gomega.HaveLen(1), fmt.Sprintf("expected claim confidence metric, got %#v", metrics.ClaimConfidences))
+	gomega.Expect(metrics.ClaimConfidences[0].Confidence).To(gomega.BeEquivalentTo("high"), fmt.Sprintf("expected claim confidence metric, got %#v", metrics.ClaimConfidences))
 
-	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 4 || !containsStringFold(metrics.ContextCompactions[0].PinnedPaths, "internal/surfaces/tui/app/app.go") {
-		t.Fatalf("expected context compaction metric, got %#v", metrics.ContextCompactions)
-	}
+	gomega.Expect(metrics.ContextCompactions).To(gomega.HaveLen(1), fmt.Sprintf("expected context compaction metric, got %#v", metrics.ContextCompactions))
+	gomega.Expect(metrics.ContextCompactions[0].DroppedMessages).To(gomega.BeEquivalentTo(4), fmt.Sprintf("expected context compaction metric, got %#v", metrics.ContextCompactions))
+	gomega.Expect(containsStringFold(metrics.ContextCompactions[0].PinnedPaths, "internal/surfaces/tui/app/app.go")).To(gomega.BeTrue(), fmt.Sprintf("expected context compaction metric, got %#v", metrics.ContextCompactions))
 
-	if len(metrics.RouteAmbiguities) != 1 || !metrics.RouteAmbiguities[0].Ambiguous {
-		t.Fatalf("expected route ambiguity metric, got %#v", metrics.RouteAmbiguities)
-	}
+	gomega.Expect(metrics.RouteAmbiguities).To(gomega.HaveLen(1), fmt.Sprintf("expected route ambiguity metric, got %#v", metrics.RouteAmbiguities))
+	gomega.Expect(metrics.RouteAmbiguities[0].Ambiguous).To(gomega.BeTrue(), fmt.Sprintf("expected route ambiguity metric, got %#v", metrics.RouteAmbiguities))
 
-	if len(metrics.VerificationFeedback) != 1 || metrics.VerificationFeedback[0].LearnedRecommendation == "" {
-		t.Fatalf("expected verification feedback metric, got %#v", metrics.VerificationFeedback)
-	}
+	gomega.Expect(metrics.VerificationFeedback).To(gomega.HaveLen(1), fmt.Sprintf("expected verification feedback metric, got %#v", metrics.VerificationFeedback))
+	gomega.Expect(metrics.VerificationFeedback[0].LearnedRecommendation).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("expected verification feedback metric, got %#v", metrics.VerificationFeedback))
 
-	if len(metrics.ToolFailureConfidence) != 1 || metrics.ToolFailureConfidence[0].ConfidenceImpact == "" {
-		t.Fatalf("expected tool-failure confidence metric, got %#v", metrics.ToolFailureConfidence)
-	}
+	gomega.Expect(metrics.ToolFailureConfidence).To(gomega.HaveLen(1), fmt.Sprintf("expected tool-failure confidence metric, got %#v", metrics.ToolFailureConfidence))
+	gomega.Expect(metrics.ToolFailureConfidence[0].ConfidenceImpact).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("expected tool-failure confidence metric, got %#v", metrics.ToolFailureConfidence))
 
-	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "review" || metrics.ControlRails[0].PermissionProfile != "analysis_read_only_then_guarded_writes" {
-		t.Fatalf("expected control rails metric, got %#v", metrics.ControlRails)
-	}
+	gomega.Expect(metrics.ControlRails).To(gomega.HaveLen(1), fmt.Sprintf("expected control rails metric, got %#v", metrics.ControlRails))
+	gomega.Expect(metrics.ControlRails[0].TaskFamily).To(gomega.BeEquivalentTo("review"), fmt.Sprintf("expected control rails metric, got %#v", metrics.ControlRails))
+	gomega.Expect(metrics.ControlRails[0].PermissionProfile).To(gomega.BeEquivalentTo("analysis_read_only_then_guarded_writes"), fmt.Sprintf("expected control rails metric, got %#v", metrics.ControlRails))
 
-	if !containsStringFold(metrics.ControlRails[0].TargetRefs, "internal/surfaces/tui/app/app.go") {
-		t.Fatalf("expected control rails target refs, got %#v", metrics.ControlRails[0].TargetRefs)
-	}
+	gomega.Expect(containsStringFold(metrics.ControlRails[0].TargetRefs, "internal/surfaces/tui/app/app.go")).To(gomega.BeTrue(), fmt.Sprintf("expected control rails target refs, got %#v", metrics.ControlRails[0].TargetRefs))
 
-	if metrics.ControlRails[0].AgentMode != "plan" || metrics.ControlRails[0].WorkflowKind != "optimization_refactor" || metrics.ControlRails[0].WorkflowPhase != "awaiting_approval" || !containsStringFold(metrics.ControlRails[0].AllowedTools, "task") {
-		t.Fatalf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0])
-	}
-}
-
-func TestScenarioRoundTripFileHelpers(t *testing.T) {
+	gomega.Expect(metrics.ControlRails[0].AgentMode).To(gomega.BeEquivalentTo("plan"), fmt.Sprintf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0]))
+	gomega.Expect(metrics.ControlRails[0].WorkflowKind).To(gomega.BeEquivalentTo("optimization_refactor"), fmt.Sprintf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0]))
+	gomega.Expect(metrics.ControlRails[0].WorkflowPhase).To(gomega.BeEquivalentTo("awaiting_approval"), fmt.Sprintf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0]))
+	gomega.Expect(containsStringFold(metrics.ControlRails[0].AllowedTools, "task")).To(gomega.BeTrue(), fmt.Sprintf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0]))
+})
+var _ = ginkgo.It("scenario round trip file helpers", func() {
+	t := ginkgo.GinkgoT()
 	path := filepath.Join(t.TempDir(), "scenario.json")
 	scenario := Scenario{
 		Name:                    "grounding-smoke",
@@ -179,59 +159,44 @@ func TestScenarioRoundTripFileHelpers(t *testing.T) {
 		RequireDiscoveryClasses: []string{"semantic_context"},
 	}
 
-	if err := WriteScenario(path, scenario); err != nil {
-		t.Fatalf("WriteScenario: %v", err)
-	}
+	gomega.Expect(WriteScenario(path, scenario)).To(gomega.Succeed(), "write scenario")
 
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read scenario file: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read scenario file: %v", err))
 
-	if !strings.HasSuffix(string(data), "\n") {
-		t.Fatalf("WriteScenario should emit newline-terminated JSON, got %q", string(data))
-	}
+	gomega.Expect(strings.HasSuffix(string(data), "\n")).To(gomega.BeTrue(), fmt.Sprintf("WriteScenario should emit newline-terminated JSON, got %q", string(data)))
 
 	got, err := LoadScenario(path)
-	if err != nil {
-		t.Fatalf("LoadScenario: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadScenario: %v", err))
 
-	if got.Name != scenario.Name || !containsStringFold(got.RequireTools, "read_file") || !containsStringFold(got.RequireEvidencePaths, "internal/runtime/agent/source_grounding.go") {
-		t.Fatalf("scenario round trip mismatch: %#v", got)
-	}
-}
-
-func TestLoadRecordsNormalizesLegacyPayloadRecords(t *testing.T) {
+	gomega.Expect(got.Name).To(gomega.BeEquivalentTo(scenario.Name), fmt.Sprintf("scenario round trip mismatch: %#v", got))
+	gomega.Expect(containsStringFold(got.RequireTools, "read_file")).To(gomega.BeTrue(), fmt.Sprintf("scenario round trip mismatch: %#v", got))
+	gomega.Expect(containsStringFold(got.RequireEvidencePaths, "internal/runtime/agent/source_grounding.go")).To(gomega.BeTrue(), fmt.Sprintf("scenario round trip mismatch: %#v", got))
+})
+var _ = ginkgo.It("load records normalizes legacy payload records", func() {
+	t := ginkgo.GinkgoT()
 	path := filepath.Join(t.TempDir(), "conversation.jsonl")
 	lines := []string{
 		`{"kind":"message","payload":{"role":"user","content":"hello"},"ts":"2026-06-07T00:00:00Z","session_id":"s1"}`,
 		`{"type":"tool_result","tool":"read_file","summary":"Read internal/evidence/eval/eval.go"}`,
 	}
 
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		t.Fatalf("write log: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)).To(gomega.Succeed(), "write log")
 
 	records, err := LoadRecords(path)
-	if err != nil {
-		t.Fatalf("LoadRecords: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadRecords: %v", err))
 
-	if len(records) != 2 {
-		t.Fatalf("records length = %d, want 2", len(records))
-	}
+	gomega.Expect(records).To(gomega.HaveLen(2), fmt.Sprintf("records length = %d, want 2", len(records)))
 
-	if records[0].Type != "message" || records[0].Data["type"] != "message" || records[0].Data["kind"] != "message" || records[0].Data["session_id"] != "s1" {
-		t.Fatalf("legacy record was not normalized: %#v", records[0])
-	}
+	gomega.Expect(records[0].Type).To(gomega.BeEquivalentTo("message"), fmt.Sprintf("legacy record was not normalized: %#v", records[0]))
+	gomega.Expect(records[0].Data["type"]).To(gomega.BeEquivalentTo("message"), fmt.Sprintf("legacy record was not normalized: %#v", records[0]))
+	gomega.Expect(records[0].Data["kind"]).To(gomega.BeEquivalentTo("message"), fmt.Sprintf("legacy record was not normalized: %#v", records[0]))
+	gomega.Expect(records[0].Data["session_id"]).To(gomega.BeEquivalentTo("s1"), fmt.Sprintf("legacy record was not normalized: %#v", records[0]))
 
-	if records[1].Type != "tool_result" || records[1].Data["tool"] != "read_file" {
-		t.Fatalf("typed record should pass through: %#v", records[1])
-	}
-}
-
-func TestAnalyzeIncludesLiveContractRollbackChangedFiles(t *testing.T) {
+	gomega.Expect(records[1].Type).To(gomega.BeEquivalentTo("tool_result"), fmt.Sprintf("typed record should pass through: %#v", records[1]))
+	gomega.Expect(records[1].Data["tool"]).To(gomega.BeEquivalentTo("read_file"), fmt.Sprintf("typed record should pass through: %#v", records[1]))
+})
+var _ = ginkgo.It("analyze includes live contract rollback changed files", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "shorten the label"}},
 		{Type: "idiom.live_contract.rollback", Data: map[string]any{
@@ -242,20 +207,15 @@ func TestAnalyzeIncludesLiveContractRollbackChangedFiles(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "internal/labels/labels.go" {
-		t.Fatalf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles)
-	}
+	gomega.Expect(metrics.ChangedFiles).To(gomega.HaveLen(1), fmt.Sprintf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles))
+	gomega.Expect(metrics.ChangedFiles[0]).To(gomega.BeEquivalentTo("internal/labels/labels.go"), fmt.Sprintf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles))
 
-	if metrics.RecordTypes["idiom.live_contract.rollback"] != 1 {
-		t.Fatalf("expected rollback record type count, got %#v", metrics.RecordTypes)
-	}
+	gomega.Expect(metrics.RecordTypes["idiom.live_contract.rollback"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected rollback record type count, got %#v", metrics.RecordTypes))
 
-	if len(metrics.LiveContractRollbacks) != 1 || metrics.LiveContractRollbacks[0].Status != "clean" {
-		t.Fatalf("expected rollback snapshot, got %#v", metrics.LiveContractRollbacks)
-	}
-}
-
-func TestAnalyzeIncludesSuccessfulWriteResultChangedFiles(t *testing.T) {
+	gomega.Expect(metrics.LiveContractRollbacks).To(gomega.HaveLen(1), fmt.Sprintf("expected rollback snapshot, got %#v", metrics.LiveContractRollbacks))
+	gomega.Expect(metrics.LiveContractRollbacks[0].Status).To(gomega.BeEquivalentTo("clean"), fmt.Sprintf("expected rollback snapshot, got %#v", metrics.LiveContractRollbacks))
+})
+var _ = ginkgo.It("analyze includes successful write result changed files", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "update the docs"}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "edit_file", "raw": `{"path":"README.md"}`}},
@@ -264,23 +224,18 @@ func TestAnalyzeIncludesSuccessfulWriteResultChangedFiles(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "README.md" {
-		t.Fatalf("expected structured write result to count as changed-file evidence, got %#v", metrics.ChangedFiles)
-	}
-}
-
-func TestAnalyzeDoesNotTrustAssistantClaimedChangedFiles(t *testing.T) {
+	gomega.Expect(metrics.ChangedFiles).To(gomega.HaveLen(1), fmt.Sprintf("expected structured write result to count as changed-file evidence, got %#v", metrics.ChangedFiles))
+	gomega.Expect(metrics.ChangedFiles[0]).To(gomega.BeEquivalentTo("README.md"), fmt.Sprintf("expected structured write result to count as changed-file evidence, got %#v", metrics.ChangedFiles))
+})
+var _ = ginkgo.It("analyze does not trust assistant claimed changed files", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Changed files:\n- README.md"}},
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.ChangedFiles) != 0 {
-		t.Fatalf("assistant-only changed-file claims must not count as mutation evidence, got %#v", metrics.ChangedFiles)
-	}
-}
-
-func TestAnalyzeRollbackEvidenceOverridesWriteResultClaims(t *testing.T) {
+	gomega.Expect(metrics.ChangedFiles).To(gomega.BeEmpty(), fmt.Sprintf("assistant-only changed-file claims must not count as mutation evidence, got %#v", metrics.ChangedFiles))
+})
+var _ = ginkgo.It("analyze rollback evidence overrides write result claims", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "write_file", "raw": `{"path":"README.md"}`}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "write_file", "summary": "Wrote README.md", "error": ""}},
@@ -291,24 +246,18 @@ func TestAnalyzeRollbackEvidenceOverridesWriteResultClaims(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.ChangedFiles) != 0 {
-		t.Fatalf("empty live rollback diff must override write-result claims, got %#v", metrics.ChangedFiles)
-	}
-}
-
-func TestAnalyzeIgnoresNoopWriteResultChangedFiles(t *testing.T) {
+	gomega.Expect(metrics.ChangedFiles).To(gomega.BeEmpty(), fmt.Sprintf("empty live rollback diff must override write-result claims, got %#v", metrics.ChangedFiles))
+})
+var _ = ginkgo.It("analyze ignores noop write result changed files", func() {
 	records := []Record{
 		{Type: "tool_result", Data: map[string]any{"tool": "edit_file", "path": "README.md", "summary": "No-op edit for README.md; file already matched", "error": ""}},
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "No changes were needed."}},
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.ChangedFiles) != 0 {
-		t.Fatalf("no-op write result must not count as changed-file evidence, got %#v", metrics.ChangedFiles)
-	}
-}
-
-func TestAnalyzeRoutePlanFromPlanExecuteWriterRouteDecision(t *testing.T) {
+	gomega.Expect(metrics.ChangedFiles).To(gomega.BeEmpty(), fmt.Sprintf("no-op write result must not count as changed-file evidence, got %#v", metrics.ChangedFiles))
+})
+var _ = ginkgo.It("analyze route plan from plan execute writer route decision", func() {
 	records := []Record{
 		{Type: "idiom.plan_execute.writer_route_decision", Data: map[string]any{
 			"task_family":  string(autonomy.TaskFamilyPlanThenExecutePlanner),
@@ -318,17 +267,14 @@ func TestAnalyzeRoutePlanFromPlanExecuteWriterRouteDecision(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.RoutePlans) != 1 {
-		t.Fatalf("expected route plan from writer route event, got %#v", metrics.RoutePlans)
-	}
+	gomega.Expect(metrics.RoutePlans).To(gomega.HaveLen(1), fmt.Sprintf("expected route plan from writer route event, got %#v", metrics.RoutePlans))
 
 	plan := metrics.RoutePlans[0]
-	if plan.InitialLane != string(autonomy.TaskFamilyPlanThenExecutePlanner) || plan.Reason != string(autonomy.RouteReasonPlanThenExecuteRequest) || plan.Contract != string(planartifactcontract.ContractKindImplementationResult) {
-		t.Fatalf("unexpected plan-execute route plan: %#v", plan)
-	}
-}
-
-func TestAnalyzeRoutePlanFromPlanExecuteExecutorWriterRouteDecision(t *testing.T) {
+	gomega.Expect(plan.InitialLane).To(gomega.BeEquivalentTo(string(autonomy.TaskFamilyPlanThenExecutePlanner)), fmt.Sprintf("unexpected plan-execute route plan: %#v", plan))
+	gomega.Expect(plan.Reason).To(gomega.BeEquivalentTo(string(autonomy.RouteReasonPlanThenExecuteRequest)), fmt.Sprintf("unexpected plan-execute route plan: %#v", plan))
+	gomega.Expect(plan.Contract).To(gomega.BeEquivalentTo(string(planartifactcontract.ContractKindImplementationResult)), fmt.Sprintf("unexpected plan-execute route plan: %#v", plan))
+})
+var _ = ginkgo.It("analyze route plan from plan execute executor writer route decision", func() {
 	records := []Record{
 		{Type: "idiom.plan_execute.writer_route_decision", Data: map[string]any{
 			"task_family": string(autonomy.TaskFamilyPlanThenExecuteExecutor),
@@ -337,17 +283,14 @@ func TestAnalyzeRoutePlanFromPlanExecuteExecutorWriterRouteDecision(t *testing.T
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.RoutePlans) != 1 {
-		t.Fatalf("expected executor route plan from writer route event, got %#v", metrics.RoutePlans)
-	}
+	gomega.Expect(metrics.RoutePlans).To(gomega.HaveLen(1), fmt.Sprintf("expected executor route plan from writer route event, got %#v", metrics.RoutePlans))
 
 	plan := metrics.RoutePlans[0]
-	if plan.InitialLane != string(autonomy.TaskFamilyPlanThenExecuteExecutor) || plan.Reason != string(autonomy.RouteReasonPlanArtifactDispatch) || plan.Contract != string(autonomy.RuntimeContractExecutorDispatchResult) {
-		t.Fatalf("unexpected plan-execute executor route plan: %#v", plan)
-	}
-}
-
-func TestAnalyzeExtractsRunnerMetricsFromRunEvents(t *testing.T) {
+	gomega.Expect(plan.InitialLane).To(gomega.BeEquivalentTo(string(autonomy.TaskFamilyPlanThenExecuteExecutor)), fmt.Sprintf("unexpected plan-execute executor route plan: %#v", plan))
+	gomega.Expect(plan.Reason).To(gomega.BeEquivalentTo(string(autonomy.RouteReasonPlanArtifactDispatch)), fmt.Sprintf("unexpected plan-execute executor route plan: %#v", plan))
+	gomega.Expect(plan.Contract).To(gomega.BeEquivalentTo(string(autonomy.RuntimeContractExecutorDispatchResult)), fmt.Sprintf("unexpected plan-execute executor route plan: %#v", plan))
+})
+var _ = ginkgo.It("analyze extracts runner metrics from run events", func() {
 	records := []Record{
 		{Type: "run_event", Data: map[string]any{"role": "control_rails", "content": `{"task_family":"implementation","permission_profile":"guarded_workspace_write","allowed_tools":["read_file"]}`}},
 		{Type: "run_event", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"implement","used_model_calls":1,"budget_exhausted":false}`}},
@@ -356,24 +299,21 @@ func TestAnalyzeExtractsRunnerMetricsFromRunEvents(t *testing.T) {
 
 	metrics := Analyze(records)
 
-	if got := metrics.MessageRoles["control_rails"]; got != 1 {
-		t.Fatalf("expected control_rails run_event role to be counted, got %d", got)
+	{
+		got := metrics.MessageRoles["control_rails"]
+		gomega.Expect(got).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected control_rails run_event role to be counted, got %d", got))
 	}
 
-	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "implementation" {
-		t.Fatalf("expected control rails from run_event, got %#v", metrics.ControlRails)
-	}
+	gomega.Expect(metrics.ControlRails).To(gomega.HaveLen(1), fmt.Sprintf("expected control rails from run_event, got %#v", metrics.ControlRails))
+	gomega.Expect(metrics.ControlRails[0].TaskFamily).To(gomega.BeEquivalentTo("implementation"), fmt.Sprintf("expected control rails from run_event, got %#v", metrics.ControlRails))
 
-	if len(metrics.BudgetLedgers) != 1 || metrics.BudgetLedgers[0].Lane != "implement" {
-		t.Fatalf("expected budget ledger from run_event, got %#v", metrics.BudgetLedgers)
-	}
+	gomega.Expect(metrics.BudgetLedgers).To(gomega.HaveLen(1), fmt.Sprintf("expected budget ledger from run_event, got %#v", metrics.BudgetLedgers))
+	gomega.Expect(metrics.BudgetLedgers[0].Lane).To(gomega.BeEquivalentTo("implement"), fmt.Sprintf("expected budget ledger from run_event, got %#v", metrics.BudgetLedgers))
 
-	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 2 {
-		t.Fatalf("expected context compaction from run_event, got %#v", metrics.ContextCompactions)
-	}
-}
-
-func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
+	gomega.Expect(metrics.ContextCompactions).To(gomega.HaveLen(1), fmt.Sprintf("expected context compaction from run_event, got %#v", metrics.ContextCompactions))
+	gomega.Expect(metrics.ContextCompactions[0].DroppedMessages).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected context compaction from run_event, got %#v", metrics.ContextCompactions))
+})
+var _ = ginkgo.It("evaluate plan execution expectation detects scope drift", func() {
 	records := []Record{
 		{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
 			"plan_id":                       "plan-1",
@@ -404,9 +344,7 @@ func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
 		},
 	})
 
-	if !report.Passed {
-		t.Fatalf("expected plan execution drift assertions to pass, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected plan execution drift assertions to pass, got %#v", report.Findings))
 
 	noDrift := Evaluate("", records, Scenario{
 		Name: "plan-execution-no-drift",
@@ -416,16 +354,11 @@ func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
 			RequireNoDrift:         true,
 		},
 	})
-	if noDrift.Passed {
-		t.Fatalf("expected no-drift assertion to fail when drift event is present")
-	}
+	gomega.Expect(noDrift.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected no-drift assertion to fail when drift event is present"))
 
-	if !strings.Contains(strings.Join(noDrift.Findings, "\n"), "plan execution drift was forbidden") {
-		t.Fatalf("expected no-drift finding, got %#v", noDrift.Findings)
-	}
-}
-
-func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
+	gomega.Expect(strings.Join(noDrift.Findings, "\n")).To(gomega.ContainSubstring("plan execution drift was forbidden"), fmt.Sprintf("expected no-drift finding, got %#v", noDrift.Findings))
+})
+var _ = ginkgo.It("evaluate plan execution expectation requires packet freshness", func() {
 	records := []Record{
 		{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
 			"handoff_created":           true,
@@ -447,9 +380,7 @@ func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
 		},
 	})
 
-	if !report.Passed {
-		t.Fatalf("expected fresh packet assertions to pass, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected fresh packet assertions to pass, got %#v", report.Findings))
 
 	missing := Evaluate("", []Record{{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
 		"handoff_created":        true,
@@ -463,15 +394,11 @@ func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
 			RequirePacketFresh:   true,
 		},
 	})
-	if missing.Passed {
-		t.Fatalf("expected missing packet assertions to fail")
-	}
+	gomega.Expect(missing.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected missing packet assertions to fail"))
 
 	joined := strings.Join(missing.Findings, "\n")
 	for _, want := range []string{"packet presence was required", "fresh packet was required"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected finding %q, got %q", want, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(want), fmt.Sprintf("expected finding %q, got %q", want, joined))
 	}
 
 	createdOnly := Evaluate("", []Record{{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
@@ -483,16 +410,11 @@ func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
 			RequireHandoffCreated: true,
 		},
 	})
-	if createdOnly.Passed {
-		t.Fatalf("handoff_created without handoff_id must not satisfy RequireHandoffID")
-	}
+	gomega.Expect(createdOnly.Passed).To(gomega.BeFalse(), fmt.Sprintf("handoff_created without handoff_id must not satisfy RequireHandoffID"))
 
-	if !strings.Contains(strings.Join(createdOnly.Findings, "\n"), "handoff id was required but not observed") {
-		t.Fatalf("expected strict handoff id finding, got %#v", createdOnly.Findings)
-	}
-}
-
-func TestEvaluatePlanExecuteVerificationEventsSatisfyVerificationRequirement(t *testing.T) {
+	gomega.Expect(strings.Join(createdOnly.Findings, "\n")).To(gomega.ContainSubstring("handoff id was required but not observed"), fmt.Sprintf("expected strict handoff id finding, got %#v", createdOnly.Findings))
+})
+var _ = ginkgo.It("evaluate plan execute verification events satisfy verification requirement", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "Use plan-execute to update internal/labels/labels.go, then run `go test ./...`."}},
 		{Type: "idiom.plan_execute.verification", Data: map[string]any{
@@ -509,16 +431,31 @@ func TestEvaluatePlanExecuteVerificationEventsSatisfyVerificationRequirement(t *
 		Name:                "plan-execute-verification",
 		RequireVerification: "passed",
 	})
-	if !report.Passed {
-		t.Fatalf("expected plan-execute verification events to satisfy verification requirement, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected plan-execute verification events to satisfy verification requirement, got %#v", report.Findings))
 
-	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationPassed {
-		t.Fatalf("expected one passed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
+	gomega.Expect(report.Metrics.VerificationChecks).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected one passed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed))
+	gomega.Expect(report.Metrics.VerificationPassed).To(gomega.BeTrue(), fmt.Sprintf("expected one passed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed))
+})
+var _ = ginkgo.It("evaluate feature planner atom completion satisfies verification requirement", func() {
+	for _, records := range [][]Record{
+		{{Type: "idiom.feature_planner.atom_completed", Data: map[string]any{
+			"fields": map[string]any{"verification_status": "passed"},
+		}}},
+		{{Type: "run_event", Data: map[string]any{
+			"role":    "idiom.feature_planner.atom_completed",
+			"content": `{"fields":{"verification_status":"passed"}}`,
+		}}},
+	} {
+		report := Evaluate("log.jsonl", records, Scenario{
+			Name:                "feature-planner-verification",
+			RequireVerification: "passed",
+		})
+		gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected feature-planner atom verification to satisfy requirement, got %#v", report.Findings))
+		gomega.Expect(report.Metrics.VerificationChecks).To(gomega.Equal(1))
+		gomega.Expect(report.Metrics.VerificationPassed).To(gomega.BeTrue())
 	}
-}
-
-func TestEvaluatePlanExecuteVerificationFailureFailsPassedRequirement(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate plan execute verification failure fails passed requirement", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "Use plan-execute to update internal/labels/labels.go, then run `go test ./...`."}},
 		{Type: "idiom.plan_execute.verification", Data: map[string]any{
@@ -535,20 +472,15 @@ func TestEvaluatePlanExecuteVerificationFailureFailsPassedRequirement(t *testing
 		Name:                "plan-execute-verification",
 		RequireVerification: "passed",
 	})
-	if report.Passed {
-		t.Fatalf("expected failed plan-execute verification to fail passed requirement")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected failed plan-execute verification to fail passed requirement"))
 
-	if !strings.Contains(strings.Join(report.Findings, "\n"), "verification did not pass") {
-		t.Fatalf("expected verification failure finding, got %#v", report.Findings)
-	}
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("verification did not pass"), fmt.Sprintf("expected verification failure finding, got %#v", report.Findings))
 
-	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationFailed || report.Metrics.VerificationPassed {
-		t.Fatalf("expected one failed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
-	}
-}
-
-func TestAnalyzeDoesNotTreatGenericSourceSanityFallbackAsPassedVerification(t *testing.T) {
+	gomega.Expect(report.Metrics.VerificationChecks).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected one failed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed))
+	gomega.Expect(report.Metrics.VerificationFailed).To(gomega.BeTrue(), fmt.Sprintf("expected one failed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed))
+	gomega.Expect(report.Metrics.VerificationPassed).To(gomega.BeFalse(), fmt.Sprintf("expected one failed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed))
+})
+var _ = ginkgo.It("analyze does not treat generic source sanity fallback as passed verification", func() {
 	records := []Record{{
 		Type: "tool_result",
 		Data: map[string]any{
@@ -561,24 +493,18 @@ func TestAnalyzeDoesNotTreatGenericSourceSanityFallbackAsPassedVerification(t *t
 	}}
 
 	metrics := Analyze(records)
-	if metrics.VerificationChecks != 1 {
-		t.Fatalf("VerificationChecks = %d, want 1", metrics.VerificationChecks)
-	}
+	gomega.Expect(metrics.VerificationChecks).To(gomega.BeEquivalentTo(1), fmt.Sprintf("VerificationChecks = %d, want 1", metrics.VerificationChecks))
 
-	if metrics.VerificationPassed || metrics.VerificationFailed {
-		t.Fatalf("generic fallback should be insufficient, not passed/failed: passed=%t failed=%t", metrics.VerificationPassed, metrics.VerificationFailed)
-	}
+	gomega.Expect(metrics.VerificationPassed).To(gomega.BeFalse(), fmt.Sprintf("generic fallback should be insufficient, not passed/failed: passed=%t failed=%t", metrics.VerificationPassed, metrics.VerificationFailed))
+	gomega.Expect(metrics.VerificationFailed).To(gomega.BeFalse(), fmt.Sprintf("generic fallback should be insufficient, not passed/failed: passed=%t failed=%t", metrics.VerificationPassed, metrics.VerificationFailed))
 
 	report := Evaluate("log.jsonl", records, Scenario{
 		Name:                "generic-source-sanity-fallback",
 		RequireVerification: "passed",
 	})
-	if report.Passed {
-		t.Fatalf("generic fallback should not satisfy passed verification requirement")
-	}
-}
-
-func TestAnalyzeDoesNotTreatPatchHygienePhaseAsPassedVerification(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("generic fallback should not satisfy passed verification requirement"))
+})
+var _ = ginkgo.It("analyze does not treat patch hygiene phase as passed verification", func() {
 	records := []Record{{
 		Type: "phase",
 		Data: map[string]any{
@@ -593,12 +519,10 @@ func TestAnalyzeDoesNotTreatPatchHygienePhaseAsPassedVerification(t *testing.T) 
 		Name:                "patch-hygiene-only",
 		RequireVerification: "passed",
 	})
-	if report.Metrics.VerificationPassed || report.Passed {
-		t.Fatalf("patch hygiene phase should not satisfy passed verification, passed=%t report=%t", report.Metrics.VerificationPassed, report.Passed)
-	}
-}
-
-func TestAnalyzeDoesNotTreatPatchHygieneToolResultAsPassedVerification(t *testing.T) {
+	gomega.Expect(report.Metrics.VerificationPassed).To(gomega.BeFalse(), fmt.Sprintf("patch hygiene phase should not satisfy passed verification, passed=%t report=%t", report.Metrics.VerificationPassed, report.Passed))
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("patch hygiene phase should not satisfy passed verification, passed=%t report=%t", report.Metrics.VerificationPassed, report.Passed))
+})
+var _ = ginkgo.It("analyze does not treat patch hygiene tool result as passed verification", func() {
 	records := []Record{{
 		Type: "tool_result",
 		Data: map[string]any{
@@ -614,16 +538,13 @@ func TestAnalyzeDoesNotTreatPatchHygieneToolResultAsPassedVerification(t *testin
 		Name:                "patch-hygiene-tool-result",
 		RequireVerification: "passed",
 	})
-	if report.Metrics.VerificationChecks != 1 {
-		t.Fatalf("VerificationChecks = %d, want 1", report.Metrics.VerificationChecks)
-	}
+	gomega.Expect(report.Metrics.VerificationChecks).To(gomega.BeEquivalentTo(1), fmt.Sprintf("VerificationChecks = %d, want 1", report.Metrics.VerificationChecks))
 
-	if report.Metrics.VerificationPassed || report.Metrics.VerificationFailed || report.Passed {
-		t.Fatalf("patch hygiene tool result should be insufficient, passed=%t failed=%t report=%t", report.Metrics.VerificationPassed, report.Metrics.VerificationFailed, report.Passed)
-	}
-}
-
-func TestAnalyzeUsesLaneSummaryAsAssistantFallback(t *testing.T) {
+	gomega.Expect(report.Metrics.VerificationPassed).To(gomega.BeFalse(), fmt.Sprintf("patch hygiene tool result should be insufficient, passed=%t failed=%t report=%t", report.Metrics.VerificationPassed, report.Metrics.VerificationFailed, report.Passed))
+	gomega.Expect(report.Metrics.VerificationFailed).To(gomega.BeFalse(), fmt.Sprintf("patch hygiene tool result should be insufficient, passed=%t failed=%t report=%t", report.Metrics.VerificationPassed, report.Metrics.VerificationFailed, report.Passed))
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("patch hygiene tool result should be insufficient, passed=%t failed=%t report=%t", report.Metrics.VerificationPassed, report.Metrics.VerificationFailed, report.Passed))
+})
+var _ = ginkgo.It("analyze uses lane summary as assistant fallback", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment"}},
@@ -634,20 +555,14 @@ func TestAnalyzeUsesLaneSummaryAsAssistantFallback(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.AssistantTurns != 2 {
-		t.Fatalf("expected lane summaries to count as assistant fallback turns, got %d", metrics.AssistantTurns)
-	}
+	gomega.Expect(metrics.AssistantTurns).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected lane summaries to count as assistant fallback turns, got %d", metrics.AssistantTurns))
 
-	if !strings.Contains(metrics.FinalAssistant, "concrete line anchor") {
-		t.Fatalf("expected final assistant fallback from latest lane summary, got %q", metrics.FinalAssistant)
-	}
+	gomega.Expect(metrics.FinalAssistant).To(gomega.ContainSubstring("concrete line anchor"), fmt.Sprintf("expected final assistant fallback from latest lane summary, got %q", metrics.FinalAssistant))
 
-	if len(metrics.RoutePlans) != 2 || metrics.RoutePlans[1].InitialLane != "implement" {
-		t.Fatalf("expected route_plan_final to be evaluated, got %#v", metrics.RoutePlans)
-	}
-}
-
-func TestAnalyzeCountsLaneSummaryWhenLaterTurnHasAssistant(t *testing.T) {
+	gomega.Expect(metrics.RoutePlans).To(gomega.HaveLen(2), fmt.Sprintf("expected route_plan_final to be evaluated, got %#v", metrics.RoutePlans))
+	gomega.Expect(metrics.RoutePlans[1].InitialLane).To(gomega.BeEquivalentTo("implement"), fmt.Sprintf("expected route_plan_final to be evaluated, got %#v", metrics.RoutePlans))
+})
+var _ = ginkgo.It("analyze counts lane summary when later turn has assistant", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},
 		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Plan summary."}},
@@ -656,16 +571,11 @@ func TestAnalyzeCountsLaneSummaryWhenLaterTurnHasAssistant(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.AssistantTurns != 2 {
-		t.Fatalf("expected lane summary plus final assistant to cover both user turns, got %d", metrics.AssistantTurns)
-	}
+	gomega.Expect(metrics.AssistantTurns).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected lane summary plus final assistant to cover both user turns, got %d", metrics.AssistantTurns))
 
-	if metrics.FinalAssistant != "Need a concrete anchor." {
-		t.Fatalf("expected real assistant to remain final assistant, got %q", metrics.FinalAssistant)
-	}
-}
-
-func TestEvaluateScenarioReportsFailures(t *testing.T) {
+	gomega.Expect(metrics.FinalAssistant).To(gomega.BeEquivalentTo("Need a concrete anchor."), fmt.Sprintf("expected real assistant to remain final assistant, got %q", metrics.FinalAssistant))
+})
+var _ = ginkgo.It("evaluate scenario reports failures", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "please edit the banner"}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=explore reason=explore_request contract=grounded_explanation"}},
@@ -797,19 +707,14 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 	}
 
 	report := Evaluate("log.jsonl", records, scenario)
-	if report.Passed {
-		t.Fatalf("expected scenario to fail, got %#v", report)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected scenario to fail, got %#v", report))
 
 	joined := strings.Join(report.Findings, "\n")
 	for _, expected := range []string{"required tool", "route plan mismatch", "replan recommendation mismatch", "evidence paths do not include", "verification plan mismatch", "required readiness check", "required deepening attempt", "required final answer critic", "required effort policy", "required long-horizon state", "required workflow state", "required budget ledger", "required evidence delta", "required claim confidence", "required context compaction", "required route ambiguity", "required verification feedback", "required tool-failure confidence", "required control rails", "language capabilities do not include", "broad tool requests exceeded", "repeated dead-end requests exceeded", "summary rejections exceeded", "verification did not pass"} {
-		if !strings.Contains(joined, expected) {
-			t.Fatalf("expected finding containing %q, got %q", expected, joined)
-		}
+		gomega.Expect(joined).To(gomega.ContainSubstring(expected), fmt.Sprintf("expected finding containing %q, got %q", expected, joined))
 	}
-}
-
-func TestAnalyzeCountsRejectedToolResultWithoutRequestAsAttempt(t *testing.T) {
+})
+var _ = ginkgo.It("analyze counts rejected tool result without request as attempt", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "path": "internal/labels/labels.go"}},
@@ -835,24 +740,17 @@ func TestAnalyzeCountsRejectedToolResultWithoutRequestAsAttempt(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.ToolRequests != 3 {
-		t.Fatalf("expected rejected unrequested tool_result attempts to count as tool requests, got %d", metrics.ToolRequests)
-	}
+	gomega.Expect(metrics.ToolRequests).To(gomega.BeEquivalentTo(3), fmt.Sprintf("expected rejected unrequested tool_result attempts to count as tool requests, got %d", metrics.ToolRequests))
 
-	if metrics.Tools["code_navigate"] != 1 {
-		t.Fatalf("expected rejected code_navigate attempt to count as tool usage, got %#v", metrics.Tools)
-	}
+	gomega.Expect(metrics.Tools["code_navigate"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected rejected code_navigate attempt to count as tool usage, got %#v", metrics.Tools))
 
-	if metrics.DiscoveryTools["code_navigate"] != 0 || metrics.DiscoveryClasses["language_symbol"] != 0 {
-		t.Fatalf("unannotated rejected code_navigate must not infer discovery metadata, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
-	}
+	gomega.Expect(metrics.DiscoveryTools["code_navigate"]).To(gomega.BeEquivalentTo(0), fmt.Sprintf("unannotated rejected code_navigate must not infer discovery metadata, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses))
+	gomega.Expect(metrics.DiscoveryClasses["language_symbol"]).To(gomega.BeEquivalentTo(0), fmt.Sprintf("unannotated rejected code_navigate must not infer discovery metadata, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses))
 
-	if metrics.ErrorCount != 2 || len(metrics.Errors) != 2 {
-		t.Fatalf("expected two error events and two unique errors, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
-	}
-}
-
-func TestAnalyzeDoesNotInferDiscoveryProfileForUnannotatedTools(t *testing.T) {
+	gomega.Expect(metrics.ErrorCount).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected two error events and two unique errors, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors))
+	gomega.Expect(metrics.Errors).To(gomega.HaveLen(2), fmt.Sprintf("expected two error events and two unique errors, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors))
+})
+var _ = ginkgo.It("analyze does not infer discovery profile for unannotated tools", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "code_navigate", "path": "internal/labels/labels.go"}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Read Label", "error": ""}},
@@ -861,12 +759,12 @@ func TestAnalyzeDoesNotInferDiscoveryProfileForUnannotatedTools(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.DiscoveryTools) != 0 || len(metrics.DiscoveryClasses) != 0 || len(metrics.DiscoveryScopes) != 0 || len(metrics.DiscoveryCosts) != 0 {
-		t.Fatalf("unannotated tool records must not infer discovery taxonomy, tools=%#v classes=%#v scopes=%#v costs=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses, metrics.DiscoveryScopes, metrics.DiscoveryCosts)
-	}
-}
-
-func TestAnalyzeUncountsRecoverablePostReadinessGapAttempt(t *testing.T) {
+	gomega.Expect(metrics.DiscoveryTools).To(gomega.HaveLen(0), fmt.Sprintf("unannotated tool records must not infer discovery taxonomy, tools=%#v classes=%#v scopes=%#v costs=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses, metrics.DiscoveryScopes, metrics.DiscoveryCosts))
+	gomega.Expect(metrics.DiscoveryClasses).To(gomega.HaveLen(0), fmt.Sprintf("unannotated tool records must not infer discovery taxonomy, tools=%#v classes=%#v scopes=%#v costs=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses, metrics.DiscoveryScopes, metrics.DiscoveryCosts))
+	gomega.Expect(metrics.DiscoveryScopes).To(gomega.HaveLen(0), fmt.Sprintf("unannotated tool records must not infer discovery taxonomy, tools=%#v classes=%#v scopes=%#v costs=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses, metrics.DiscoveryScopes, metrics.DiscoveryCosts))
+	gomega.Expect(metrics.DiscoveryCosts).To(gomega.HaveLen(0), fmt.Sprintf("unannotated tool records must not infer discovery taxonomy, tools=%#v classes=%#v scopes=%#v costs=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses, metrics.DiscoveryScopes, metrics.DiscoveryCosts))
+})
+var _ = ginkgo.It("analyze uncounts recoverable post readiness gap attempt", func() {
 	records := []Record{
 		{
 			Type: "tool_request",
@@ -906,24 +804,17 @@ func TestAnalyzeUncountsRecoverablePostReadinessGapAttempt(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.ToolRequests != 1 {
-		t.Fatalf("expected recoverable post-readiness gap attempt to be uncounted, got %d", metrics.ToolRequests)
-	}
+	gomega.Expect(metrics.ToolRequests).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected recoverable post-readiness gap attempt to be uncounted, got %d", metrics.ToolRequests))
 
-	if metrics.Tools["code_navigate"] != 0 {
-		t.Fatalf("expected recoverable code_navigate attempt to be uncounted, got %#v", metrics.Tools)
-	}
+	gomega.Expect(metrics.Tools["code_navigate"]).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected recoverable code_navigate attempt to be uncounted, got %#v", metrics.Tools))
 
-	if metrics.DiscoveryTools["code_navigate"] != 0 || metrics.DiscoveryClasses["language_symbol"] != 0 {
-		t.Fatalf("expected recoverable discovery metrics to be uncounted, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
-	}
+	gomega.Expect(metrics.DiscoveryTools["code_navigate"]).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected recoverable discovery metrics to be uncounted, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses))
+	gomega.Expect(metrics.DiscoveryClasses["language_symbol"]).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected recoverable discovery metrics to be uncounted, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses))
 
-	if metrics.ErrorCount != 0 || len(metrics.Errors) != 0 {
-		t.Fatalf("expected recoverable post-readiness gap not to count as an error, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
-	}
-}
-
-func TestAnalyzeDoesNotCountCompletionGateAsToolRequest(t *testing.T) {
+	gomega.Expect(metrics.ErrorCount).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected recoverable post-readiness gap not to count as an error, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors))
+	gomega.Expect(metrics.Errors).To(gomega.HaveLen(0), fmt.Sprintf("expected recoverable post-readiness gap not to count as an error, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors))
+})
+var _ = ginkgo.It("analyze does not count completion gate as tool request", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "path": "internal/runtime/agent/runner.go"}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Read internal/runtime/agent/runner.go", "error": ""}},
@@ -931,20 +822,13 @@ func TestAnalyzeDoesNotCountCompletionGateAsToolRequest(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.ToolRequests != 1 {
-		t.Fatalf("expected completion_gate feedback not to count as workspace tool request, got %d", metrics.ToolRequests)
-	}
+	gomega.Expect(metrics.ToolRequests).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected completion_gate feedback not to count as workspace tool request, got %d", metrics.ToolRequests))
 
-	if metrics.Tools["completion_gate"] != 0 {
-		t.Fatalf("expected completion_gate not to count as tool usage, got %#v", metrics.Tools)
-	}
+	gomega.Expect(metrics.Tools["completion_gate"]).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected completion_gate not to count as tool usage, got %#v", metrics.Tools))
 
-	if metrics.CompletionGateRejections != 1 {
-		t.Fatalf("expected completion gate rejection metric to remain, got %d", metrics.CompletionGateRejections)
-	}
-}
-
-func TestAnalyzeParsesVerificationPlanRunEvent(t *testing.T) {
+	gomega.Expect(metrics.CompletionGateRejections).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected completion gate rejection metric to remain, got %d", metrics.CompletionGateRejections))
+})
+var _ = ginkgo.It("analyze parses verification plan run event", func() {
 	records := []Record{{
 		Type: "run_event",
 		Data: map[string]any{
@@ -954,17 +838,14 @@ func TestAnalyzeParsesVerificationPlanRunEvent(t *testing.T) {
 	}}
 
 	metrics := Analyze(records)
-	if len(metrics.VerificationPlans) != 1 {
-		t.Fatalf("expected verification plan from run_event, got %#v", metrics.VerificationPlans)
-	}
+	gomega.Expect(metrics.VerificationPlans).To(gomega.HaveLen(1), fmt.Sprintf("expected verification plan from run_event, got %#v", metrics.VerificationPlans))
 
 	plan := metrics.VerificationPlans[0]
-	if plan.Confidence != "low" || !containsStringFold(plan.Commands, "bash -n scripts/run-harness.sh") || !containsStringFold(plan.ExpectedFailures, "shell syntax errors") {
-		t.Fatalf("unexpected verification plan: %#v", plan)
-	}
-}
-
-func TestAnalyzeDoesNotUncountPriorToolForUnrequestedRecoverableGap(t *testing.T) {
+	gomega.Expect(plan.Confidence).To(gomega.BeEquivalentTo("low"), fmt.Sprintf("unexpected verification plan: %#v", plan))
+	gomega.Expect(containsStringFold(plan.Commands, "bash -n scripts/run-harness.sh")).To(gomega.BeTrue(), fmt.Sprintf("unexpected verification plan: %#v", plan))
+	gomega.Expect(containsStringFold(plan.ExpectedFailures, "shell syntax errors")).To(gomega.BeTrue(), fmt.Sprintf("unexpected verification plan: %#v", plan))
+})
+var _ = ginkgo.It("analyze does not uncount prior tool for unrequested recoverable gap", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "code_navigate", "path": "internal/labels/labels.go"}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Read Label", "error": ""}},
@@ -980,32 +861,23 @@ func TestAnalyzeDoesNotUncountPriorToolForUnrequestedRecoverableGap(t *testing.T
 	}
 
 	metrics := Analyze(records)
-	if metrics.ToolRequests != 1 || metrics.Tools["code_navigate"] != 1 {
-		t.Fatalf("expected unrequested recoverable gap not to decrement prior valid attempt, requests=%d tools=%#v", metrics.ToolRequests, metrics.Tools)
-	}
+	gomega.Expect(metrics.ToolRequests).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected unrequested recoverable gap not to decrement prior valid attempt, requests=%d tools=%#v", metrics.ToolRequests, metrics.Tools))
+	gomega.Expect(metrics.Tools["code_navigate"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected unrequested recoverable gap not to decrement prior valid attempt, requests=%d tools=%#v", metrics.ToolRequests, metrics.Tools))
 
-	if metrics.ErrorCount != 0 {
-		t.Fatalf("expected unrequested recoverable gap not to count as an error, got %d", metrics.ErrorCount)
-	}
-}
-
-func TestAnalyzeKeepsRepeatedIdenticalErrorEventCount(t *testing.T) {
+	gomega.Expect(metrics.ErrorCount).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected unrequested recoverable gap not to count as an error, got %d", metrics.ErrorCount))
+})
+var _ = ginkgo.It("analyze keeps repeated identical error event count", func() {
 	records := []Record{
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "duplicate rejection"}},
 		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "duplicate rejection"}},
 	}
 
 	metrics := Analyze(records)
-	if metrics.ErrorCount != 2 {
-		t.Fatalf("expected repeated identical errors to count as two events, got %d", metrics.ErrorCount)
-	}
+	gomega.Expect(metrics.ErrorCount).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected repeated identical errors to count as two events, got %d", metrics.ErrorCount))
 
-	if len(metrics.Errors) != 1 {
-		t.Fatalf("expected retained error messages to remain deduplicated, got %#v", metrics.Errors)
-	}
-}
-
-func TestAnalyzeDeduplicatesMirroredToolAndErrorRecordsByStep(t *testing.T) {
+	gomega.Expect(metrics.Errors).To(gomega.HaveLen(1), fmt.Sprintf("expected retained error messages to remain deduplicated, got %#v", metrics.Errors))
+})
+var _ = ginkgo.It("analyze deduplicates mirrored tool and error records by step", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "action": "read_file:a.go"}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "action": "read_file:a.go"}},
@@ -1014,20 +886,14 @@ func TestAnalyzeDeduplicatesMirroredToolAndErrorRecordsByStep(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.ToolRequests != 2 {
-		t.Fatalf("expected mirrored records to count as two logical attempts, got %d", metrics.ToolRequests)
-	}
+	gomega.Expect(metrics.ToolRequests).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected mirrored records to count as two logical attempts, got %d", metrics.ToolRequests))
 
-	if metrics.Tools["read_file"] != 1 || metrics.Tools["code_navigate"] != 1 {
-		t.Fatalf("expected logical tool counts, got %#v", metrics.Tools)
-	}
+	gomega.Expect(metrics.Tools["read_file"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected logical tool counts, got %#v", metrics.Tools))
+	gomega.Expect(metrics.Tools["code_navigate"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected logical tool counts, got %#v", metrics.Tools))
 
-	if metrics.ErrorCount != 1 {
-		t.Fatalf("expected duplicate rejected result records to count as one logical error event, got %d", metrics.ErrorCount)
-	}
-}
-
-func TestEvaluateScenarioPromptContainsChecksLastUserOnly(t *testing.T) {
+	gomega.Expect(metrics.ErrorCount).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected duplicate rejected result records to count as one logical error event, got %d", metrics.ErrorCount))
+})
+var _ = ginkgo.It("evaluate scenario prompt contains checks last user only", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "earlier request mentions first plan"}},
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Question."}},
@@ -1038,12 +904,44 @@ func TestEvaluateScenarioPromptContainsChecksLastUserOnly(t *testing.T) {
 		Name:           "latest-turn-prompt",
 		PromptContains: []string{"first plan"},
 	})
-	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `last user prompt does not contain "first plan"`) {
-		t.Fatalf("expected prompt_contains to check only the latest user turn, passed=%t findings=%#v", report.Passed, report.Findings)
-	}
-}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected prompt_contains to check only the latest user turn, passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring(`last user prompt does not contain "first plan"`), fmt.Sprintf("expected prompt_contains to check only the latest user turn, passed=%t findings=%#v", report.Passed, report.Findings))
+})
+var _ = ginkgo.It("evaluate scenario prompt digest checks redacted user content", func() {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	records := []Record{{
+		Type: "message",
+		Data: map[string]any{
+			"role":           "user",
+			"content_hash":   digest,
+			"content_length": 42,
+		},
+	}}
 
-func TestEvaluateScenarioPromptHistoryContainsChecksAnyUserTurn(t *testing.T) {
+	report := Evaluate("redacted-feature-planner.jsonl", records, Scenario{
+		Name:         "redacted-feature-planner",
+		PromptSHA256: digest,
+	})
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected digest assertion to pass: %#v", report.Findings))
+	gomega.Expect(report.Metrics.LastUser).To(gomega.BeEmpty())
+	gomega.Expect(report.Metrics.LastUserSHA256).To(gomega.Equal(digest))
+})
+var _ = ginkgo.It("evaluate scenario prompt digest survives nested user prompts", func() {
+	digest := "sha256:" + strings.Repeat("b", 64)
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content_hash": digest, "content_length": 42, "session_id": "feature-planner"}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "nested plan-execute contract", "session_id": "nested"}},
+	}
+
+	report := Evaluate("nested-feature-planner.jsonl", records, Scenario{
+		Name:         "nested feature planner",
+		PromptSHA256: digest,
+	})
+
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected task prompt digest to remain assertable across nested prompts: %#v", report.Findings))
+	gomega.Expect(report.Metrics.UserPromptSHA256s).To(gomega.ContainElement(digest))
+})
+var _ = ginkgo.It("evaluate scenario prompt history contains checks any user turn", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "earlier request mentions first plan"}},
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Question."}},
@@ -1054,12 +952,37 @@ func TestEvaluateScenarioPromptHistoryContainsChecksAnyUserTurn(t *testing.T) {
 		Name:                  "history-prompt",
 		PromptHistoryContains: []string{"first plan"},
 	})
-	if !report.Passed {
-		t.Fatalf("expected prompt_history_contains to check the full user prompt history, got %#v", report.Findings)
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected prompt_history_contains to check the full user prompt history, got %#v", report.Findings))
+})
+var _ = ginkgo.It("analyze counts TUI approval input submissions without double-counting mirrored user messages", func() {
+	records := []Record{
+		{Type: "input_submission", Data: map[string]any{"content": "/feature-planner propose files"}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "/feature-planner propose files"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Approval required."}},
+		{Type: "input_submission", Data: map[string]any{"content": "Is this model-generated?"}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Is this model-generated?"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Yes."}},
+		{Type: "input_submission", Data: map[string]any{"content": "Approved."}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Plan accepted."}},
 	}
-}
 
-func TestEvaluateScenarioToolAssertionsIncludeRejectedAttempts(t *testing.T) {
+	report := Evaluate("tui-approval.jsonl", records, Scenario{
+		Name:                        "tui approval",
+		PromptHistoryContains:       []string{"Approved."},
+		RequireAssistantForEachUser: true,
+	})
+
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected direct approval input to participate in prompt history: %#v", report.Findings))
+	gomega.Expect(report.Metrics.UserTurns).To(gomega.Equal(3))
+	gomega.Expect(report.Metrics.AssistantTurns).To(gomega.Equal(3))
+	gomega.Expect(report.Metrics.UserPrompts).To(gomega.Equal([]string{
+		"/feature-planner propose files",
+		"Is this model-generated?",
+		"Approved.",
+	}))
+	gomega.Expect(report.Metrics.LastUser).To(gomega.Equal("Approved."))
+})
+var _ = ginkgo.It("evaluate scenario tool assertions include rejected attempts", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Implementation target write-ready tool rejected", "error": "code_navigate rejected"}},
@@ -1069,20 +992,16 @@ func TestEvaluateScenarioToolAssertionsIncludeRejectedAttempts(t *testing.T) {
 		Name:         "rejected attempt required",
 		RequireTools: []string{"code_navigate"},
 	})
-	if !report.Passed {
-		t.Fatalf("expected required tool assertion to include rejected attempts, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected required tool assertion to include rejected attempts, got %#v", report.Findings))
 
 	report = Evaluate("log.jsonl", records, Scenario{
 		Name:        "rejected attempt forbidden",
 		ForbidTools: []string{"code_navigate"},
 	})
-	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `forbidden tool "code_navigate" was used`) {
-		t.Fatalf("expected forbidden tool assertion to include rejected attempts, passed=%t findings=%#v", report.Passed, report.Findings)
-	}
-}
-
-func TestEvaluateScenarioRequiresRejectedTools(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected forbidden tool assertion to include rejected attempts, passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring(`forbidden tool "code_navigate" was used`), fmt.Sprintf("expected forbidden tool assertion to include rejected attempts, passed=%t findings=%#v", report.Passed, report.Findings))
+})
+var _ = ginkgo.It("evaluate scenario requires rejected tools", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "run verification"}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "Tool not available in current runtime contract", "error": "shell is not in the current allowed tool surface"}},
@@ -1092,20 +1011,60 @@ func TestEvaluateScenarioRequiresRejectedTools(t *testing.T) {
 		Name:                 "shell-denial",
 		RequireRejectedTools: []string{"shell"},
 	})
-	if !report.Passed {
-		t.Fatalf("expected rejected shell tool assertion to pass, got %#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected rejected shell tool assertion to pass, got %#v", report.Findings))
 
 	report = Evaluate("log.jsonl", records, Scenario{
 		Name:                 "missing-denial",
 		RequireRejectedTools: []string{"edit_file"},
 	})
-	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `required rejected tool "edit_file" was not observed`) {
-		t.Fatalf("expected missing rejected tool assertion to fail, passed=%t findings=%#v", report.Passed, report.Findings)
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected missing rejected tool assertion to fail, passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring(`required rejected tool "edit_file" was not observed`), fmt.Sprintf("expected missing rejected tool assertion to fail, passed=%t findings=%#v", report.Passed, report.Findings))
+})
+var _ = ginkgo.It("evaluate scenario prefers typed rejection disposition over prose", func() {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
+		{Type: "tool_result", Data: map[string]any{
+			"step":                  1,
+			"tool":                  "edit_file",
+			"summary":               "Mutation could not be performed",
+			"error":                 "scope mismatch",
+			"rejection_disposition": "policy_denied",
+			"rejected_write_paths":  []any{"internal/labels/labels.go"},
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"step":                  2,
+			"tool":                  "append_file",
+			"summary":               "Request was not executed",
+			"rejection_disposition": "invalid_request",
+		}},
 	}
-}
 
-func TestEvaluateScenarioRequiresAssistantForEachUserTurn(t *testing.T) {
+	report := Evaluate("typed-rejection.jsonl", records, Scenario{
+		Name:                 "typed-rejection",
+		RequireRejectedTools: []string{"edit_file", "append_file"},
+	})
+
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("typed rejections should pass without prose classifiers: %#v", report.Findings))
+	gomega.Expect(report.Metrics.RejectedTools).To(gomega.HaveKeyWithValue("edit_file", 1))
+	gomega.Expect(report.Metrics.RejectedTools).To(gomega.HaveKeyWithValue("append_file", 1))
+	gomega.Expect(report.Metrics.SuccessfulTools).NotTo(gomega.HaveKey("append_file"), "typed rejection must not count as a success when an adapter omits error text")
+})
+
+var _ = ginkgo.It("evaluate scenario retains legacy rejection prose fallback", func() {
+	records := []Record{{Type: "tool_result", Data: map[string]any{
+		"tool":    "shell",
+		"summary": "Tool not available in current runtime contract",
+		"error":   "shell is not in the current allowed tool surface",
+	}}}
+
+	report := Evaluate("legacy-rejection.jsonl", records, Scenario{
+		Name:                 "legacy-rejection",
+		RequireRejectedTools: []string{"shell"},
+	})
+
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("legacy rejection logs should remain readable: %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate scenario requires assistant for each user turn", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you identify opportunities for us to refactor our repo for long-term maintainability"}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
@@ -1118,16 +1077,11 @@ func TestEvaluateScenarioRequiresAssistantForEachUserTurn(t *testing.T) {
 		Name:                        "conversation coherence",
 		RequireAssistantForEachUser: true,
 	})
-	if report.Passed {
-		t.Fatalf("expected missing assistant-turn coverage to fail, got %#v", report)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected missing assistant-turn coverage to fail, got %#v", report))
 
-	if !strings.Contains(strings.Join(report.Findings, "\n"), "assistant turns fewer than user turns") {
-		t.Fatalf("expected assistant-turn finding, got %#v", report.Findings)
-	}
-}
-
-func TestEvaluateScenarioAcceptsRequiredRoutePlan(t *testing.T) {
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("assistant turns fewer than user turns"), fmt.Sprintf("expected assistant-turn finding, got %#v", report.Findings))
+})
+var _ = ginkgo.It("evaluate scenario accepts required route plan", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "analyze structure"}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture followup=implement reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
@@ -1150,12 +1104,9 @@ func TestEvaluateScenarioAcceptsRequiredRoutePlan(t *testing.T) {
 			Reason:   "defect-shaped",
 		},
 	})
-	if !report.Passed {
-		t.Fatalf("expected scenario to pass, got %#v", report)
-	}
-}
-
-func TestEvaluateScenarioRequireRunEventsPassesWhenRolesPresent(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected scenario to pass, got %#v", report))
+})
+var _ = ginkgo.It("evaluate scenario require run events passes when roles present", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "rename the enum"}},
 		{Type: "message", Data: map[string]any{"role": "plan_then_execute_write_guard", "content": "plan-then-execute planner phase: write tool edit_file redirected to submit_plan"}},
@@ -1171,16 +1122,14 @@ func TestEvaluateScenarioRequireRunEventsPassesWhenRolesPresent(t *testing.T) {
 			"  ", // blank entries are tolerated and ignored
 		},
 	})
-	if !report.Passed {
-		t.Fatalf("expected scenario to pass when both required run events appear, got findings %v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected scenario to pass when both required run events appear, got findings %v", report.Findings))
 
-	if got := report.Metrics.MessageRoles["plan_then_execute_write_guard"]; got != 1 {
-		t.Fatalf("expected MessageRoles to count plan_then_execute_write_guard once, got %d", got)
+	{
+		got := report.Metrics.MessageRoles["plan_then_execute_write_guard"]
+		gomega.Expect(got).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected MessageRoles to count plan_then_execute_write_guard once, got %d", got))
 	}
-}
-
-func TestEvaluateScenarioRequireRunEventsFailsWhenRoleMissing(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate scenario require run events fails when role missing", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "rename the enum"}},
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Plan submitted."}},
@@ -1190,9 +1139,7 @@ func TestEvaluateScenarioRequireRunEventsFailsWhenRoleMissing(t *testing.T) {
 		Name:             "plan-execute write guard expected but absent",
 		RequireRunEvents: []string{"plan_then_execute_write_guard"},
 	})
-	if report.Passed {
-		t.Fatalf("expected scenario to fail when required run event is absent, got pass")
-	}
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected scenario to fail when required run event is absent, got pass"))
 
 	var sawFinding bool
 
@@ -1202,10 +1149,9 @@ func TestEvaluateScenarioRequireRunEventsFailsWhenRoleMissing(t *testing.T) {
 		}
 	}
 
-	if !sawFinding {
-		t.Fatalf("expected finding pointing at the missing run event, got %v", report.Findings)
-	}
-}
+	gomega.Expect(sawFinding).To(gomega.BeTrue(), fmt.Sprintf("expected finding pointing at the missing run event, got %v", report.Findings))
+})
+var
 
 // TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes covers the
 // second match source: orchestrator events emitted to stdout JSONL with the
@@ -1213,7 +1159,7 @@ func TestEvaluateScenarioRequireRunEventsFailsWhenRoleMissing(t *testing.T) {
 // instead of role on a type:"message" record. RequireRunEvents must match
 // either source so a single field can cover runner gates and orchestrator
 // gates symmetrically.
-func TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes(t *testing.T) {
+_ = ginkgo.It("evaluate scenario require run events matches orchestrator event types", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "execute the plan"}},
 		{Type: "idiom.plan_execute.plan_artifact_loaded", Data: map[string]any{"path": ".idiom/plans/x.plan.json", "edits": 3}},
@@ -1228,16 +1174,14 @@ func TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes(t *testin
 			"idiom.plan_execute.preflight_failed",
 		},
 	})
-	if !report.Passed {
-		t.Fatalf("expected scenario to pass when orchestrator events appear as top-level record types, got findings %v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected scenario to pass when orchestrator events appear as top-level record types, got findings %v", report.Findings))
 
-	if got := report.Metrics.RecordTypes["idiom.plan_execute.preflight_failed"]; got != 1 {
-		t.Fatalf("expected RecordTypes to count preflight_failed once, got %d", got)
+	{
+		got := report.Metrics.RecordTypes["idiom.plan_execute.preflight_failed"]
+		gomega.Expect(got).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected RecordTypes to count preflight_failed once, got %d", got))
 	}
-}
-
-func TestEvaluateScenarioRequireRunEventsAcceptsFeaturePlannerSourceSatisfiedCompletionAlias(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate scenario require run events accepts feature planner source satisfied completion alias", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "dispatch the atom"}},
 		{Type: "idiom.feature_planner.atom_source_satisfied", Data: map[string]any{"atom_id": "atom-1", "outcome": "source_satisfied"}},
@@ -1248,12 +1192,9 @@ func TestEvaluateScenarioRequireRunEventsAcceptsFeaturePlannerSourceSatisfiedCom
 		Name:             "source-satisfied atom completes feature-planner atom",
 		RequireRunEvents: []string{"idiom.feature_planner.atom_completed"},
 	})
-	if !report.Passed {
-		t.Fatalf("expected source-satisfied atom event to satisfy atom_completed requirement, got findings %v", report.Findings)
-	}
-}
-
-func TestEvaluateScenarioRequireRunEventsMatchesNestedAutonomyEventTypes(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected source-satisfied atom event to satisfy atom_completed requirement, got findings %v", report.Findings))
+})
+var _ = ginkgo.It("evaluate scenario require run events matches nested autonomy event types", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "read the denied file"}},
 		{
@@ -1270,16 +1211,14 @@ func TestEvaluateScenarioRequireRunEventsMatchesNestedAutonomyEventTypes(t *test
 		Name:             "autonomy tool policy result observed",
 		RequireRunEvents: []string{"tool_policy_result"},
 	})
-	if !report.Passed {
-		t.Fatalf("expected scenario to pass when autonomy event payload type appears, got findings %v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected scenario to pass when autonomy event payload type appears, got findings %v", report.Findings))
 
-	if got := report.Metrics.RecordTypes["tool_policy_result"]; got != 1 {
-		t.Fatalf("expected RecordTypes to count nested tool_policy_result once, got %d", got)
+	{
+		got := report.Metrics.RecordTypes["tool_policy_result"]
+		gomega.Expect(got).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected RecordTypes to count nested tool_policy_result once, got %d", got))
 	}
-}
-
-func TestEvaluateScenarioAcceptsFrontierControllerTelemetry(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate scenario accepts frontier controller telemetry", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "review routing thoroughly"}},
 		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"review","used_model_calls":3,"used_deepening_passes":2,"max_deepening_passes":2,"used_tool_results":4,"new_evidence_paths":1,"total_evidence_paths":2,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted and identify unresolved gaps"}`}},
@@ -1357,12 +1296,9 @@ func TestEvaluateScenarioAcceptsFrontierControllerTelemetry(t *testing.T) {
 		},
 	})
 
-	if !report.Passed {
-		t.Fatalf("expected frontier telemetry scenario to pass, got %#v", report)
-	}
-}
-
-func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected frontier telemetry scenario to pass, got %#v", report))
+})
+var _ = ginkgo.It("build suggested scenario reflects observed metrics", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "remove the banner text"}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=locate followup=implement reason=locate_request contract=locate_targets"}},
@@ -1393,216 +1329,178 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 	}
 
 	scenario := BuildSuggestedScenario("banner-remove", records)
-	if scenario.Name != "banner-remove" {
-		t.Fatalf("unexpected scenario name: %q", scenario.Name)
-	}
+	gomega.Expect(scenario.Name).To(gomega.BeEquivalentTo("banner-remove"), fmt.Sprintf("unexpected scenario name: %q", scenario.Name))
 
-	if len(scenario.PromptContains) != 1 || scenario.PromptContains[0] != "remove the banner text" {
-		t.Fatalf("unexpected prompt matchers: %#v", scenario.PromptContains)
-	}
+	gomega.Expect(scenario.PromptContains).To(gomega.HaveLen(1), fmt.Sprintf("unexpected prompt matchers: %#v", scenario.PromptContains))
+	gomega.Expect(scenario.PromptContains[0]).To(gomega.BeEquivalentTo("remove the banner text"), fmt.Sprintf("unexpected prompt matchers: %#v", scenario.PromptContains))
 
-	if scenario.RequireVerification != "passed" {
-		t.Fatalf("expected passed verification, got %q", scenario.RequireVerification)
-	}
+	gomega.Expect(scenario.RequireVerification).To(gomega.BeEquivalentTo("passed"), fmt.Sprintf("expected passed verification, got %q", scenario.RequireVerification))
 
-	if !containsStringFold(scenario.RequireTools, "search_content") {
-		t.Fatalf("expected successful narrowing tool in scenario: %#v", scenario.RequireTools)
-	}
+	gomega.Expect(containsStringFold(scenario.RequireTools, "search_content")).To(gomega.BeTrue(), fmt.Sprintf("expected successful narrowing tool in scenario: %#v", scenario.RequireTools))
 
-	if !containsStringFold(scenario.RequireChangedFiles, "internal/surfaces/tui/app/app.go") {
-		t.Fatalf("expected changed file in scenario: %#v", scenario.RequireChangedFiles)
-	}
+	gomega.Expect(containsStringFold(scenario.RequireChangedFiles, "internal/surfaces/tui/app/app.go")).To(gomega.BeTrue(), fmt.Sprintf("expected changed file in scenario: %#v", scenario.RequireChangedFiles))
 
-	if scenario.RequireRoutePlan == nil || scenario.RequireRoutePlan.InitialLane != "locate" || scenario.RequireRoutePlan.Contract != "locate_targets" {
-		t.Fatalf("expected suggested route plan in scenario, got %#v", scenario.RequireRoutePlan)
-	}
+	gomega.Expect(scenario.RequireRoutePlan).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested route plan in scenario, got %#v", scenario.RequireRoutePlan))
+	gomega.Expect(scenario.RequireRoutePlan.InitialLane).To(gomega.BeEquivalentTo("locate"), fmt.Sprintf("expected suggested route plan in scenario, got %#v", scenario.RequireRoutePlan))
+	gomega.Expect(scenario.RequireRoutePlan.Contract).To(gomega.BeEquivalentTo("locate_targets"), fmt.Sprintf("expected suggested route plan in scenario, got %#v", scenario.RequireRoutePlan))
 
-	if scenario.RequireReplan == nil || scenario.RequireReplan.FromLane != "locate" || scenario.RequireReplan.ToLane != "review" {
-		t.Fatalf("expected suggested replan in scenario, got %#v", scenario.RequireReplan)
-	}
+	gomega.Expect(scenario.RequireReplan).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested replan in scenario, got %#v", scenario.RequireReplan))
+	gomega.Expect(scenario.RequireReplan.FromLane).To(gomega.BeEquivalentTo("locate"), fmt.Sprintf("expected suggested replan in scenario, got %#v", scenario.RequireReplan))
+	gomega.Expect(scenario.RequireReplan.ToLane).To(gomega.BeEquivalentTo("review"), fmt.Sprintf("expected suggested replan in scenario, got %#v", scenario.RequireReplan))
 
-	if !containsStringFold(scenario.RequireEvidencePaths, "internal/surfaces/tui/app/app.go") {
-		t.Fatalf("expected suggested evidence path in scenario, got %#v", scenario.RequireEvidencePaths)
-	}
+	gomega.Expect(containsStringFold(scenario.RequireEvidencePaths, "internal/surfaces/tui/app/app.go")).To(gomega.BeTrue(), fmt.Sprintf("expected suggested evidence path in scenario, got %#v", scenario.RequireEvidencePaths))
 
-	if !containsLanguageCapabilityExpectation(scenario.RequireLanguageCapabilities, "go") {
-		t.Fatalf("expected suggested Go language capability, got %#v", scenario.RequireLanguageCapabilities)
-	}
+	gomega.Expect(containsLanguageCapabilityExpectation(scenario.RequireLanguageCapabilities, "go")).To(gomega.BeTrue(), fmt.Sprintf("expected suggested Go language capability, got %#v", scenario.RequireLanguageCapabilities))
 
-	if scenario.RequireVerificationPlan == nil || scenario.RequireVerificationPlan.RiskLevel != "high" || scenario.RequireVerificationPlan.UsesFullSuite == nil || !*scenario.RequireVerificationPlan.UsesFullSuite {
-		t.Fatalf("expected suggested verification plan, got %#v", scenario.RequireVerificationPlan)
-	}
+	gomega.Expect(scenario.RequireVerificationPlan).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested verification plan, got %#v", scenario.RequireVerificationPlan))
+	gomega.Expect(scenario.RequireVerificationPlan.RiskLevel).To(gomega.BeEquivalentTo("high"), fmt.Sprintf("expected suggested verification plan, got %#v", scenario.RequireVerificationPlan))
+	gomega.Expect(scenario.RequireVerificationPlan.UsesFullSuite).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested verification plan, got %#v", scenario.RequireVerificationPlan))
+	gomega.Expect(*scenario.RequireVerificationPlan.UsesFullSuite).To(gomega.BeTrue(), fmt.Sprintf("expected suggested verification plan, got %#v", scenario.RequireVerificationPlan))
 
-	if scenario.RequireReadiness == nil || scenario.RequireReadiness.Ready == nil || *scenario.RequireReadiness.Ready || scenario.RequireReadiness.Action != "retry" {
-		t.Fatalf("expected suggested readiness check, got %#v", scenario.RequireReadiness)
-	}
+	gomega.Expect(scenario.RequireReadiness).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested readiness check, got %#v", scenario.RequireReadiness))
+	gomega.Expect(scenario.RequireReadiness.Ready).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested readiness check, got %#v", scenario.RequireReadiness))
+	gomega.Expect(*scenario.RequireReadiness.Ready).To(gomega.BeFalse(), fmt.Sprintf("expected suggested readiness check, got %#v", scenario.RequireReadiness))
+	gomega.Expect(scenario.RequireReadiness.Action).To(gomega.BeEquivalentTo("retry"), fmt.Sprintf("expected suggested readiness check, got %#v", scenario.RequireReadiness))
 
-	if scenario.RequireDeepening == nil || scenario.RequireDeepening.Attempted == nil || !*scenario.RequireDeepening.Attempted || scenario.RequireDeepening.Action != "retry_with_evidence" {
-		t.Fatalf("expected suggested deepening attempt, got %#v", scenario.RequireDeepening)
-	}
+	gomega.Expect(scenario.RequireDeepening).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested deepening attempt, got %#v", scenario.RequireDeepening))
+	gomega.Expect(scenario.RequireDeepening.Attempted).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested deepening attempt, got %#v", scenario.RequireDeepening))
+	gomega.Expect(*scenario.RequireDeepening.Attempted).To(gomega.BeTrue(), fmt.Sprintf("expected suggested deepening attempt, got %#v", scenario.RequireDeepening))
+	gomega.Expect(scenario.RequireDeepening.Action).To(gomega.BeEquivalentTo("retry_with_evidence"), fmt.Sprintf("expected suggested deepening attempt, got %#v", scenario.RequireDeepening))
 
-	if scenario.RequireFinalAnswerCritic == nil || scenario.RequireFinalAnswerCritic.Repaired == nil || !*scenario.RequireFinalAnswerCritic.Repaired || scenario.RequireFinalAnswerCritic.Action != "repair" {
-		t.Fatalf("expected suggested final answer critic, got %#v", scenario.RequireFinalAnswerCritic)
-	}
+	gomega.Expect(scenario.RequireFinalAnswerCritic).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested final answer critic, got %#v", scenario.RequireFinalAnswerCritic))
+	gomega.Expect(scenario.RequireFinalAnswerCritic.Repaired).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested final answer critic, got %#v", scenario.RequireFinalAnswerCritic))
+	gomega.Expect(*scenario.RequireFinalAnswerCritic.Repaired).To(gomega.BeTrue(), fmt.Sprintf("expected suggested final answer critic, got %#v", scenario.RequireFinalAnswerCritic))
+	gomega.Expect(scenario.RequireFinalAnswerCritic.Action).To(gomega.BeEquivalentTo("repair"), fmt.Sprintf("expected suggested final answer critic, got %#v", scenario.RequireFinalAnswerCritic))
 
-	if scenario.RequireEffortPolicy == nil || scenario.RequireEffortPolicy.Level != "medium" || scenario.RequireEffortPolicy.MinAnalysisToolBudget == nil || *scenario.RequireEffortPolicy.MinAnalysisToolBudget != 6 {
-		t.Fatalf("expected suggested effort policy, got %#v", scenario.RequireEffortPolicy)
-	}
+	gomega.Expect(scenario.RequireEffortPolicy).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested effort policy, got %#v", scenario.RequireEffortPolicy))
+	gomega.Expect(scenario.RequireEffortPolicy.Level).To(gomega.BeEquivalentTo("medium"), fmt.Sprintf("expected suggested effort policy, got %#v", scenario.RequireEffortPolicy))
+	gomega.Expect(scenario.RequireEffortPolicy.MinAnalysisToolBudget).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested effort policy, got %#v", scenario.RequireEffortPolicy))
+	gomega.Expect(*scenario.RequireEffortPolicy.MinAnalysisToolBudget).To(gomega.BeEquivalentTo(6), fmt.Sprintf("expected suggested effort policy, got %#v", scenario.RequireEffortPolicy))
 
-	if scenario.RequireLongHorizonState == nil || scenario.RequireLongHorizonState.Action != "resume" || scenario.RequireLongHorizonState.Stage == nil || *scenario.RequireLongHorizonState.Stage != 2 {
-		t.Fatalf("expected suggested long-horizon state, got %#v", scenario.RequireLongHorizonState)
-	}
+	gomega.Expect(scenario.RequireLongHorizonState).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested long-horizon state, got %#v", scenario.RequireLongHorizonState))
+	gomega.Expect(scenario.RequireLongHorizonState.Action).To(gomega.BeEquivalentTo("resume"), fmt.Sprintf("expected suggested long-horizon state, got %#v", scenario.RequireLongHorizonState))
+	gomega.Expect(scenario.RequireLongHorizonState.Stage).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested long-horizon state, got %#v", scenario.RequireLongHorizonState))
+	gomega.Expect(*scenario.RequireLongHorizonState.Stage).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected suggested long-horizon state, got %#v", scenario.RequireLongHorizonState))
 
-	if scenario.RequireBudgetLedger == nil || scenario.RequireBudgetLedger.BudgetExhausted == nil || !*scenario.RequireBudgetLedger.BudgetExhausted || scenario.RequireBudgetLedger.MinModelCalls == nil || *scenario.RequireBudgetLedger.MinModelCalls != 2 {
-		t.Fatalf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger)
-	}
+	gomega.Expect(scenario.RequireBudgetLedger).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger))
+	gomega.Expect(scenario.RequireBudgetLedger.BudgetExhausted).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger))
+	gomega.Expect(*scenario.RequireBudgetLedger.BudgetExhausted).To(gomega.BeTrue(), fmt.Sprintf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger))
+	gomega.Expect(scenario.RequireBudgetLedger.MinModelCalls).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger))
+	gomega.Expect(*scenario.RequireBudgetLedger.MinModelCalls).To(gomega.BeEquivalentTo(2), fmt.Sprintf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger))
 
-	if scenario.RequireEvidenceDelta == nil || scenario.RequireEvidenceDelta.MinNewPaths == nil || *scenario.RequireEvidenceDelta.MinNewPaths != 1 || scenario.RequireEvidenceDelta.MaxFailedTools == nil || *scenario.RequireEvidenceDelta.MaxFailedTools != 0 {
-		t.Fatalf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta)
-	}
+	gomega.Expect(scenario.RequireEvidenceDelta).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta))
+	gomega.Expect(scenario.RequireEvidenceDelta.MinNewPaths).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta))
+	gomega.Expect(*scenario.RequireEvidenceDelta.MinNewPaths).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta))
+	gomega.Expect(scenario.RequireEvidenceDelta.MaxFailedTools).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta))
+	gomega.Expect(*scenario.RequireEvidenceDelta.MaxFailedTools).To(gomega.BeEquivalentTo(0), fmt.Sprintf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta))
 
-	if scenario.RequireClaimConfidence == nil || scenario.RequireClaimConfidence.MaxUnresolved == nil || *scenario.RequireClaimConfidence.MaxUnresolved != 1 || scenario.RequireClaimConfidence.CalibrationBasis == "" {
-		t.Fatalf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence)
-	}
+	gomega.Expect(scenario.RequireClaimConfidence).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence))
+	gomega.Expect(scenario.RequireClaimConfidence.MaxUnresolved).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence))
+	gomega.Expect(*scenario.RequireClaimConfidence.MaxUnresolved).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence))
+	gomega.Expect(scenario.RequireClaimConfidence.CalibrationBasis).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence))
 
-	if scenario.RequireContextCompaction == nil || scenario.RequireContextCompaction.MinDroppedMessages == nil || *scenario.RequireContextCompaction.MinDroppedMessages != 3 || !containsStringFold(scenario.RequireContextCompaction.RequirePinnedPaths, "internal/surfaces/tui/app/app.go") {
-		t.Fatalf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction)
-	}
+	gomega.Expect(scenario.RequireContextCompaction).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction))
+	gomega.Expect(scenario.RequireContextCompaction.MinDroppedMessages).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction))
+	gomega.Expect(*scenario.RequireContextCompaction.MinDroppedMessages).To(gomega.BeEquivalentTo(3), fmt.Sprintf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction))
+	gomega.Expect(containsStringFold(scenario.RequireContextCompaction.RequirePinnedPaths, "internal/surfaces/tui/app/app.go")).To(gomega.BeTrue(), fmt.Sprintf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction))
 
-	if scenario.RequireRouteAmbiguity == nil || scenario.RequireRouteAmbiguity.Ambiguous == nil || !*scenario.RequireRouteAmbiguity.Ambiguous || !containsStringFold(scenario.RequireRouteAmbiguity.RequireSignals, "implement") {
-		t.Fatalf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity)
-	}
+	gomega.Expect(scenario.RequireRouteAmbiguity).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity))
+	gomega.Expect(scenario.RequireRouteAmbiguity.Ambiguous).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity))
+	gomega.Expect(*scenario.RequireRouteAmbiguity.Ambiguous).To(gomega.BeTrue(), fmt.Sprintf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity))
+	gomega.Expect(containsStringFold(scenario.RequireRouteAmbiguity.RequireSignals, "implement")).To(gomega.BeTrue(), fmt.Sprintf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity))
 
-	if scenario.RequireVerificationFeedback == nil || scenario.RequireVerificationFeedback.Confidence != "high" || len(scenario.RequireVerificationFeedback.RecommendationContains) != 1 || !containsStringFold(scenario.RequireVerificationFeedback.RequireFailureClasses, "go_unused_variable") {
-		t.Fatalf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback)
-	}
+	gomega.Expect(scenario.RequireVerificationFeedback).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback))
+	gomega.Expect(scenario.RequireVerificationFeedback.Confidence).To(gomega.BeEquivalentTo("high"), fmt.Sprintf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback))
+	gomega.Expect(scenario.RequireVerificationFeedback.RecommendationContains).To(gomega.HaveLen(1), fmt.Sprintf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback))
+	gomega.Expect(containsStringFold(scenario.RequireVerificationFeedback.RequireFailureClasses, "go_unused_variable")).To(gomega.BeTrue(), fmt.Sprintf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback))
 
-	if scenario.RequireToolFailureConfidence == nil || scenario.RequireToolFailureConfidence.Tool != "read_file" || scenario.RequireToolFailureConfidence.ConfidenceImpact == "" {
-		t.Fatalf("expected suggested tool-failure confidence, got %#v", scenario.RequireToolFailureConfidence)
-	}
+	gomega.Expect(scenario.RequireToolFailureConfidence).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested tool-failure confidence, got %#v", scenario.RequireToolFailureConfidence))
+	gomega.Expect(scenario.RequireToolFailureConfidence.Tool).To(gomega.BeEquivalentTo("read_file"), fmt.Sprintf("expected suggested tool-failure confidence, got %#v", scenario.RequireToolFailureConfidence))
+	gomega.Expect(scenario.RequireToolFailureConfidence.ConfidenceImpact).NotTo(gomega.BeEquivalentTo(""), fmt.Sprintf("expected suggested tool-failure confidence, got %#v", scenario.RequireToolFailureConfidence))
 
-	if scenario.RequireControlRails == nil || scenario.RequireControlRails.TaskFamily != "locate" || scenario.RequireControlRails.VerificationContract != "tests_passed_or_failed_or_skipped_with_blocker" {
-		t.Fatalf("expected suggested control rails, got %#v", scenario.RequireControlRails)
-	}
+	gomega.Expect(scenario.RequireControlRails).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested control rails, got %#v", scenario.RequireControlRails))
+	gomega.Expect(scenario.RequireControlRails.TaskFamily).To(gomega.BeEquivalentTo("locate"), fmt.Sprintf("expected suggested control rails, got %#v", scenario.RequireControlRails))
+	gomega.Expect(scenario.RequireControlRails.VerificationContract).To(gomega.BeEquivalentTo("tests_passed_or_failed_or_skipped_with_blocker"), fmt.Sprintf("expected suggested control rails, got %#v", scenario.RequireControlRails))
 
-	if scenario.MaxSummaryRejections == nil || *scenario.MaxSummaryRejections != 1 {
-		t.Fatalf("expected suggested summary rejection budget, got %#v", scenario.MaxSummaryRejections)
-	}
-}
-
-func TestParseReplanRecommendation(t *testing.T) {
+	gomega.Expect(scenario.MaxSummaryRejections).NotTo(gomega.BeNil(), fmt.Sprintf("expected suggested summary rejection budget, got %#v", scenario.MaxSummaryRejections))
+	gomega.Expect(*scenario.MaxSummaryRejections).To(gomega.BeEquivalentTo(1), fmt.Sprintf("expected suggested summary rejection budget, got %#v", scenario.MaxSummaryRejections))
+})
+var _ = ginkgo.It("parse replan recommendation", func() {
 	replan := parseReplanRecommendation("review -> architecture: review produced structural evidence")
-	if replan.FromLane != "review" || replan.ToLane != "architecture" || !strings.Contains(replan.Reason, "structural evidence") {
-		t.Fatalf("unexpected replan parse: %#v", replan)
-	}
+	gomega.Expect(replan.FromLane).To(gomega.BeEquivalentTo("review"), fmt.Sprintf("unexpected replan parse: %#v", replan))
+	gomega.Expect(replan.ToLane).To(gomega.BeEquivalentTo("architecture"), fmt.Sprintf("unexpected replan parse: %#v", replan))
+	gomega.Expect(replan.Reason).To(gomega.ContainSubstring("structural evidence"), fmt.Sprintf("unexpected replan parse: %#v", replan))
 
-	if !replanMatches(replan, ReplanExpectation{FromLane: "review", ToLane: "architecture", Reason: "structural"}) {
-		t.Fatalf("expected replan matcher to accept %#v", replan)
-	}
-}
-
-func TestEvidencePathsFromTextExtractsPathLineReferences(t *testing.T) {
+	gomega.Expect(replanMatches(replan, ReplanExpectation{FromLane: "review", ToLane: "architecture", Reason: "structural"})).To(gomega.BeTrue(), fmt.Sprintf("expected replan matcher to accept %#v", replan))
+})
+var _ = ginkgo.It("evidence paths from text extracts path line references", func() {
 	paths := evidencePathsFromText("Read f1 internal/surfaces/tui/app/app.go lines 1-120 and found internal/capabilities/workspace/manager.go:42.")
 	for _, want := range []string{"internal/surfaces/tui/app/app.go", "internal/capabilities/workspace/manager.go"} {
-		if !containsStringFold(paths, want) {
-			t.Fatalf("expected %q in evidence paths, got %#v", want, paths)
-		}
+		gomega.Expect(containsStringFold(paths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected %q in evidence paths, got %#v", want, paths))
 	}
-}
-
-func TestParseLanguageCapabilities(t *testing.T) {
+})
+var _ = ginkgo.It("parse language capabilities", func() {
 	caps := parseLanguageCapabilities("Repository profile:\nLanguage capability registry:\n- go tools: go_overview, go_find_symbol | signals: go.mod, internal/surfaces/tui/app/app.go\n- c/c++ tools: cpp_find_symbol | signals: native/main.cpp")
-	if !languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "internal/surfaces/tui/app/app.go"}) {
-		t.Fatalf("expected Go capability, got %#v", caps)
-	}
+	gomega.Expect(languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "internal/surfaces/tui/app/app.go"})).To(gomega.BeTrue(), fmt.Sprintf("expected Go capability, got %#v", caps))
 
-	if !languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "c/c++", Tool: "cpp_find_symbol", Signal: "native/main.cpp"}) {
-		t.Fatalf("expected C/C++ capability, got %#v", caps)
-	}
-}
-
-func TestParseVerificationPlan(t *testing.T) {
+	gomega.Expect(languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "c/c++", Tool: "cpp_find_symbol", Signal: "native/main.cpp"})).To(gomega.BeTrue(), fmt.Sprintf("expected C/C++ capability, got %#v", caps))
+})
+var _ = ginkgo.It("parse verification plan", func() {
 	plan := parseVerificationPlan(`{"commands":["go build ./...","go test -vet=off ./..."],"uses_full_suite":true,"coverage":"full-suite escalation","confidence":"high","risk_level":"high","expected_failures":["compile errors"],"repair_policy":"repair all failing full-suite checks"}`)
-	if plan.Raw == "" {
-		t.Fatal("expected verification plan to parse")
-	}
+	gomega.Expect(plan.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected verification plan to parse"))
 
-	if !verificationPlanMatches(plan, VerificationPlanExpectation{
+	gomega.Expect(verificationPlanMatches(plan, VerificationPlanExpectation{
 		Coverage:                "full-suite escalation",
 		Confidence:              "high",
 		RiskLevel:               "high",
 		UsesFullSuite:           boolPtr(true),
 		RequireCommands:         []string{"go test -vet=off ./..."},
 		RequireExpectedFailures: []string{"compile errors"},
-	}) {
-
-		t.Fatalf("expected verification plan matcher to accept %#v", plan)
-	}
-}
-
-func TestParseReadinessCheck(t *testing.T) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected verification plan matcher to accept %#v", plan))
+})
+var _ = ginkgo.It("parse readiness check", func() {
 	readiness := parseReadinessCheck(`{"lane":"architecture","ready":false,"confidence":"low","action":"retry","reason":"response asks for more evidence before it is ready","evidence_paths":["internal/surfaces/tui/app/app.go","internal/capabilities/workspace/manager.go"]}`)
-	if readiness.Raw == "" {
-		t.Fatal("expected readiness check to parse")
-	}
+	gomega.Expect(readiness.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected readiness check to parse"))
 
-	if !readinessMatches(readiness, ReadinessExpectation{
+	gomega.Expect(readinessMatches(readiness, ReadinessExpectation{
 		Lane:             "architecture",
 		Ready:            boolPtr(false),
 		Confidence:       "low",
 		Action:           "retry",
 		MinEvidencePaths: intPtr(2),
 		ReasonContains:   []string{"more evidence"},
-	}) {
-
-		t.Fatalf("expected readiness matcher to accept %#v", readiness)
-	}
-}
-
-func TestParseDeepeningAttempt(t *testing.T) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected readiness matcher to accept %#v", readiness))
+})
+var _ = ginkgo.It("parse deepening attempt", func() {
 	deepening := parseDeepeningAttempt(`{"lane":"review","attempt":2,"attempted":true,"exhausted":false,"action":"retry_with_evidence","reason":"readiness gate failed; retry with wider candidate reads","evidence_paths":["internal/surfaces/tui/app/app.go","internal/capabilities/workspace/manager.go"]}`)
-	if deepening.Raw == "" {
-		t.Fatal("expected deepening attempt to parse")
-	}
+	gomega.Expect(deepening.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected deepening attempt to parse"))
 
-	if !deepeningMatches(deepening, DeepeningExpectation{
+	gomega.Expect(deepeningMatches(deepening, DeepeningExpectation{
 		Lane:             "review",
 		Attempted:        boolPtr(true),
 		Exhausted:        boolPtr(false),
 		Action:           "retry_with_evidence",
 		MinEvidencePaths: intPtr(2),
 		ReasonContains:   []string{"readiness gate"},
-	}) {
-
-		t.Fatalf("expected deepening matcher to accept %#v", deepening)
-	}
-}
-
-func TestParseFinalAnswerCritic(t *testing.T) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected deepening matcher to accept %#v", deepening))
+})
+var _ = ginkgo.It("parse final answer critic", func() {
 	critic := parseFinalAnswerCritic(`{"contract":"implementation_result","passed":false,"action":"repair","repaired":true,"findings":["missing verification section"]}`)
-	if critic.Raw == "" {
-		t.Fatal("expected final answer critic to parse")
-	}
+	gomega.Expect(critic.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected final answer critic to parse"))
 
-	if !finalAnswerCriticMatches(critic, FinalAnswerCriticExpectation{
+	gomega.Expect(finalAnswerCriticMatches(critic, FinalAnswerCriticExpectation{
 		Contract:        "implementation_result",
 		Passed:          boolPtr(false),
 		Action:          "repair",
 		Repaired:        boolPtr(true),
 		RequireFindings: []string{"verification"},
-	}) {
-
-		t.Fatalf("expected final answer critic matcher to accept %#v", critic)
-	}
-}
-
-func TestParseEffortPolicy(t *testing.T) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected final answer critic matcher to accept %#v", critic))
+})
+var _ = ginkgo.It("parse effort policy", func() {
 	policy := parseEffortPolicy(`{"lane":"review","level":"thorough","analysis_tool_budget":6,"implement_tool_budget":6,"deepening_passes":2,"max_output_tokens":2048,"reasoning_budget":-1,"confidence_floor":"high_or_exhausted_budget","budget_exhaustion_mode":"answer_with_explicit_uncertainty_or_fallback"}`)
-	if policy.Raw == "" {
-		t.Fatal("expected effort policy to parse")
-	}
+	gomega.Expect(policy.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected effort policy to parse"))
 
-	if !effortPolicyMatches(policy, EffortPolicyExpectation{
+	gomega.Expect(effortPolicyMatches(policy, EffortPolicyExpectation{
 		Lane:                   "review",
 		Level:                  "thorough",
 		MinAnalysisToolBudget:  intPtr(6),
@@ -1611,19 +1509,13 @@ func TestParseEffortPolicy(t *testing.T) {
 		MinMaxOutputTokens:     intPtr(2048),
 		ConfidenceFloor:        "high_or_exhausted_budget",
 		BudgetExhaustionMode:   "answer_with_explicit_uncertainty_or_fallback",
-	}) {
-
-		t.Fatalf("expected effort policy matcher to accept %#v", policy)
-	}
-}
-
-func TestParseLongHorizonState(t *testing.T) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected effort policy matcher to accept %#v", policy))
+})
+var _ = ginkgo.It("parse long horizon state", func() {
 	state := parseLongHorizonState(`{"action":"persist","source_lane":"architecture","stage":1,"focus_path":"internal/surfaces/tui/app/app.go","changed":["internal/surfaces/tui/app/app.go"],"remaining":["internal/capabilities/workspace/manager.go"],"next_step":"Continue with the workspace manager extraction.","resumable":true}`)
-	if state.Raw == "" {
-		t.Fatal("expected long-horizon state to parse")
-	}
+	gomega.Expect(state.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected long-horizon state to parse"))
 
-	if !longHorizonStateMatches(state, LongHorizonStateExpectation{
+	gomega.Expect(longHorizonStateMatches(state, LongHorizonStateExpectation{
 		Action:           "persist",
 		SourceLane:       "architecture",
 		Stage:            intPtr(1),
@@ -1631,33 +1523,23 @@ func TestParseLongHorizonState(t *testing.T) {
 		RequireRemaining: []string{"internal/capabilities/workspace/manager.go"},
 		NextContains:     []string{"workspace manager"},
 		Resumable:        boolPtr(true),
-	}) {
-
-		t.Fatalf("expected long-horizon matcher to accept %#v", state)
-	}
-}
-
-func TestParseContextCompaction(t *testing.T) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected long-horizon matcher to accept %#v", state))
+})
+var _ = ginkgo.It("parse context compaction", func() {
 	compaction := parseContextCompaction(`{"dropped_messages":3,"retained_messages":5,"max_history":5,"pinned_paths":["internal/surfaces/tui/app/app.go"],"pinned_memory_kind":"partial_repair","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`)
-	if compaction.Raw == "" {
-		t.Fatal("expected context compaction to parse")
-	}
+	gomega.Expect(compaction.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected context compaction to parse"))
 
-	if !contextCompactionMatches(compaction, ContextCompactionExpectation{
+	gomega.Expect(contextCompactionMatches(compaction, ContextCompactionExpectation{
 		MinDroppedMessages:  intPtr(3),
 		MinRetainedMessages: intPtr(5),
 		MaxHistory:          intPtr(5),
 		RequirePinnedPaths:  []string{"internal/surfaces/tui/app/app.go"},
 		PinnedMemoryKind:    "partial_repair",
 		StrategyContains:    []string{"pinned_task_memory"},
-	}) {
-
-		t.Fatalf("expected context compaction matcher to accept %#v", compaction)
-	}
-}
-
-func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
-	if budgetLedgerMatches(BudgetLedgerSnapshot{
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected context compaction matcher to accept %#v", compaction))
+})
+var _ = ginkgo.It("frontier controller matchers reject mismatches", func() {
+	gomega.Expect(budgetLedgerMatches(BudgetLedgerSnapshot{
 		Lane:               "review",
 		UsedModelCalls:     1,
 		TotalEvidencePaths: 0,
@@ -1669,12 +1551,9 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MinModelCalls:    intPtr(2),
 		MinEvidencePaths: intPtr(1),
 		BudgetExhausted:  boolPtr(true),
-	}) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected budget ledger mismatch to be rejected"))
 
-		t.Fatal("expected budget ledger mismatch to be rejected")
-	}
-
-	if !budgetLedgerMatches(BudgetLedgerSnapshot{
+	gomega.Expect(budgetLedgerMatches(BudgetLedgerSnapshot{
 		Lane:            "review",
 		UsedModelCalls:  2,
 		TotalTokens:     42,
@@ -1685,23 +1564,17 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MinModelCalls:  intPtr(2),
 		MinTotalTokens: intPtr(40),
 		StopReason:     "model_final",
-	}) {
+	})).To(gomega.BeTrue(), fmt.Sprint("expected budget ledger matcher to accept sufficient token usage"))
 
-		t.Fatal("expected budget ledger matcher to accept sufficient token usage")
-	}
-
-	if budgetLedgerMatches(BudgetLedgerSnapshot{
+	gomega.Expect(budgetLedgerMatches(BudgetLedgerSnapshot{
 		Lane:        "review",
 		TotalTokens: 10,
 	}, BudgetLedgerExpectation{
 		Lane:           "review",
 		MinTotalTokens: intPtr(40),
-	}) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected budget ledger token mismatch to be rejected"))
 
-		t.Fatal("expected budget ledger token mismatch to be rejected")
-	}
-
-	if evidenceDeltaMatches(EvidenceDeltaSnapshot{
+	gomega.Expect(evidenceDeltaMatches(EvidenceDeltaSnapshot{
 		Lane:             "review",
 		NewEvidencePaths: nil,
 		ToolResults:      1,
@@ -1713,12 +1586,9 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MarginalValue:  "medium",
 		MinToolResults: intPtr(2),
 		MaxFailedTools: intPtr(0),
-	}) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected evidence delta mismatch to be rejected"))
 
-		t.Fatal("expected evidence delta mismatch to be rejected")
-	}
-
-	if claimConfidenceMatches(ClaimConfidenceSnapshot{
+	gomega.Expect(claimConfidenceMatches(ClaimConfidenceSnapshot{
 		Lane:                  "review",
 		Confidence:            "low",
 		EvidencePaths:         nil,
@@ -1730,12 +1600,9 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MinEvidencePaths: intPtr(1),
 		MaxUnresolved:    intPtr(0),
 		CalibrationBasis: "grounded",
-	}) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected claim confidence mismatch to be rejected"))
 
-		t.Fatal("expected claim confidence mismatch to be rejected")
-	}
-
-	if contextCompactionMatches(ContextCompactionSnapshot{
+	gomega.Expect(contextCompactionMatches(ContextCompactionSnapshot{
 		DroppedMessages:  1,
 		RetainedMessages: 2,
 		MaxHistory:       2,
@@ -1749,12 +1616,9 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		RequirePinnedPaths:  []string{"internal/evidence/eval/eval.go"},
 		PinnedMemoryKind:    "partial_repair",
 		StrategyContains:    []string{"pinned_task_memory"},
-	}) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected context compaction mismatch to be rejected"))
 
-		t.Fatal("expected context compaction mismatch to be rejected")
-	}
-
-	if routeAmbiguityMatches(RouteAmbiguitySnapshot{
+	gomega.Expect(routeAmbiguityMatches(RouteAmbiguitySnapshot{
 		SelectedLane: "architecture",
 		Signals:      []string{"architecture"},
 		Ambiguous:    false,
@@ -1764,12 +1628,9 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		Ambiguous:        boolPtr(true),
 		RequireSignals:   []string{"implement"},
 		TieBreakContains: []string{"selected review"},
-	}) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected route ambiguity mismatch to be rejected"))
 
-		t.Fatal("expected route ambiguity mismatch to be rejected")
-	}
-
-	if verificationFeedbackMatches(VerificationFeedbackSnapshot{
+	gomega.Expect(verificationFeedbackMatches(VerificationFeedbackSnapshot{
 		Confidence:            "low",
 		FailedCommands:        []string{"go test ./internal/surfaces/tui/app"},
 		FailureClasses:        []string{"go_unused_variable"},
@@ -1779,12 +1640,9 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		RequireFailedCommands:  []string{"go test ./..."},
 		RequireFailureClasses:  []string{"go_import_cycle"},
 		RecommendationContains: []string{"full-suite success"},
-	}) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected verification feedback mismatch to be rejected"))
 
-		t.Fatal("expected verification feedback mismatch to be rejected")
-	}
-
-	if toolFailureConfidenceMatches(ToolFailureConfidenceSnapshot{
+	gomega.Expect(toolFailureConfidenceMatches(ToolFailureConfidenceSnapshot{
 		Lane:             "review",
 		Tool:             "read_file",
 		ConfidenceImpact: "degrade_until_alternate_evidence_covers_gap",
@@ -1792,19 +1650,13 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		Lane:             "explore",
 		Tool:             "search_content",
 		ConfidenceImpact: "ignore_failure",
-	}) {
-
-		t.Fatal("expected tool-failure confidence mismatch to be rejected")
-	}
-}
-
-func TestParseGeneralLongHorizonTaskMemory(t *testing.T) {
+	})).To(gomega.BeFalse(), fmt.Sprint("expected tool-failure confidence mismatch to be rejected"))
+})
+var _ = ginkgo.It("parse general long horizon task memory", func() {
 	state := parseLongHorizonState(`{"action":"persist","memory_kind":"partial_repair","source_lane":"implement","open_gaps":["verification is failing"],"attempted_searches":["validated target internal/surfaces/tui/app/app.go"],"chosen_targets":["internal/surfaces/tui/app/app.go"],"verification_history":["go test ./internal/surfaces/tui/app -> failed: exit status 1"],"next_actions":["repair failing verification before widening implementation scope"],"resumable":true}`)
-	if state.Raw == "" {
-		t.Fatal("expected general long-horizon state to parse")
-	}
+	gomega.Expect(state.Raw).NotTo(gomega.BeEquivalentTo(""), fmt.Sprint("expected general long-horizon state to parse"))
 
-	if !longHorizonStateMatches(state, LongHorizonStateExpectation{
+	gomega.Expect(longHorizonStateMatches(state, LongHorizonStateExpectation{
 		Action:                     "persist",
 		MemoryKind:                 "partial_repair",
 		SourceLane:                 "implement",
@@ -1814,13 +1666,9 @@ func TestParseGeneralLongHorizonTaskMemory(t *testing.T) {
 		RequireVerificationHistory: []string{"go test ./internal/surfaces/tui/app -> failed: exit status 1"},
 		RequireNextActions:         []string{"repair failing verification before widening implementation scope"},
 		Resumable:                  boolPtr(true),
-	}) {
-
-		t.Fatalf("expected general long-horizon matcher to accept %#v", state)
-	}
-}
-
-func TestBuildSuggestedScenarioSkipsBroadOrFailedTools(t *testing.T) {
+	})).To(gomega.BeTrue(), fmt.Sprintf("expected general long-horizon matcher to accept %#v", state))
+})
+var _ = ginkgo.It("build suggested scenario skips broad or failed tools", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "padding under banner"}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "list_files", "broad": true}},
@@ -1830,12 +1678,9 @@ func TestBuildSuggestedScenarioSkipsBroadOrFailedTools(t *testing.T) {
 	}
 
 	scenario := BuildSuggestedScenario("bad-run", records)
-	if len(scenario.RequireTools) != 0 {
-		t.Fatalf("expected no required tools from failed/broad run, got %#v", scenario.RequireTools)
-	}
-}
-
-func TestAnalyzeTracksDiscoveryBalanceMetadata(t *testing.T) {
+	gomega.Expect(scenario.RequireTools).To(gomega.BeEmpty(), fmt.Sprintf("expected no required tools from failed/broad run, got %#v", scenario.RequireTools))
+})
+var _ = ginkgo.It("analyze tracks discovery balance metadata", func() {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "structural_search", "discovery_class": "ast_search", "discovery_scope": "targeted", "discovery_cost": "medium"}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "error": ""}},
@@ -1850,37 +1695,34 @@ func TestAnalyzeTracksDiscoveryBalanceMetadata(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if metrics.DiscoveryTools["structural_search"] != 1 || metrics.DiscoveryTools["discovery_query"] != 1 || metrics.DiscoveryTools["semgrep_scan"] != 1 || metrics.DiscoveryTools["dependency_graph"] != 1 {
-		t.Fatalf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools)
-	}
+	gomega.Expect(metrics.DiscoveryTools["structural_search"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools))
+	gomega.Expect(metrics.DiscoveryTools["discovery_query"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools))
+	gomega.Expect(metrics.DiscoveryTools["semgrep_scan"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools))
+	gomega.Expect(metrics.DiscoveryTools["dependency_graph"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools))
 
-	if metrics.DiscoveryClasses["ast_search"] != 1 || metrics.DiscoveryClasses["composite_query"] != 1 || metrics.DiscoveryClasses["security_scan"] != 1 || metrics.DiscoveryClasses["dependency_graph"] != 1 {
-		t.Fatalf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses)
-	}
+	gomega.Expect(metrics.DiscoveryClasses["ast_search"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses))
+	gomega.Expect(metrics.DiscoveryClasses["composite_query"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses))
+	gomega.Expect(metrics.DiscoveryClasses["security_scan"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses))
+	gomega.Expect(metrics.DiscoveryClasses["dependency_graph"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses))
 
-	if metrics.DiscoveryScopes["targeted"] != 2 || metrics.DiscoveryScopes["broad"] != 2 {
-		t.Fatalf("unexpected discovery scope counts: %#v", metrics.DiscoveryScopes)
-	}
+	gomega.Expect(metrics.DiscoveryScopes["targeted"]).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected discovery scope counts: %#v", metrics.DiscoveryScopes))
+	gomega.Expect(metrics.DiscoveryScopes["broad"]).To(gomega.BeEquivalentTo(2), fmt.Sprintf("unexpected discovery scope counts: %#v", metrics.DiscoveryScopes))
 
-	if metrics.DiscoveryCosts["high"] != 1 || metrics.DiscoveryCosts["medium"] != 3 || metrics.HeavyDiscoveryRequests != 1 {
-		t.Fatalf("unexpected discovery cost metrics: costs=%#v heavy=%d", metrics.DiscoveryCosts, metrics.HeavyDiscoveryRequests)
-	}
-}
-
-func TestAnalyzePromotesReadinessEvidencePaths(t *testing.T) {
+	gomega.Expect(metrics.DiscoveryCosts["high"]).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery cost metrics: costs=%#v heavy=%d", metrics.DiscoveryCosts, metrics.HeavyDiscoveryRequests))
+	gomega.Expect(metrics.DiscoveryCosts["medium"]).To(gomega.BeEquivalentTo(3), fmt.Sprintf("unexpected discovery cost metrics: costs=%#v heavy=%d", metrics.DiscoveryCosts, metrics.HeavyDiscoveryRequests))
+	gomega.Expect(metrics.HeavyDiscoveryRequests).To(gomega.BeEquivalentTo(1), fmt.Sprintf("unexpected discovery cost metrics: costs=%#v heavy=%d", metrics.DiscoveryCosts, metrics.HeavyDiscoveryRequests))
+})
+var _ = ginkgo.It("analyze promotes readiness evidence paths", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "readiness_check", "content": `{"action":"answer","lane":"architecture","ready":true,"evidence_paths":["internal/runtime/agent/runner.go","internal/runtime/agent/runner_child_tasks.go"]}`}},
 	}
 
 	metrics := Analyze(records)
 	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
-		if !containsStringFold(metrics.EvidencePaths, want) {
-			t.Fatalf("expected readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths)
-		}
+		gomega.Expect(containsStringFold(metrics.EvidencePaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths))
 	}
-}
-
-func TestAnalyzePromotesRunEventSidecarRoles(t *testing.T) {
+})
+var _ = ginkgo.It("analyze promotes run event sidecar roles", func() {
 	records := []Record{
 		{Type: "run_event", Data: map[string]any{"role": "readiness_check", "content": `{"action":"answer","lane":"architecture","ready":true,"evidence_paths":["internal/runtime/agent/runner.go","internal/runtime/agent/runner_child_tasks.go"]}`}},
 		{Type: "run_event", Data: map[string]any{"role": "final_answer_critic", "content": `{"contract":"architecture_assessment","passed":true,"action":"accept"}`}},
@@ -1888,18 +1730,14 @@ func TestAnalyzePromotesRunEventSidecarRoles(t *testing.T) {
 	}
 
 	metrics := Analyze(records)
-	if len(metrics.ReadinessChecks) != 1 || len(metrics.FinalAnswerCritics) != 1 {
-		t.Fatalf("expected run_event sidecar roles to be analyzed, got readiness=%#v critic=%#v", metrics.ReadinessChecks, metrics.FinalAnswerCritics)
-	}
+	gomega.Expect(metrics.ReadinessChecks).To(gomega.HaveLen(1), fmt.Sprintf("expected run_event sidecar roles to be analyzed, got readiness=%#v critic=%#v", metrics.ReadinessChecks, metrics.FinalAnswerCritics))
+	gomega.Expect(metrics.FinalAnswerCritics).To(gomega.HaveLen(1), fmt.Sprintf("expected run_event sidecar roles to be analyzed, got readiness=%#v critic=%#v", metrics.ReadinessChecks, metrics.FinalAnswerCritics))
 
 	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go", "internal/runtime/agent/answer_composer.go"} {
-		if !containsStringFold(metrics.EvidencePaths, want) {
-			t.Fatalf("expected run_event readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths)
-		}
+		gomega.Expect(containsStringFold(metrics.EvidencePaths, want)).To(gomega.BeTrue(), fmt.Sprintf("expected run_event readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths))
 	}
-}
-
-func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
+})
+var _ = ginkgo.It("evaluate discovery balance assertions", func() {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "find insecure eval"}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "discovery_query", "discovery_class": "composite_query", "discovery_scope": "targeted", "discovery_cost": "medium"}},
@@ -1916,9 +1754,7 @@ func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
 		MaxHeavyDiscoveryRequests: &maxHeavy,
 	})
 
-	if !report.Passed {
-		t.Fatalf("expected discovery balance scenario to pass, findings=%#v", report.Findings)
-	}
+	gomega.Expect(report.Passed).To(gomega.BeTrue(), fmt.Sprintf("expected discovery balance scenario to pass, findings=%#v", report.Findings))
 
 	zeroHeavy := 0
 
@@ -1927,83 +1763,64 @@ func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
 		MaxHeavyDiscoveryRequests: &zeroHeavy,
 	})
 
-	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "heavy discovery requests exceeded") {
-		t.Fatalf("expected heavy discovery budget failure, got passed=%t findings=%#v", report.Passed, report.Findings)
-	}
-}
-
-func TestLoadRecordsReadsJSONL(t *testing.T) {
+	gomega.Expect(report.Passed).To(gomega.BeFalse(), fmt.Sprintf("expected heavy discovery budget failure, got passed=%t findings=%#v", report.Passed, report.Findings))
+	gomega.Expect(strings.Join(report.Findings, "\n")).To(gomega.ContainSubstring("heavy discovery requests exceeded"), fmt.Sprintf("expected heavy discovery budget failure, got passed=%t findings=%#v", report.Passed, report.Findings))
+})
+var _ = ginkgo.It("load records reads jsonl", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.jsonl")
 
 	const payload = "{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\"}\n{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"hello\"}\n"
 
-	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
-		t.Fatalf("write sample log: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(payload), 0o644)).To(gomega.Succeed(), "write sample log")
 
 	records, err := LoadRecords(path)
-	if err != nil {
-		t.Fatalf("LoadRecords: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadRecords: %v", err))
 
-	if len(records) != 2 {
-		t.Fatalf("expected 2 records, got %d", len(records))
-	}
-}
-
-func TestLoadRecordsNormalizesKindPayloadJSONL(t *testing.T) {
+	gomega.Expect(records).To(gomega.HaveLen(2), fmt.Sprintf("expected 2 records, got %d", len(records)))
+})
+var _ = ginkgo.It("load records normalizes kind payload jsonl", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.jsonl")
 
 	const payload = "{\"kind\":\"tool_request\",\"payload\":{\"tool\":\"search_content\",\"raw\":\"{\\\"pattern\\\":\\\"Runner\\\"}\",\"action\":\"search_content:Runner\"}}\n"
 
-	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
-		t.Fatalf("write sample log: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(payload), 0o644)).To(gomega.Succeed(), "write sample log")
 
 	records, err := LoadRecords(path)
-	if err != nil {
-		t.Fatalf("LoadRecords: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadRecords: %v", err))
 
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
-	}
+	gomega.Expect(records).To(gomega.HaveLen(1), fmt.Sprintf("expected 1 record, got %d", len(records)))
 
-	if records[0].Type != "tool_request" {
-		t.Fatalf("record type: want tool_request, got %q", records[0].Type)
-	}
+	gomega.Expect(records[0].Type).To(gomega.BeEquivalentTo("tool_request"), fmt.Sprintf("record type: want tool_request, got %q", records[0].Type))
 
-	if got, _ := records[0].Data["tool"].(string); got != "search_content" {
-		t.Fatalf("normalized tool: want search_content, got %q", got)
+	{
+		got, _ := records[0].Data["tool"].(string)
+		gomega.Expect(got).To(gomega.BeEquivalentTo("search_content"), fmt.Sprintf("normalized tool: want search_content, got %q", got))
 	}
-}
-
-func TestLoadRecordsHandlesLongJSONLLine(t *testing.T) {
+})
+var _ = ginkgo.It("load records handles long jsonl line", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.jsonl")
 	payload := "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"" + strings.Repeat("x", 128*1024) + "\"}\n"
 
-	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
-		t.Fatalf("write sample log: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(payload), 0o644)).To(gomega.Succeed(), "write sample log")
 
 	records, err := LoadRecords(path)
-	if err != nil {
-		t.Fatalf("LoadRecords: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadRecords: %v", err))
 
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
-	}
+	gomega.Expect(records).To(gomega.HaveLen(1), fmt.Sprintf("expected 1 record, got %d", len(records)))
 
-	if got, _ := records[0].Data["content"].(string); len(got) != 128*1024 {
-		t.Fatalf("long content length: want %d, got %d", 128*1024, len(got))
+	{
+		got, _ := records[0].Data["content"].(string)
+		gomega.Expect(got).To(gomega.HaveLen(128*1024), fmt.Sprintf("long content length: want %d, got %d", 128*1024, len(got)))
 	}
-}
-
-func TestAnalyzeLogSupportsE2EKindPayloadRecords(t *testing.T) {
+})
+var _ = ginkgo.It("analyze log supports e2 e kind payload records", func() {
+	t := ginkgo.GinkgoT()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "e2e.jsonl")
 	payload := strings.Join([]string{
@@ -2014,27 +1831,20 @@ func TestAnalyzeLogSupportsE2EKindPayloadRecords(t *testing.T) {
 		`{"kind":"summary","payload":{"elapsed_ms":99,"tool_requests":1,"tool_results":1,"answer_chars":42}}`,
 	}, "\n") + "\n"
 
-	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
-		t.Fatalf("write e2e log: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(payload), 0o644)).To(gomega.Succeed(), "write e2e log")
 
 	report, err := AnalyzeLog(path)
-	if err != nil {
-		t.Fatalf("AnalyzeLog: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("AnalyzeLog: %v", err))
 
-	if report.UserPrompt != "find Runner" {
-		t.Fatalf("user prompt: want find Runner, got %q", report.UserPrompt)
-	}
+	gomega.Expect(report.UserPrompt).To(gomega.BeEquivalentTo("find Runner"), fmt.Sprintf("user prompt: want find Runner, got %q", report.UserPrompt))
 
-	if report.Tools.SearchContent != 1 || report.Tools.Total != 1 {
-		t.Fatalf("tool counts not parsed: %+v", report.Tools)
-	}
+	gomega.Expect(report.Tools.SearchContent).To(gomega.BeEquivalentTo(1), fmt.Sprintf("tool counts not parsed: %+v", report.Tools))
+	gomega.Expect(report.Tools.Total).To(gomega.BeEquivalentTo(1), fmt.Sprintf("tool counts not parsed: %+v", report.Tools))
 
-	if report.ToolResults != 1 || report.DurationMillis != 99 || report.FinalAnswerChars != 42 {
-		t.Fatalf("summary metrics not parsed: %+v", report)
-	}
-}
+	gomega.Expect(report.ToolResults).To(gomega.BeEquivalentTo(1), fmt.Sprintf("summary metrics not parsed: %+v", report))
+	gomega.Expect(report.DurationMillis).To(gomega.BeEquivalentTo(99), fmt.Sprintf("summary metrics not parsed: %+v", report))
+	gomega.Expect(report.FinalAnswerChars).To(gomega.BeEquivalentTo(42), fmt.Sprintf("summary metrics not parsed: %+v", report))
+})
 
 func containsLanguageCapabilityExpectation(items []LanguageCapabilityExpectation, language string) bool {
 	for _, item := range items {

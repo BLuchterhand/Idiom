@@ -4,107 +4,78 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestUnderRootContainmentAndMissingPolicy(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "docs", "a.md"), "ok\n")
+var _ = ginkgo.Describe("Safe paths", func() {
+	ginkgo.DescribeTable("resolves paths under a workspace root according to missing-path policy",
+		func(pathForRoot func(string) string, opts Options, wantRel, wantErr string) {
+			root := ginkgo.GinkgoT().TempDir()
+			mustWriteFile(filepath.Join(root, "docs", "a.md"), "ok\n")
 
-	tests := []struct {
-		name    string
-		path    string
-		opts    Options
-		wantRel string
-		wantErr string
-	}{
-		{name: "relative existing", path: "docs/a.md", wantRel: "docs/a.md"},
-		{name: "absolute existing", path: filepath.Join(root, "docs", "a.md"), wantRel: "docs/a.md"},
-		{name: "empty path", path: " ", wantErr: "is empty"},
-		{name: "escape path", path: filepath.Join(root, "..", "outside.md"), wantErr: "must stay under workspace root"},
-		{name: "missing allowed", path: "docs/new.md", opts: Options{AllowMissing: true}, wantRel: "docs/new.md"},
-		{name: "missing rejected", path: "docs/new.md", wantErr: "resolve real test path"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, rel, err := UnderRoot(root, test.path, "test path", test.opts)
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("UnderRoot error = %v, want containing %q", err, test.wantErr)
-				}
+			_, relative, err := UnderRoot(root, pathForRoot(root), "test path", opts)
+			if wantErr != "" {
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(wantErr)))
 				return
 			}
-			if err != nil {
-				t.Fatalf("UnderRoot error = %v", err)
-			}
-			if rel != test.wantRel {
-				t.Fatalf("rel = %q, want %q", rel, test.wantRel)
-			}
-		})
-	}
-}
 
-func TestRelRejectsRootAndEscapes(t *testing.T) {
-	root := filepath.Clean(t.TempDir())
-	if got, ok := Rel(root, filepath.Join(root, "dir", "file.txt")); !ok || got != "dir/file.txt" {
-		t.Fatalf("Rel inside = %q, %t; want dir/file.txt true", got, ok)
-	}
-	if _, ok := Rel(root, root); ok {
-		t.Fatal("Rel should reject root itself")
-	}
-	if _, ok := Rel(root, filepath.Dir(root)); ok {
-		t.Fatal("Rel should reject parent escape")
-	}
-}
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(relative).To(gomega.Equal(wantRel))
+		},
+		ginkgo.Entry("relative existing path", func(string) string { return "docs/a.md" }, Options{}, "docs/a.md", ""),
+		ginkgo.Entry("absolute existing path", func(root string) string { return filepath.Join(root, "docs", "a.md") }, Options{}, "docs/a.md", ""),
+		ginkgo.Entry("empty path", func(string) string { return " " }, Options{}, "", "is empty"),
+		ginkgo.Entry("path escaping the root", func(root string) string { return filepath.Join(root, "..", "outside.md") }, Options{}, "", "must stay under workspace root"),
+		ginkgo.Entry("allowed missing path", func(string) string { return "docs/new.md" }, Options{AllowMissing: true}, "docs/new.md", ""),
+		ginkgo.Entry("rejected missing path", func(string) string { return "docs/new.md" }, Options{}, "", "resolve real test path"),
+	)
 
-func TestRejectSymlinkAncestors(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation commonly requires elevated privileges on Windows")
-	}
+	ginkgo.It("returns slash-separated relative paths and rejects roots or escapes", func() {
+		root := filepath.Clean(ginkgo.GinkgoT().TempDir())
+		relative, ok := Rel(root, filepath.Join(root, "dir", "file.txt"))
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(relative).To(gomega.Equal("dir/file.txt"))
 
-	root := t.TempDir()
-	targetDir := t.TempDir()
-	if err := os.Symlink(targetDir, filepath.Join(root, "linkdir")); err != nil {
-		t.Fatalf("symlink ancestor: %v", err)
-	}
+		_, ok = Rel(root, root)
+		gomega.Expect(ok).To(gomega.BeFalse())
+		_, ok = Rel(root, filepath.Dir(root))
+		gomega.Expect(ok).To(gomega.BeFalse())
+	})
 
-	err := RejectSymlinkAncestors(root, filepath.Join(root, "linkdir", "file.txt"), "write path")
-	if err == nil || !strings.Contains(err.Error(), "must not traverse symlinked directories") {
-		t.Fatalf("RejectSymlinkAncestors error = %v", err)
-	}
-}
+	ginkgo.It("rejects symlinked ancestor directories", func() {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("symlink creation commonly requires elevated privileges on Windows")
+		}
 
-func TestRejectSymlinkTarget(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation commonly requires elevated privileges on Windows")
-	}
+		root := ginkgo.GinkgoT().TempDir()
+		targetDir := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(os.Symlink(targetDir, filepath.Join(root, "linkdir"))).To(gomega.Succeed())
 
-	root := t.TempDir()
-	target := filepath.Join(root, "target.txt")
-	mustWriteFile(t, target, "ok\n")
-	link := filepath.Join(root, "link.txt")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatalf("symlink target: %v", err)
-	}
+		err := RejectSymlinkAncestors(root, filepath.Join(root, "linkdir", "file.txt"), "write path")
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("must not traverse symlinked directories")))
+	})
 
-	err := RejectSymlinkTarget(link, "write path")
-	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
-		t.Fatalf("RejectSymlinkTarget error = %v", err)
-	}
+	ginkgo.It("rejects symlink targets while allowing missing direct targets", func() {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("symlink creation commonly requires elevated privileges on Windows")
+		}
 
-	if err := RejectSymlinkTarget(filepath.Join(root, "missing.txt"), "write path"); err != nil {
-		t.Fatalf("missing target should be allowed by direct target check, got %v", err)
-	}
-}
+		root := ginkgo.GinkgoT().TempDir()
+		target := filepath.Join(root, "target.txt")
+		mustWriteFile(target, "ok\n")
+		link := filepath.Join(root, "link.txt")
+		gomega.Expect(os.Symlink(target, link)).To(gomega.Succeed())
 
-func mustWriteFile(t *testing.T, path string, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+		gomega.Expect(RejectSymlinkTarget(link, "write path")).To(
+			gomega.MatchError(gomega.ContainSubstring("must not be a symlink")),
+		)
+		gomega.Expect(RejectSymlinkTarget(filepath.Join(root, "missing.txt"), "write path")).To(gomega.Succeed())
+	})
+})
+
+func mustWriteFile(path, body string) {
+	gomega.Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(path, []byte(body), 0o644)).To(gomega.Succeed())
 }

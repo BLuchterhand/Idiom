@@ -9,7 +9,6 @@ const (
 	RequiredToolVerificationShell                        = "verification_shell"
 	RequiredToolBoundedWorkspaceEvidence                 = "bounded_workspace_evidence_tool"
 	RequiredToolSemanticDiscoveryOrNarrowReadForNamedGap = "semantic_discovery_or_narrow_read_for_named_gap"
-	RequiredToolExactPendingSourceBodyFollowupOrEdit     = "exact_pending_source_body_followup_or_edit_file_or_apply_patch"
 )
 
 func ConcreteRequiredTools(requiredTool string) []string {

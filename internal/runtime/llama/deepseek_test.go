@@ -6,34 +6,29 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"testing"
 	"time"
 
 	"idiom/internal/platform/config"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-// reasoningFixture is a single case for the parameterized DeepSeek
-// reasoning_content history repair test. Each fixture is a JSON response
-// body the test server returns; the test verifies that a follow-up call
-// includes the expected reasoning_content in the history.
 type reasoningFixture struct {
 	name     string
-	response string // server response JSON
-	history  string // expected reasoning_content in follow-up assistant message
+	response string
+	history  string
 }
 
-func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
-	enableThinking := true
-	fixtures := []reasoningFixture{
+var _ = Describe("DeepSeek reasoning history", func() {
+	for _, tc := range []reasoningFixture{
 		{
 			name:     "omitted",
 			response: `{"choices":[{"message":{"role":"assistant","content":"Hello"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
-			history:  "",
 		},
 		{
 			name:     "empty",
 			response: `{"choices":[{"message":{"role":"assistant","reasoning_content":"","content":"Hello"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
-			history:  "",
 		},
 		{
 			name:     "normal",
@@ -46,7 +41,7 @@ func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
 			history:  "Let me think about this.\nFirst, I need to parse the request.\nThen, I can formulate a response.",
 		},
 		{
-			name:     "special_chars",
+			name:     "special characters",
 			response: "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"reasoning_content\":\"Special: \\\"quotes\\\" \\\\backslash\\\\ <tag> unicode: ñ ∑ ∞\",\"content\":\"Hello\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}",
 			history:  "Special: \"quotes\" \\backslash\\ <tag> unicode: ñ ∑ ∞",
 		},
@@ -56,37 +51,29 @@ func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
 			history:  "This reasoning was cut off because the model hit",
 		},
 		{
-			name:     "long_reasoning",
+			name:     "long",
 			response: `{"choices":[{"message":{"role":"assistant","reasoning_content":"Step 1: Analyze. Step 2: Think deeper. Step 3: Consider alternatives. Step 4: Evaluate trade-offs. Step 5: Select best approach. Step 6: Verify correctness. Step 7: Prepare response.","content":"Hello"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
 			history:  "Step 1: Analyze. Step 2: Think deeper. Step 3: Consider alternatives. Step 4: Evaluate trade-offs. Step 5: Select best approach. Step 6: Verify correctness. Step 7: Prepare response.",
 		},
-	}
-
-	for _, tc := range fixtures {
-		t.Run(tc.name, func(t *testing.T) {
+	} {
+		tc := tc
+		It("preserves "+tc.name+" reasoning content in a follow-up request", func() {
+			enableThinking := true
 			var gotRequest map[string]any
-
 			callCount := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer GinkgoRecover()
 				callCount++
-
-				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
-					t.Fatalf("decode request: %v", err)
-				}
-
-				// First call returns the fixture response (with reasoning_content)
-				// Second call simulates a follow-up so we can inspect history
+				Expect(json.NewDecoder(r.Body).Decode(&gotRequest)).To(Succeed())
 				if callCount == 1 {
 					_, _ = w.Write([]byte(tc.response))
-				} else {
-					_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"follow-up"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+					return
 				}
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"follow-up"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 			}))
-
 			defer server.Close()
 
 			client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
-
 			reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
 				{Role: "user", Content: "hi"},
 			}, ChatOptions{
@@ -94,130 +81,72 @@ func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
 				EnableThinking: &enableThinking,
 				MaxTokens:      32,
 			})
-			if err != nil {
-				t.Fatalf("first chat call: %v", err)
-			}
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reply.ReasoningContent).To(Equal(tc.history))
 
-			// Verify the response preserved reasoning_content from the fixture
-			if reply.ReasoningContent != tc.history {
-				t.Fatalf("reasoning_content: got %q, want %q", reply.ReasoningContent, tc.history)
-			}
-
-			// Now issue a follow-up call that includes the prior assistant message.
-			// DeepSeek requires reasoning_content to be preserved in history.
 			_, err = client.CompleteChatMessage(context.Background(), []ChatMessage{
 				{Role: "user", Content: "prior"},
-				{ // This is the assistant reply we just received, going into history
-					Role:             "assistant",
-					Content:          reply.Content,
-					ReasoningContent: reply.ReasoningContent,
-				},
+				{Role: "assistant", Content: reply.Content, ReasoningContent: reply.ReasoningContent},
 				{Role: "user", Content: "follow-up"},
 			}, ChatOptions{
 				Model:          "deepseek-v4-flash",
 				EnableThinking: &enableThinking,
 				MaxTokens:      32,
 			})
-			if err != nil {
-				t.Fatalf("follow-up chat call: %v", err)
-			}
+			Expect(err).NotTo(HaveOccurred())
 
-			// Verify the follow-up request preserved reasoning_content in
-			// the assistant history message
 			messages, ok := gotRequest["messages"].([]any)
-			if !ok || len(messages) < 2 {
-				t.Fatalf("expected messages in follow-up request, got %#v", gotRequest["messages"])
-			}
-
-			// Find the assistant message in the follow-up request history
-			var foundAsst bool
-
-			for _, raw := range messages {
-				msg, ok := raw.(map[string]any)
-				if !ok {
-					continue
+			Expect(ok).To(BeTrue())
+			Expect(len(messages)).To(BeNumerically(">=", 2))
+			assistant := requestMessageWithRole(messages, "assistant")
+			Expect(assistant).NotTo(BeNil())
+			reasoning, present := assistant["reasoning_content"]
+			if tc.history == "" {
+				if present {
+					Expect(reasoning).To(BeEmpty())
 				}
-
-				if msg["role"] == "assistant" {
-					foundAsst = true
-
-					gotRC, hasRC := msg["reasoning_content"]
-
-					if tc.history == "" {
-						// When there's no reasoning_content, DeepSeek may still
-						// include the field as empty string; that's acceptable
-						if hasRC && gotRC != "" {
-							t.Fatalf("expected no reasoning_content (empty), got %q", gotRC)
-						}
-					} else {
-						if !hasRC {
-							t.Fatal("expected reasoning_content in follow-up assistant message, but field is missing")
-						}
-
-						if gotRC != tc.history {
-							t.Fatalf("reasoning_content in history: got %q, want %q", gotRC, tc.history)
-						}
-					}
-
-					break
-				}
+				return
 			}
-
-			if !foundAsst {
-				t.Fatal("no assistant message found in follow-up request messages")
-			}
+			Expect(present).To(BeTrue())
+			Expect(reasoning).To(Equal(tc.history))
 		})
 	}
-}
 
-func TestDeepSeekReasoningContentStreamed(t *testing.T) {
-	enableThinking := true
-	fixtures := []reasoningFixture{
+	for _, tc := range []reasoningFixture{
 		{
-			name:     "streamed_normal",
+			name:     "normal stream",
 			response: "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Thinking step by step\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"Answer\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n",
-			history:  "",
 		},
 		{
-			name:     "streamed_multiline",
+			name:     "multiline stream",
 			response: "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Line one\\n\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Line two\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"Done\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n",
-			history:  "",
 		},
 		{
-			name:     "streamed_empty_reasoning",
+			name:     "stream without reasoning",
 			response: "data: {\"choices\":[{\"delta\":{\"content\":\"No reasoning\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n",
-			history:  "",
 		},
-	}
-
-	for _, tc := range fixtures {
-		t.Run(tc.name, func(t *testing.T) {
+	} {
+		tc := tc
+		It("does not invent reasoning history after a "+tc.name, func() {
+			enableThinking := true
 			var gotRequest map[string]any
-
 			callCount := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer GinkgoRecover()
 				callCount++
-
-				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
-					t.Fatalf("decode request: %v", err)
-				}
-
+				Expect(json.NewDecoder(r.Body).Decode(&gotRequest)).To(Succeed())
 				if callCount == 1 {
 					w.Header().Set("Content-Type", "text/event-stream")
-
 					_, _ = w.Write([]byte(tc.response))
-				} else {
-					_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"follow-up"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+					return
 				}
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"follow-up"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 			}))
-
 			defer server.Close()
 
 			client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
-
 			var streamedContent strings.Builder
-
-			err := client.StreamChat(context.Background(), []ChatMessage{
+			Expect(client.StreamChat(context.Background(), []ChatMessage{
 				{Role: "user", Content: "hi"},
 			}, ChatOptions{
 				Model:          "deepseek-v4-flash",
@@ -225,360 +154,177 @@ func TestDeepSeekReasoningContentStreamed(t *testing.T) {
 				MaxTokens:      32,
 			}, func(delta string) error {
 				streamedContent.WriteString(delta)
-
 				return nil
-			})
-			if err != nil {
-				t.Fatalf("stream chat call: %v", err)
-			}
+			})).To(Succeed())
 
-			// Follow-up call to verify history
-			_, err = client.CompleteChatMessage(context.Background(), []ChatMessage{
+			_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
 				{Role: "user", Content: "prior"},
-				{Role: "assistant", Content: streamedContent.String(), ReasoningContent: ""},
+				{Role: "assistant", Content: streamedContent.String()},
 				{Role: "user", Content: "follow-up"},
 			}, ChatOptions{
 				Model:          "deepseek-v4-flash",
 				EnableThinking: &enableThinking,
 				MaxTokens:      32,
 			})
-			if err != nil {
-				t.Fatalf("follow-up after stream: %v", err)
-			}
+			Expect(err).NotTo(HaveOccurred())
 
-			// Verify follow-up request preserves the assistant message
 			messages, ok := gotRequest["messages"].([]any)
-			if !ok {
-				t.Fatalf("expected messages in follow-up request")
-			}
-
-			var foundAsst bool
-
-			for _, raw := range messages {
-				msg, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				if msg["role"] == "assistant" {
-					foundAsst = true
-					// Streaming doesn't produce reasoning_content on the response,
-					// so the history assistant message should not have it
-					if rc, hasRC := msg["reasoning_content"]; hasRC && rc != "" {
-						t.Fatalf("streamed assistant message should not have reasoning_content, got %q", rc)
-					}
-
-					break
-				}
-			}
-
-			if !foundAsst {
-				t.Fatal("no assistant message in follow-up request messages")
+			Expect(ok).To(BeTrue())
+			assistant := requestMessageWithRole(messages, "assistant")
+			Expect(assistant).NotTo(BeNil())
+			if reasoning, present := assistant["reasoning_content"]; present {
+				Expect(reasoning).To(BeEmpty())
 			}
 		})
 	}
-}
 
-func TestDeepSeekStripsReasoningOnNonAssistant(t *testing.T) {
-	// Verify that non-assistant messages (user, system, tool) have their
-	// reasoning_content stripped even for DeepSeek backend. Only assistant
-	// messages should preserve it.
-	enableThinking := true
+	It("strips reasoning from non-assistant messages", func() {
+		enableThinking := true
+		gotRequest := captureChatRequest([]ChatMessage{
+			{Role: "system", Content: "be concise", ReasoningContent: "should be stripped"},
+			{Role: "user", Content: "hello", ReasoningContent: "should be stripped too"},
+			{Role: "assistant", Content: "prior answer", ReasoningContent: "preserved reasoning"},
+		}, config.BackendDeepSeek, ChatOptions{
+			Model:          "deepseek-v4-flash",
+			EnableThinking: &enableThinking,
+			MaxTokens:      32,
+		})
 
-	var gotRequest map[string]any
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
-			t.Fatalf("decode request: %v", err)
+		messages, ok := gotRequest["messages"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(len(messages)).To(BeNumerically(">=", 3))
+		for index, expected := range []struct {
+			role      string
+			reasoning string
+		}{
+			{"system", ""},
+			{"user", ""},
+			{"assistant", "preserved reasoning"},
+		} {
+			message, ok := messages[index].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(message).To(HaveKeyWithValue("role", expected.role))
+			reasoning, _ := message["reasoning_content"].(string)
+			Expect(reasoning).To(Equal(expected.reasoning))
 		}
-
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-	}))
-
-	defer server.Close()
-
-	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
-
-	_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
-		{Role: "system", Content: "be concise", ReasoningContent: "should be stripped"},
-		{Role: "user", Content: "hello", ReasoningContent: "should be stripped too"},
-		{Role: "assistant", Content: "prior answer", ReasoningContent: "preserved reasoning"},
-	}, ChatOptions{
-		Model:          "deepseek-v4-flash",
-		EnableThinking: &enableThinking,
-		MaxTokens:      32,
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
 
-	messages, ok := gotRequest["messages"].([]any)
-	if !ok || len(messages) < 3 {
-		t.Fatalf("expected 3+ messages, got %#v", gotRequest["messages"])
-	}
+	It("preserves reasoning on an assistant tool-call message", func() {
+		enableThinking := true
+		gotRequest := captureChatRequest([]ChatMessage{
+			{Role: "user", Content: "hi"},
+			{
+				Role:             "assistant",
+				ReasoningContent: "I should call read_file",
+				ToolCalls: []ToolCall{{
+					ID:       "call_1",
+					Function: ToolCallFunc{Name: "read_file", Arguments: `{"path":"x"}`},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call_1", Content: "result"},
+		}, config.BackendDeepSeek, ChatOptions{
+			Model:          "deepseek-v4-flash",
+			EnableThinking: &enableThinking,
+			MaxTokens:      32,
+		})
 
-	tests := []struct {
-		index int
-		role  string
-		want  string // expected reasoning_content value
-	}{
-		{0, "system", ""},                       // system: stripped
-		{1, "user", ""},                         // user: stripped
-		{2, "assistant", "preserved reasoning"}, // assistant: preserved
-	}
-	for _, tt := range tests {
-		msg := messages[tt.index].(map[string]any)
-		if msg["role"] != tt.role {
-			t.Fatalf("msg[%d]: expected role %q, got %q", tt.index, tt.role, msg["role"])
-		}
+		messages, ok := gotRequest["messages"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(len(messages)).To(BeNumerically(">=", 3))
+		assistant, ok := messages[1].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(assistant).To(HaveKeyWithValue("role", "assistant"))
+		Expect(assistant).To(HaveKeyWithValue("reasoning_content", "I should call read_file"))
+	})
+})
 
-		gotRC, _ := msg["reasoning_content"].(string)
-		if gotRC != tt.want {
-			t.Fatalf("msg[%d] role=%s reasoning_content: got %q, want %q", tt.index, tt.role, gotRC, tt.want)
-		}
-	}
-}
-
-func TestNonDeepSeekBackendsStripReasoningContent(t *testing.T) {
-	// Verify that non-DeepSeek hosted backends (ZAI/GLM, MiniMax) continue to
-	// strip reasoning_content from all messages through the hosted backend
-	// adapter.
-	//
-	// Local backend adapters strip reasoning_content unless PreserveThinking is
-	// enabled.
-	enableThinking := true
-	backends := []struct {
-		name    string
-		backend string
-	}{
-		{"zai", config.BackendZAI},
-		{"glm", config.BackendGLM},
-		{"minimax", config.BackendMiniMax},
-	}
-
-	for _, bc := range backends {
-		t.Run(bc.name, func(t *testing.T) {
-			var gotRequest map[string]any
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
-					t.Fatalf("decode request: %v", err)
-				}
-
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-			}))
-
-			defer server.Close()
-
-			client := NewClient(server.URL, time.Second).WithBackend(bc.backend)
-
-			_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
+var _ = Describe("Other backend reasoning history", func() {
+	for _, backend := range []string{config.BackendZAI, config.BackendGLM, config.BackendMiniMax} {
+		backend := backend
+		It("strips reasoning from every message for "+backend, func() {
+			enableThinking := true
+			gotRequest := captureChatRequest([]ChatMessage{
 				{Role: "user", Content: "hi", ReasoningContent: "should be stripped"},
 				{Role: "assistant", Content: "prior", ReasoningContent: "should also be stripped"},
-			}, ChatOptions{
-				Model:          bc.backend + "-model",
+			}, backend, ChatOptions{
+				Model:          backend + "-model",
 				EnableThinking: &enableThinking,
 				MaxTokens:      32,
 			})
-			if err != nil {
-				t.Fatalf("CompleteChatMessage: %v", err)
-			}
-
-			messages, ok := gotRequest["messages"].([]any)
-			if !ok || len(messages) < 2 {
-				t.Fatalf("expected at least 2 messages in request, got %#v", gotRequest["messages"])
-			}
-
-			// Non-DeepSeek hosted backends must NOT preserve reasoning_content
-			for _, raw := range messages {
-				msg, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				if rc, hasRC := msg["reasoning_content"]; hasRC && rc != "" {
-					t.Fatalf("non-DeepSeek hosted backend %s should strip reasoning_content, got %q on role=%s",
-						bc.name, rc, msg["role"])
-				}
-			}
+			expectRequestReasoningToBeEmpty(gotRequest)
 		})
 	}
-}
 
-func TestDeepSeekPreservesReasoningOnToolCallAssistant(t *testing.T) {
-	// Assistant messages with tool_calls and reasoning_content should
-	// preserve reasoning_content for DeepSeek
-	enableThinking := true
-
-	var gotRequest map[string]any
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-	}))
-
-	defer server.Close()
-
-	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
-
-	_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
-		{Role: "user", Content: "hi"},
-		{
-			Role:             "assistant",
-			Content:          "",
-			ReasoningContent: "I should call read_file",
-			ToolCalls: []ToolCall{
-				{ID: "call_1", Function: ToolCallFunc{Name: "read_file", Arguments: `{"path":"x"}`}},
-			},
-		},
-		{Role: "tool", ToolCallID: "call_1", Content: "result"},
-	}, ChatOptions{
-		Model:          "deepseek-v4-flash",
-		EnableThinking: &enableThinking,
-		MaxTokens:      32,
-	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
-
-	messages, ok := gotRequest["messages"].([]any)
-	if !ok || len(messages) < 3 {
-		t.Fatalf("expected 3+ messages, got %#v", gotRequest["messages"])
-	}
-
-	// The assistant message at index 1 should have reasoning_content preserved
-	asstMsg := messages[1].(map[string]any)
-	if asstMsg["role"] != "assistant" {
-		t.Fatalf("expected role assistant at index 1, got %q", asstMsg["role"])
-	}
-
-	rc, hasRC := asstMsg["reasoning_content"]
-	if !hasRC {
-		t.Fatal("assistant with tool_calls should preserve reasoning_content for DeepSeek, but field is missing")
-	}
-
-	if rc != "I should call read_file" {
-		t.Fatalf("reasoning_content on tool-call assistant: got %q, want %q", rc, "I should call read_file")
-	}
-}
-
-func TestLocalBackendsPreserveReasoningContentWhenRequested(t *testing.T) {
-	// Local backend adapters preserve reasoning_content when the caller asks
-	// to keep thinking history.
-	for _, bc := range []struct {
-		name    string
-		backend string
-	}{
-		{"llama", config.BackendLlama},
-		{"mlx", config.BackendMLX},
-	} {
-		t.Run(bc.name, func(t *testing.T) {
-			var gotRequest map[string]any
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
-					t.Fatalf("decode request: %v", err)
-				}
-
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-			}))
-
-			defer server.Close()
-
-			client := NewClient(server.URL, time.Second).WithBackend(bc.backend)
-
-			_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
+	for _, backend := range []string{config.BackendLlama, config.BackendMLX} {
+		backend := backend
+		It("preserves local reasoning when requested for "+backend, func() {
+			gotRequest := captureChatRequest([]ChatMessage{
 				{Role: "user", Content: "hi", ReasoningContent: "preserved"},
 				{Role: "assistant", Content: "prior", ReasoningContent: "also preserved"},
-			}, ChatOptions{
-				Model:            bc.backend + "-model",
+			}, backend, ChatOptions{
+				Model:            backend + "-model",
 				PreserveThinking: true,
 				MaxTokens:        32,
 			})
-			if err != nil {
-				t.Fatalf("CompleteChatMessage: %v", err)
-			}
 
 			messages, ok := gotRequest["messages"].([]any)
-			if !ok || len(messages) < 2 {
-				t.Fatalf("expected 2+ messages in request, got %#v", gotRequest["messages"])
-			}
-
-			// Local backends must preserve reasoning_content as-is when
-			// PreserveThinking is enabled.
+			Expect(ok).To(BeTrue())
+			Expect(len(messages)).To(BeNumerically(">=", 2))
 			for _, raw := range messages {
-				msg, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				role, _ := msg["role"].(string)
-				rc, hasRC := msg["reasoning_content"]
-
-				if !hasRC {
-					t.Fatalf("local backend %s should preserve reasoning_content on role=%s, but field is missing",
-						bc.name, role)
-				}
-
-				if rc == "" {
-					t.Fatalf("local backend %s should preserve reasoning_content on role=%s, got empty",
-						bc.name, role)
-				}
+				message, ok := raw.(map[string]any)
+				Expect(ok).To(BeTrue())
+				Expect(message).To(HaveKey("reasoning_content"))
+				Expect(message["reasoning_content"]).NotTo(BeEmpty())
 			}
 		})
-	}
-}
 
-func TestLocalBackendsStripReasoningContentWhenNotPreserving(t *testing.T) {
-	for _, bc := range []struct {
-		name    string
-		backend string
-	}{
-		{"llama", config.BackendLlama},
-		{"mlx", config.BackendMLX},
-	} {
-		t.Run(bc.name, func(t *testing.T) {
-			var gotRequest map[string]any
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
-					t.Fatalf("decode request: %v", err)
-				}
-
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-			}))
-			defer server.Close()
-
-			client := NewClient(server.URL, time.Second).WithBackend(bc.backend)
-
-			_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
+		It("strips local reasoning when preservation is disabled for "+backend, func() {
+			gotRequest := captureChatRequest([]ChatMessage{
 				{Role: "user", Content: "hi", ReasoningContent: "strip user"},
 				{Role: "assistant", Content: "prior", ReasoningContent: "strip assistant"},
-			}, ChatOptions{
-				Model:     bc.backend + "-model",
+			}, backend, ChatOptions{
+				Model:     backend + "-model",
 				MaxTokens: 32,
 			})
-			if err != nil {
-				t.Fatalf("CompleteChatMessage: %v", err)
-			}
-
-			messages, ok := gotRequest["messages"].([]any)
-			if !ok || len(messages) < 2 {
-				t.Fatalf("expected 2+ messages in request, got %#v", gotRequest["messages"])
-			}
-
-			for _, raw := range messages {
-				msg, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				if rc, hasRC := msg["reasoning_content"]; hasRC && rc != "" {
-					t.Fatalf("local backend %s should strip reasoning_content when PreserveThinking=false, got %q on role=%s", bc.name, rc, msg["role"])
-				}
-			}
+			expectRequestReasoningToBeEmpty(gotRequest)
 		})
+	}
+})
+
+func captureChatRequest(messages []ChatMessage, backend string, options ChatOptions) map[string]any {
+	var gotRequest map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer GinkgoRecover()
+		Expect(json.NewDecoder(r.Body).Decode(&gotRequest)).To(Succeed())
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	DeferCleanup(server.Close)
+
+	client := NewClient(server.URL, time.Second).WithBackend(backend)
+	_, err := client.CompleteChatMessage(context.Background(), messages, options)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return gotRequest
+}
+
+func requestMessageWithRole(messages []any, role string) map[string]any {
+	for _, raw := range messages {
+		message, ok := raw.(map[string]any)
+		if ok && message["role"] == role {
+			return message
+		}
+	}
+	return nil
+}
+
+func expectRequestReasoningToBeEmpty(request map[string]any) {
+	messages, ok := request["messages"].([]any)
+	ExpectWithOffset(1, ok).To(BeTrue())
+	ExpectWithOffset(1, len(messages)).To(BeNumerically(">=", 2))
+	for _, raw := range messages {
+		message, ok := raw.(map[string]any)
+		ExpectWithOffset(1, ok).To(BeTrue())
+		if reasoning, present := message["reasoning_content"]; present {
+			ExpectWithOffset(1, reasoning).To(BeEmpty(), "role %v", message["role"])
+		}
 	}
 }

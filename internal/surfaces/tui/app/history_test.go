@@ -2,13 +2,15 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/agent"
@@ -26,66 +28,43 @@ func newHistoryPanelModel() *Model {
 	}
 }
 
-func TestLiveAgentHistoryEntryUpdatesToolCallInPlace(t *testing.T) {
+var _ = ginkgo.It("live agent history entry updates tool call in place", func() {
 	m := newHistoryPanelModel()
 	m.appendHistoryMessage("user", "inspect the app", nil)
 	m.beginAgentHistoryTurn()
 
-	if len(m.history.entries) != 2 {
-		t.Fatalf("expected user entry plus live agent entry, got %d", len(m.history.entries))
-	}
+	gomega.Expect(len(m.history.entries)).To(gomega.Equal(2), fmt.Sprintf("expected user entry plus live agent entry, got %d", len(m.history.entries)))
 
 	agentEntry := &m.history.entries[1]
-	if !agentEntry.inProgress {
-		t.Fatal("agent history entry should be marked in progress")
-	}
+	gomega.Expect(agentEntry.inProgress).To(gomega.BeTrue(), fmt.Sprint("agent history entry should be marked in progress"))
 
-	if agentEntry.summary != "working…" {
-		t.Fatalf("placeholder summary = %q, want working…", agentEntry.summary)
-	}
+	gomega.Expect(agentEntry.summary).To(gomega.Equal("working…"), fmt.Sprintf("placeholder summary = %q, want working…", agentEntry.summary))
 
 	m.recordToolTraceInHistory(1, "read_file | running internal/surfaces/tui/app/history.go", "inspect the history model", true, "read", "", nil)
 
-	if len(agentEntry.toolCalls) != 1 {
-		t.Fatalf("expected one live tool line, got %d", len(agentEntry.toolCalls))
-	}
+	gomega.Expect(len(agentEntry.toolCalls)).To(gomega.Equal(1), fmt.Sprintf("expected one live tool line, got %d", len(agentEntry.toolCalls)))
 
-	if !agentEntry.toolCalls[0].running {
-		t.Fatal("tool line should be marked running")
-	}
+	gomega.Expect(agentEntry.toolCalls[0].running).To(gomega.BeTrue(), fmt.Sprint("tool line should be marked running"))
 
-	if !strings.Contains(m.history.viewport.View(), "Tools: 1 call(s) (1 read); 1 running") {
-		t.Fatalf("history viewport did not render compact tool summary:\n%s", m.history.viewport.View())
-	}
+	gomega.Expect(strings.Contains(m.history.viewport.View(), "Tools: 1 call(s) (1 read); 1 running")).To(gomega.BeTrue(), fmt.Sprintf("history viewport did not render compact tool summary:\n%s", m.history.viewport.View()))
 
-	if !strings.Contains(m.history.viewport.View(), "Latest: read_file running - inspect the history model") {
-		t.Fatalf("history viewport did not render latest tool intent:\n%s", m.history.viewport.View())
-	}
+	gomega.Expect(strings.Contains(m.history.viewport.View(), "Latest: read_file running - inspect the history model")).To(gomega.BeTrue(), fmt.Sprintf("history viewport did not render latest tool intent:\n%s", m.history.viewport.View()))
 
 	m.recordToolTraceInHistory(1, "read_file | Read internal/surfaces/tui/app/history.go lines 1-40", "", false, "", "ok: read 40 lines", nil)
 
-	if len(agentEntry.toolCalls) != 1 {
-		t.Fatalf("tool result should update existing step, got %d lines", len(agentEntry.toolCalls))
-	}
+	gomega.Expect(len(agentEntry.toolCalls)).To(gomega.Equal(1), fmt.Sprintf("tool result should update existing step, got %d lines", len(agentEntry.toolCalls)))
 
-	if agentEntry.toolCalls[0].running {
-		t.Fatal("tool line should no longer be marked running")
-	}
+	gomega.Expect(agentEntry.toolCalls[0].running).To(gomega.BeFalse(), fmt.Sprint("tool line should no longer be marked running"))
 
-	if strings.Contains(agentEntry.toolCalls[0].line, "running") {
-		t.Fatalf("tool line was not replaced with result: %q", agentEntry.toolCalls[0].line)
-	}
+	gomega.Expect(strings.Contains(agentEntry.toolCalls[0].line, "running")).To(gomega.BeFalse(), fmt.Sprintf("tool line was not replaced with result: %q", agentEntry.toolCalls[0].line))
 
-	if agentEntry.toolCalls[0].intent != "inspect the history model" {
-		t.Fatalf("tool result should preserve intent, got %q", agentEntry.toolCalls[0].intent)
-	}
+	gomega.Expect(agentEntry.toolCalls[0].intent).To(gomega.Equal("inspect the history model"), fmt.Sprintf("tool result should preserve intent, got %q", agentEntry.toolCalls[0].intent))
 
-	if agentEntry.toolCalls[0].kind != "read" || agentEntry.toolCalls[0].outcome != "ok: read 40 lines" {
-		t.Fatalf("tool audit metadata not preserved: %#v", agentEntry.toolCalls[0])
-	}
-}
+	gomega.Expect(agentEntry.toolCalls[0].kind).To(gomega.Equal("read"), fmt.Sprintf("tool audit metadata not preserved: %#v", agentEntry.toolCalls[0]))
+	gomega.Expect(agentEntry.toolCalls[0].outcome).To(gomega.Equal("ok: read 40 lines"), fmt.Sprintf("tool audit metadata not preserved: %#v", agentEntry.toolCalls[0]))
+})
 
-func TestRecordAgentTurnFinalizesLiveHistoryEntry(t *testing.T) {
+var _ = ginkgo.It("record agent turn finalizes live history entry", func() {
 	m := newHistoryPanelModel()
 	m.appendHistoryMessage("user", "fix the panel", nil)
 	m.beginAgentHistoryTurn()
@@ -95,29 +74,20 @@ func TestRecordAgentTurnFinalizesLiveHistoryEntry(t *testing.T) {
 
 	m.recordAgentTurn()
 
-	if len(m.history.entries) != 2 {
-		t.Fatalf("expected two history entries, got %d", len(m.history.entries))
-	}
+	gomega.Expect(len(m.history.entries)).To(gomega.Equal(2), fmt.Sprintf("expected two history entries, got %d", len(m.history.entries)))
 
 	agentEntry := m.history.entries[1]
-	if agentEntry.inProgress {
-		t.Fatal("agent history entry should be finalized")
-	}
+	gomega.Expect(agentEntry.inProgress).To(gomega.BeFalse(), fmt.Sprint("agent history entry should be finalized"))
 
-	if m.currentTurnHistoryActive {
-		t.Fatal("current turn history should be inactive after finalization")
-	}
+	gomega.Expect(m.currentTurnHistoryActive).To(gomega.BeFalse(), fmt.Sprint("current turn history should be inactive after finalization"))
 
-	if len(agentEntry.toolCalls) != 1 {
-		t.Fatalf("expected one retained tool line, got %d", len(agentEntry.toolCalls))
-	}
+	gomega.Expect(len(agentEntry.toolCalls)).To(gomega.Equal(1), fmt.Sprintf("expected one retained tool line, got %d", len(agentEntry.toolCalls)))
 
-	if len(agentEntry.contents) != 1 || agentEntry.contents[0] != "Updated the history panel." {
-		t.Fatalf("final assistant response not attached to live entry: %#v", agentEntry.contents)
-	}
-}
+	gomega.Expect(len(agentEntry.contents)).To(gomega.Equal(1), fmt.Sprintf("final assistant response not attached to live entry: %#v", agentEntry.contents))
+	gomega.Expect(agentEntry.contents[0]).To(gomega.Equal("Updated the history panel."), fmt.Sprintf("final assistant response not attached to live entry: %#v", agentEntry.contents))
+})
 
-func TestToolRequestIntentUsesDescriptionWhenAvailable(t *testing.T) {
+var _ = ginkgo.It("tool request intent uses description when available", func() {
 	got := toolRequestIntent(agent.ToolRequestEvent{
 		Request: workspace.ToolRequest{
 			Tool:        "edit_file",
@@ -127,12 +97,10 @@ func TestToolRequestIntentUsesDescriptionWhenAvailable(t *testing.T) {
 	})
 	want := "Add inferred tool intent to the live history panel."
 
-	if got != want {
-		t.Fatalf("toolRequestIntent = %q, want %q", got, want)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("toolRequestIntent = %q, want %q", got, want))
+})
 
-func TestToolRequestIntentInfersSearchPurpose(t *testing.T) {
+var _ = ginkgo.It("tool request intent infers search purpose", func() {
 	got := toolRequestIntent(agent.ToolRequestEvent{
 		Request: workspace.ToolRequest{
 			Tool:    "search_content",
@@ -142,12 +110,10 @@ func TestToolRequestIntentInfersSearchPurpose(t *testing.T) {
 	})
 	want := "locate references to recordToolTraceInHistory in internal/surfaces/tui/app/*.go"
 
-	if got != want {
-		t.Fatalf("toolRequestIntent = %q, want %q", got, want)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("toolRequestIntent = %q, want %q", got, want))
+})
 
-func TestHistoryRendersCompactAuditDigest(t *testing.T) {
+var _ = ginkgo.It("history renders compact audit digest", func() {
 	m := newHistoryPanelModel()
 	m.appendHistoryMessage("user", "inspect audit trail", nil)
 	m.beginAgentHistoryTurn()
@@ -175,9 +141,7 @@ func TestHistoryRendersCompactAuditDigest(t *testing.T) {
 		"Latest: context_pack ok - build a ranked context packet before choosing exact reads",
 		"Signals: cache refreshed",
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("history viewport missing %q:\n%s", want, view)
-		}
+		gomega.Expect(strings.Contains(view, want)).To(gomega.BeTrue(), fmt.Sprintf("history viewport missing %q:\n%s", want, view))
 	}
 
 	for _, noisy := range []string{
@@ -186,13 +150,11 @@ func TestHistoryRendersCompactAuditDigest(t *testing.T) {
 		"outcome=ok: ranked 8 file(s)",
 		"reason: build a ranked context packet before choosing exact reads",
 	} {
-		if strings.Contains(view, noisy) {
-			t.Fatalf("compact history should not render raw detail %q:\n%s", noisy, view)
-		}
+		gomega.Expect(strings.Contains(view, noisy)).To(gomega.BeFalse(), fmt.Sprintf("compact history should not render raw detail %q:\n%s", noisy, view))
 	}
-}
+})
 
-func TestHistoryTraceDetailRendersRawAuditEventsAndToolMetadata(t *testing.T) {
+var _ = ginkgo.It("history trace detail renders raw audit events and tool metadata", func() {
 	m := newHistoryPanelModel()
 
 	m.traceMode = traceDisplayDetail
@@ -224,41 +186,36 @@ func TestHistoryTraceDetailRendersRawAuditEventsAndToolMetadata(t *testing.T) {
 		"outcome=ok: ranked 8 file(s)",
 		"reason: build a ranked context packet before choosing exact reads",
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("detail history viewport missing %q:\n%s", want, view)
-		}
+		gomega.Expect(strings.Contains(view, want)).To(gomega.BeTrue(), fmt.Sprintf("detail history viewport missing %q:\n%s", want, view))
 	}
-}
+})
 
-func TestHistoryAuditEventFromRunEventSummarizesContractSignals(t *testing.T) {
+var _ = ginkgo.It("history audit event from run event summarizes contract signals", func() {
 	event, ok := historyAuditEventFromRunEvent(agent.RunEvent{
 		Role:    "completion_status",
 		Content: `{"lane":"implement","contract":"implementation_result","status":"blocked","blocker_kind":"required_edit_paths_remaining","edit_attempted":false}`,
 	})
-	if !ok {
-		t.Fatal("expected completion_status to produce a history audit event")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected completion_status to produce a history audit event"))
 
-	if event.kind != "contract" || event.label != "contract blocked: implementation_result" || !strings.Contains(event.detail, "blocker=required_edit_paths_remaining") {
-		t.Fatalf("unexpected completion audit event: %#v", event)
-	}
-}
+	gomega.Expect(event.kind).To(gomega.Equal("contract"), fmt.Sprintf("unexpected completion audit event: %#v", event))
+	gomega.Expect(event.label).To(gomega.Equal("contract blocked: implementation_result"), fmt.Sprintf("unexpected completion audit event: %#v", event))
+	gomega.Expect(event.detail).To(gomega.ContainSubstring("blocker=required_edit_paths_remaining"), fmt.Sprintf("unexpected completion audit event: %#v", event))
+})
 
-func TestHistoryAuditEventFromAutonomyObligation(t *testing.T) {
+var _ = ginkgo.It("history audit event from autonomy obligation", func() {
 	event, ok := historyAuditEventFromRunEvent(agent.RunEvent{
 		Role:    "autonomy_event",
 		Content: `{"type":"obligation_resolved","contract_id":"contract_123","obligation":{"obligation_id":"source-body","kind":"source_evidence","status":"resolved","target_ref":"internal/surfaces/tui/app/history.go","resolution":"read_file"}}`,
 	})
-	if !ok {
-		t.Fatal("expected autonomy event to produce a history audit event")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected autonomy event to produce a history audit event"))
 
-	if event.kind != "obligation" || event.status != "resolved" || !strings.Contains(event.auditLine(), "source_evidence") {
-		t.Fatalf("unexpected autonomy audit event: %#v", event)
-	}
-}
+	gomega.Expect(event.kind).To(gomega.Equal("obligation"), fmt.Sprintf("unexpected autonomy audit event: %#v", event))
+	gomega.Expect(event.status).To(gomega.Equal("resolved"), fmt.Sprintf("unexpected autonomy audit event: %#v", event))
+	gomega.Expect(event.auditLine()).To(gomega.ContainSubstring("source_evidence"), fmt.Sprintf("unexpected autonomy audit event: %#v", event))
+})
 
-func TestHistoryAuditEventFromChildToolEvents(t *testing.T) {
+var _ = ginkgo.It("history audit event from child tool events", func() {
+	t := ginkgo.GinkgoT()
 	requestPayload := mustMarshalJSON(t, agent.ToolRequestEvent{
 		Step:  2,
 		Agent: "child:explorer",
@@ -270,13 +227,11 @@ func TestHistoryAuditEventFromChildToolEvents(t *testing.T) {
 	})
 	requestEvent, ok := historyAuditEventFromRunEvent(agent.RunEvent{Role: "child_tool_request", Content: requestPayload})
 
-	if !ok {
-		t.Fatal("expected child tool request audit event")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected child tool request audit event"))
 
-	if requestEvent.kind != "delegation" || requestEvent.status != "requested" || !strings.Contains(requestEvent.detail, "reason=locate references") {
-		t.Fatalf("unexpected child request audit event: %#v", requestEvent)
-	}
+	gomega.Expect(requestEvent.kind).To(gomega.Equal("delegation"), fmt.Sprintf("unexpected child request audit event: %#v", requestEvent))
+	gomega.Expect(requestEvent.status).To(gomega.Equal("requested"), fmt.Sprintf("unexpected child request audit event: %#v", requestEvent))
+	gomega.Expect(requestEvent.detail).To(gomega.ContainSubstring("reason=locate references"), fmt.Sprintf("unexpected child request audit event: %#v", requestEvent))
 
 	resultPayload := mustMarshalJSON(t, agent.ToolResultEvent{
 		Step:  2,
@@ -288,36 +243,28 @@ func TestHistoryAuditEventFromChildToolEvents(t *testing.T) {
 	})
 	resultEvent, ok := historyAuditEventFromRunEvent(agent.RunEvent{Role: "child_tool_result", Content: resultPayload})
 
-	if !ok {
-		t.Fatal("expected child tool result audit event")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected child tool result audit event"))
 
-	if resultEvent.kind != "delegation" || resultEvent.status != "ok" || !strings.Contains(resultEvent.detail, "3 line(s)") {
-		t.Fatalf("unexpected child result audit event: %#v", resultEvent)
-	}
-}
+	gomega.Expect(resultEvent.kind).To(gomega.Equal("delegation"), fmt.Sprintf("unexpected child result audit event: %#v", resultEvent))
+	gomega.Expect(resultEvent.status).To(gomega.Equal("ok"), fmt.Sprintf("unexpected child result audit event: %#v", resultEvent))
+	gomega.Expect(resultEvent.detail).To(gomega.ContainSubstring("3 line(s)"), fmt.Sprintf("unexpected child result audit event: %#v", resultEvent))
+})
 
-func TestFailAgentHistoryTurnFinalizesPlaceholder(t *testing.T) {
+var _ = ginkgo.It("fail agent history turn finalizes placeholder", func() {
 	m := newHistoryPanelModel()
 	m.beginAgentHistoryTurn()
 
 	m.failAgentHistoryTurn(errors.New("server unavailable"))
 
-	if len(m.history.entries) != 1 {
-		t.Fatalf("expected failed placeholder to remain as history entry, got %d", len(m.history.entries))
-	}
+	gomega.Expect(len(m.history.entries)).To(gomega.Equal(1), fmt.Sprintf("expected failed placeholder to remain as history entry, got %d", len(m.history.entries)))
 
 	entry := m.history.entries[0]
-	if entry.inProgress {
-		t.Fatal("failed history entry should not remain in progress")
-	}
+	gomega.Expect(entry.inProgress).To(gomega.BeFalse(), fmt.Sprint("failed history entry should not remain in progress"))
 
-	if !strings.Contains(entry.summary, "Chat failed: server unavailable") {
-		t.Fatalf("failure summary missing error: %q", entry.summary)
-	}
-}
+	gomega.Expect(strings.Contains(entry.summary, "Chat failed: server unavailable")).To(gomega.BeTrue(), fmt.Sprintf("failure summary missing error: %q", entry.summary))
+})
 
-func TestRecordToolTraceInHistoryThrottlesLiveHistoryRender(t *testing.T) {
+var _ = ginkgo.It("record tool trace in history throttles live history render", func() {
 	m := newHistoryPanelModel()
 	m.appendHistoryMessage("user", "inspect the app", nil)
 	m.beginAgentHistoryTurn()
@@ -328,16 +275,12 @@ func TestRecordToolTraceInHistoryThrottlesLiveHistoryRender(t *testing.T) {
 
 	m.recordToolTraceInHistory(1, "read_file | running internal/surfaces/tui/app/history.go", "inspect the history model", true, "read", "", nil)
 
-	if !m.history.renderPending {
-		t.Fatal("expected live history render to be throttled while streaming")
-	}
+	gomega.Expect(m.history.renderPending).To(gomega.BeTrue(), fmt.Sprint("expected live history render to be throttled while streaming"))
 
-	if strings.Contains(m.history.viewport.View(), "read_file | running internal/surfaces/tui/app/history.go") {
-		t.Fatalf("expected throttled render to defer viewport update, got:\n%s", m.history.viewport.View())
-	}
-}
+	gomega.Expect(strings.Contains(m.history.viewport.View(), "read_file | running internal/surfaces/tui/app/history.go")).To(gomega.BeFalse(), fmt.Sprintf("expected throttled render to defer viewport update, got:\n%s", m.history.viewport.View()))
+})
 
-func TestCtrlBOpensHistoryTabAndSetsStatusWhileStreaming(t *testing.T) {
+var _ = ginkgo.It("ctrl b opens history tab and sets status while streaming", func() {
 	m := &Model{
 		ready:     true,
 		width:     120,
@@ -352,15 +295,9 @@ func TestCtrlBOpensHistoryTabAndSetsStatusWhileStreaming(t *testing.T) {
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
 	updated := model.(*Model)
 
-	if !updated.history.panelOpen {
-		t.Fatal("expected Ctrl+B to open the panel")
-	}
+	gomega.Expect(updated.history.panelOpen).To(gomega.BeTrue(), fmt.Sprint("expected Ctrl+B to open the panel"))
 
-	if updated.panelTab != panelTabHistory {
-		t.Fatalf("expected Ctrl+B to switch to history tab, got %d", updated.panelTab)
-	}
+	gomega.Expect(updated.panelTab).To(gomega.Equal(panelTabHistory), fmt.Sprintf("expected Ctrl+B to switch to history tab, got %d", updated.panelTab))
 
-	if !strings.Contains(updated.status, "History panel open") {
-		t.Fatalf("expected status to acknowledge panel open, got %q", updated.status)
-	}
-}
+	gomega.Expect(strings.Contains(updated.status, "History panel open")).To(gomega.BeTrue(), fmt.Sprintf("expected status to acknowledge panel open, got %q", updated.status))
+})

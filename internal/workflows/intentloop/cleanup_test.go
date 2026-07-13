@@ -3,73 +3,58 @@ package intentloop
 import (
 	"os"
 	"path/filepath"
-	"slices"
-	"testing"
 	"time"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestCompactChildArtifactsPreservesEvidenceAndDeletesOnlyTransientFiles(t *testing.T) {
-	root := t.TempDir()
-	state := NewState("cleanup-session", "original", IntentLoopContract{}, 3, staleCleanupTime())
-	terminalPath := writeRelativeFile(t, root, ".idiom/plan-execute/sessions/child-1.terminal.json", `{"status":"completed"}`)
-	progressPath := writeRelativeFile(t, root, ".idiom/plan-execute/progress/child-1.json", `{"status":"running"}`)
-	transientPath := writeRelativeFile(t, root, ".idiom/intent-loop/sessions/cleanup-session/spill/output.tmp", "large duplicate")
-	promptPath := writeRelativeFile(t, root, ".idiom/intent-loop/sessions/cleanup-session/cycle-001.prompt.md", "prompt")
-	state.Cycles = []CycleRecord{{
-		CycleNumber:            1,
-		Status:                 "completed",
-		PlanExecuteSessionID:   "child-1",
-		CyclePromptPath:        promptPath,
-		TerminalCompletionPath: terminalPath,
-		ResumeStatePath:        progressPath,
-		ChangedPaths:           []string{"internal/workflows/intentloop/resume.go"},
-		FailureKind:            "verification_failed",
-		MutationDeltas: []CycleMutationDelta{{
-			Path:       "internal/workflows/intentloop/resume.go",
-			Kind:       "modify",
-			DiffSHA256: "sha256:diff",
-		}},
-		ChildIdentity: &ChildRunIdentity{BackendProfile: "profile"},
-	}}
+var _ = ginkgo.Describe("Artifact compaction", func() {
+	ginkgo.It("preserves durable evidence and deletes only transient child files", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state := NewState("cleanup-session", "original", IntentLoopContract{}, 3, staleCleanupTime())
+		terminalPath := writeRelativeFile(root, ".idiom/plan-execute/sessions/child-1.terminal.json", `{"status":"completed"}`)
+		progressPath := writeRelativeFile(root, ".idiom/plan-execute/progress/child-1.json", `{"status":"running"}`)
+		transientPath := writeRelativeFile(root, ".idiom/intent-loop/sessions/cleanup-session/spill/output.tmp", "large duplicate")
+		promptPath := writeRelativeFile(root, ".idiom/intent-loop/sessions/cleanup-session/cycle-001.prompt.md", "prompt")
+		state.Cycles = []CycleRecord{{
+			CycleNumber:            1,
+			Status:                 "completed",
+			PlanExecuteSessionID:   "child-1",
+			CyclePromptPath:        promptPath,
+			TerminalCompletionPath: terminalPath,
+			ResumeStatePath:        progressPath,
+			ChangedPaths:           []string{"internal/workflows/intentloop/resume.go"},
+			FailureKind:            "verification_failed",
+			MutationDeltas: []CycleMutationDelta{{
+				Path:       "internal/workflows/intentloop/resume.go",
+				Kind:       "modify",
+				DiffSHA256: "sha256:diff",
+			}},
+			ChildIdentity: &ChildRunIdentity{BackendProfile: "profile"},
+		}}
 
-	report, err := CompactChildArtifacts(root, &state)
-	if err != nil {
-		t.Fatalf("CompactChildArtifacts error = %v", err)
-	}
-	if fileMissing(root, terminalPath) || fileMissing(root, progressPath) || fileMissing(root, promptPath) {
-		t.Fatalf("cleanup removed preserved evidence: terminal=%v progress=%v prompt=%v",
-			fileMissing(root, terminalPath), fileMissing(root, progressPath), fileMissing(root, promptPath))
-	}
-	if !fileMissing(root, transientPath) {
-		t.Fatalf("transient file still exists: %s", transientPath)
-	}
-	if len(report.ChildSnapshots) != 1 {
-		t.Fatalf("ChildSnapshots = %#v", report.ChildSnapshots)
-	}
-	snapshot := report.ChildSnapshots[0]
-	if snapshot.TerminalCompletionSHA256 == "" || snapshot.ResumeStateSHA256 == "" {
-		t.Fatalf("snapshot missing evidence hashes: %#v", snapshot)
-	}
-	if !slices.Contains(report.PreservedPaths, terminalPath) || !slices.Contains(report.PreservedPaths, progressPath) {
-		t.Fatalf("preserved paths missing evidence: %#v", report.PreservedPaths)
-	}
-	if !slices.Contains(report.DeletedPaths, ".idiom/intent-loop/sessions/cleanup-session/spill") {
-		t.Fatalf("deleted paths missing transient spill dir: %#v", report.DeletedPaths)
-	}
-	if state.Cycles[0].ChangedPaths[0] == "" || state.Cycles[0].MutationDeltas[0].DiffSHA256 == "" || state.Cycles[0].ChildIdentity == nil {
-		t.Fatalf("parent metadata was not preserved: %#v", state.Cycles[0])
-	}
-}
+		report, err := CompactChildArtifacts(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(fileMissing(root, terminalPath)).To(gomega.BeFalse())
+		gomega.Expect(fileMissing(root, progressPath)).To(gomega.BeFalse())
+		gomega.Expect(fileMissing(root, promptPath)).To(gomega.BeFalse())
+		gomega.Expect(fileMissing(root, transientPath)).To(gomega.BeTrue())
+		gomega.Expect(report.ChildSnapshots).To(gomega.HaveLen(1))
+		gomega.Expect(report.ChildSnapshots[0].TerminalCompletionSHA256).NotTo(gomega.BeEmpty())
+		gomega.Expect(report.ChildSnapshots[0].ResumeStateSHA256).NotTo(gomega.BeEmpty())
+		gomega.Expect(report.PreservedPaths).To(gomega.ContainElements(terminalPath, progressPath))
+		gomega.Expect(report.DeletedPaths).To(gomega.ContainElement(".idiom/intent-loop/sessions/cleanup-session/spill"))
+		gomega.Expect(state.Cycles[0].ChangedPaths[0]).NotTo(gomega.BeEmpty())
+		gomega.Expect(state.Cycles[0].MutationDeltas[0].DiffSHA256).NotTo(gomega.BeEmpty())
+		gomega.Expect(state.Cycles[0].ChildIdentity).NotTo(gomega.BeNil())
+	})
+})
 
-func writeRelativeFile(t *testing.T, root string, relPath string, body string) string {
-	t.Helper()
+func writeRelativeFile(root, relPath, body string) string {
 	fullPath := filepath.Join(root, filepath.FromSlash(relPath))
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", relPath, err)
-	}
-	if err := os.WriteFile(fullPath, []byte(body), 0o600); err != nil {
-		t.Fatalf("write %s: %v", relPath, err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(fullPath), 0o755)).To(gomega.Succeed(), "mkdir %s", relPath)
+	gomega.Expect(os.WriteFile(fullPath, []byte(body), 0o600)).To(gomega.Succeed(), "write %s", relPath)
 	return relPath
 }
 

@@ -25,34 +25,13 @@ finish() {
     wait "$server_pid" 2>/dev/null || true
   fi
   if [[ -s "$request_log" && -f "$log_path" ]]; then
-    python3 - "$log_path" "$request_log" <<'PY'
-import json
-import pathlib
-import sys
-from datetime import datetime, timezone
-
-log_path, request_log = map(pathlib.Path, sys.argv[1:])
-count = 0
-tools = []
-for line in request_log.read_text(encoding="utf-8").splitlines():
-    if not line.strip():
-        continue
-    count += 1
-    try:
-        record = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    tools.append(int(record.get("tool_count") or 0))
-event = {
-    "type": "idiom.scripted_model.requests",
-    "ts": datetime.now(timezone.utc).isoformat(),
-    "request_count": count,
-    "tool_counts": tools,
-}
-with log_path.open("a", encoding="utf-8") as f:
-    json.dump(event, f, sort_keys=True)
-    f.write("\n")
-PY
+    if ! python3 "$repo_root/scripts/scripted-model-server.py" \
+      --request-log "$request_log" \
+      --emit-events-to "$log_path" \
+      --require-fully-consumed; then
+      echo "scripted contract runner did not fully consume the model script" >&2
+      exit_code=1
+    fi
   fi
   rm -rf "$run_dir"
   exit "$exit_code"
@@ -84,5 +63,6 @@ fi
 export IDIOM_SCRIPTED_MODEL_BASE_URL
 IDIOM_SCRIPTED_MODEL_BASE_URL="$(tr -d '[:space:]' < "$port_file")"
 export IDIOM_SCRIPTED_MODEL_ID="${IDIOM_SCRIPTED_MODEL_ID:-scripted-model}"
+export IDIOM_SCRIPTED_REQUEST_SURFACE_FACTS=1
 
 "$repo_root/scripts/live-contract-runner.sh"

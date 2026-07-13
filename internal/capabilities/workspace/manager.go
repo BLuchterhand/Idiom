@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
@@ -38,7 +39,8 @@ type Manager struct {
 	permissionRules      map[string][]toolpolicy.Rule
 	protectedWritePaths  map[string]struct{}
 	toolSurface          ToolSurface
-	languageTools        *languagetools.Manager
+	languageTools        atomic.Pointer[languagetools.Manager]
+	mutationEpoch        atomic.Uint64
 }
 
 type Mode string
@@ -57,6 +59,7 @@ const (
 func NewManager(cfg config.Workspace) *Manager {
 	cfg.Root = config.CanonicalizeExistingPath(cfg.Root)
 	cfg.CWD = config.CanonicalizeExistingPath(cfg.CWD)
+	cfg.SessionID = strings.TrimSpace(cfg.SessionID)
 
 	m := &Manager{
 		cfg:          cfg,
@@ -67,9 +70,20 @@ func NewManager(cfg config.Workspace) *Manager {
 		writeGuard:   NewWriteGuard(),
 	}
 
-	m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
+	m.languageTools.Store(languagetools.NewManager(languageToolHost{manager: m}))
+	m.mutationEpoch.Store(1)
+	m.pathAccess.mutationEpoch = &m.mutationEpoch
 
 	return m
+}
+
+// MutationEpoch reports the workspace generation used to invalidate ephemeral
+// source windows after any harness-observed mutation.
+func (m *Manager) MutationEpoch() uint64 {
+	if m == nil {
+		return 0
+	}
+	return m.mutationEpoch.Load()
 }
 
 // MarkPathObserved records that a caller has successfully read or enumerated
@@ -111,6 +125,9 @@ func (m *Manager) SessionID() string {
 		return ""
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.cfg.SessionID
 }
 
@@ -124,11 +141,7 @@ func (m *Manager) SetSessionID(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if strings.TrimSpace(m.cfg.SessionID) != sessionID {
-		m.pathAccess.ClearSystemSearchApprovals()
-	}
-
-	m.cfg.SessionID = strings.TrimSpace(sessionID)
+	m.cfg.SessionID = sessionID
 }
 
 func (m *Manager) Enabled() bool {
@@ -290,7 +303,7 @@ func inferLanguagePrecisionTier(result ToolResult) string {
 
 func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 	if strings.TrimSpace(req.Path) != "" {
-		pathFromRequest, err := m.pathAccess.ResolveReadPath(req.Path, req.Workdir)
+		pathFromRequest, err := m.pathAccess.ResolveReadPath(req.executionSessionIdentity, req.Path, req.Workdir)
 		if err != nil {
 			if resolved, ok := resolveUserGlobalConversationLogReadPath(req.Path); ok {
 				pathFromRequest = resolved
@@ -300,7 +313,7 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 		}
 
 		if strings.TrimSpace(req.ID) != "" {
-			pathFromHandle, err := m.pathTracker.PathForHandle(req.ID)
+			pathFromHandle, err := m.resolveReadHandleTarget(req.executionSessionIdentity, req.ID)
 			if err == nil && filepath.Clean(pathFromHandle) == filepath.Clean(pathFromRequest) {
 				return pathFromHandle, m.handleDisplay(pathFromHandle), nil
 			}
@@ -317,7 +330,7 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 	}
 
 	if strings.TrimSpace(req.ID) != "" {
-		path, err := m.pathTracker.PathForHandle(req.ID)
+		path, err := m.resolveReadHandleTarget(req.executionSessionIdentity, req.ID)
 		if err != nil {
 			return "", "", err
 		}
@@ -326,6 +339,33 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 	}
 
 	return "", "", fmt.Errorf("read_file requires id or path")
+}
+
+func (m *Manager) resolveReadHandleTarget(identity executionSessionIdentity, handle string) (string, error) {
+	path, err := m.pathTracker.PathForHandle(handle)
+	if err != nil {
+		return "", err
+	}
+
+	resolved, err := m.pathAccess.ResolveReadPath(identity, path, "")
+	if err == nil {
+		return resolved, nil
+	}
+
+	defaultReadable, ok := resolveUserGlobalConversationLogReadPath(path)
+	if !ok {
+		return "", err
+	}
+	if filepath.Clean(defaultReadable) == filepath.Clean(path) {
+		return defaultReadable, nil
+	}
+	pathInfo, pathErr := os.Stat(path)
+	defaultInfo, defaultErr := os.Stat(defaultReadable)
+	if pathErr == nil && defaultErr == nil && os.SameFile(pathInfo, defaultInfo) {
+		return defaultReadable, nil
+	}
+
+	return "", err
 }
 
 func (m *Manager) resolveExplicitReadPath(path string) (string, string, error) {

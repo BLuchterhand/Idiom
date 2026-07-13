@@ -76,6 +76,27 @@ func validateWorkflowState(ws WorkflowState) error {
 	if len(ws.ArtifactPaths) == 0 {
 		errs = append(errs, errors.New("workflow state missing artifact_paths"))
 	}
+	if ws.SourceSatisfiedDelivery != nil {
+		if strings.TrimSpace(ws.CurrentPhase) != string(PhaseComplete) {
+			errs = append(errs, fmt.Errorf(
+				"workflow state source-satisfied delivery requires current_phase %q",
+				PhaseComplete,
+			))
+		}
+		if err := ValidateSourceSatisfiedDeliveryCloseout(*ws.SourceSatisfiedDelivery); err != nil {
+			errs = append(errs, err)
+		}
+		if strings.TrimSpace(ws.SourceSatisfiedDelivery.EffortID) != strings.TrimSpace(ws.EffortID) ||
+			strings.TrimSpace(ws.SourceSatisfiedDelivery.TaskID) != strings.TrimSpace(ws.TaskID) {
+			errs = append(errs, fmt.Errorf(
+				"workflow state source-satisfied delivery effort/task mismatch: closeout %s/%s, state %s/%s",
+				strings.TrimSpace(ws.SourceSatisfiedDelivery.EffortID),
+				strings.TrimSpace(ws.SourceSatisfiedDelivery.TaskID),
+				strings.TrimSpace(ws.EffortID),
+				strings.TrimSpace(ws.TaskID),
+			))
+		}
+	}
 
 	if err := validatePrivacyFlags("workflow state privacy", ws.Privacy); err != nil {
 		errs = append(errs, err)
@@ -160,6 +181,7 @@ var allowedObligationTypes = map[string]bool{
 
 func validateTDDLedger(ledger TDDLedger) error {
 	var errs []error
+	seenObligationIDs := map[string]bool{}
 
 	require(&errs, ledger.SchemaVersion, "tdd ledger missing schema_version")
 	require(&errs, ledger.EffortID, "tdd ledger missing effort_id")
@@ -187,6 +209,12 @@ func validateTDDLedger(ledger TDDLedger) error {
 	for i, obligation := range ledger.Obligations {
 		prefix := fmt.Sprintf("tdd obligation %d", i)
 		require(&errs, obligation.ID, prefix+" missing id")
+		if id := strings.TrimSpace(obligation.ID); id != "" {
+			if seenObligationIDs[id] {
+				errs = append(errs, fmt.Errorf("%s duplicates obligation id %q", prefix, id))
+			}
+			seenObligationIDs[id] = true
+		}
 		require(&errs, obligation.Type, prefix+" missing type")
 		require(&errs, obligation.Behavior, prefix+" missing behavior")
 		require(&errs, obligation.Owner, prefix+" missing owner")
@@ -665,6 +693,7 @@ func validatePRD(doc PRDDocument) error {
 
 func validateADRIndex(idx ADRIndex) error {
 	var errs []error
+	seenADRIDs := map[string]bool{}
 
 	require(&errs, idx.SchemaVersion, "ADR index missing schema_version")
 	require(&errs, idx.EffortID, "ADR index missing effort_id")
@@ -676,6 +705,12 @@ func validateADRIndex(idx ADRIndex) error {
 	for i, entry := range idx.ADRs {
 		prefix := fmt.Sprintf("ADR index entry %d", i)
 		require(&errs, entry.ADRID, prefix+" missing adr_id")
+		if id := strings.TrimSpace(entry.ADRID); id != "" {
+			if seenADRIDs[id] {
+				errs = append(errs, fmt.Errorf("%s duplicates adr_id %q", prefix, id))
+			}
+			seenADRIDs[id] = true
+		}
 		require(&errs, entry.Status, prefix+" missing status")
 
 		if entry.Status != "" {

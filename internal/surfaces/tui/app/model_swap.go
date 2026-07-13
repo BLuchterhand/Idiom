@@ -9,6 +9,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/llama"
+	runtimesession "idiom/internal/runtime/session"
 )
 
 func (m *Model) applyModelSwap(name string) {
@@ -22,6 +23,16 @@ func (m *Model) applyModelSwap(name string) {
 		return
 	}
 
+	if m.managedServer && m.controller != nil {
+		if m.managedServers == nil {
+			m.managedServers = newManagedServerRegistry()
+		}
+		m.managedServers.add(m.controller)
+	}
+	m.backendRevision++
+	m.bootingServer = false
+	m.managedServer = false
+	m.serverUp = false
 	m.modelID = name
 	m.modelDisplayID = name
 	m.modelSwapped = true
@@ -45,7 +56,7 @@ func (m *Model) applyModelSwap(name string) {
 		return
 	}
 
-	spec := backendsModelToLlamaServer(model, m.cfg.LlamaServer)
+	spec := runtimesession.ServerSpecForBackendModel(model, m.cfg.LlamaServer)
 
 	m.plannerSpec = spec
 	m.cfg.LlamaServer = spec
@@ -72,7 +83,7 @@ func (m *Model) applyModelSwap(name string) {
 		m.controller = nil
 	}
 
-	m.status = fmt.Sprintf("Model set to %s", m.activeModelDisplayID())
+	m.status = fmt.Sprintf("Model set to %s", activeModelDisplayID(m.modelDisplayID, m.modelID))
 }
 
 func (m *Model) slashModel(_ string, args []string) bool {

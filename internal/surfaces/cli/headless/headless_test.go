@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,352 +13,266 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/platform/config"
 	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 )
 
-func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-	summaryPath := filepath.Join(root, "summary.json")
+var _ = ginkgo.Describe("headless", func() {
+	ginkgo.It("run applies policy overrides and writes completion", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+		summaryPath := filepath.Join(root, "summary.json")
 
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{
-		"--config", configPath,
-		"--prompt", "summarize the repo",
-		"--output", "json",
-		"--session", "run-test-1",
-		"--permission-profile", "read-only",
-		"--deny-tool", "shell",
-		"--allow-tool", "read_file",
-		"--deny-path", "secrets/**",
-		"--max-tool-steps", "3",
-		"--timeout", "2s",
-		"--summary-out", summaryPath,
-	}, bytes.NewReader(nil), &stdout, &stderr, func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-		if prompt != "summarize the repo" {
-			t.Fatalf("prompt = %q", prompt)
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{
+			"--config", configPath,
+			"--prompt", "summarize the repo",
+			"--output", "json",
+			"--session", "run-test-1",
+			"--permission-profile", "read-only",
+			"--deny-tool", "shell",
+			"--allow-tool", "read_file",
+			"--deny-path", "secrets/**",
+			"--max-tool-steps", "3",
+			"--timeout", "2s",
+			"--summary-out", summaryPath,
+		}, bytes.NewReader(nil), &stdout, &stderr, func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			gomega.Expect(prompt).To(gomega.Equal("summarize the repo"), fmt.Sprintf("prompt = %q", prompt))
+			gomega.Expect(opts.JSONEvents).To(gomega.BeFalse(), "json output mode should not force JSONL event output")
+			gomega.Expect(cfg.Workspace.EnableWrites).To(gomega.BeFalse(), "read-only permission profile should disable writes")
+			gomega.Expect(cfg.Chat.MaxToolSteps).To(gomega.Equal(3), fmt.Sprintf("MaxToolSteps = %d, want 3", cfg.Chat.MaxToolSteps))
+			gomega.Expect(cfg.Chat.RequestTimeoutSeconds).To(gomega.Equal(2), fmt.Sprintf("timeout projection = request %d start %d", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs))
+			gomega.Expect(cfg.Chat.ServerStartTimeoutSecs).To(gomega.BeZero(), fmt.Sprintf("timeout projection = request %d start %d", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs))
+
+			if got := cfg.Workspace.ToolRules["shell"][0].Decision; got != "deny" {
+				ginkgo.Fail(fmt.Sprintf("shell first decision = %q", got))
+			}
+			if got := cfg.Workspace.ToolRules["read_file"][0].Decision; got != "allow" {
+				ginkgo.Fail(fmt.Sprintf("read_file decision = %q", got))
+			}
+			if got := cfg.Workspace.ToolRules["edit_file"][0]; got.Pattern != "secrets/**" || got.Decision != "deny" {
+				ginkgo.Fail(fmt.Sprintf("edit_file deny rule = %#v", got))
+			}
+
+			return "answer", nil
+		}, nil, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+
+		var output runrecord.RunOutputRecord
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &output)).To(gomega.Succeed())
+
+		record := output.RunCompletionRecord
+		gomega.Expect(output.Answer).To(gomega.Equal("answer"), fmt.Sprintf("json output should include final answer, got %q", output.Answer))
+		gomega.Expect(record.SchemaVersion).To(gomega.Equal(runrecord.RunCompletionSchemaVersion), fmt.Sprintf("unexpected completion identity: %#v", record))
+		gomega.Expect(record.Type).To(gomega.Equal(runrecord.RunCompletionRecordType), fmt.Sprintf("unexpected completion identity: %#v", record))
+		gomega.Expect(record.Artifacts["completion"]).NotTo(gomega.BeEmpty(), fmt.Sprintf("completion artifacts not recorded: %#v", record.Artifacts))
+		gomega.Expect(record.Artifacts["summary"]).To(gomega.Equal(summaryPath), fmt.Sprintf("completion artifacts not recorded: %#v", record.Artifacts))
+
+		completionPath := filepath.Join(root, filepath.FromSlash(record.Artifacts["completion"]))
+		if _, err := os.Stat(completionPath); err != nil {
+			ginkgo.Fail(fmt.Sprintf("completion artifact missing: %v", err))
 		}
-		if opts.JSONEvents {
-			t.Fatal("json output mode should not force JSONL event output")
+		var saved runrecord.RunCompletionRecord
+		savedBody, err := os.ReadFile(completionPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), err)
+		gomega.Expect(json.Unmarshal(savedBody, &saved)).To(gomega.Succeed())
+		gomega.Expect(string(savedBody)).NotTo(gomega.ContainSubstring(`"answer"`), fmt.Sprintf("durable completion record should not persist raw answer: %s", string(savedBody)))
+		gomega.Expect(saved.Artifacts["completion"]).NotTo(gomega.Equal(""), fmt.Sprintf("saved completion should be self-referential: %#v", saved.Artifacts))
+
+		if got := saved.Metadata["active_mode"]; len(got) != 1 || got[0] != "headless_prompt" {
+			ginkgo.Fail(fmt.Sprintf("completion metadata should record active headless mode: %#v", saved.Metadata))
 		}
-		if cfg.Workspace.EnableWrites {
-			t.Fatal("read-only permission profile should disable writes")
+		if got := saved.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "headless_policy_timeout" {
+			ginkgo.Fail(fmt.Sprintf("completion metadata should record timeout owner: %#v", saved.Metadata))
 		}
-		if cfg.Chat.MaxToolSteps != 3 {
-			t.Fatalf("MaxToolSteps = %d, want 3", cfg.Chat.MaxToolSteps)
+		if got := saved.Metadata["build_version"]; len(got) != 1 || got[0] == "" {
+			ginkgo.Fail(fmt.Sprintf("completion metadata should record build identity: %#v", saved.Metadata))
 		}
-		if cfg.Chat.RequestTimeoutSeconds != 2 || cfg.Chat.ServerStartTimeoutSecs != 0 {
-			t.Fatalf("timeout projection = request %d start %d", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs)
+		if _, err := os.Stat(summaryPath); err != nil {
+			ginkgo.Fail(fmt.Sprintf("summary artifact missing: %v", err))
 		}
-		if got := cfg.Workspace.ToolRules["shell"][0].Decision; got != "deny" {
-			t.Fatalf("shell first decision = %q", got)
-		}
-		if got := cfg.Workspace.ToolRules["read_file"][0].Decision; got != "allow" {
-			t.Fatalf("read_file decision = %q", got)
-		}
-		if got := cfg.Workspace.ToolRules["edit_file"][0]; got.Pattern != "secrets/**" || got.Decision != "deny" {
-			t.Fatalf("edit_file deny rule = %#v", got)
-		}
-
-		return "answer", nil
-	}, nil, nil)
-
-	if code != 0 {
-		t.Fatalf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	var output runrecord.RunOutputRecord
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		t.Fatalf("decode stdout completion: %v\n%s", err, stdout.String())
-	}
-	record := output.RunCompletionRecord
-	if output.Answer != "answer" {
-		t.Fatalf("json output should include final answer, got %q", output.Answer)
-	}
-	if record.SchemaVersion != runrecord.RunCompletionSchemaVersion || record.Type != runrecord.RunCompletionRecordType {
-		t.Fatalf("unexpected completion identity: %#v", record)
-	}
-	if record.Artifacts["completion"] == "" || record.Artifacts["summary"] != summaryPath {
-		t.Fatalf("completion artifacts not recorded: %#v", record.Artifacts)
-	}
-
-	completionPath := filepath.Join(root, filepath.FromSlash(record.Artifacts["completion"]))
-	if _, err := os.Stat(completionPath); err != nil {
-		t.Fatalf("completion artifact missing: %v", err)
-	}
-	var saved runrecord.RunCompletionRecord
-	savedBody, err := os.ReadFile(completionPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(savedBody, &saved); err != nil {
-		t.Fatalf("decode saved completion: %v", err)
-	}
-	if bytes.Contains(savedBody, []byte(`"answer"`)) {
-		t.Fatalf("durable completion record should not persist raw answer: %s", string(savedBody))
-	}
-	if saved.Artifacts["completion"] == "" {
-		t.Fatalf("saved completion should be self-referential: %#v", saved.Artifacts)
-	}
-	if got := saved.Metadata["active_mode"]; len(got) != 1 || got[0] != "headless_prompt" {
-		t.Fatalf("completion metadata should record active headless mode: %#v", saved.Metadata)
-	}
-	if got := saved.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "headless_policy_timeout" {
-		t.Fatalf("completion metadata should record timeout owner: %#v", saved.Metadata)
-	}
-	if got := saved.Metadata["build_version"]; len(got) != 1 || got[0] == "" {
-		t.Fatalf("completion metadata should record build identity: %#v", saved.Metadata)
-	}
-	if _, err := os.Stat(summaryPath); err != nil {
-		t.Fatalf("summary artifact missing: %v", err)
-	}
-}
-
-func TestRunHelpReturnsZero(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--help"}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-		t.Fatal("prompt runner should not run for help")
-		return "", nil
-	}, nil, nil)
-	if code != 0 {
-		t.Fatalf("help exit = %d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Usage of idiom run") {
-		t.Fatalf("help output missing usage: %q", stderr.String())
-	}
-}
-
-func TestRunPromptFailureWritesCompletion(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-
-	var stdout, stderr bytes.Buffer
-	code := Run(
-		[]string{"--config", configPath, "--prompt", "fail this"},
-		bytes.NewReader(nil),
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			return "", errors.New("prompt failed")
-		},
-		nil,
-		nil,
-	)
-	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
-		t.Fatalf("expected prompt failure, code=%d stderr=%s", code, stderr.String())
-	}
-
-	record, _ := readSingleHeadlessCompletion(t, root)
-	if record.TerminalClass != runrecord.TerminalClassFailed || record.ExitCode != 1 || !strings.Contains(record.Error, "prompt failed") {
-		t.Fatalf("unexpected failure completion: %#v", record)
-	}
-}
-
-func TestRunTurnsFileUsesSingleSessionRunner(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-	turnsPath := filepath.Join(t.TempDir(), "turns.json")
-	if err := os.WriteFile(turnsPath, []byte(`["first turn","second turn"]`), 0o644); err != nil {
-		t.Fatalf("write turns file: %v", err)
-	}
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotPrompts     []string
-		gotOpts        cmdruntime.RunOptions
-	)
-	code := Run(
-		[]string{"--config", configPath, "--turns-file", turnsPath, "--json", "--resume", "prior-session"},
-		bytes.NewReader(nil),
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("single prompt runner should not be called for --turns-file")
+	})
+	ginkgo.It("run help returns zero", func() {
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{"--help"}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			ginkgo.Fail("prompt runner should not run for help")
 			return "", nil
-		},
-		func(_ config.Config, prompts []string, opts cmdruntime.RunOptions, w io.Writer) ([]string, error) {
-			gotPrompts = append([]string(nil), prompts...)
-			gotOpts = opts
-			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"second answer\"}\n"))
+		}, nil, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("help exit = %d stderr=%s", code, stderr.String()))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("Usage of idiom run"), fmt.Sprintf("help output missing usage: %q", stderr.String()))
 
-			return []string{"first answer", "second answer"}, nil
-		},
-		nil,
-	)
-	if code != 0 {
-		t.Fatalf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-	if strings.Join(gotPrompts, "|") != "first turn|second turn" {
-		t.Fatalf("unexpected prompts: %#v", gotPrompts)
-	}
-	if !gotOpts.JSONEvents || gotOpts.Resume != "prior-session" {
-		t.Fatalf("unexpected opts: %#v", gotOpts)
-	}
-	if got := stdout.String(); got != "{\"type\":\"final\",\"content\":\"second answer\"}\n" {
-		t.Fatalf("JSON turns mode must only emit runner JSONL, got %q", got)
-	}
+	})
+	ginkgo.It("run prompt failure writes completion", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
 
-	record, _ := readSingleHeadlessCompletion(t, root)
-	if record.Implementation != "idiom run" ||
-		record.OutputMode != "jsonl" ||
-		record.TerminalClass != runrecord.TerminalClassCompleted ||
-		record.PromptSHA256 == "" ||
-		record.AnswerSHA256 == "" {
-		t.Fatalf("unexpected turns-file completion: %#v", record)
-	}
-	if got := record.Metadata["entrypoint"]; len(got) != 1 || got[0] != "idiom run" {
-		t.Fatalf("entrypoint metadata = %#v", record.Metadata)
-	}
-	if got := record.Metadata["active_mode"]; len(got) != 1 || got[0] != "headless_turns_file" {
-		t.Fatalf("active_mode metadata = %#v", record.Metadata)
-	}
-	if got := record.Metadata["turns_file"]; len(got) != 1 || got[0] != filepath.Clean(turnsPath) {
-		t.Fatalf("turns_file metadata = %#v", record.Metadata)
-	}
-}
+		var stdout, stderr bytes.Buffer
+		code := Run(
+			[]string{"--config", configPath, "--prompt", "fail this"},
+			bytes.NewReader(nil),
+			&stdout,
+			&stderr,
+			func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				return "", errors.New("prompt failed")
+			},
+			nil,
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("expected prompt failure, code=%d stderr=%s", code, stderr.String()))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("prompt failed"), fmt.Sprintf("expected prompt failure, code=%d stderr=%s", code, stderr.String()))
 
-func TestRunRejectsPromptTurnsConflict(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-	turnsPath := filepath.Join(t.TempDir(), "turns.txt")
-	if err := os.WriteFile(turnsPath, []byte("first\n"), 0o644); err != nil {
-		t.Fatalf("write turns file: %v", err)
-	}
+		record, _ := readSingleHeadlessCompletion(root)
+		gomega.Expect(record.TerminalClass).To(gomega.Equal(runrecord.TerminalClassFailed), fmt.Sprintf("unexpected failure completion: %#v", record))
+		gomega.Expect(record.ExitCode).To(gomega.Equal(1), fmt.Sprintf("unexpected failure completion: %#v", record))
+		gomega.Expect(record.Error).To(gomega.ContainSubstring("prompt failed"), fmt.Sprintf("unexpected failure completion: %#v", record))
 
-	var stdout, stderr bytes.Buffer
-	code := Run(
-		[]string{"--config", configPath, "--prompt", "x", "--turns-file", turnsPath},
-		bytes.NewReader(nil),
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not run for invalid flags")
-			return "", nil
-		},
-		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
-			t.Fatal("turns runner should not run for invalid flags")
-			return nil, nil
-		},
-		nil,
-	)
-	if code != 2 || !strings.Contains(stderr.String(), "cannot be combined") {
-		t.Fatalf("expected prompt/turns conflict, code=%d stderr=%s", code, stderr.String())
-	}
-}
+	})
+	ginkgo.It("run turns file uses single session runner", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+		turnsPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "turns.json")
+		gomega.Expect(os.WriteFile(turnsPath, []byte(`["first turn","second turn"]`), 0o644)).To(gomega.Succeed())
 
-func TestRunValidatesOutputSchema(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
+		var (
+			stdout, stderr bytes.Buffer
+			gotPrompts     []string
+			gotOpts        cmdruntime.RunOptions
+		)
+		code := Run(
+			[]string{"--config", configPath, "--turns-file", turnsPath, "--json", "--resume", "prior-session"},
+			bytes.NewReader(nil),
+			&stdout,
+			&stderr,
+			func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				ginkgo.Fail("single prompt runner should not be called for --turns-file")
+				return "", nil
+			},
+			func(_ config.Config, prompts []string, opts cmdruntime.RunOptions, w io.Writer) ([]string, error) {
+				gotPrompts = append([]string(nil), prompts...)
+				gotOpts = opts
+				_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"second answer\"}\n"))
 
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{
-		"--config", configPath,
-		"--prompt", "hello",
-		"--output", "json",
-		"--output-schema", "answer.v1",
-		"--session", "run-schema",
-	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-		return `{"schema_version":"answer.v1","answer":"ok"}`, nil
-	}, nil, nil)
+				return []string{"first answer", "second answer"}, nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+		gomega.Expect(strings.Join(gotPrompts, "|")).To(gomega.Equal("first turn|second turn"), fmt.Sprintf("unexpected prompts: %#v", gotPrompts))
+		gomega.Expect(gotOpts.JSONEvents).To(gomega.BeTrue(), fmt.Sprintf("unexpected opts: %#v", gotOpts))
+		gomega.Expect(gotOpts.Resume).To(gomega.Equal("prior-session"), fmt.Sprintf("unexpected opts: %#v", gotOpts))
 
-	if code != 0 {
-		t.Fatalf("schema-valid run failed: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-	var output runrecord.RunOutputRecord
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
-	}
-	record := output.RunCompletionRecord
-	if record.OutputSchema != "answer.v1" || record.TerminalClass != "completed" {
-		t.Fatalf("unexpected schema-valid record: %#v", record)
-	}
-	if output.Answer == "" {
-		t.Fatal("schema-valid JSON output should include answer")
-	}
+		if got := stdout.String(); got != "{\"type\":\"final\",\"content\":\"second answer\"}\n" {
+			ginkgo.Fail(fmt.Sprintf("JSON turns mode must only emit runner JSONL, got %q", got))
+		}
 
-	stdout.Reset()
-	stderr.Reset()
-	code = Run([]string{
-		"--config", configPath,
-		"--prompt", "hello",
-		"--output", "json",
-		"--output-schema", "answer.v1",
-		"--session", "run-schema-bad",
-	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-		return `{"schema_version":"wrong.v1","answer":"ok"}`, nil
-	}, nil, nil)
-	if code == 0 {
-		t.Fatal("schema mismatch should fail")
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		t.Fatalf("decode failed completion: %v\n%s", err, stdout.String())
-	}
-	record = output.RunCompletionRecord
-	if record.TerminalClass != "output_schema_failed" {
-		t.Fatalf("unexpected schema failure record: %#v", record)
-	}
-}
+		record, _ := readSingleHeadlessCompletion(root)
+		gomega.Expect(record.Implementation).To(gomega.Equal("idiom run"), fmt.Sprintf("unexpected turns-file completion: %#v", record))
+		gomega.Expect(record.OutputMode).To(gomega.Equal("jsonl"), fmt.Sprintf("unexpected turns-file completion: %#v", record))
+		gomega.Expect(record.TerminalClass).To(gomega.Equal(runrecord.TerminalClassCompleted), fmt.Sprintf("unexpected turns-file completion: %#v", record))
+		gomega.Expect(record.PromptSHA256).NotTo(gomega.BeEmpty(), fmt.Sprintf("unexpected turns-file completion: %#v", record))
+		gomega.Expect(record.AnswerSHA256).NotTo(gomega.BeEmpty(), fmt.Sprintf("unexpected turns-file completion: %#v", record))
 
-func TestRunRejectsInvalidPolicyFlags(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
+		if got := record.Metadata["entrypoint"]; len(got) != 1 || got[0] != "idiom run" {
+			ginkgo.Fail(fmt.Sprintf("entrypoint metadata = %#v", record.Metadata))
+		}
+		if got := record.Metadata["active_mode"]; len(got) != 1 || got[0] != "headless_turns_file" {
+			ginkgo.Fail(fmt.Sprintf("active_mode metadata = %#v", record.Metadata))
+		}
+		if got := record.Metadata["turns_file"]; len(got) != 1 || got[0] != filepath.Clean(turnsPath) {
+			ginkgo.Fail(fmt.Sprintf("turns_file metadata = %#v", record.Metadata))
+		}
+	})
+	ginkgo.It("run rejects prompt turns conflict", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+		turnsPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "turns.txt")
+		gomega.Expect(os.WriteFile(turnsPath, []byte("first\n"), 0o644)).To(gomega.Succeed())
 
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{
-			name: "permission profile",
-			args: []string{"--config", configPath, "--prompt", "x", "--permission-profile", "god-mode"},
-			want: "--permission-profile",
-		},
-		{
-			name: "timeout",
-			args: []string{"--config", configPath, "--prompt", "x", "--timeout", "not-a-duration"},
-			want: "--timeout",
-		},
-		{
-			name: "max tool steps",
-			args: []string{"--config", configPath, "--prompt", "x", "--max-tool-steps", "-1"},
-			want: "--max-tool-steps",
-		},
-	}
+		var stdout, stderr bytes.Buffer
+		code := Run(
+			[]string{"--config", configPath, "--prompt", "x", "--turns-file", turnsPath},
+			bytes.NewReader(nil),
+			&stdout,
+			&stderr,
+			func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				ginkgo.Fail("prompt runner should not run for invalid flags")
+				return "", nil
+			},
+			func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
+				ginkgo.Fail("turns runner should not run for invalid flags")
+				return nil, nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(2), fmt.Sprintf("expected prompt/turns conflict, code=%d stderr=%s", code, stderr.String()))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("cannot be combined"), fmt.Sprintf("expected prompt/turns conflict, code=%d stderr=%s", code, stderr.String()))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	})
+	ginkgo.It("run validates output schema", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{
+			"--config", configPath,
+			"--prompt", "hello",
+			"--output", "json",
+			"--output-schema", "answer.v1",
+			"--session", "run-schema",
+		}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			return `{"schema_version":"answer.v1","answer":"ok"}`, nil
+		}, nil, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("schema-valid run failed: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+
+		var output runrecord.RunOutputRecord
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &output)).To(gomega.Succeed())
+
+		record := output.RunCompletionRecord
+		gomega.Expect(record.OutputSchema).To(gomega.Equal("answer.v1"), fmt.Sprintf("unexpected schema-valid record: %#v", record))
+		gomega.Expect(record.TerminalClass).To(gomega.Equal(runrecord.TerminalClassCompleted), fmt.Sprintf("unexpected schema-valid record: %#v", record))
+		gomega.Expect(output.Answer).NotTo(gomega.Equal(""), "schema-valid JSON output should include answer")
+
+		stdout.Reset()
+		stderr.Reset()
+		code = Run([]string{
+			"--config", configPath,
+			"--prompt", "hello",
+			"--output", "json",
+			"--output-schema", "answer.v1",
+			"--session", "run-schema-bad",
+		}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			return `{"schema_version":"wrong.v1","answer":"ok"}`, nil
+		}, nil, nil)
+		gomega.Expect(code).NotTo(gomega.Equal(0), "schema mismatch should fail")
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &output)).To(gomega.Succeed())
+
+		record = output.RunCompletionRecord
+		gomega.Expect(record.TerminalClass).To(gomega.Equal(runrecord.TerminalClassOutputSchemaFailed), fmt.Sprintf("unexpected schema failure record: %#v", record))
+
+	})
+	ginkgo.DescribeTable("rejects invalid policy flags",
+		func(flagName, value string) {
+			configPath := writeHeadlessTestConfig(ginkgo.GinkgoT().TempDir())
 			var stdout, stderr bytes.Buffer
-			code := Run(tt.args, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-				t.Fatal("prompt runner should not run for invalid flags")
+			code := Run([]string{"--config", configPath, "--prompt", "x", flagName, value}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				ginkgo.Fail("prompt runner should not run for invalid flags")
 				return "", nil
 			}, nil, nil)
-			if code != 2 {
-				t.Fatalf("exit = %d, want 2 stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-			}
-			if !strings.Contains(stderr.String(), tt.want) {
-				t.Fatalf("stderr %q does not mention %q", stderr.String(), tt.want)
-			}
-		})
-	}
-}
-
-func TestRunRejectsInvalidSessionIDsBeforeModelExecution(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-
-	tests := []string{
-		"../escape",
-		"a/b",
-		`a\b`,
-		strings.Repeat("a", 129),
-	}
-	for _, sessionID := range tests {
-		t.Run(sessionID, func(t *testing.T) {
+			gomega.Expect(code).To(gomega.Equal(2), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+			gomega.Expect(stderr.String()).To(gomega.ContainSubstring(flagName))
+		},
+		ginkgo.Entry("permission profile", "--permission-profile", "god-mode"),
+		ginkgo.Entry("timeout", "--timeout", "not-a-duration"),
+		ginkgo.Entry("max tool steps", "--max-tool-steps", "-1"),
+	)
+	ginkgo.DescribeTable("rejects invalid session IDs before model execution",
+		func(sessionID string) {
+			configPath := writeHeadlessTestConfig(ginkgo.GinkgoT().TempDir())
 			var stdout, stderr bytes.Buffer
 			code := Run([]string{
 				"--config", configPath,
@@ -365,133 +280,240 @@ func TestRunRejectsInvalidSessionIDsBeforeModelExecution(t *testing.T) {
 				"--output", "json",
 				"--session", sessionID,
 			}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-				t.Fatal("prompt runner should not run for invalid session id")
+				ginkgo.Fail("prompt runner should not run for invalid session id")
 				return "", nil
 			}, nil, nil)
+			gomega.Expect(code).To(gomega.Equal(2), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+			gomega.Expect(stderr.String()).To(gomega.ContainSubstring("invalid run id"))
+		},
+		ginkgo.Entry("parent traversal", "../escape"),
+		ginkgo.Entry("forward slash", "a/b"),
+		ginkgo.Entry("backslash", `a\b`),
+		ginkgo.Entry("overlong identifier", strings.Repeat("a", 129)),
+	)
+	ginkgo.It("run fails when completion cannot be saved", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+		gomega.Expect(os.WriteFile(filepath.Join(root, ".idiom"), []byte("not a directory"), 0o600)).To(gomega.Succeed())
 
-			if code != 2 {
-				t.Fatalf("exit = %d, want 2 stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-			}
-			if !strings.Contains(stderr.String(), "invalid run id") {
-				t.Fatalf("stderr should explain invalid run id, got %q", stderr.String())
-			}
-		})
-	}
-}
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{
+			"--config", configPath,
+			"--prompt", "hello",
+			"--output", "json",
+			"--session", "completion-save-fails",
+		}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			return "ok", nil
+		}, nil, nil)
+		gomega.Expect(code).NotTo(gomega.Equal(0), "completion save failure should fail the run")
 
-func TestRunFailsWhenCompletionCannotBeSaved(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-	if err := os.WriteFile(filepath.Join(root, ".idiom"), []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+		var output runrecord.RunOutputRecord
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &output)).To(gomega.Succeed())
+		gomega.Expect(output.TerminalClass).To(gomega.Equal(runrecord.TerminalClassArtifactFailed), fmt.Sprintf("unexpected artifact failure record: %#v", output.RunCompletionRecord))
+		gomega.Expect(output.Error).NotTo(gomega.BeEmpty(), fmt.Sprintf("unexpected artifact failure record: %#v", output.RunCompletionRecord))
+		gomega.Expect(output.Artifacts["completion"]).To(gomega.Equal(""), fmt.Sprintf("failed completion save must not advertise a saved completion artifact: %#v", output.Artifacts))
 
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{
-		"--config", configPath,
-		"--prompt", "hello",
-		"--output", "json",
-		"--session", "completion-save-fails",
-	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-		return "ok", nil
-	}, nil, nil)
+	})
+	ginkgo.It("run policy timeout projects to runtime request timeout", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
 
-	if code == 0 {
-		t.Fatal("completion save failure should fail the run")
-	}
-	var output runrecord.RunOutputRecord
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
-	}
-	if output.TerminalClass != "artifact_failed" || output.Error == "" {
-		t.Fatalf("unexpected artifact failure record: %#v", output.RunCompletionRecord)
-	}
-	if output.Artifacts["completion"] != "" {
-		t.Fatalf("failed completion save must not advertise a saved completion artifact: %#v", output.Artifacts)
-	}
-}
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{
+			"--config", configPath,
+			"--prompt", "bounded review",
+			"--output", "json",
+			"--timeout", "2s",
+			"--session", "run-timeout-projection",
+		}, bytes.NewReader(nil), &stdout, &stderr, func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			gomega.Expect(config.Default().Chat.RequestTimeoutSeconds).NotTo(gomega.Equal(2), "test precondition invalid: default request timeout should differ from override")
+			gomega.Expect(cfg.Chat.RequestTimeoutSeconds).To(gomega.Equal(2), fmt.Sprintf("timeout projection = request %d start %d, want 2/0", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs))
+			gomega.Expect(cfg.Chat.ServerStartTimeoutSecs).To(gomega.BeZero(), fmt.Sprintf("timeout projection = request %d start %d, want 2/0", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs))
 
-func TestRunPolicyTimeoutProjectsToRuntimeRequestTimeout(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
+			return "ok", nil
+		}, nil, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("timeout projection run failed stdout=%s stderr=%s", stdout.String(), stderr.String()))
 
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{
-		"--config", configPath,
-		"--prompt", "bounded review",
-		"--output", "json",
-		"--timeout", "2s",
-		"--session", "run-timeout-projection",
-	}, bytes.NewReader(nil), &stdout, &stderr, func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
-		if config.Default().Chat.RequestTimeoutSeconds == 2 {
-			t.Fatal("test precondition invalid: default request timeout should differ from override")
+		var output runrecord.RunOutputRecord
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &output)).To(gomega.Succeed())
+
+		if got := output.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "headless_policy_timeout" {
+			ginkgo.Fail(fmt.Sprintf("timeout owner metadata should identify policy timeout: %#v", output.Metadata))
 		}
-		if cfg.Chat.RequestTimeoutSeconds != 2 || cfg.Chat.ServerStartTimeoutSecs != 0 {
-			t.Fatalf("timeout projection = request %d start %d, want 2/0", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs)
+	})
+	ginkgo.It("run command captures stdout stderr and exit code", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		check := runCommand(context.Background(), "check", "printf 'out'; printf 'err' >&2; exit 7", headlessCommandTestConfig(root))
+		gomega.Expect(check.ExitCode).To(gomega.Equal(7), fmt.Sprintf("ExitCode = %d, want 7; check=%#v", check.ExitCode, check))
+		gomega.Expect(check.Stdout).To(gomega.Equal("out"), fmt.Sprintf("Stdout = %q, want out", check.Stdout))
+		gomega.Expect(check.Stderr).To(gomega.Equal("err"), fmt.Sprintf("Stderr = %q, want err", check.Stderr))
+		gomega.Expect(check.Name).To(gomega.Equal("check"), fmt.Sprintf("check identity not preserved: %#v", check))
+		gomega.Expect(check.Command).NotTo(gomega.BeEmpty(), fmt.Sprintf("check identity not preserved: %#v", check))
+
+	})
+	ginkgo.It("run command uses configured command dir and bounds output", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		check := runCommand(context.Background(), "pwd", "pwd; printf '%05000d' 0", headlessCommandTestConfig(root))
+		gomega.Expect(check.ExitCode).To(gomega.Equal(0), fmt.Sprintf("ExitCode = %d, want 0; check=%#v", check.ExitCode, check))
+		gomega.Expect(strings.HasPrefix(check.Stdout, root)).To(gomega.BeTrue(), fmt.Sprintf("Stdout should start with configured cwd %q, got %q", root, check.Stdout[:min(len(check.Stdout), 80)]))
+		gomega.Expect(check.Stdout).To(gomega.HaveLen(4000), fmt.Sprintf("Stdout length = %d, want bounded 4000", len(check.Stdout)))
+
+	})
+	ginkgo.It("run command honors context timeout", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+
+		check := runCommand(ctx, "timeout", "while true; do :; done", headlessCommandTestConfig(root))
+		gomega.Expect(check.ExitCode).NotTo(gomega.Equal(0), fmt.Sprintf("timeout command should not exit 0: %#v", check))
+		gomega.Expect(check.DurationMS).To(gomega.BeNumerically(">", 0), fmt.Sprintf("timeout duration should be bounded, got %dms in %#v", check.DurationMS, check))
+		gomega.Expect(check.DurationMS).To(gomega.BeNumerically("<=", 1000), fmt.Sprintf("timeout duration should be bounded, got %dms in %#v", check.DurationMS, check))
+
+	})
+	ginkgo.It("write git diff writes workspace patch", func() {
+		if _, err := exec.LookPath("git"); err != nil {
+			ginkgo.Skip("git not available")
 		}
-		return "ok", nil
-	}, nil, nil)
 
-	if code != 0 {
-		t.Fatalf("timeout projection run failed stdout=%s stderr=%s", stdout.String(), stderr.String())
-	}
+		root := ginkgo.GinkgoT().TempDir()
+		runHeadlessGit(root, "init")
+		runHeadlessGit(root, "config", "user.email", "test@example.com")
+		runHeadlessGit(root, "config", "user.name", "Test User")
+		gomega.Expect(os.WriteFile(filepath.Join(root, "file.txt"), []byte("before\n"), 0o644)).To(gomega.Succeed())
 
-	var output runrecord.RunOutputRecord
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		t.Fatalf("decode timeout projection completion: %v\n%s", err, stdout.String())
-	}
-	if got := output.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "headless_policy_timeout" {
-		t.Fatalf("timeout owner metadata should identify policy timeout: %#v", output.Metadata)
-	}
-}
+		runHeadlessGit(root, "add", "file.txt")
+		runHeadlessGit(root, "commit", "-m", "initial")
+		gomega.Expect(os.WriteFile(filepath.Join(root, "file.txt"), []byte("after\n"), 0o644)).To(gomega.Succeed())
 
-func TestRunCommandCapturesStdoutStderrAndExitCode(t *testing.T) {
-	root := t.TempDir()
-	check := runCommand(context.Background(), "check", "printf 'out'; printf 'err' >&2; exit 7", headlessCommandTestConfig(root))
+		patchPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "diff.patch")
+		gomega.Expect(writeGitDiff(patchPath, headlessCommandTestConfig(root))).To(gomega.Succeed())
 
-	if check.ExitCode != 7 {
-		t.Fatalf("ExitCode = %d, want 7; check=%#v", check.ExitCode, check)
-	}
-	if check.Stdout != "out" {
-		t.Fatalf("Stdout = %q, want out", check.Stdout)
-	}
-	if check.Stderr != "err" {
-		t.Fatalf("Stderr = %q, want err", check.Stderr)
-	}
-	if check.Name != "check" || check.Command == "" {
-		t.Fatalf("check identity not preserved: %#v", check)
-	}
-}
+		body, err := os.ReadFile(patchPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read patch: %v", err))
 
-func TestRunCommandUsesConfiguredCommandDirAndBoundsOutput(t *testing.T) {
-	root := t.TempDir()
-	check := runCommand(context.Background(), "pwd", "pwd; printf '%05000d' 0", headlessCommandTestConfig(root))
+		text := string(body)
+		for _, want := range []string{"diff --git a/file.txt b/file.txt", "-before", "+after"} {
+			gomega.Expect(text).To(gomega.ContainSubstring(want), fmt.Sprintf("patch missing %q:\n%s", want, text))
 
-	if check.ExitCode != 0 {
-		t.Fatalf("ExitCode = %d, want 0; check=%#v", check.ExitCode, check)
-	}
-	if !strings.HasPrefix(check.Stdout, root) {
-		t.Fatalf("Stdout should start with configured cwd %q, got %q", root, check.Stdout[:min(len(check.Stdout), 80)])
-	}
-	if len(check.Stdout) != 4000 {
-		t.Fatalf("Stdout length = %d, want bounded 4000", len(check.Stdout))
-	}
-}
+		}
 
-func TestRunCommandHonorsContextTimeout(t *testing.T) {
-	root := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
+		info, err := os.Stat(patchPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("stat patch: %v", err))
 
-	check := runCommand(ctx, "timeout", "while true; do :; done", headlessCommandTestConfig(root))
+		if got := info.Mode().Perm(); got != 0o600 {
+			ginkgo.Fail(fmt.Sprintf("patch mode = %o, want 600", got))
+		}
+	})
+	ginkgo.It("run fail on degraded rejects unsupported approval policy", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
 
-	if check.ExitCode == 0 {
-		t.Fatalf("timeout command should not exit 0: %#v", check)
-	}
-	if check.DurationMS <= 0 || check.DurationMS > 1000 {
-		t.Fatalf("timeout duration should be bounded, got %dms in %#v", check.DurationMS, check)
-	}
-}
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{
+			"--config", configPath,
+			"--prompt", "hello",
+			"--output", "json",
+			"--approval-policy", "on-request",
+			"--fail-on-degraded",
+			"--session", "run-degraded",
+		}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			return "ok", nil
+		}, nil, nil)
+		gomega.Expect(code).NotTo(gomega.Equal(0), fmt.Sprintf("degraded run should fail when --fail-on-degraded is set"))
+
+		var record runrecord.RunCompletionRecord
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &record)).To(gomega.Succeed())
+		gomega.Expect(record.TerminalClass).To(gomega.Equal(runrecord.TerminalClassDegraded), fmt.Sprintf("unexpected degraded record: %#v", record))
+		gomega.Expect(record.UnsupportedFlags).NotTo(gomega.BeEmpty(), fmt.Sprintf("unexpected degraded record: %#v", record))
+
+	})
+	ginkgo.It("run json flag emits jsonl only", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{
+			"--config", configPath,
+			"--prompt", "hello",
+			"--json",
+			"--session", "run-jsonl",
+		}, bytes.NewReader(nil), &stdout, &stderr, func(_ config.Config, _ string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
+			gomega.Expect(opts.JSONEvents).To(gomega.BeTrue(), "--json should request runtime JSON events")
+
+			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
+
+			return "ok", nil
+		}, nil, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("Run exit = %d stderr=%s", code, stderr.String()))
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("\nok\n"), fmt.Sprintf("JSONL mode should not append plain answer: %q", stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"type":"final"`), fmt.Sprintf("expected runtime JSONL event, got %q", stdout.String()))
+
+	})
+	ginkgo.It("session export sanitizes and replay returns prompts", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+		logDir := filepath.Join(root, "logs", "conversations")
+		gomega.Expect(os.MkdirAll(logDir, 0o755)).To(gomega.Succeed())
+
+		logPath := filepath.Join(logDir, "session-1.jsonl")
+		gomega.Expect(os.WriteFile(logPath, []byte(
+			`{"type":"message","role":"user","content":"secret prompt"}`+"\n"+
+				`{"type":"tool_result","tool":"read_file","summary":"read README","content":"raw file body"}`+"\n",
+		), 0o600)).To(gomega.Succeed())
+
+		exportPath := filepath.Join(root, "export.json")
+		var stdout, stderr bytes.Buffer
+		code := RunSession([]string{"export", "--config", configPath, "--session", "session-1", "--out", exportPath}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("export exit = %d stderr=%s", code, stderr.String()))
+
+		body, err := os.ReadFile(exportPath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), err)
+		gomega.Expect(string(body)).NotTo(gomega.ContainSubstring("secret prompt"), fmt.Sprintf("sanitized export leaked raw content: %s", string(body)))
+		gomega.Expect(string(body)).NotTo(gomega.ContainSubstring("raw file body"), fmt.Sprintf("sanitized export leaked raw content: %s", string(body)))
+		gomega.Expect(string(body)).To(gomega.ContainSubstring("read README"), fmt.Sprintf("sanitized export should retain summaries: %s", string(body)))
+
+		stdout.Reset()
+		stderr.Reset()
+		code = RunSession([]string{"replay", "--config", configPath, "--session", "session-1"}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("replay exit = %d stderr=%s", code, stderr.String()))
+		gomega.Expect(strings.TrimSpace(stdout.String())).To(gomega.Equal("secret prompt"), fmt.Sprintf("replay stdout = %q", stdout.String()))
+
+	})
+	ginkgo.It("contract inspect reports configured policy", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := writeHeadlessTestConfig(root)
+
+		var stdout, stderr bytes.Buffer
+		code := RunContract([]string{"inspect", "--config", configPath, "--json"}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("contract inspect exit = %d stderr=%s", code, stderr.String()))
+
+		var report map[string]any
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &report)).To(gomega.Succeed())
+		gomega.Expect(report["schema_version"]).To(gomega.Equal("idiom.headless.contract_report.v1"), fmt.Sprintf("unexpected report: %#v", report))
+
+		gotRoot, _ := filepath.EvalSymlinks(report["workspace_root"].(string))
+		wantRoot, _ := filepath.EvalSymlinks(root)
+		gomega.Expect(gotRoot).To(gomega.Equal(wantRoot), fmt.Sprintf("workspace root = %v, want %s", report["workspace_root"], root))
+
+	})
+	ginkgo.It("serve mux reports health and status", func() {
+		server := httptest.NewServer(newServeMux())
+		defer server.Close()
+
+		for _, path := range []string{"/healthz", "/v1/status"} {
+			resp, err := http.Get(server.URL + path)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("GET %s: %v", path, err))
+
+			defer resp.Body.Close()
+			gomega.Expect(resp.StatusCode).To(gomega.Equal(http.StatusOK), fmt.Sprintf("GET %s status = %d", path, resp.StatusCode))
+
+			var body map[string]any
+			gomega.Expect(json.NewDecoder(resp.Body).Decode(&body)).To(gomega.Succeed())
+			gomega.Expect(body["schema_version"]).To(gomega.Equal("idiom.headless.server.v1"), fmt.Sprintf("%s schema_version = %v", path, body["schema_version"]))
+
+		}
+	})
+})
 
 func headlessCommandTestConfig(root string) config.Config {
 	cfg := config.Config{}
@@ -502,212 +524,16 @@ func headlessCommandTestConfig(root string) config.Config {
 	return cfg
 }
 
-func TestWriteGitDiffWritesWorkspacePatch(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	root := t.TempDir()
-	runHeadlessGit(t, root, "init")
-	runHeadlessGit(t, root, "config", "user.email", "test@example.com")
-	runHeadlessGit(t, root, "config", "user.name", "Test User")
-
-	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("before\n"), 0o644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-	runHeadlessGit(t, root, "add", "file.txt")
-	runHeadlessGit(t, root, "commit", "-m", "initial")
-
-	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("after\n"), 0o644); err != nil {
-		t.Fatalf("modify file: %v", err)
-	}
-
-	patchPath := filepath.Join(t.TempDir(), "diff.patch")
-	if err := writeGitDiff(patchPath, headlessCommandTestConfig(root)); err != nil {
-		t.Fatalf("writeGitDiff failed: %v", err)
-	}
-
-	body, err := os.ReadFile(patchPath)
-	if err != nil {
-		t.Fatalf("read patch: %v", err)
-	}
-	text := string(body)
-	for _, want := range []string{"diff --git a/file.txt b/file.txt", "-before", "+after"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("patch missing %q:\n%s", want, text)
-		}
-	}
-
-	info, err := os.Stat(patchPath)
-	if err != nil {
-		t.Fatalf("stat patch: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("patch mode = %o, want 600", got)
-	}
-}
-
-func runHeadlessGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
+func runHeadlessGit(dir string, args ...string) {
 
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+		ginkgo.Fail(fmt.Sprintf("git %v failed: %v\n%s", args, err, string(out)))
 	}
 }
 
-func TestRunFailOnDegradedRejectsUnsupportedApprovalPolicy(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{
-		"--config", configPath,
-		"--prompt", "hello",
-		"--output", "json",
-		"--approval-policy", "on-request",
-		"--fail-on-degraded",
-		"--session", "run-degraded",
-	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-		return "ok", nil
-	}, nil, nil)
-
-	if code == 0 {
-		t.Fatalf("degraded run should fail when --fail-on-degraded is set")
-	}
-	var record runrecord.RunCompletionRecord
-	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
-		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
-	}
-	if record.TerminalClass != "degraded" || len(record.UnsupportedFlags) == 0 {
-		t.Fatalf("unexpected degraded record: %#v", record)
-	}
-}
-
-func TestRunJSONFlagEmitsJSONLOnly(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{
-		"--config", configPath,
-		"--prompt", "hello",
-		"--json",
-		"--session", "run-jsonl",
-	}, bytes.NewReader(nil), &stdout, &stderr, func(_ config.Config, _ string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
-		if !opts.JSONEvents {
-			t.Fatal("--json should request runtime JSON events")
-		}
-		_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
-
-		return "ok", nil
-	}, nil, nil)
-
-	if code != 0 {
-		t.Fatalf("Run exit = %d stderr=%s", code, stderr.String())
-	}
-	if strings.Contains(stdout.String(), "\nok\n") {
-		t.Fatalf("JSONL mode should not append plain answer: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), `"type":"final"`) {
-		t.Fatalf("expected runtime JSONL event, got %q", stdout.String())
-	}
-}
-
-func TestSessionExportSanitizesAndReplayReturnsPrompts(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-	logDir := filepath.Join(root, "logs", "conversations")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(logDir, "session-1.jsonl")
-	if err := os.WriteFile(logPath, []byte(
-		`{"type":"message","role":"user","content":"secret prompt"}`+"\n"+
-			`{"type":"tool_result","tool":"read_file","summary":"read README","content":"raw file body"}`+"\n",
-	), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	exportPath := filepath.Join(root, "export.json")
-	var stdout, stderr bytes.Buffer
-	code := RunSession([]string{"export", "--config", configPath, "--session", "session-1", "--out", exportPath}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("export exit = %d stderr=%s", code, stderr.String())
-	}
-	body, err := os.ReadFile(exportPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(body, []byte("secret prompt")) || bytes.Contains(body, []byte("raw file body")) {
-		t.Fatalf("sanitized export leaked raw content: %s", string(body))
-	}
-	if !bytes.Contains(body, []byte("read README")) {
-		t.Fatalf("sanitized export should retain summaries: %s", string(body))
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = RunSession([]string{"replay", "--config", configPath, "--session", "session-1"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("replay exit = %d stderr=%s", code, stderr.String())
-	}
-	if strings.TrimSpace(stdout.String()) != "secret prompt" {
-		t.Fatalf("replay stdout = %q", stdout.String())
-	}
-}
-
-func TestContractInspectReportsConfiguredPolicy(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-
-	var stdout, stderr bytes.Buffer
-	code := RunContract([]string{"inspect", "--config", configPath, "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("contract inspect exit = %d stderr=%s", code, stderr.String())
-	}
-
-	var report map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
-		t.Fatalf("decode report: %v", err)
-	}
-	if report["schema_version"] != "idiom.headless.contract_report.v1" {
-		t.Fatalf("unexpected report: %#v", report)
-	}
-	gotRoot, _ := filepath.EvalSymlinks(report["workspace_root"].(string))
-	wantRoot, _ := filepath.EvalSymlinks(root)
-	if gotRoot != wantRoot {
-		t.Fatalf("workspace root = %v, want %s", report["workspace_root"], root)
-	}
-}
-
-func TestServeMuxReportsHealthAndStatus(t *testing.T) {
-	server := httptest.NewServer(newServeMux())
-	defer server.Close()
-
-	for _, path := range []string{"/healthz", "/v1/status"} {
-		resp, err := http.Get(server.URL + path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("GET %s status = %d", path, resp.StatusCode)
-		}
-
-		var body map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatalf("decode %s: %v", path, err)
-		}
-		if body["schema_version"] != "idiom.headless.server.v1" {
-			t.Fatalf("%s schema_version = %v", path, body["schema_version"])
-		}
-	}
-}
-
-func writeHeadlessTestConfig(t *testing.T, root string) string {
-	t.Helper()
+func writeHeadlessTestConfig(root string) string {
 
 	cfg := config.Default()
 	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
@@ -718,37 +544,25 @@ func writeHeadlessTestConfig(t *testing.T, root string) string {
 	cfg.Workspace.EnableWrites = true
 
 	data, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), err)
+
 	configPath := filepath.Join(root, "config.json")
-	if err := os.WriteFile(configPath, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	gomega.Expect(os.WriteFile(configPath, data, 0o600)).To(gomega.Succeed())
 
 	return configPath
 }
 
-func readSingleHeadlessCompletion(t *testing.T, root string) (runrecord.RunCompletionRecord, []byte) {
-	t.Helper()
+func readSingleHeadlessCompletion(root string) (runrecord.RunCompletionRecord, []byte) {
 
 	matches, err := filepath.Glob(filepath.Join(root, ".idiom", "runs", "*.completion.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("expected one completion record, got %#v", matches)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), err)
+	gomega.Expect(matches).To(gomega.HaveLen(1), fmt.Sprintf("expected one completion record, got %#v", matches))
 
 	body, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), err)
 
 	var record runrecord.RunCompletionRecord
-	if err := json.Unmarshal(body, &record); err != nil {
-		t.Fatalf("decode completion record: %v\n%s", err, string(body))
-	}
+	gomega.Expect(json.Unmarshal(body, &record)).To(gomega.Succeed())
 
 	return record, body
 }

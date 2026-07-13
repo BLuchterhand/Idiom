@@ -25,6 +25,7 @@ func ApplyProductSourceSatisfiedCloseout(state *FeatureState) {
 func ProductSourceSatisfiedCloseout(state FeatureState, brief ProductWorkflowBrief, requestedEffortID string) (FeatureState, Event) {
 	state.EffortRoot = strings.TrimSpace(brief.EffortRoot)
 	state.EffortID = firstNonEmptyTrimmed(requestedEffortID, brief.EffortID, state.EffortID)
+	state.TaskID = firstNonEmptyTrimmed(state.TaskID, brief.TaskID)
 
 	activeRunDeltas := make([]ActiveRunDelta, 0, len(state.ActiveRuns))
 
@@ -46,6 +47,7 @@ func ProductSourceSatisfiedCloseout(state FeatureState, brief ProductWorkflowBri
 		ActiveRunDeltas: activeRunDeltas,
 		Fields: map[string]any{
 			"effort_id":          strings.TrimSpace(brief.EffortID),
+			"task_id":            strings.TrimSpace(brief.TaskID),
 			"effort_root":        strings.TrimSpace(brief.EffortRoot),
 			"status_bucket":      strings.TrimSpace(brief.StatusBucket),
 			"current_phase":      strings.TrimSpace(brief.CurrentPhase),

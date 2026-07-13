@@ -1,18 +1,23 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/platform/config"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestHasReadableWorkspaceFilesDetectsProjectEvidence(t *testing.T) {
+var _ = ginkgo.It("has readable workspace files detects project evidence", func() {
+	t := ginkgo.GinkgoT()
 	tests := []struct {
 		name  string
 		files []string
@@ -45,38 +50,35 @@ func TestHasReadableWorkspaceFilesDetectsProjectEvidence(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.By(fmt.Sprint(tt.name), func() {
 			root := t.TempDir()
 			for _, file := range tt.files {
 				writePromptRoutingTestFile(t, root, file)
 			}
 
-			if got := hasReadableWorkspaceFiles(root); got != tt.want {
-				t.Fatalf("hasReadableWorkspaceFiles()=%t, want %t", got, tt.want)
+			{
+				got := hasReadableWorkspaceFiles(root)
+				gomega.Expect(got).To(gomega.Equal(tt.want), fmt.Sprintf("hasReadableWorkspaceFiles()=%t, want %t", got, tt.want))
 			}
 		})
 	}
-}
+})
 
-func TestPromptContextPacketProjectionCarriesTerminalStateWhenBlocked(t *testing.T) {
+var _ = ginkgo.It("prompt context packet projection carries terminal state when blocked", func() {
 	projection := plancontract.PromptContextPacketProjectionFromPrompt("plain prompt without packet headings")
 
-	if projection.State != workflowstate.StateTerminal {
-		t.Fatalf("state = %q, want terminal", projection.State)
-	}
-	if projection.TerminalState != workflowstate.TerminalStateBlocked {
-		t.Fatalf("terminal_state = %q, want blocked", projection.TerminalState)
-	}
-	if projection.Dispatchable {
-		t.Fatal("missing context packet must not be dispatchable")
-	}
-}
+	gomega.Expect(projection.State).To(gomega.Equal(workflowstate.StateTerminal), fmt.Sprintf("state = %q, want terminal", projection.State))
+	gomega.Expect(projection.TerminalState).To(gomega.Equal(workflowstate.TerminalStateBlocked), fmt.Sprintf("terminal_state = %q, want blocked", projection.TerminalState))
+	gomega.Expect(projection.Dispatchable).To(gomega.BeFalse(), fmt.Sprint("missing context packet must not be dispatchable"))
+})
 
-func TestGreenfieldCreationConfirmationSkipsReadOnlyDesignQuestion(t *testing.T) {
+var _ = ginkgo.It("greenfield creation confirmation skips read only design question", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	model := &Model{
 		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 	}
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 	plan := promptExecutionPlan{
 		route: turnRoutePlan{
 			Family:      "conversation",
@@ -87,16 +89,16 @@ func TestGreenfieldCreationConfirmationSkipsReadOnlyDesignQuestion(t *testing.T)
 	}
 	prompt := `What would a decent "LLM brain" project look like? something that can maintain context across projects and reduce overall token consumption through clever documentation management?`
 
-	if model.greenfieldCreationRequiresConfirmation(prompt, plan) {
-		t.Fatal("greenfield design question should reach the direct-answer model path")
-	}
-}
+	gomega.Expect(session.greenfieldCreationRequiresConfirmation(prompt, plan)).To(gomega.BeFalse(), fmt.Sprint("greenfield design question should reach the direct-answer model path"))
+})
 
-func TestGreenfieldCreationConfirmationStillCatchesMisroutedCreationPrompt(t *testing.T) {
+var _ = ginkgo.It("greenfield creation confirmation still catches misrouted creation prompt", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	model := &Model{
 		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 	}
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 	readOnlyPlan := promptExecutionPlan{
 		route: turnRoutePlan{
 			Family:      "conversation",
@@ -107,22 +109,20 @@ func TestGreenfieldCreationConfirmationStillCatchesMisroutedCreationPrompt(t *te
 	}
 	prompt := "Create a simple browser app."
 
-	if !model.greenfieldCreationRequiresConfirmation(prompt, readOnlyPlan) {
-		t.Fatal("misrouted greenfield creation prompt should still ask for lane confirmation")
-	}
+	gomega.Expect(session.greenfieldCreationRequiresConfirmation(prompt, readOnlyPlan)).To(gomega.BeTrue(), fmt.Sprint("misrouted greenfield creation prompt should still ask for lane confirmation"))
 
 	writePromptRoutingTestFile(t, root, "README.md")
-	if model.greenfieldCreationRequiresConfirmation(prompt, readOnlyPlan) {
-		t.Fatal("non-empty workspace should not trigger greenfield creation confirmation")
-	}
-}
+	gomega.Expect(session.greenfieldCreationRequiresConfirmation(prompt, readOnlyPlan)).To(gomega.BeFalse(), fmt.Sprint("non-empty workspace should not trigger greenfield creation confirmation"))
+})
 
-func TestReadOnlyEditRequestRequiresImplementationConfirmation(t *testing.T) {
+var _ = ginkgo.It("read only edit request requires implementation confirmation", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writePromptRoutingTestFile(t, root, "README.md")
 	model := &Model{
 		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 	}
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 	readOnlyPlan := promptExecutionPlan{
 		route: turnRoutePlan{
 			Family:      "conversation",
@@ -132,13 +132,9 @@ func TestReadOnlyEditRequestRequiresImplementationConfirmation(t *testing.T) {
 		},
 	}
 
-	if !model.readOnlyEditRequestRequiresConfirmation("Please make the requested edits in internal/runtime/agent/runner_core.go.", readOnlyPlan) {
-		t.Fatal("misrouted explicit edit request should ask for implementation confirmation before a read-only model turn")
-	}
+	gomega.Expect(session.readOnlyEditRequestRequiresConfirmation("Please make the requested edits in internal/runtime/agent/runner_core.go.", readOnlyPlan)).To(gomega.BeTrue(), fmt.Sprint("misrouted explicit edit request should ask for implementation confirmation before a read-only model turn"))
 
-	if model.readOnlyEditRequestRequiresConfirmation("How would you make the routing code easier to understand?", readOnlyPlan) {
-		t.Fatal("read-only design question should not ask for implementation confirmation")
-	}
+	gomega.Expect(session.readOnlyEditRequestRequiresConfirmation("How would you make the routing code easier to understand?", readOnlyPlan)).To(gomega.BeFalse(), fmt.Sprint("read-only design question should not ask for implementation confirmation"))
 
 	writePlan := promptExecutionPlan{
 		route: turnRoutePlan{
@@ -148,17 +144,13 @@ func TestReadOnlyEditRequestRequiresImplementationConfirmation(t *testing.T) {
 			WriteIntent: "yes",
 		},
 	}
-	if model.readOnlyEditRequestRequiresConfirmation("Please make the requested edits.", writePlan) {
-		t.Fatal("write-capable route should not ask for read-only edit confirmation")
-	}
+	gomega.Expect(session.readOnlyEditRequestRequiresConfirmation("Please make the requested edits.", writePlan)).To(gomega.BeFalse(), fmt.Sprint("write-capable route should not ask for read-only edit confirmation"))
 
-	model.planExecuteActive = true
-	if model.readOnlyEditRequestRequiresConfirmation("Submit a corrective plan with executable edits only.", readOnlyPlan) {
-		t.Fatal("internal plan-execute prompt runner should not ask for user-facing implementation confirmation")
-	}
-}
+	session.planExecuteActive = true
+	gomega.Expect(session.readOnlyEditRequestRequiresConfirmation("Submit a corrective plan with executable edits only.", readOnlyPlan)).To(gomega.BeFalse(), fmt.Sprint("internal plan-execute prompt runner should not ask for user-facing implementation confirmation"))
+})
 
-func TestGreenfieldCreationConfirmationUsesSharedPresenter(t *testing.T) {
+var _ = ginkgo.It("greenfield creation confirmation uses shared presenter", func() {
 	readOnlyPlan := promptExecutionPlan{
 		route: turnRoutePlan{
 			Family:      "conversation",
@@ -175,9 +167,7 @@ func TestGreenfieldCreationConfirmationUsesSharedPresenter(t *testing.T) {
 		"write-capable implement lane",
 		"ask your question as-is",
 	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("greenfield confirmation missing %q:\n%s", want, answer)
-		}
+		gomega.Expect(strings.Contains(answer, want)).To(gomega.BeTrue(), fmt.Sprintf("greenfield confirmation missing %q:\n%s", want, answer))
 	}
 
 	for _, forbidden := range []string{
@@ -186,13 +176,11 @@ func TestGreenfieldCreationConfirmationUsesSharedPresenter(t *testing.T) {
 		"State saved at",
 		"Feature planner needs your approval",
 	} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("greenfield confirmation leaked scope-authorization text %q:\n%s", forbidden, answer)
-		}
+		gomega.Expect(strings.Contains(answer, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("greenfield confirmation leaked scope-authorization text %q:\n%s", forbidden, answer))
 	}
-}
+})
 
-func TestWorkspaceEditConfirmationQuestionUsesImplementationCommand(t *testing.T) {
+var _ = ginkgo.It("workspace edit confirmation question uses implementation command", func() {
 	answer := workspaceEditConfirmationQuestion(promptExecutionPlan{
 		route: turnRoutePlan{
 			Family:      "conversation",
@@ -208,21 +196,21 @@ func TestWorkspaceEditConfirmationQuestionUsesImplementationCommand(t *testing.T
 		"write-capable implement lane",
 		"answer in read-only mode",
 	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("workspace edit confirmation missing %q:\n%s", want, answer)
-		}
+		gomega.Expect(strings.Contains(answer, want)).To(gomega.BeTrue(), fmt.Sprintf("workspace edit confirmation missing %q:\n%s", want, answer))
 	}
-}
+})
 
-func writePromptRoutingTestFile(t *testing.T, root string, rel string) {
-	t.Helper()
+func writePromptRoutingTestFile(t ginkgo.FullGinkgoTInterface, root string, rel string) {
+	ginkgo.GinkgoHelper()
 
 	path := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	{
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir %s: %v", filepath.Dir(path), err))
 	}
 
-	if err := os.WriteFile(path, []byte("test\n"), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
+	{
+		err := os.WriteFile(path, []byte("test\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write %s: %v", path, err))
 	}
 }

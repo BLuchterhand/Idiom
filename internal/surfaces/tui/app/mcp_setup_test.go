@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"testing"
 	"time"
 
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/platform/config"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
 // fakeMCPServer responds to the three method calls the registry makes
@@ -34,18 +36,14 @@ func fakeMCPServer() *httptest.Server {
 	}))
 }
 
-func TestSetupMCPRegistry_EmptyReturnsNil(t *testing.T) {
+var _ = ginkgo.It("setup mcp registry empty returns nil", func() {
 	reg, fails := mcp.SetupRegistry(context.Background(), nil, false)
-	if reg != nil {
-		t.Fatalf("expected nil registry, got %v", reg)
-	}
+	gomega.Expect(reg).To(gomega.BeNil(), fmt.Sprintf("expected nil registry, got %v", reg))
 
-	if len(fails) != 0 {
-		t.Fatalf("expected no failures, got %v", fails)
-	}
-}
+	gomega.Expect(len(fails)).To(gomega.Equal(0), fmt.Sprintf("expected no failures, got %v", fails))
+})
 
-func TestSetupMCPRegistry_RegistersHTTPServer(t *testing.T) {
+var _ = ginkgo.It("setup mcp registry registers http server", func() {
 	srv := fakeMCPServer()
 	defer srv.Close()
 
@@ -56,45 +54,37 @@ func TestSetupMCPRegistry_RegistersHTTPServer(t *testing.T) {
 	reg, fails := mcp.SetupRegistry(ctx, []config.MCPServer{
 		{Name: "fake", URL: srv.URL, TimeoutSeconds: 5},
 	}, true)
-	if reg == nil {
-		t.Fatalf("expected registry, got nil")
-	}
+	gomega.Expect(reg).NotTo(gomega.BeNil(), fmt.Sprintf("expected registry, got nil"))
 
 	defer reg.Close()
 
-	if len(fails) != 0 {
-		t.Fatalf("expected no failures, got %v", fails)
-	}
+	gomega.Expect(len(fails)).To(gomega.Equal(0), fmt.Sprintf("expected no failures, got %v", fails))
 
 	tools := reg.Tools()
-	if _, ok := tools["mcp:fake/echo"]; !ok {
-		t.Fatalf("expected mcp:fake/echo in registry, got %v", tools)
+	{
+		_, ok := tools["mcp:fake/echo"]
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected mcp:fake/echo in registry, got %v", tools))
 	}
-}
+})
 
-func TestSetupMCPRegistry_SSRFBlockedReportsFailure(t *testing.T) {
+var _ = ginkgo.It("setup mcp registry ssrf blocked reports failure", func() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	reg, fails := mcp.SetupRegistry(ctx, []config.MCPServer{
 		{Name: "blocked", URL: "http://127.0.0.1:9/"},
 	}, false)
-	if reg == nil {
-		t.Fatalf("expected non-nil registry even when all servers fail")
-	}
+	gomega.Expect(reg).NotTo(gomega.BeNil(), fmt.Sprintf("expected non-nil registry even when all servers fail"))
 
 	defer reg.Close()
 
-	if len(fails) != 1 {
-		t.Fatalf("expected 1 failure, got %v", fails)
-	}
+	gomega.Expect(len(fails)).To(gomega.Equal(1), fmt.Sprintf("expected 1 failure, got %v", fails))
 
-	if !strings.Contains(fails[0], "blocked") || !strings.Contains(fails[0], "loopback") {
-		t.Fatalf("expected failure mentioning server name and SSRF reason, got %q", fails[0])
-	}
-}
+	gomega.Expect(fails[0]).To(gomega.ContainSubstring("blocked"), fmt.Sprintf("expected failure mentioning server name and SSRF reason, got %q", fails[0]))
+	gomega.Expect(fails[0]).To(gomega.ContainSubstring("loopback"), fmt.Sprintf("expected failure mentioning server name and SSRF reason, got %q", fails[0]))
+})
 
-func TestSetupMCPRegistry_OneFailDoesNotBlockOthers(t *testing.T) {
+var _ = ginkgo.It("setup mcp registry one fail does not block others", func() {
 	srv := fakeMCPServer()
 	defer srv.Close()
 
@@ -105,17 +95,14 @@ func TestSetupMCPRegistry_OneFailDoesNotBlockOthers(t *testing.T) {
 		{Name: "blocked", URL: "http://127.0.0.1:9/"},
 		{Name: "fake", URL: srv.URL, TimeoutSeconds: 5},
 	}, true) // allowPrivate so the httptest URL passes; the closed-port one still fails on connect
-	if reg == nil {
-		t.Fatalf("expected registry")
-	}
+	gomega.Expect(reg).NotTo(gomega.BeNil(), fmt.Sprintf("expected registry"))
 
 	defer reg.Close()
 
-	if len(fails) != 1 {
-		t.Fatalf("expected exactly 1 failure (the blocked one), got %d: %v", len(fails), fails)
-	}
+	gomega.Expect(len(fails)).To(gomega.Equal(1), fmt.Sprintf("expected exactly 1 failure (the blocked one), got %d: %v", len(fails), fails))
 
-	if _, ok := reg.Tools()["mcp:fake/echo"]; !ok {
-		t.Fatalf("expected mcp:fake/echo to be registered even though sibling failed")
+	{
+		_, ok := reg.Tools()["mcp:fake/echo"]
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("expected mcp:fake/echo to be registered even though sibling failed"))
 	}
-}
+})

@@ -7,94 +7,52 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/platform/textutil"
-	"idiom/internal/runtime/llama"
 	"idiom/internal/workflows/productworkflow"
 )
 
-type scriptedLLMClient struct {
-	responses          []string
-	reasoningResponses []string
-	finishReasons      []string
-	messages           [][]llama.ChatMessage
-	options            []llama.ChatOptions
-	callCount          int
-}
-
-func (c *scriptedLLMClient) CompleteChat(_ context.Context, messages []llama.ChatMessage, opts llama.ChatOptions) (string, error) {
-	c.messages = append(c.messages, append([]llama.ChatMessage(nil), messages...))
-	c.options = append(c.options, opts)
-
-	if c.callCount >= len(c.responses) {
-		return c.responses[len(c.responses)-1], nil
-	}
-
-	resp := c.responses[c.callCount]
-	c.callCount++
-
-	return resp, nil
-}
-
-func (c *scriptedLLMClient) CompleteChatMessage(_ context.Context, messages []llama.ChatMessage, opts llama.ChatOptions) (llama.ChatMessage, error) {
-	callIndex := c.callCount
-	resp, _ := c.CompleteChat(context.TODO(), messages, opts)
-	finishReason := ""
-
-	if callIndex < len(c.finishReasons) {
-		finishReason = c.finishReasons[callIndex]
-	}
-
-	reasoning := ""
-	if callIndex < len(c.reasoningResponses) {
-		reasoning = c.reasoningResponses[callIndex]
-	}
-
-	return llama.ChatMessage{Role: "assistant", Content: resp, ReasoningContent: reasoning, FinishReason: finishReason}, nil
-}
-
-func (c *scriptedLLMClient) StreamChat(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions, _ func(string) error) error {
-	return nil
-}
-
-func (c *scriptedLLMClient) ListModels(_ context.Context) ([]llama.ModelInfo, error) {
-	return []llama.ModelInfo{{ID: "mock-model"}}, nil
-}
-
-func (c *scriptedLLMClient) Backend() string           { return "mock" }
-func (c *scriptedLLMClient) SupportsNativeTools() bool { return false }
-
-func setupE2EModel(t *testing.T, responses []string) (*Model, string) {
-	t.Helper()
+func setupE2ESession(t ginkgo.FullGinkgoTInterface, responses []string, expectedCallCount ...int) (*promptExecutionSession, string, *scriptedLLMRecorder) {
+	ginkgo.GinkgoHelper()
 
 	tmp := t.TempDir()
 	effortRoot := filepath.Join(tmp, "docs", "product-workflows", "efforts", "started", "test-effort")
-	client := &scriptedLLMClient{responses: responses}
+	script := scriptedLLMConfig{responses: responses}
+	if len(expectedCallCount) > 0 {
+		script.assertCallCount = true
+		script.expectedCallCount = expectedCallCount[0]
+	}
+	client := newScriptedLLMRecorder(t, script)
 
-	m := &Model{}
+	live := &Model{
+		client: client.mock,
+		events: make(chan tea.Msg, promptWorkerEventBuffer),
+	}
+	live.featurePlannerEffortRoot = effortRoot
+	live.featurePlannerPhase = productworkflow.PhasePRDDrafting
 
-	m.client = client
-	m.featurePlannerEffortRoot = effortRoot
-	m.featurePlannerPhase = productworkflow.PhasePRDDrafting
-
-	if err := os.MkdirAll(effortRoot, 0o755); err != nil {
-		t.Fatalf("mkdir effort root: %v", err)
+	{
+		err := os.MkdirAll(effortRoot, 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir effort root: %v", err))
 	}
 
 	for _, sub := range []string{"adrs", "evidence", "briefs", "reports"} {
-		if err := os.MkdirAll(filepath.Join(effortRoot, sub), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", sub, err)
+		{
+			err := os.MkdirAll(filepath.Join(effortRoot, sub), 0o755)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir %s: %v", sub, err))
 		}
 	}
+	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDDrafting, "planned")
 
-	return m, effortRoot
+	return newDetachedPromptExecutionSession(context.Background(), live), effortRoot, client
 }
 
-func writeWorkflowState(t *testing.T, effortRoot, phase, state string) {
-	t.Helper()
+func writeWorkflowState(t ginkgo.FullGinkgoTInterface, effortRoot string, phase productworkflow.CreationPhase, state string) {
+	ginkgo.GinkgoHelper()
 
 	ws := productworkflow.WorkflowState{
 		SchemaVersion: "idiom.product_workflow_state.v1",
@@ -103,10 +61,11 @@ func writeWorkflowState(t *testing.T, effortRoot, phase, state string) {
 		Title:         "Test Feature",
 		CreatedAt:     "2026-01-01T00:00:00Z",
 		UpdatedAt:     "2026-01-01T00:00:00Z",
+		LastEventID:   "evt-create-init-2026-01-01T00:00:00Z",
 		StatusBucket:  "started",
-		CurrentPhase:  phase,
+		CurrentPhase:  string(phase),
 		CurrentState:  state,
-		ArtifactPaths: map[string]string{"prd": "prd.md"},
+		ArtifactPaths: map[string]string{"prd": "prd.md", "events": "events.jsonl"},
 		Context: productworkflow.WorkflowContext{
 			ContextPackID:  "test-pack",
 			FreshnessState: "fresh",
@@ -119,12 +78,25 @@ func writeWorkflowState(t *testing.T, effortRoot, phase, state string) {
 		},
 		FolderPath:       effortRoot,
 		DurabilityLevel:  "standard",
-		NextValidActions: []string{"approve_prd"},
+		NextValidActions: []string{"approve_prd", "edit_requirements"},
 	}
 	data, _ := json.MarshalIndent(ws, "", "  ")
 
 	data = append(data, '\n')
-	os.WriteFile(filepath.Join(effortRoot, "workflow_state.json"), data, 0o644)
+	gomega.Expect(os.WriteFile(filepath.Join(effortRoot, "workflow_state.json"), data, 0o644)).To(gomega.Succeed())
+	gomega.Expect(os.WriteFile(filepath.Join(effortRoot, "events.jsonl"), nil, 0o644)).To(gomega.Succeed())
+}
+
+func advanceE2EPRDToADRDrafting(t ginkgo.FullGinkgoTInterface, effortRoot string) {
+	ginkgo.GinkgoHelper()
+
+	result, err := productworkflow.SubmitPRDForReview(effortRoot)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(result.CurrentPhase).To(gomega.Equal(productworkflow.PhasePRDReview))
+	result, intake, err := productworkflow.ApprovePRDGate(effortRoot)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(intake.Passed).To(gomega.BeTrue(), "failures=%#v", intake.Failures)
+	gomega.Expect(result.CurrentPhase).To(gomega.Equal(productworkflow.PhaseADRDrafting))
 }
 
 func validPRD() string {
@@ -249,229 +221,181 @@ Max link validity?
 
 const garbage = "# Just some random prose\n\nNo front matter, no format, nothing parseable.\n"
 
-// TestE2EFeaturePlannerPRDToADR exercises the full PRD → approve → ADR flow.
-func TestE2EFeaturePlannerPRDToADR(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs()})
-	ctx := context.Background()
+var _ = ginkgo.Describe("Feature planner end-to-end workflow", ginkgo.Label("e2e"), func() {
+	// TestE2EFeaturePlannerPRDToADR exercises the full PRD → approve → ADR flow.
+	ginkgo.It("drafts and approves a PRD before generating ADRs", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD(), validADRs()})
+		ctx := context.Background()
 
-	_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
-	if err != nil {
-		t.Fatalf("PRD drafting: %v", err)
-	}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	prdData, err := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
-	if err != nil {
-		t.Fatalf("prd.md not found: %v", err)
-	}
+		prdData, err := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	prd, err := productworkflow.ParsePRDMarkdown(prdData)
-	if err != nil {
-		t.Fatalf("prd.md invalid: %v", err)
-	}
+		prd, err := productworkflow.ParsePRDMarkdown(prdData)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(prd.Requirements).To(gomega.HaveLen(2))
 
-	if len(prd.Requirements) != 2 {
-		t.Fatalf("expected 2 requirements, got %d", len(prd.Requirements))
-	}
+		_, err = m.approvePRDAndAdvance(context.Background(), effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+		adrDir := filepath.Join(effortRoot, "adrs")
+		files, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
 
-	if _, err := m.approvePRDAndAdvance(effortRoot); err != nil {
-		t.Fatalf("PRD approval: %v", err)
-	}
+		gomega.Expect(files).NotTo(gomega.BeEmpty(), "no ADR files found")
 
-	adrDir := filepath.Join(effortRoot, "adrs")
-	files, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
+		idxData, _ := os.ReadFile(filepath.Join(adrDir, "index.json"))
 
-	if len(files) == 0 {
-		t.Fatal("no ADR files found")
-	}
+		idx, err := productworkflow.ParseADRIndexJSON(idxData)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	idxData, _ := os.ReadFile(filepath.Join(adrDir, "index.json"))
-
-	idx, err := productworkflow.ParseADRIndexJSON(idxData)
-	if err != nil {
-		t.Fatalf("index.json invalid: %v", err)
-	}
-
-	for _, entry := range idx.ADRs {
-		if _, err := os.Stat(filepath.Join(adrDir, entry.Path)); os.IsNotExist(err) {
-			t.Fatalf("ADR %s in index but not on disk", entry.Path)
+		for _, entry := range idx.ADRs {
+			_, err := os.Stat(filepath.Join(adrDir, entry.Path))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "ADR %s in index but not on disk", entry.Path)
 		}
-	}
 
-	t.Logf("PASS: %d ADRs, index valid", len(idx.ADRs))
-}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: %d ADRs, index valid", len(idx.ADRs))
+	})
 
-func TestE2EFeaturePlannerAcceptedSourceQuestionPlanRevisionStaysInPlanner(t *testing.T) {
-	projectRoot := t.TempDir()
-	cfg := featurePlannerTestConfig(projectRoot)
-	state := saveAcceptedSourceFeaturePlannerQuestionState(t, projectRoot, "accepted-source-e2e-session")
+	ginkgo.It("keeps a plan revision inside the feature-planner lane", ginkgo.SpecTimeout(asyncOwnershipSpecTimeout), func(ctx ginkgo.SpecContext) {
+		t := ginkgo.GinkgoT()
+		projectRoot := t.TempDir()
+		cfg := featurePlannerTestConfig(projectRoot)
+		state := saveAcceptedSourceFeaturePlannerQuestionState(t, projectRoot, "accepted-source-e2e-session")
 
-	client := &scriptedLLMClient{responses: []string{
-		`{"tool":"ask_planner_question","question_summary":"Confirm persistent memory and multi-repo plan additions","blocking_claim":"The operator asked to add more information to the plan, so the revised MVP boundary needs confirmation before approval.","requested_decision":"Confirm the plan should add persistent memory storage, repository-scoped namespaces, and explicit multi-repo isolation tests.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["llm_brain/query_handler.py","tests/test_query_handler.py"],"affected_fields":["requirements_scope","test_obligations"]}`,
-	}}
-	m := newReadyFeaturePlannerTUITestModel(t, cfg, client, state.SessionID, true)
+		client := newScriptedLLMRecorder(t, scriptedLLMConfig{responses: []string{
+			`{"tool":"ask_planner_question","question_summary":"Confirm persistent memory and multi-repo plan additions","blocking_claim":"The operator asked to add more information to the plan, so the revised MVP boundary needs confirmation before approval.","requested_decision":"Confirm the plan should add persistent memory storage, repository-scoped namespaces, and explicit multi-repo isolation tests.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["llm_brain/query_handler.py","tests/test_query_handler.py"],"affected_fields":["requirements_scope","test_obligations"]}`,
+		}})
+		m := newReadyFeaturePlannerTUITestModel(t, cfg, client, state.SessionID, true)
 
-	revision := "Can you add more info to the plan for persistent memory and multi-repo support?"
-	m.input.SetValue(revision)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(*Model)
-	m = waitForFeaturePlannerTUIStreamDone(t, m)
+		revision := "Can you add more info to the plan for persistent memory and multi-repo support?"
+		m.input.SetValue(revision)
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = updated.(*Model)
+		m = waitForFeaturePlannerTUIStreamDone(ctx, t, m)
 
-	if len(client.messages) != 1 {
-		t.Fatalf("plan revision question should route to feature-planner exactly once, got %#v", client.messages)
-	}
-	if !featurePlannerRequestMessagesContain(client.messages[0], "Operator plan revision instruction:") ||
-		!featurePlannerRequestMessagesContain(client.messages[0], revision) {
-		t.Fatalf("question-form plan revision did not reach feature-planner resume prompt: %#v", client.messages)
-	}
-	for _, message := range m.messages {
-		if message.Role == "user" && message.Content == revision {
-			t.Fatalf("feature-planner revision must not be appended as normal chat history: %#v", m.messages)
+		gomega.Expect(client.messages).To(gomega.HaveLen(1))
+		gomega.Expect(featurePlannerRequestMessagesContain(client.messages[0], "Operator plan revision instruction:")).To(gomega.BeTrue())
+		gomega.Expect(featurePlannerRequestMessagesContain(client.messages[0], revision)).To(gomega.BeTrue())
+		for _, message := range m.messages {
+			gomega.Expect(message).NotTo(gomega.And(
+				gomega.HaveField("Role", gomega.Equal("user")),
+				gomega.HaveField("Content", gomega.Equal(revision)),
+			), "feature-planner revision must not be appended as normal chat history")
 		}
-	}
 
-	after := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
-	if len(after.OpenQuestions) != 2 || after.OpenQuestions[0].Status != "answered" || after.OpenQuestions[1].Status != "open" {
-		t.Fatalf("question-form revision should answer prior question and open revised planner question: %+v", after.OpenQuestions)
-	}
-	if after.OpenQuestions[0].Answer != revision || after.OpenQuestions[0].AnswerSourceKind != "plan_revision" {
-		t.Fatalf("prior accepted-source question was not superseded by plan revision: %+v", after.OpenQuestions[0])
-	}
-	if len(after.AuthorityDeltas) != 0 {
-		t.Fatalf("plan revision must not create accepted-source authority deltas: %+v", after.AuthorityDeltas)
-	}
-}
+		after := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
+		gomega.Expect(after.OpenQuestions).To(gomega.HaveLen(2))
+		gomega.Expect(after.OpenQuestions[0].Status).To(gomega.Equal("answered"))
+		gomega.Expect(after.OpenQuestions[1].Status).To(gomega.Equal("open"))
+		gomega.Expect(after.OpenQuestions[0].Answer).To(gomega.Equal(revision))
+		gomega.Expect(after.OpenQuestions[0].AnswerSourceKind).To(gomega.Equal("plan_revision"))
+		gomega.Expect(after.AuthorityDeltas).To(gomega.BeEmpty())
+	})
 
-// TestPRDRepairLoop verifies malformed PRD triggers repair and retry succeeds.
-func TestPRDRepairLoop(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{garbage, validPRD()})
-	ctx := context.Background()
+	// TestPRDRepairLoop verifies malformed PRD triggers repair and retry succeeds.
+	ginkgo.It("repairs malformed PRD output", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{garbage, validPRD()})
+		ctx := context.Background()
 
-	_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
-	if err != nil {
-		t.Fatalf("PRD repair should succeed: %v", err)
-	}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if _, err := productworkflow.ParsePRDMarkdown(
-		mustReadFile(filepath.Join(effortRoot, "prd.md")),
-	); err != nil {
-		t.Fatalf("prd.md invalid after repair: %v", err)
-	}
+		prdData, err := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		_, err = productworkflow.ParsePRDMarkdown(prdData)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if _, err := os.Stat(filepath.Join(effortRoot, "prd_parse_failure_raw_001.md")); os.IsNotExist(err) {
-		t.Error("expected prd_parse_failure_raw_001.md")
-	}
+		_, err = os.Stat(filepath.Join(effortRoot, "prd_parse_failure_raw_001.md"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	t.Log("PASS: PRD repair loop succeeded")
-}
+		fmt.Fprintln(ginkgo.GinkgoWriter, "PASS: PRD repair loop succeeded")
+	})
 
-// TestPRDRepairExhaustion verifies all retries fail → non-fatal message.
-func TestPRDRepairExhaustion(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{garbage, garbage, garbage})
-	ctx := context.Background()
+	// TestPRDRepairExhaustion verifies all retries fail → non-fatal message.
+	ginkgo.It("reports exhausted PRD repair without aborting the workflow", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{garbage, garbage, garbage})
+		ctx := context.Background()
 
-	answer, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
-	if err != nil {
-		t.Fatalf("PRD repair exhaustion should return message, not error: %v", err)
-	}
+		answer, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(answer).To(gomega.ContainSubstring("PRD parsing failed"))
 
-	if !strings.Contains(answer, "PRD parsing failed") {
-		t.Errorf("expected parse failure message, got: %v", answer)
-	}
-
-	for i := 1; i <= 2; i++ {
-		name := fmt.Sprintf("prd_parse_failure_raw_%03d.md", i)
-		if _, statErr := os.Stat(filepath.Join(effortRoot, name)); os.IsNotExist(statErr) {
-			t.Errorf("expected %s", name)
+		for i := 1; i <= 2; i++ {
+			name := fmt.Sprintf("prd_parse_failure_raw_%03d.md", i)
+			_, statErr := os.Stat(filepath.Join(effortRoot, name))
+			gomega.Expect(statErr).NotTo(gomega.HaveOccurred(), "expected %s", name)
 		}
-	}
 
-	if _, statErr := os.Stat(filepath.Join(effortRoot, "prd_parse_failure_final.md")); os.IsNotExist(statErr) {
-		t.Error("expected prd_parse_failure_final.md")
-	}
+		_, statErr := os.Stat(filepath.Join(effortRoot, "prd_parse_failure_final.md"))
+		gomega.Expect(statErr).NotTo(gomega.HaveOccurred())
 
-	t.Log("PASS: PRD repair exhaustion → non-fatal message, raw failures saved")
-}
+		fmt.Fprintln(ginkgo.GinkgoWriter, "PASS: PRD repair exhaustion → non-fatal message, raw failures saved")
+	})
 
-// TestADRRepairSuccess verifies ADR repair loop: garbage → repair → success.
-func TestADRRepairSuccess(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD()})
-	ctx := context.Background()
+	// TestADRRepairSuccess verifies ADR repair loop: garbage → repair → success.
+	ginkgo.It("repairs malformed ADR output", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD()})
+		ctx := context.Background()
 
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	// Reset client for ADR generation with repair.
-	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	m.featurePlannerEffortRoot = effortRoot
-	// 1 initial + 1 repair prompt + 1 tryGenerateADRs retry = 3 calls
-	// New direct-parse design: 1 initial + 1 repair = 2 calls (not 3).
-	m.client = &scriptedLLMClient{responses: []string{garbage, validADRs()}}
+		// Reset client for ADR generation with repair.
+		advanceE2EPRDToADRDrafting(t, effortRoot)
+		m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+		m.featurePlannerEffortRoot = effortRoot
+		// 1 initial + 1 repair prompt + 1 tryGenerateADRs retry = 3 calls
+		// New direct-parse design: 1 initial + 1 repair = 2 calls (not 3).
+		adrClient := newScriptedLLMRecorder(t, scriptedLLMConfig{responses: []string{garbage, validADRs()}})
+		m.client = adrClient.mock
 
-	adrDocs, _, err := m.generateADRs(ctx, effortRoot)
-	if err != nil {
-		t.Fatalf("ADR repair should succeed: %v", err)
-	}
+		adrDocs, _, err := m.generateADRs(ctx, effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(adrDocs).NotTo(gomega.BeEmpty())
+		_, err = os.Stat(filepath.Join(effortRoot, "adrs_parse_failure_raw_001.txt"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(adrClient.callCount).To(gomega.Equal(2))
 
-	if len(adrDocs) == 0 {
-		t.Fatal("expected ADRs after repair")
-	}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: ADR repair succeeded, %d ADRs, %d calls", len(adrDocs), adrClient.callCount)
+	})
 
-	if _, err := os.Stat(filepath.Join(effortRoot, "adrs_parse_failure_raw_001.txt")); os.IsNotExist(err) {
-		t.Error("expected adrs_parse_failure_raw_001.txt")
-	}
+	// TestADRRepairExhaustion verifies ADR repair exhaustion fails closed instead
+	// of writing an empty successful ADR index.
+	ginkgo.It("fails closed when ADR repair is exhausted", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD()})
+		ctx := context.Background()
 
-	if m.client.(*scriptedLLMClient).callCount != 2 {
-		t.Errorf("expected 2 model calls (direct parse), got %d", m.client.(*scriptedLLMClient).callCount)
-	}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	t.Logf("PASS: ADR repair succeeded, %d ADRs, %d calls", len(adrDocs), m.client.(*scriptedLLMClient).callCount)
-}
+		advanceE2EPRDToADRDrafting(t, effortRoot)
+		m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+		m.featurePlannerEffortRoot = effortRoot
+		// New direct-parse design: 1 initial + 2 repair attempts = 3 calls.
+		adrClient := newScriptedLLMRecorder(t, scriptedLLMConfig{responses: []string{garbage, garbage, garbage}})
+		m.client = adrClient.mock
 
-// TestADRRepairExhaustion verifies ADR repair exhaustion fails closed instead
-// of writing an empty successful ADR index.
-func TestADRRepairExhaustion(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD()})
-	ctx := context.Background()
+		adrDocs, _, err := m.generateADRs(ctx, effortRoot)
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("ADR parsing failed after")))
+		gomega.Expect(adrDocs).To(gomega.BeEmpty())
+		_, statErr := os.Stat(filepath.Join(effortRoot, "adrs_parse_failure_final.txt"))
+		gomega.Expect(statErr).NotTo(gomega.HaveOccurred())
+		gomega.Expect(adrClient.callCount).To(gomega.Equal(3))
 
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: ADR repair exhaustion fails closed, %d calls", adrClient.callCount)
+	})
 
-	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	m.featurePlannerEffortRoot = effortRoot
-	// New direct-parse design: 1 initial + 2 repair attempts = 3 calls.
-	m.client = &scriptedLLMClient{responses: []string{garbage, garbage, garbage}}
-
-	adrDocs, _, err := m.generateADRs(ctx, effortRoot)
-	if err == nil {
-		t.Fatal("ADR repair exhaustion should return an error")
-	}
-
-	if !strings.Contains(err.Error(), "ADR parsing failed after") {
-		t.Fatalf("unexpected exhaustion error: %v", err)
-	}
-
-	if len(adrDocs) != 0 {
-		t.Errorf("expected 0 ADRs after exhaustion, got %d", len(adrDocs))
-	}
-
-	if _, statErr := os.Stat(filepath.Join(effortRoot, "adrs_parse_failure_final.txt")); os.IsNotExist(statErr) {
-		t.Error("expected adrs_parse_failure_final.txt")
-	}
-
-	if m.client.(*scriptedLLMClient).callCount != 3 {
-		t.Errorf("expected 3 model calls, got %d", m.client.(*scriptedLLMClient).callCount)
-	}
-
-	t.Logf("PASS: ADR repair exhaustion fails closed, %d calls", m.client.(*scriptedLLMClient).callCount)
-}
-
-// TestADRPartialSuccess verifies some ADR chunks parse, some fail.
-func TestADRPartialSuccess(t *testing.T) {
-	partialADRs := `---
+	// TestADRPartialSuccess verifies some ADR chunks parse, some fail.
+	ginkgo.It("retains valid ADRs when another ADR chunk is malformed", func() {
+		t := ginkgo.GinkgoT()
+		partialADRs := `---
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: draft
@@ -513,46 +437,35 @@ Test.
 This is not a valid ADR at all.
 `
 
-	m, effortRoot := setupE2EModel(t, []string{validPRD(), partialADRs})
-	ctx := context.Background()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD(), partialADRs})
+		ctx := context.Background()
 
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+		_, err = m.approvePRDAndAdvance(context.Background(), effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	_, err := m.approvePRDAndAdvance(effortRoot)
-	if err != nil {
-		t.Fatalf("approve PRD: %v", err)
-	}
+		adrDir := filepath.Join(effortRoot, "adrs")
+		files, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
 
-	adrDir := filepath.Join(effortRoot, "adrs")
-	files, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
+		gomega.Expect(files).NotTo(gomega.BeEmpty())
 
-	if len(files) == 0 {
-		t.Fatal("expected at least 1 ADR from partial success")
-	}
+		idxData, _ := os.ReadFile(filepath.Join(adrDir, "index.json"))
 
-	idxData, _ := os.ReadFile(filepath.Join(adrDir, "index.json"))
+		idx, err := productworkflow.ParseADRIndexJSON(idxData)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(idx.ADRs).NotTo(gomega.BeEmpty())
 
-	idx, err := productworkflow.ParseADRIndexJSON(idxData)
-	if err != nil {
-		t.Fatalf("index invalid: %v", err)
-	}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: partial success — %d of 2 chunks parsed", len(idx.ADRs))
+	})
 
-	if len(idx.ADRs) == 0 {
-		t.Fatal("expected at least 1 ADR in index")
-	}
-
-	t.Logf("PASS: partial success — %d of 2 chunks parsed", len(idx.ADRs))
-}
-
-// TestPRDIntakeRepair verifies the auto-repair path when PRD intake fails.
-func TestPRDIntakeRepair(t *testing.T) {
-	// PRD with valid format but empty evidence_refs + tdd_obligations
-	// (intake fails, auto-repair triggers).
-	badPRD := `---
+	// TestPRDIntakeRepair verifies the auto-repair path when PRD intake fails.
+	ginkgo.It("repairs an invalid PRD during intake", func() {
+		t := ginkgo.GinkgoT()
+		// PRD with valid format but empty evidence_refs + tdd_obligations
+		// (intake fails, auto-repair triggers).
+		badPRD := `---
 schema_version: idiom.prd.v1
 prd_id: test-effort
 status: draft
@@ -577,89 +490,69 @@ created_at: 2026-01-01T00:00:00Z
 - **open_questions**: []
 `
 
-	// Responses: intake repair model call (valid PRD) + ADR generation (valid ADRs).
-	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs()})
-	// Write bad PRD directly — skip PRD generation.
-	if err := os.WriteFile(filepath.Join(effortRoot, "prd.md"), []byte(badPRD), 0o644); err != nil {
-		t.Fatalf("write bad prd.md: %v", err)
-	}
+		// Responses: intake repair model call (valid PRD) + ADR generation (valid ADRs).
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD(), validADRs()}, 1)
+		// Write bad PRD directly — skip PRD generation.
+		gomega.Expect(os.WriteFile(filepath.Join(effortRoot, "prd.md"), []byte(badPRD), 0o644)).To(gomega.Succeed())
 
-	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+		result, err := m.approvePRDAndAdvance(context.Background(), effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	result, err := m.approvePRDAndAdvance(effortRoot)
-	if err != nil {
-		t.Fatalf("approve PRD: %v", err)
-	}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "result: %s", textutil.Truncate(result, 200))
 
-	t.Logf("result: %s", textutil.Truncate(result, 200))
+		// Auto-repair updates PRD on disk, user must re-approve.
+		gomega.Expect(result).To(gomega.ContainSubstring("auto-repaired"))
 
-	// Auto-repair updates PRD on disk, user must re-approve.
-	if !strings.Contains(result, "auto-repaired") {
-		t.Error("expected auto-repair message")
-	}
+		// Verify the PRD on disk was updated with the repair output.
+		prdData, _ := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
+		gomega.Expect(string(prdData)).To(gomega.ContainSubstring("inference"))
 
-	// Verify the PRD on disk was updated with the repair output.
-	prdData, _ := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
-	if !strings.Contains(string(prdData), "inference") {
-		t.Error("expected repaired PRD to have evidence_refs filled in")
-	}
+		// Verify PRD is NOT yet accepted (auto-repair doesn't re-run approval).
+		gomega.Expect(string(prdData)).NotTo(gomega.ContainSubstring("accepted"))
 
-	// Verify PRD is NOT yet accepted (auto-repair doesn't re-run approval).
-	if strings.Contains(string(prdData), "accepted") {
-		t.Error("expected PRD to still be draft after auto-repair (needs re-approval)")
-	}
+		fmt.Fprintln(ginkgo.GinkgoWriter, "PASS: PRD intake auto-repair succeeded, PRD updated on disk")
+	})
 
-	t.Log("PASS: PRD intake auto-repair succeeded, PRD updated on disk")
-}
+	// TestNoDoubleADRWrite verifies ADR refinement does not double-write.
+	ginkgo.It("does not duplicate ADR files during refinement", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD(), validADRs(), validADRs()})
+		ctx := context.Background()
 
-// TestNoDoubleADRWrite verifies ADR refinement does not double-write.
-func TestNoDoubleADRWrite(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs(), validADRs()})
-	ctx := context.Background()
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
+		_, err = m.approvePRDAndAdvance(context.Background(), effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+		adrDir := filepath.Join(effortRoot, "adrs")
+		initial, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
+		initialCount := len(initial)
+		fmt.Fprintf(ginkgo.GinkgoWriter, "Initial ADR files: %d", initialCount)
 
-	if _, err := m.approvePRDAndAdvance(effortRoot); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
+		m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+		m.featurePlannerEffortRoot = effortRoot
+		m.runADRDraftingTurn(ctx, "Add detail")
 
-	adrDir := filepath.Join(effortRoot, "adrs")
-	initial, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
-	initialCount := len(initial)
-	t.Logf("Initial ADR files: %d", initialCount)
+		final, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
+		fmt.Fprintf(ginkgo.GinkgoWriter, "ADR files after refinement: %d", len(final))
 
-	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	m.featurePlannerEffortRoot = effortRoot
-	writeWorkflowState(t, effortRoot, productworkflow.PhaseADRDrafting, "planned")
-	m.runADRDraftingTurn(ctx, "Add detail")
+		gomega.Expect(len(final)).To(gomega.BeNumerically(">=", initialCount))
 
-	final, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
-	t.Logf("ADR files after refinement: %d", len(final))
+		_, err = os.Stat(filepath.Join(adrDir, "index.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if len(final) < initialCount {
-		t.Errorf("file count decreased: %d → %d", initialCount, len(final))
-	}
-
-	if _, err := os.Stat(filepath.Join(adrDir, "index.json")); os.IsNotExist(err) {
-		t.Error("index.json missing after refinement")
-	}
-
-	for _, f := range final {
-		if strings.Count(filepath.Base(f), "ADR-") > 1 {
-			t.Errorf("duplicate ADR ID in filename: %s", filepath.Base(f))
+		for _, f := range final {
+			gomega.Expect(strings.Count(filepath.Base(f), "ADR-")).To(gomega.BeNumerically("<=", 1))
 		}
-	}
 
-	t.Logf("PASS: %d → %d files, no duplicates", initialCount, len(final))
-}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: %d → %d files, no duplicates", initialCount, len(final))
+	})
 
-// TestADRRefinementMerge verifies merge preserves existing ADRs and updates matching IDs.
-func TestADRRefinementMerge(t *testing.T) {
-	adr001Only := `---
+	// TestADRRefinementMerge verifies merge preserves existing ADRs and updates matching IDs.
+	ginkgo.It("merges refined ADRs without dropping unchanged decisions", func() {
+		t := ginkgo.GinkgoT()
+		adr001Only := `---
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: draft
@@ -699,260 +592,194 @@ Fall back to basic auth.
 Token rotation?
 `
 
-	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs(), adr001Only})
-	ctx := context.Background()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD(), validADRs(), adr001Only})
+		ctx := context.Background()
 
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+		_, err = m.approvePRDAndAdvance(context.Background(), effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if _, err := m.approvePRDAndAdvance(effortRoot); err != nil {
-		t.Fatalf("approve PRD: %v", err)
-	}
+		adrDir := filepath.Join(effortRoot, "adrs")
+		initial, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
+		fmt.Fprintf(ginkgo.GinkgoWriter, "After generation: %d ADR files", len(initial))
 
-	adrDir := filepath.Join(effortRoot, "adrs")
-	initial, _ := filepath.Glob(filepath.Join(adrDir, "*.md"))
-	t.Logf("After generation: %d ADR files", len(initial))
+		m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+		m.featurePlannerEffortRoot = effortRoot
+		m.runADRDraftingTurn(ctx, "Update ADR-001")
 
-	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	m.featurePlannerEffortRoot = effortRoot
-	writeWorkflowState(t, effortRoot, productworkflow.PhaseADRDrafting, "planned")
-	m.runADRDraftingTurn(ctx, "Update ADR-001")
+		idxData, _ := os.ReadFile(filepath.Join(adrDir, "index.json"))
+		idx, _ := productworkflow.ParseADRIndexJSON(idxData)
+		adrIDs := map[string]bool{}
 
-	idxData, _ := os.ReadFile(filepath.Join(adrDir, "index.json"))
-	idx, _ := productworkflow.ParseADRIndexJSON(idxData)
-	adrIDs := map[string]bool{}
-
-	for _, entry := range idx.ADRs {
-		adrIDs[entry.ADRID] = true
-	}
-
-	if !adrIDs["ADR-001"] {
-		t.Error("ADR-001 missing after refinement")
-	}
-
-	if !adrIDs["ADR-002"] {
-		t.Error("ADR-002 missing — merge should preserve existing entries")
-	}
-
-	adr1Data, _ := os.ReadFile(filepath.Join(adrDir, "ADR-001.md"))
-	if strings.Contains(string(adr1Data), "Refined OAuth") {
-		t.Log("ADR-001 content updated by refinement")
-	}
-
-	adr2Data, _ := os.ReadFile(filepath.Join(adrDir, "ADR-002.md"))
-	if !strings.Contains(string(adr2Data), "Time-limited reset link via email.") {
-		t.Fatalf("ADR-002 body should be preserved when refinement returns only ADR-001, got:\n%s", string(adr2Data))
-	}
-
-	t.Logf("PASS: merge preserved %d ADRs", len(idx.ADRs))
-}
-
-// TestADRRepairDirectParse verifies the repair loop parses repair output
-// directly (1 model call per attempt, not 2). Previously the loop called
-// tryGenerateADRs which rebuilt the prompt and called the model again.
-func TestADRRepairDirectParse(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD()})
-	ctx := context.Background()
-
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
-
-	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	m.featurePlannerEffortRoot = effortRoot
-	// Only 2 responses needed: 1 initial (garbage) + 1 repair (valid ADRs).
-	// Previously this needed 3 (1 initial + 1 repair prompt + 1 tryGenerateADRs).
-	// Now the repair loop parses repair output directly — no redundant model call.
-	m.client = &scriptedLLMClient{responses: []string{garbage, validADRs()}}
-
-	adrDocs, _, err := m.generateADRs(ctx, effortRoot)
-	if err != nil {
-		t.Fatalf("ADR repair should succeed with direct parse: %v", err)
-	}
-
-	if len(adrDocs) == 0 {
-		t.Fatal("expected ADRs after direct-parse repair")
-	}
-
-	if _, err := os.Stat(filepath.Join(effortRoot, "adrs_parse_failure_raw_001.txt")); os.IsNotExist(err) {
-		t.Error("expected adrs_parse_failure_raw_001.txt")
-	}
-
-	// Verify the call count: should be 2 (initial + repair), not 3.
-	if m.client.(*scriptedLLMClient).callCount != 2 {
-		t.Errorf("expected 2 model calls (direct parse), got %d", m.client.(*scriptedLLMClient).callCount)
-	}
-
-	t.Logf("PASS: ADR repair direct parse — %d model calls, %d ADRs", m.client.(*scriptedLLMClient).callCount, len(adrDocs))
-}
-
-func TestProductWorkflowADRDraftingPreservesAndRendersADRDecision(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs()})
-	ctx := context.Background()
-
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
-
-	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
-
-	answer, err := m.approvePRDAndAdvance(effortRoot)
-	if err != nil {
-		t.Fatalf("approve PRD: %v", err)
-	}
-
-	if !strings.Contains(answer, "Decision: Use authorization code flow with PKCE.") {
-		t.Fatalf("ADR creation response should render a useful decision summary, got:\n%s", answer)
-	}
-
-	adrData, err := os.ReadFile(filepath.Join(effortRoot, "adrs", "ADR-001.md"))
-	if err != nil {
-		t.Fatalf("read generated ADR: %v", err)
-	}
-
-	adrText := string(adrData)
-	if !strings.Contains(adrText, "Use authorization code flow with PKCE.") {
-		t.Fatalf("generated ADR should preserve the model-authored decision body, got:\n%s", adrText)
-	}
-
-	if strings.Contains(adrText, "## Decision\n\n\n\n") {
-		t.Fatalf("generated ADR body was replaced with the empty template:\n%s", adrText)
-	}
-}
-
-func TestProductWorkflowPRDDraftingReturnsConversationalSummary(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD()})
-	ctx := context.Background()
-
-	answer, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
-	if err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
-
-	for _, want := range []string{
-		"PRD draft generated.",
-		"Saved: prd.md",
-		"What I captured:",
-		"REQ-001 [P1]: The system shall support OAuth 2.0 login.",
-		"All intake checks passed.",
-	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("PRD response missing %q:\n%s", want, answer)
+		for _, entry := range idx.ADRs {
+			adrIDs[entry.ADRID] = true
 		}
-	}
 
-	if strings.Contains(answer, "schema_version: idiom.prd.v1") {
-		t.Fatalf("PRD response should not echo raw persisted markdown:\n%s", answer)
-	}
+		gomega.Expect(adrIDs).To(gomega.HaveKey("ADR-001"))
+		gomega.Expect(adrIDs).To(gomega.HaveKey("ADR-002"))
 
-	if _, err := os.Stat(filepath.Join(effortRoot, "prd.md")); err != nil {
-		t.Fatalf("expected prd.md to be saved: %v", err)
-	}
-}
-
-func TestProductWorkflowPRDRefinementReportsRequirementChanges(t *testing.T) {
-	updatedPRD := strings.Replace(validPRD(), "The system shall support OAuth 2.0 login.", "The system shall support OAuth 2.0 login with PKCE.", 1)
-	m, _ := setupE2EModel(t, []string{validPRD(), updatedPRD})
-	ctx := context.Background()
-
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("initial PRD: %v", err)
-	}
-
-	answer, err := m.runPRDDraftingTurn(ctx, "Require PKCE")
-	if err != nil {
-		t.Fatalf("refine PRD: %v", err)
-	}
-
-	for _, want := range []string{
-		"PRD updated from your feedback.",
-		"Change summary:",
-		"Updated requirements: REQ-001",
-		"The system shall support OAuth 2.0 login with PKCE.",
-	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("PRD refinement response missing %q:\n%s", want, answer)
+		adr1Data, _ := os.ReadFile(filepath.Join(adrDir, "ADR-001.md"))
+		if strings.Contains(string(adr1Data), "Refined OAuth") {
+			fmt.Fprintln(ginkgo.GinkgoWriter, "ADR-001 content updated by refinement")
 		}
-	}
 
-	if strings.Contains(answer, "schema_version: idiom.prd.v1") {
-		t.Fatalf("PRD refinement response should not echo raw persisted markdown:\n%s", answer)
-	}
-}
+		adr2Data, _ := os.ReadFile(filepath.Join(adrDir, "ADR-002.md"))
+		gomega.Expect(string(adr2Data)).To(gomega.ContainSubstring("Time-limited reset link via email."))
 
-func TestProductWorkflowADRRefinementReturnsConversationalSummary(t *testing.T) {
-	updatedADRs := strings.Replace(validADRs(), "Use authorization code flow with PKCE.", "Use authorization code flow with PKCE and documented redirect URI handling.", 1)
-	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs(), updatedADRs})
-	ctx := context.Background()
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: merge preserved %d ADRs", len(idx.ADRs))
+	})
 
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
+	// TestADRRepairDirectParse verifies the repair loop parses repair output
+	// directly (1 model call per attempt, not 2). Previously the loop called
+	// tryGenerateADRs which rebuilt the prompt and called the model again.
+	ginkgo.It("parses repaired ADR output without an extra model call", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD()})
+		ctx := context.Background()
 
-	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if _, err := m.approvePRDAndAdvance(effortRoot); err != nil {
-		t.Fatalf("approve PRD: %v", err)
-	}
+		advanceE2EPRDToADRDrafting(t, effortRoot)
+		m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+		m.featurePlannerEffortRoot = effortRoot
+		// Only 2 responses needed: 1 initial (garbage) + 1 repair (valid ADRs).
+		// Previously this needed 3 (1 initial + 1 repair prompt + 1 tryGenerateADRs).
+		// Now the repair loop parses repair output directly — no redundant model call.
+		adrClient := newScriptedLLMRecorder(t, scriptedLLMConfig{responses: []string{garbage, validADRs()}})
+		m.client = adrClient.mock
 
-	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	writeWorkflowState(t, effortRoot, productworkflow.PhaseADRDrafting, "planned")
+		adrDocs, _, err := m.generateADRs(ctx, effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(adrDocs).NotTo(gomega.BeEmpty())
+		_, err = os.Stat(filepath.Join(effortRoot, "adrs_parse_failure_raw_001.txt"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(adrClient.callCount).To(gomega.Equal(2))
 
-	answer, err := m.runADRDraftingTurn(ctx, "Capture redirect URI handling")
-	if err != nil {
-		t.Fatalf("refine ADR: %v", err)
-	}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: ADR repair direct parse — %d model calls, %d ADRs", adrClient.callCount, len(adrDocs))
+	})
 
-	for _, want := range []string{
-		"ADR drafts updated from your feedback.",
-		"Saved: adrs/index.json and ADR markdown files.",
-		"Change summary:",
-		"Updated ADRs: ADR-001",
-		"Decision: Use authorization code flow with PKCE and documented redirect URI handling.",
-	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("ADR refinement response missing %q:\n%s", want, answer)
+	ginkgo.It("preserves and renders the model-authored ADR decision", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD(), validADRs()})
+		ctx := context.Background()
+
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		answer, err := m.approvePRDAndAdvance(context.Background(), effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(answer).To(gomega.ContainSubstring("Decision: Use authorization code flow with PKCE."))
+
+		adrData, err := os.ReadFile(filepath.Join(effortRoot, "adrs", "ADR-001.md"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		adrText := string(adrData)
+		gomega.Expect(adrText).To(gomega.ContainSubstring("Use authorization code flow with PKCE."))
+		gomega.Expect(adrText).NotTo(gomega.ContainSubstring("## Decision\n\n\n\n"))
+	})
+
+	ginkgo.It("returns a conversational PRD drafting summary", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD()})
+		ctx := context.Background()
+
+		answer, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		for _, want := range []string{
+			"PRD draft generated.",
+			"Saved: prd.md",
+			"What I captured:",
+			"REQ-001 [P1]: The system shall support OAuth 2.0 login.",
+			"All intake checks passed.",
+		} {
+			gomega.Expect(answer).To(gomega.ContainSubstring(want))
 		}
-	}
 
-	if strings.Contains(answer, "schema_version: idiom.adr.v1") {
-		t.Fatalf("ADR refinement response should not echo raw persisted markdown:\n%s", answer)
-	}
-}
+		gomega.Expect(answer).NotTo(gomega.ContainSubstring("schema_version: idiom.prd.v1"))
 
-// TestADRRepairExhaustionDirectParse verifies exhaustion fails closed with direct parse.
-func TestADRRepairExhaustionDirectParse(t *testing.T) {
-	m, effortRoot := setupE2EModel(t, []string{validPRD()})
-	ctx := context.Background()
+		_, err = os.Stat(filepath.Join(effortRoot, "prd.md"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
 
-	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
-		t.Fatalf("PRD: %v", err)
-	}
+	ginkgo.It("reports PRD requirement changes conversationally", func() {
+		t := ginkgo.GinkgoT()
+		updatedPRD := strings.Replace(validPRD(), "The system shall support OAuth 2.0 login.", "The system shall support OAuth 2.0 login with PKCE.", 1)
+		m, _, _ := setupE2ESession(t, []string{validPRD(), updatedPRD})
+		ctx := context.Background()
 
-	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	m.featurePlannerEffortRoot = effortRoot
-	// 3 garbage: 1 initial + 2 repair attempts (1 call each, direct parse)
-	m.client = &scriptedLLMClient{responses: []string{garbage, garbage, garbage}}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	adrDocs, _, err := m.generateADRs(ctx, effortRoot)
-	if err == nil {
-		t.Fatal("ADR repair exhaustion should return an error")
-	}
+		answer, err := m.runPRDDraftingTurn(ctx, "Require PKCE")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if !strings.Contains(err.Error(), "ADR parsing failed after") {
-		t.Fatalf("unexpected exhaustion error: %v", err)
-	}
+		for _, want := range []string{
+			"PRD updated from your feedback.",
+			"Change summary:",
+			"Updated requirements: REQ-001",
+			"The system shall support OAuth 2.0 login with PKCE.",
+		} {
+			gomega.Expect(answer).To(gomega.ContainSubstring(want))
+		}
 
-	if len(adrDocs) != 0 {
-		t.Errorf("expected 0 ADRs after exhaustion, got %d", len(adrDocs))
-	}
+		gomega.Expect(answer).NotTo(gomega.ContainSubstring("schema_version: idiom.prd.v1"))
+	})
 
-	if m.client.(*scriptedLLMClient).callCount != 3 {
-		t.Errorf("expected 3 model calls, got %d", m.client.(*scriptedLLMClient).callCount)
-	}
+	ginkgo.It("returns a conversational ADR refinement summary", func() {
+		t := ginkgo.GinkgoT()
+		updatedADRs := strings.Replace(validADRs(), "Use authorization code flow with PKCE.", "Use authorization code flow with PKCE and documented redirect URI handling.", 1)
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD(), validADRs(), updatedADRs})
+		ctx := context.Background()
 
-	t.Logf("PASS: ADR repair exhaustion direct parse fails closed, %d model calls", m.client.(*scriptedLLMClient).callCount)
-}
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		_, err = m.approvePRDAndAdvance(context.Background(), effortRoot)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+
+		answer, err := m.runADRDraftingTurn(ctx, "Capture redirect URI handling")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		for _, want := range []string{
+			"ADR drafts updated from your feedback.",
+			"Saved: adrs/index.json and ADR markdown files.",
+			"Change summary:",
+			"Updated ADRs: ADR-001",
+			"Decision: Use authorization code flow with PKCE and documented redirect URI handling.",
+		} {
+			gomega.Expect(answer).To(gomega.ContainSubstring(want))
+		}
+
+		gomega.Expect(answer).NotTo(gomega.ContainSubstring("schema_version: idiom.adr.v1"))
+	})
+
+	// TestADRRepairExhaustionDirectParse verifies exhaustion fails closed with direct parse.
+	ginkgo.It("fails closed after direct-parse ADR repair exhaustion", func() {
+		t := ginkgo.GinkgoT()
+		m, effortRoot, _ := setupE2ESession(t, []string{validPRD()})
+		ctx := context.Background()
+
+		_, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		advanceE2EPRDToADRDrafting(t, effortRoot)
+		m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+		m.featurePlannerEffortRoot = effortRoot
+		// 3 garbage: 1 initial + 2 repair attempts (1 call each, direct parse)
+		adrClient := newScriptedLLMRecorder(t, scriptedLLMConfig{responses: []string{garbage, garbage, garbage}})
+		m.client = adrClient.mock
+
+		adrDocs, _, err := m.generateADRs(ctx, effortRoot)
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("ADR parsing failed after")))
+		gomega.Expect(adrDocs).To(gomega.BeEmpty())
+		gomega.Expect(adrClient.callCount).To(gomega.Equal(3))
+
+		fmt.Fprintf(ginkgo.GinkgoWriter, "PASS: ADR repair exhaustion direct parse fails closed, %d model calls", adrClient.callCount)
+	})
+})

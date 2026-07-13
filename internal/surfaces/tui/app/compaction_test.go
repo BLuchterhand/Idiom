@@ -3,19 +3,22 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"testing"
 	"time"
 
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
 // Fix 5 (context compaction) — exercises docs/opencode-fixes-design.md §5.
 
-func TestMaybeCompactHistoryBelowThresholdIsNoop(t *testing.T) {
+var _ = ginkgo.It("maybe compact history below threshold is noop", func() {
 	m := &Model{}
 	history := make([]llama.ChatMessage, 5)
 
@@ -24,12 +27,10 @@ func TestMaybeCompactHistoryBelowThresholdIsNoop(t *testing.T) {
 	}
 
 	got := m.MaybeCompactHistory(context.Background(), history)
-	if len(got) != len(history) {
-		t.Fatalf("expected no-op for history below threshold, got %d (wanted %d)", len(got), len(history))
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(len(history)), fmt.Sprintf("expected no-op for history below threshold, got %d (wanted %d)", len(got), len(history)))
+})
 
-func TestMaybeCompactHistoryFoldsOldMessagesIntoDigest(t *testing.T) {
+var _ = ginkgo.It("maybe compact history folds old messages into digest", ginkgo.Label("development-scenario", "integration", "contract"), func() {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -59,20 +60,15 @@ func TestMaybeCompactHistoryFoldsOldMessagesIntoDigest(t *testing.T) {
 
 	got := m.MaybeCompactHistory(context.Background(), history)
 
-	if calls != 1 {
-		t.Fatalf("expected exactly 1 model call to summarize, got %d", calls)
-	}
+	gomega.Expect(calls).To(gomega.Equal(1), fmt.Sprintf("expected exactly 1 model call to summarize, got %d", calls))
 
-	if len(got) >= len(history) {
-		t.Fatalf("expected compacted history to be shorter than input, got %d (input %d)", len(got), len(history))
-	}
+	gomega.Expect(len(got) >= len(history)).To(gomega.BeFalse(), fmt.Sprintf("expected compacted history to be shorter than input, got %d (input %d)", len(got), len(history)))
 
-	if got[0].Role != "system" || !strings.Contains(got[0].Content, "Session digest") {
-		t.Fatalf("expected first message to be system digest, got %#v", got[0])
-	}
-}
+	gomega.Expect(got[0].Role).To(gomega.Equal("system"), fmt.Sprintf("expected first message to be system digest, got %#v", got[0]))
+	gomega.Expect(got[0].Content).To(gomega.ContainSubstring("Session digest"), fmt.Sprintf("expected first message to be system digest, got %#v", got[0]))
+})
 
-func TestFallbackSessionDigestPreservesFirstUserGoal(t *testing.T) {
+var _ = ginkgo.It("fallback session digest preserves first user goal", func() {
 	oldest := []llama.ChatMessage{
 		{Role: "user", Content: "goal: migrate the auth middleware"},
 		{Role: "assistant", Content: "worked on it"},
@@ -80,16 +76,12 @@ func TestFallbackSessionDigestPreservesFirstUserGoal(t *testing.T) {
 	}
 	digest := fallbackSessionDigest(oldest)
 
-	if !strings.Contains(digest, "migrate the auth middleware") {
-		t.Fatalf("fallback digest must preserve first user goal, got:\n%s", digest)
-	}
+	gomega.Expect(strings.Contains(digest, "migrate the auth middleware")).To(gomega.BeTrue(), fmt.Sprintf("fallback digest must preserve first user goal, got:\n%s", digest))
 
-	if !strings.Contains(digest, "1 assistant turns") {
-		t.Fatalf("fallback digest should summarize counts, got:\n%s", digest)
-	}
-}
+	gomega.Expect(strings.Contains(digest, "1 assistant turns")).To(gomega.BeTrue(), fmt.Sprintf("fallback digest should summarize counts, got:\n%s", digest))
+})
 
-func TestMaybeCompactHistoryFallsBackWhenModelCallFails(t *testing.T) {
+var _ = ginkgo.It("maybe compact history falls back when model call fails", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
@@ -110,12 +102,11 @@ func TestMaybeCompactHistoryFallsBackWhenModelCallFails(t *testing.T) {
 	}
 
 	got := m.MaybeCompactHistory(context.Background(), history)
-	if got[0].Role != "system" || !strings.Contains(got[0].Content, "add telemetry") {
-		t.Fatalf("expected deterministic fallback digest preserving goal, got:\n%#v", got[0])
-	}
-}
+	gomega.Expect(got[0].Role).To(gomega.Equal("system"), fmt.Sprintf("expected deterministic fallback digest preserving goal, got:\n%#v", got[0]))
+	gomega.Expect(got[0].Content).To(gomega.ContainSubstring("add telemetry"), fmt.Sprintf("expected deterministic fallback digest preserving goal, got:\n%#v", got[0]))
+})
 
-func TestSlashCompactCommandCompactsTranscript(t *testing.T) {
+var _ = ginkgo.It("slash compact command compacts transcript", func() {
 	m := &Model{
 		messages: []llama.ChatMessage{
 			{Role: "user", Content: "original goal: fix short follow-up answers"},
@@ -125,50 +116,38 @@ func TestSlashCompactCommandCompactsTranscript(t *testing.T) {
 		},
 	}
 
-	if quit := m.handleSlashCommand("/compact"); quit {
-		t.Fatal("compact command must not quit the TUI")
+	{
+		quit := m.handleSlashCommand("/compact")
+		gomega.Expect(quit).To(gomega.BeFalse(), fmt.Sprint("compact command must not quit the TUI"))
 	}
 
-	if len(m.messages) != 2 {
-		t.Fatalf("expected compacted transcript with digest plus latest message, got %#v", m.messages)
-	}
+	gomega.Expect(len(m.messages)).To(gomega.Equal(2), fmt.Sprintf("expected compacted transcript with digest plus latest message, got %#v", m.messages))
 
-	if m.messages[0].Role != "system" || !strings.Contains(m.messages[0].Content, "short follow-up answers") {
-		t.Fatalf("expected first message to be compact digest preserving original goal, got %#v", m.messages[0])
-	}
+	gomega.Expect(m.messages[0].Role).To(gomega.Equal("system"), fmt.Sprintf("expected first message to be compact digest preserving original goal, got %#v", m.messages[0]))
+	gomega.Expect(m.messages[0].Content).To(gomega.ContainSubstring("short follow-up answers"), fmt.Sprintf("expected first message to be compact digest preserving original goal, got %#v", m.messages[0]))
 
-	if m.messages[1].Content != "what about bounded read scoping?" {
-		t.Fatalf("expected latest message to remain verbatim, got %#v", m.messages[1])
-	}
+	gomega.Expect(m.messages[1].Content).To(gomega.Equal("what about bounded read scoping?"), fmt.Sprintf("expected latest message to remain verbatim, got %#v", m.messages[1]))
 
 	for _, msg := range m.messages {
-		if strings.Contains(msg.Content, "secret packet path") {
-			t.Fatalf("operator-only content must not be compacted into model-visible transcript: %#v", m.messages)
-		}
+		gomega.Expect(strings.Contains(msg.Content, "secret packet path")).To(gomega.BeFalse(), fmt.Sprintf("operator-only content must not be compacted into model-visible transcript: %#v", m.messages))
 	}
 
-	if !strings.Contains(m.status, "Compacted conversation") {
-		t.Fatalf("expected compact status, got %q", m.status)
-	}
-}
+	gomega.Expect(strings.Contains(m.status, "Compacted conversation")).To(gomega.BeTrue(), fmt.Sprintf("expected compact status, got %q", m.status))
+})
 
-func TestSlashCompactCommandRejectsArgsAndStreaming(t *testing.T) {
+var _ = ginkgo.It("slash compact command rejects args and streaming", func() {
 	m := &Model{}
 	m.handleSlashCommand("/compact now")
 
-	if m.status != "Usage: /compact" {
-		t.Fatalf("expected usage for arguments, got %q", m.status)
-	}
+	gomega.Expect(m.status).To(gomega.Equal("Usage: /compact"), fmt.Sprintf("expected usage for arguments, got %q", m.status))
 
 	m = &Model{streaming: true}
 	m.handleSlashCommand("/compact")
 
-	if m.status != "A response is already in progress." {
-		t.Fatalf("expected streaming guard, got %q", m.status)
-	}
-}
+	gomega.Expect(m.status).To(gomega.Equal("A response is already in progress."), fmt.Sprintf("expected streaming guard, got %q", m.status))
+})
 
-func TestContextBudgetCompactionScalesWithContextSize(t *testing.T) {
+var _ = ginkgo.It("context budget compaction scales with context size", func() {
 	tests := []struct {
 		ctxSize       int
 		wantThreshold int
@@ -184,38 +163,26 @@ func TestContextBudgetCompactionScalesWithContextSize(t *testing.T) {
 
 	for _, tc := range tests {
 		budget := NewContextBudget(tc.ctxSize)
-		if budget.CompactionThreshold != tc.wantThreshold {
-			t.Errorf("ctxSize=%d: threshold = %d, want %d", tc.ctxSize, budget.CompactionThreshold, tc.wantThreshold)
-		}
+		gomega.Expect(budget.CompactionThreshold).To(gomega.Equal(tc.wantThreshold), fmt.Sprintf("ctxSize=%d: threshold = %d, want %d", tc.ctxSize, budget.CompactionThreshold, tc.wantThreshold))
 
-		if budget.CompactionRecentKeep != tc.wantRecent {
-			t.Errorf("ctxSize=%d: recentToKeep = %d, want %d", tc.ctxSize, budget.CompactionRecentKeep, tc.wantRecent)
-		}
+		gomega.Expect(budget.CompactionRecentKeep).To(gomega.Equal(tc.wantRecent), fmt.Sprintf("ctxSize=%d: recentToKeep = %d, want %d", tc.ctxSize, budget.CompactionRecentKeep, tc.wantRecent))
 
 		// Invariants: recentToKeep must be at least 3 and at most threshold/2
-		if budget.CompactionRecentKeep < 3 {
-			t.Errorf("ctxSize=%d: recentToKeep %d < 3 (minimum)", tc.ctxSize, budget.CompactionRecentKeep)
-		}
+		gomega.Expect(budget.CompactionRecentKeep < 3).To(gomega.BeFalse(), fmt.Sprintf("ctxSize=%d: recentToKeep %d < 3 (minimum)", tc.ctxSize, budget.CompactionRecentKeep))
 
-		if budget.CompactionRecentKeep > budget.CompactionThreshold/2 {
-			t.Errorf("ctxSize=%d: recentToKeep %d > threshold/2 (%d)", tc.ctxSize, budget.CompactionRecentKeep, budget.CompactionThreshold/2)
-		}
+		gomega.Expect(budget.CompactionRecentKeep > budget.CompactionThreshold/2).To(gomega.BeFalse(), fmt.Sprintf("ctxSize=%d: recentToKeep %d > threshold/2 (%d)", tc.ctxSize, budget.CompactionRecentKeep, budget.CompactionThreshold/2))
 	}
-}
+})
 
-func TestCompactionParamsForNilModel(t *testing.T) {
-	// A nil Model should get default thresholds from 65536 ctx
-	var m *Model
-
-	threshold := m.compactionThreshold()
+var _ = ginkgo.It("compaction params for nil model", func() {
+	// An execution with no model-derived context uses the 65536 default.
+	threshold := compactionThreshold(compactionExecution{})
 	wantThreshold := NewContextBudget(65536).CompactionThreshold
 
-	if threshold != wantThreshold {
-		t.Errorf("nil Model threshold = %d, want %d", threshold, wantThreshold)
-	}
-}
+	gomega.Expect(threshold).To(gomega.Equal(wantThreshold), fmt.Sprintf("empty execution threshold = %d, want %d", threshold, wantThreshold))
+})
 
-func TestCompactionWithRestrictiveMaxHistory(t *testing.T) {
+var _ = ginkgo.It("compaction with restrictive max history", func() {
 	// Simulate the common case: a large-context model (64K+) with the
 	// default MaxHistory=20. When MaxHistory is more restrictive than
 	// the context-derived threshold, compaction must still succeed —
@@ -253,28 +220,21 @@ func TestCompactionWithRestrictiveMaxHistory(t *testing.T) {
 
 	got := m.MaybeCompactHistory(context.Background(), history)
 	// The history should be compacted, not silently returned unchanged.
-	if len(got) >= len(history) {
-		t.Fatalf("expected compaction with restrictive MaxHistory, got same length %d", len(got))
-	}
+	gomega.Expect(len(got) >= len(history)).To(gomega.BeFalse(), fmt.Sprintf("expected compaction with restrictive MaxHistory, got same length %d", len(got)))
 
-	if got[0].Role != "system" || !strings.Contains(got[0].Content, "Session digest") {
-		t.Fatalf("expected system digest, got role=%s content=%q", got[0].Role, got[0].Content)
-	}
+	gomega.Expect(got[0].Role).To(gomega.Equal("system"), fmt.Sprintf("expected system digest, got role=%s content=%q", got[0].Role, got[0].Content))
+	gomega.Expect(got[0].Content).To(gomega.ContainSubstring("Session digest"), fmt.Sprintf("expected system digest, got role=%s content=%q", got[0].Role, got[0].Content))
 
 	// Verify the digest actually contains content from the folded messages
-	if !strings.Contains(got[0].Content, "refactor") {
-		t.Fatalf("digest must reference original goal, got:\n%s", got[0].Content)
-	}
+	gomega.Expect(strings.Contains(got[0].Content, "refactor")).To(gomega.BeTrue(), fmt.Sprintf("digest must reference original goal, got:\n%s", got[0].Content))
 
 	// MaxHistory=20, CtxSize=65536: context-derived recentToKeep=40 must scale
 	// down to MaxHistory/2=10. Compacted result = 1 digest + 10 recent = 11.
 	expectedLen := 1 + 10
-	if len(got) != expectedLen {
-		t.Fatalf("expected %d messages (1 digest + 10 recent), got %d", expectedLen, len(got))
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(expectedLen), fmt.Sprintf("expected %d messages (1 digest + 10 recent), got %d", expectedLen, len(got)))
+})
 
-func TestCompactionMaxHistoryEdgeCase(t *testing.T) {
+var _ = ginkgo.It("compaction max history edge case", func() {
 	// Small history just above MaxHistory: verify keepFrom stays positive
 	// even when recentToKeep would otherwise exceed the history length.
 	calls := 0
@@ -308,21 +268,16 @@ func TestCompactionMaxHistoryEdgeCase(t *testing.T) {
 	}
 
 	got := m.MaybeCompactHistory(context.Background(), history)
-	if len(got) >= len(history) {
-		t.Fatalf("expected compaction even with small overshoot, got same length %d", len(got))
-	}
+	gomega.Expect(len(got) >= len(history)).To(gomega.BeFalse(), fmt.Sprintf("expected compaction even with small overshoot, got same length %d", len(got)))
 
-	if got[0].Role != "system" || !strings.Contains(got[0].Content, "Session digest") {
-		t.Fatalf("expected system digest, got role=%s content=%q", got[0].Role, got[0].Content)
-	}
+	gomega.Expect(got[0].Role).To(gomega.Equal("system"), fmt.Sprintf("expected system digest, got role=%s content=%q", got[0].Role, got[0].Content))
+	gomega.Expect(got[0].Content).To(gomega.ContainSubstring("Session digest"), fmt.Sprintf("expected system digest, got role=%s content=%q", got[0].Role, got[0].Content))
 
 	// 22 messages, MaxHistory=20, recentToKeep=10: 1 digest + 10 recent = 11.
-	if len(got) != 11 {
-		t.Fatalf("expected 11 messages (1 digest + 10 recent), got %d", len(got))
-	}
-}
+	gomega.Expect(len(got)).To(gomega.Equal(11), fmt.Sprintf("expected 11 messages (1 digest + 10 recent), got %d", len(got)))
+})
 
-func TestContextBudgetConversationLimitsScale(t *testing.T) {
+var _ = ginkgo.It("context budget conversation limits scale", func() {
 	tests := []struct {
 		ctxSize   int
 		wantMsgs  int
@@ -336,47 +291,35 @@ func TestContextBudgetConversationLimitsScale(t *testing.T) {
 	}
 	for _, tc := range tests {
 		budget := NewContextBudget(tc.ctxSize)
-		if budget.ConvMaxMessages != tc.wantMsgs {
-			t.Errorf("ctxSize=%d: maxMsgs = %d, want %d", tc.ctxSize, budget.ConvMaxMessages, tc.wantMsgs)
-		}
+		gomega.Expect(budget.ConvMaxMessages).To(gomega.Equal(tc.wantMsgs), fmt.Sprintf("ctxSize=%d: maxMsgs = %d, want %d", tc.ctxSize, budget.ConvMaxMessages, tc.wantMsgs))
 
-		if budget.ConvMaxChars != tc.wantChars {
-			t.Errorf("ctxSize=%d: maxChars = %d, want %d", tc.ctxSize, budget.ConvMaxChars, tc.wantChars)
-		}
+		gomega.Expect(budget.ConvMaxChars).To(gomega.Equal(tc.wantChars), fmt.Sprintf("ctxSize=%d: maxChars = %d, want %d", tc.ctxSize, budget.ConvMaxChars, tc.wantChars))
 
 		// Invariant: values must never exceed raw context capacity
 		rawMsgs := tc.ctxSize / 125
 		rawChars := tc.ctxSize * 4
 
-		if budget.ConvMaxMessages > rawMsgs {
-			t.Errorf("ctxSize=%d: maxMsgs %d exceeds raw capacity %d", tc.ctxSize, budget.ConvMaxMessages, rawMsgs)
-		}
+		gomega.Expect(budget.ConvMaxMessages > rawMsgs).To(gomega.BeFalse(), fmt.Sprintf("ctxSize=%d: maxMsgs %d exceeds raw capacity %d", tc.ctxSize, budget.ConvMaxMessages, rawMsgs))
 
-		if budget.ConvMaxChars > rawChars {
-			t.Errorf("ctxSize=%d: maxChars %d exceeds raw capacity %d", tc.ctxSize, budget.ConvMaxChars, rawChars)
-		}
+		gomega.Expect(budget.ConvMaxChars > rawChars).To(gomega.BeFalse(), fmt.Sprintf("ctxSize=%d: maxChars %d exceeds raw capacity %d", tc.ctxSize, budget.ConvMaxChars, rawChars))
 	}
-}
+})
 
-func TestCompactionParamsRecentToKeepClampedByThreshold(t *testing.T) {
+var _ = ginkgo.It("compaction params recent to keep clamped by threshold", func() {
 	// Verify the recentToKeep <= threshold/2 invariant holds across realistic
 	// context window sizes. The clamp is a defensive guard.
 	for _, tc := range []struct{ ctxSize int }{
 		{2000}, {4096}, {8192}, {16384}, {32768}, {65536}, {131072},
 	} {
 		budget := NewContextBudget(tc.ctxSize)
-		if budget.CompactionRecentKeep > budget.CompactionThreshold/2 {
-			t.Errorf("ctxSize=%d: recentToKeep %d > threshold/2 %d — clamp failed",
-				tc.ctxSize, budget.CompactionRecentKeep, budget.CompactionThreshold/2)
-		}
+		gomega.Expect(budget.CompactionRecentKeep > budget.CompactionThreshold/2).To(gomega.BeFalse(), fmt.Sprintf("ctxSize=%d: recentToKeep %d > threshold/2 %d — clamp failed",
+			tc.ctxSize, budget.CompactionRecentKeep, budget.CompactionThreshold/2))
 	}
-}
+})
 
-func TestSlashHelpDocumentsCompactCommand(t *testing.T) {
+var _ = ginkgo.It("slash help documents compact command", func() {
 	m := &Model{}
 	m.slashHelp("/help", []string{"/help"})
 
-	if !strings.Contains(m.status, "/compact") {
-		t.Fatalf("help must document compact command, got %q", m.status)
-	}
-}
+	gomega.Expect(strings.Contains(m.status, "/compact")).To(gomega.BeTrue(), fmt.Sprintf("help must document compact command, got %q", m.status))
+})

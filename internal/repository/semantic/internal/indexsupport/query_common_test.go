@@ -2,90 +2,53 @@ package indexsupport
 
 import (
 	"regexp"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestNormalizeSymbolPatternExactMatch(t *testing.T) {
-	extractors := []*regexp.Regexp{
-		regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
-	}
+var _ = Describe("Semantic query normalization", func() {
+	Describe("NormalizeSymbolPattern", func() {
+		It("extracts a symbol from a matching declaration", func() {
+			extractors := []*regexp.Regexp{regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`)}
+			Expect(NormalizeSymbolPattern("func Hello", extractors)).To(Equal("Hello"))
+		})
 
-	if result := NormalizeSymbolPattern("func Hello", extractors); result != "Hello" {
-		t.Fatalf("expected Hello, got %s", result)
-	}
-}
+		It("preserves an unmatched pattern", func() {
+			extractors := []*regexp.Regexp{regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`)}
+			Expect(NormalizeSymbolPattern("Hello", extractors)).To(Equal("Hello"))
+		})
 
-func TestNormalizeSymbolPatternNoMatch(t *testing.T) {
-	extractors := []*regexp.Regexp{
-		regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
-	}
+		It("trims surrounding whitespace", func() {
+			Expect(NormalizeSymbolPattern("  Hello  ", nil)).To(Equal("Hello"))
+		})
 
-	if result := NormalizeSymbolPattern("Hello", extractors); result != "Hello" {
-		t.Fatalf("expected Hello, got %s", result)
-	}
-}
+		It("uses the first matching extractor", func() {
+			extractors := []*regexp.Regexp{
+				regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
+				regexp.MustCompile(`^struct\s+([A-Za-z_]\w*)`),
+			}
+			Expect(NormalizeSymbolPattern("struct Foo", extractors)).To(Equal("Foo"))
+		})
+	})
 
-func TestNormalizeSymbolPatternTrimsSpace(t *testing.T) {
-	if result := NormalizeSymbolPattern("  Hello  ", nil); result != "Hello" {
-		t.Fatalf("expected Hello, got %s", result)
-	}
-}
+	DescribeTable("strips line comments",
+		func(input, expected string) {
+			Expect(StripLineComment(input)).To(Equal(expected))
+		},
+		Entry("from a statement", "int x = 5; // comment", "int x = 5; "),
+		Entry("when absent", "int x = 5;", "int x = 5;"),
+		Entry("from empty input", "", ""),
+		Entry("from a comment-only line", "// just a comment", ""),
+	)
 
-func TestNormalizeSymbolPatternMultipleExtractors(t *testing.T) {
-	extractors := []*regexp.Regexp{
-		regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^struct\s+([A-Za-z_]\w*)`),
-	}
-
-	if result := NormalizeSymbolPattern("struct Foo", extractors); result != "Foo" {
-		t.Fatalf("expected Foo, got %s", result)
-	}
-}
-
-func TestStripLineCommentWithComment(t *testing.T) {
-	if result := StripLineComment("int x = 5; // comment"); result != "int x = 5; " {
-		t.Fatalf("unexpected result: %q", result)
-	}
-}
-
-func TestStripLineCommentNoComment(t *testing.T) {
-	if result := StripLineComment("int x = 5;"); result != "int x = 5;" {
-		t.Fatalf("unexpected result: %q", result)
-	}
-}
-
-func TestStripLineCommentEmpty(t *testing.T) {
-	if result := StripLineComment(""); result != "" {
-		t.Fatalf("unexpected result: %q", result)
-	}
-}
-
-func TestStripLineCommentOnlyComment(t *testing.T) {
-	if result := StripLineComment("// just a comment"); result != "" {
-		t.Fatalf("unexpected result: %q", result)
-	}
-}
-
-func TestFirstQualifiedWithScope(t *testing.T) {
-	if result := FirstQualified("MyClass", "myMethod", "."); result != "MyClass.myMethod" {
-		t.Fatalf("expected MyClass.myMethod, got %s", result)
-	}
-}
-
-func TestFirstQualifiedEmptyScope(t *testing.T) {
-	if result := FirstQualified("", "myMethod", "."); result != "myMethod" {
-		t.Fatalf("expected myMethod, got %s", result)
-	}
-}
-
-func TestFirstQualifiedWhitespaceScope(t *testing.T) {
-	if result := FirstQualified("  ", "myMethod", "."); result != "myMethod" {
-		t.Fatalf("expected myMethod, got %s", result)
-	}
-}
-
-func TestFirstQualifiedCppSeparator(t *testing.T) {
-	if result := FirstQualified("ns", "func", "::"); result != "ns::func" {
-		t.Fatalf("expected ns::func, got %s", result)
-	}
-}
+	DescribeTable("qualifies a symbol with a non-empty scope",
+		func(scope, symbol, separator, expected string) {
+			Expect(FirstQualified(scope, symbol, separator)).To(Equal(expected))
+		},
+		Entry("dot separator", "MyClass", "myMethod", ".", "MyClass.myMethod"),
+		Entry("empty scope", "", "myMethod", ".", "myMethod"),
+		Entry("whitespace scope", "  ", "myMethod", ".", "myMethod"),
+		Entry("C++ separator", "ns", "func", "::", "ns::func"),
+	)
+})

@@ -1,0 +1,3 @@
+[
+  "{\"tool\":\"ask_planner_question\",\"id\":\"q-short-label-baseline\",\"question_kind\":\"test_gap\",\"question_summary\":\"What should count as the TDD baseline for ShortLabel before planning implementation?\",\"blocking_claim\":\"The implementation atom cannot dispatch until the pre-execution baseline is identified.\",\"requested_decision\":\"Choose the accepted baseline behavior and test command for TDD-ShortLabel.\",\"authority_required\":\"operator_approval\",\"required_before\":\"plan_approval\"}"
+]

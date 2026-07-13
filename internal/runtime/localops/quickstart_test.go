@@ -4,143 +4,114 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestQuickstartPacketEvidenceRequiresStableIdentifiers(t *testing.T) {
-	packet := PacketEvidence(workspace.ToolResult{}, map[string]any{
-		"pack_id":         "pack-1",
-		"index_id":        "index-1",
-		"fresh":           true,
-		"candidate_files": []any{map[string]any{"path": "main.go"}},
-	}, "localize quickstart")
-	if packet.Status != "pass" || packet.PacketID != "pack-1" || packet.FreshnessState != "fresh" {
-		t.Fatalf("expected passing packet evidence, got %#v", packet)
-	}
+var _ = Describe("Quickstart evidence", func() {
+	It("requires stable packet identifiers", func() {
+		packet := PacketEvidence(workspace.ToolResult{}, map[string]any{
+			"pack_id":         "pack-1",
+			"index_id":        "index-1",
+			"fresh":           true,
+			"candidate_files": []any{map[string]any{"path": "main.go"}},
+		}, "localize quickstart")
+		Expect(packet.Status).To(Equal("pass"))
+		Expect(packet.PacketID).To(Equal("pack-1"))
+		Expect(packet.FreshnessState).To(Equal("fresh"))
 
-	blocked := PacketEvidence(workspace.ToolResult{}, map[string]any{}, "localize quickstart")
-	if blocked.Status != "blocked" || blocked.BlockerReason == "" {
-		t.Fatalf("expected missing packet fields to block, got %#v", blocked)
-	}
-}
-
-func TestQuickstartCleanupOnlyRemovesContextViewArtifacts(t *testing.T) {
-	root := t.TempDir()
-	viewDir := filepath.Join(root, ".idiom", "comprehension", "views")
-
-	if err := os.MkdirAll(viewDir, 0o755); err != nil {
-		t.Fatalf("stage view dir: %v", err)
-	}
-
-	viewPath := filepath.Join(viewDir, "pack.json")
-	if err := os.WriteFile(viewPath, []byte("{}"), 0o644); err != nil {
-		t.Fatalf("write view artifact: %v", err)
-	}
-
-	cleanup := QuickstartCleanupEvidence(viewPath, "remove-smoke-artifacts", "pack-1", root, true)
-	if cleanup.Status != "pass" || cleanup.RemovedArtifactCount != 1 {
-		t.Fatalf("expected removable view artifact cleanup, got %#v", cleanup)
-	}
-
-	if _, err := os.Stat(viewPath); !os.IsNotExist(err) {
-		t.Fatalf("expected view artifact removed, stat err=%v", err)
-	}
-
-	outside := QuickstartCleanupEvidence(filepath.Join(root, "README.md"), "remove-smoke-artifacts", "pack-1", root, true)
-	if outside.Status != "blocked" || outside.BlockerReason == "" {
-		t.Fatalf("expected non-view artifact to block cleanup, got %#v", outside)
-	}
-}
-
-func TestQuickstartCleanupReportOnlyRetainsLocalState(t *testing.T) {
-	root := t.TempDir()
-	stateDir := filepath.Join(root, ".idiom", "comprehension")
-
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		t.Fatalf("stage state dir: %v", err)
-	}
-
-	cleanup := QuickstartCleanupEvidence("", "report-only", "pack-1", root, true)
-	if cleanup.Status != "retained_by_policy" || cleanup.ExitStatus != "not_run" || cleanup.RetainedStatePolicy == "" {
-		t.Fatalf("expected report-only cleanup to retain state, got %#v", cleanup)
-	}
-
-	if _, err := os.Stat(stateDir); err != nil {
-		t.Fatalf("report-only cleanup should preserve comprehension state: %v", err)
-	}
-}
-
-func TestSuggestedVerificationCommandsAreSanitizedAndBounded(t *testing.T) {
-	commands := SuggestedVerificationCommands(map[string]any{
-		"tests": []any{
-			map[string]any{"command": "go test ./..."},
-			map[string]any{"command": "API_TOKEN=abc go test ./internal/runtime/localops"},
-			map[string]any{"command": "go test ./cmd/idiom"},
-			map[string]any{"command": "go test ./internal/runtime/agent"},
-		},
+		blocked := PacketEvidence(workspace.ToolResult{}, map[string]any{}, "localize quickstart")
+		Expect(blocked.Status).To(Equal("blocked"))
+		Expect(blocked.BlockerReason).NotTo(BeEmpty())
 	})
-	if len(commands) != 3 {
-		t.Fatalf("expected first three commands only, got %#v", commands)
-	}
 
-	if commands[0] != "go test ./..." || commands[1] != "[redacted] go test ./internal/runtime/localops" {
-		t.Fatalf("unexpected sanitized commands: %#v", commands)
-	}
+	It("removes only context-view artifacts during cleanup", func() {
+		root := GinkgoT().TempDir()
+		viewDir := filepath.Join(root, ".idiom", "comprehension", "views")
+		Expect(os.MkdirAll(viewDir, 0o755)).To(Succeed())
+		viewPath := filepath.Join(viewDir, "pack.json")
+		Expect(os.WriteFile(viewPath, []byte("{}"), 0o644)).To(Succeed())
 
-	if VerificationLabel(commands[0]) != "go-test" {
-		t.Fatalf("expected go-test label for %q", commands[0])
-	}
-}
+		cleanup := QuickstartCleanupEvidence(viewPath, "remove-smoke-artifacts", "pack-1", root, true)
+		Expect(cleanup.Status).To(Equal("pass"))
+		Expect(cleanup.RemovedArtifactCount).To(Equal(1))
+		_, err := os.Stat(viewPath)
+		Expect(os.IsNotExist(err)).To(BeTrue())
 
-func TestFinalizeQuickstartProductEvidenceBlocksForbiddenContent(t *testing.T) {
-	smoke := QuickstartSmoke{
-		Status: "pass",
-		ProductEvidenceSafeOutput: ActivationProductEvidence{
-			Status:                 "pending",
-			ForbiddenFieldCheck:    "pending",
-			RedactionStatus:        "pending",
-			P7_11Linkage:           "deferred_to_p7.11_export",
-			P9_6Linkage:            "activation_report_input",
-			HostedTelemetryDefault: false,
-		},
-		FirstUsefulPacket: ActivationPacketEvidence{
-			Task: ActivationTaskEvidence{RedactionStatus: "hashed"},
-		},
-		PrivacyRedactionStatus: ActivationPrivacyEvidence{
-			Status:              "pass",
-			ForbiddenFieldCheck: "pass",
-		},
-	}
-	FinalizeQuickstartProductEvidence(&smoke)
+		outside := QuickstartCleanupEvidence(filepath.Join(root, "README.md"), "remove-smoke-artifacts", "pack-1", root, true)
+		Expect(outside.Status).To(Equal("blocked"))
+		Expect(outside.BlockerReason).NotTo(BeEmpty())
+	})
 
-	if smoke.ProductEvidenceSafeOutput.Status != "pass" || smoke.ProductEvidenceSafeOutput.ArtifactHash == "" {
-		t.Fatalf("expected safe product evidence to pass, got %#v", smoke.ProductEvidenceSafeOutput)
-	}
+	It("retains local state under report-only cleanup", func() {
+		root := GinkgoT().TempDir()
+		stateDir := filepath.Join(root, ".idiom", "comprehension")
+		Expect(os.MkdirAll(stateDir, 0o755)).To(Succeed())
 
-	if want, err := quickstartProductEvidenceHash(smoke); err != nil || smoke.ProductEvidenceSafeOutput.ArtifactHash != want {
-		t.Fatalf("safe product evidence hash should describe final body, got=%q want=%q err=%v", smoke.ProductEvidenceSafeOutput.ArtifactHash, want, err)
-	}
+		cleanup := QuickstartCleanupEvidence("", "report-only", "pack-1", root, true)
+		Expect(cleanup.Status).To(Equal("retained_by_policy"))
+		Expect(cleanup.ExitStatus).To(Equal("not_run"))
+		Expect(cleanup.RetainedStatePolicy).NotTo(BeEmpty())
+		_, err := os.Stat(stateDir)
+		Expect(err).NotTo(HaveOccurred())
+	})
 
-	smoke.FirstUsefulPacket.PacketID = "/home/example/private-repo"
-	FinalizeQuickstartProductEvidence(&smoke)
+	It("bounds and sanitizes suggested verification commands", func() {
+		commands := SuggestedVerificationCommands(map[string]any{
+			"tests": []any{
+				map[string]any{"command": "go test ./..."},
+				map[string]any{"command": "API_TOKEN=abc go test ./internal/runtime/localops"},
+				map[string]any{"command": "go test ./cmd/idiom"},
+				map[string]any{"command": "go test ./internal/runtime/agent"},
+			},
+		})
+		Expect(commands).To(Equal([]string{
+			"go test ./...",
+			"[redacted] go test ./internal/runtime/localops",
+			"go test ./cmd/idiom",
+		}))
+		Expect(VerificationLabel(commands[0])).To(Equal("go-test"))
+	})
 
-	if smoke.Status != "blocked" || smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck == "pass" {
-		t.Fatalf("expected forbidden evidence to block, got %#v", smoke)
-	}
+	It("blocks and redacts forbidden product evidence", func() {
+		smoke := QuickstartSmoke{
+			Status: "pass",
+			ProductEvidenceSafeOutput: ActivationProductEvidence{
+				Status:                 "pending",
+				ForbiddenFieldCheck:    "pending",
+				RedactionStatus:        "pending",
+				P7_11Linkage:           "deferred_to_p7.11_export",
+				P9_6Linkage:            "activation_report_input",
+				HostedTelemetryDefault: false,
+			},
+			FirstUsefulPacket: ActivationPacketEvidence{
+				Task: ActivationTaskEvidence{RedactionStatus: "hashed"},
+			},
+			PrivacyRedactionStatus: ActivationPrivacyEvidence{
+				Status:              "pass",
+				ForbiddenFieldCheck: "pass",
+			},
+		}
+		FinalizeQuickstartProductEvidence(&smoke)
+		Expect(smoke.ProductEvidenceSafeOutput.Status).To(Equal("pass"))
+		Expect(smoke.ProductEvidenceSafeOutput.ArtifactHash).NotTo(BeEmpty())
+		expectedHash, err := quickstartProductEvidenceHash(smoke)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(smoke.ProductEvidenceSafeOutput.ArtifactHash).To(Equal(expectedHash))
 
-	if want, err := quickstartProductEvidenceHash(smoke); err != nil || smoke.ProductEvidenceSafeOutput.ArtifactHash != want {
-		t.Fatalf("blocked product evidence hash should describe final body, got=%q want=%q err=%v", smoke.ProductEvidenceSafeOutput.ArtifactHash, want, err)
-	}
+		smoke.FirstUsefulPacket.PacketID = "/home/example/private-repo"
+		FinalizeQuickstartProductEvidence(&smoke)
+		Expect(smoke.Status).To(Equal("blocked"))
+		Expect(smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck).NotTo(Equal("pass"))
+		expectedHash, err = quickstartProductEvidenceHash(smoke)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(smoke.ProductEvidenceSafeOutput.ArtifactHash).To(Equal(expectedHash))
 
-	body, err := json.Marshal(smoke)
-	if err != nil {
-		t.Fatalf("marshal smoke: %v", err)
-	}
-
-	if strings.Contains(string(body), "/home/example/private-repo") {
-		t.Fatalf("blocked quickstart evidence should redact forbidden value: %s", string(body))
-	}
-}
+		body, err := json.Marshal(smoke)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(body)).NotTo(ContainSubstring("/home/example/private-repo"))
+	})
+})

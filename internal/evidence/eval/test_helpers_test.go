@@ -1,18 +1,18 @@
 package eval
 
 import (
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
-	"testing"
 )
 
-func evalTestRepoRoot(t *testing.T) string {
-	t.Helper()
+func evalTestRepoRoot() string {
+	ginkgo.GinkgoHelper()
 
 	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get cwd: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("get cwd: %v", err))
 
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
@@ -20,18 +20,16 @@ func evalTestRepoRoot(t *testing.T) string {
 		}
 
 		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repo root not found from cwd")
-		}
+		gomega.Expect(parent).NotTo(gomega.BeEquivalentTo(dir), fmt.Sprintf("repo root not found from cwd"))
 
 		dir = parent
 	}
 }
 
-func evalTestdataPath(t *testing.T, elems ...string) string {
-	t.Helper()
+func evalTestdataPath(elems ...string) string {
+	ginkgo.GinkgoHelper()
 
-	parts := append([]string{evalTestRepoRoot(t), "testdata"}, elems...)
+	parts := append([]string{evalTestRepoRoot(), "testdata"}, elems...)
 
 	return filepath.Join(parts...)
 }

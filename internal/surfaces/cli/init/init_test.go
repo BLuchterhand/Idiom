@@ -4,17 +4,14 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
 
 	platformconfig "idiom/internal/platform/config"
 	"idiom/internal/runtime/backends"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-// expectedSeedFiles is the relative path set runInitMain must
-// create. Centralized so the four behavior tests below can assert
-// against the same surface — if the seed table grows, only this
-// list updates.
 var expectedSeedFiles = []string{
 	"config.json",
 	"backends.json",
@@ -27,235 +24,122 @@ var expectedSeedFiles = []string{
 	"prompts/profiles/claude-qwen-worker.md",
 }
 
-// TestRunInitMainCreatesFreshSkeleton is the canonical happy path:
-// runInitMain in a clean tempdir creates the entire .idiom/
-// skeleton, prints one "created" line per file plus a final
-// "Initialized" summary, and exits 0.
-func TestRunInitMainCreatesFreshSkeleton(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.Describe("idiom init", func() {
+	ginkgo.It("creates the complete project skeleton in a fresh directory", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var stdout, stderr bytes.Buffer
 
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{root}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("fresh init must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
-
-	for _, rel := range expectedSeedFiles {
-		path := filepath.Join(root, ".idiom", rel)
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("expected seed file missing: %s (%v)", path, err)
+		gomega.Expect(RunMain([]string{root}, &stdout, &stderr)).To(gomega.Equal(0), stderr.String())
+		for _, rel := range expectedSeedFiles {
+			_, err := os.Stat(filepath.Join(root, ".idiom", rel))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "missing seed file %s", rel)
 		}
-	}
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("Initialized .idiom/"))
+	})
 
-	out := stdout.String()
-	if !strings.Contains(out, "Initialized .idiom/") {
-		t.Fatalf("stdout should announce initialization: %s", out)
-	}
-}
+	ginkgo.It("refuses to clobber an existing project configuration", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(gomega.Succeed())
+		var stdout, stderr bytes.Buffer
 
-// TestRunInitMainRejectsExistingDotIdiom verifies the safety net:
-// without --merge, an existing .idiom/ dir is treated as already
-// initialized. Refuse to clobber whatever's there. Exit 2 with a
-// message that points the operator at --merge.
-func TestRunInitMainRejectsExistingDotIdiom(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("pre-create .idiom: %v", err)
-	}
+		gomega.Expect(RunMain([]string{root}, &stdout, &stderr)).To(gomega.Equal(2))
+		gomega.Expect(stderr.String()).To(gomega.SatisfyAll(
+			gomega.ContainSubstring("already exists"),
+			gomega.ContainSubstring("--merge"),
+		))
+	})
 
-	var stdout, stderr bytes.Buffer
+	ginkgo.It("merges missing project files without overwriting existing files", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		dotIdiom := filepath.Join(root, ".idiom")
+		gomega.Expect(os.MkdirAll(dotIdiom, 0o755)).To(gomega.Succeed())
+		sentinel := []byte(`{"app_name": "PRESERVED-BY-MERGE"}`)
+		gomega.Expect(os.WriteFile(filepath.Join(dotIdiom, "config.json"), sentinel, 0o644)).To(gomega.Succeed())
+		var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{root}, &stdout, &stderr)
+		gomega.Expect(RunMain([]string{"--merge", root}, &stdout, &stderr)).To(gomega.Equal(0), stderr.String())
+		preserved, err := os.ReadFile(filepath.Join(dotIdiom, "config.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(preserved).To(gomega.Equal(sentinel))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("(skipped existing"))
+		_, err = os.Stat(filepath.Join(dotIdiom, "backends.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
 
-	if code != 2 {
-		t.Fatalf("existing .idiom/ without --merge must exit 2; got %d", code)
-	}
+	ginkgo.It("creates the global user configuration skeleton directly under the home directory", func() {
+		home := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Setenv("HOME", home)
+		ginkgo.GinkgoT().Setenv("USERPROFILE", home)
+		var stdout, stderr bytes.Buffer
 
-	if !strings.Contains(stderr.String(), "already exists") {
-		t.Fatalf("stderr should explain the refusal: %s", stderr.String())
-	}
-
-	if !strings.Contains(stderr.String(), "--merge") {
-		t.Fatalf("stderr should suggest --merge: %s", stderr.String())
-	}
-}
-
-// TestRunInitMainMergeAddsMissingOnly verifies the upgrade path:
-// with --merge, files that already exist are preserved and only
-// the missing ones get created. The pre-existing config.json
-// content survives the run.
-func TestRunInitMainMergeAddsMissingOnly(t *testing.T) {
-	root := t.TempDir()
-	dotIdiom := filepath.Join(root, ".idiom")
-
-	if err := os.MkdirAll(dotIdiom, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	sentinel := []byte(`{"app_name": "PRESERVED-BY-MERGE"}`)
-	if err := os.WriteFile(filepath.Join(dotIdiom, "config.json"), sentinel, 0o644); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"--merge", root}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("merge must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
-
-	preserved, err := os.ReadFile(filepath.Join(dotIdiom, "config.json"))
-	if err != nil {
-		t.Fatalf("read preserved config: %v", err)
-	}
-
-	if !bytes.Equal(preserved, sentinel) {
-		t.Fatalf("merge must NOT overwrite existing config.json; got %q", preserved)
-	}
-
-	if !strings.Contains(stdout.String(), "(skipped existing") {
-		t.Fatalf("stdout should report skipped files: %s", stdout.String())
-	}
-
-	// Other files SHOULD have been created.
-	if _, err := os.Stat(filepath.Join(dotIdiom, "backends.json")); err != nil {
-		t.Fatalf("merge must still create missing backends.json: %v", err)
-	}
-}
-
-func TestRunInitMainGlobalMergeCreatesUserConfigSkeleton(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"--global", "--merge"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("global merge init must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
-
-	globalDir := filepath.Join(home, ".idiom")
-	for _, rel := range expectedSeedFiles {
-		path := filepath.Join(globalDir, rel)
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("expected global seed file missing: %s (%v)", path, err)
+		gomega.Expect(RunMain([]string{"--global", "--merge"}, &stdout, &stderr)).To(gomega.Equal(0), stderr.String())
+		globalDir := filepath.Join(home, ".idiom")
+		for _, rel := range expectedSeedFiles {
+			_, err := os.Stat(filepath.Join(globalDir, rel))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "missing global seed file %s", rel)
 		}
-	}
-	if _, err := os.Stat(filepath.Join(globalDir, ".idiom")); !os.IsNotExist(err) {
-		t.Fatalf("global init must write directly under ~/.idiom, not ~/.idiom/.idiom (err=%v)", err)
-	}
+		_, err := os.Stat(filepath.Join(globalDir, ".idiom"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue())
 
-	cfg, err := platformconfig.Load(filepath.Join(t.TempDir(), "missing-config.json"))
-	if err != nil {
-		t.Fatalf("global config must load through fallback: %v", err)
-	}
-	if got := cfg.LlamaServer.Kind; got != platformconfig.BackendDeepSeek {
-		t.Fatalf("global config should seed hosted default, got kind %q", got)
-	}
-	if len(cfg.Chat.SystemPromptFiles) == 0 || !strings.Contains(cfg.Chat.SystemPromptFiles[0], filepath.Join(".idiom", "prompts", "base.md")) {
-		t.Fatalf("global config should resolve seeded prompt path under ~/.idiom, got %#v", cfg.Chat.SystemPromptFiles)
-	}
+		cfg, err := platformconfig.Load(filepath.Join(ginkgo.GinkgoT().TempDir(), "missing-config.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(cfg.LlamaServer.Kind).To(gomega.Equal(platformconfig.BackendDeepSeek))
+		gomega.Expect(cfg.Chat.SystemPromptFiles).NotTo(gomega.BeEmpty())
+		gomega.Expect(cfg.Chat.SystemPromptFiles[0]).To(gomega.ContainSubstring(filepath.Join(".idiom", "prompts", "base.md")))
 
-	backendFile, err := backends.Load(filepath.Join(globalDir, "backends.json"))
-	if err != nil {
-		t.Fatalf("seeded global backends.json must parse: %v", err)
-	}
-	if backendFile.DefaultProfile != "deepseek-v4-flash" {
-		t.Fatalf("unexpected default backend profile: %q", backendFile.DefaultProfile)
-	}
-}
+		backendFile, err := backends.Load(filepath.Join(globalDir, "backends.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(backendFile.DefaultProfile).To(gomega.Equal("deepseek-v4-flash"))
+	})
 
-func TestRunInitMainGlobalMergePreservesExistingConfig(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	ginkgo.It("preserves an existing global configuration during merge", func() {
+		home := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Setenv("HOME", home)
+		ginkgo.GinkgoT().Setenv("USERPROFILE", home)
+		globalDir := filepath.Join(home, ".idiom")
+		gomega.Expect(os.MkdirAll(globalDir, 0o755)).To(gomega.Succeed())
+		sentinel := []byte(`{"app_name":"PRESERVED-GLOBAL"}`)
+		gomega.Expect(os.WriteFile(filepath.Join(globalDir, "config.json"), sentinel, 0o644)).To(gomega.Succeed())
+		var stdout, stderr bytes.Buffer
 
-	globalDir := filepath.Join(home, ".idiom")
-	if err := os.MkdirAll(globalDir, 0o755); err != nil {
-		t.Fatalf("mkdir global dir: %v", err)
-	}
-	sentinel := []byte(`{"app_name":"PRESERVED-GLOBAL"}`)
-	if err := os.WriteFile(filepath.Join(globalDir, "config.json"), sentinel, 0o644); err != nil {
-		t.Fatalf("write sentinel config: %v", err)
-	}
+		gomega.Expect(RunMain([]string{"--global", "--merge"}, &stdout, &stderr)).To(gomega.Equal(0), stderr.String())
+		preserved, err := os.ReadFile(filepath.Join(globalDir, "config.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(preserved).To(gomega.Equal(sentinel))
+		_, err = os.Stat(filepath.Join(globalDir, "backends.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
 
-	var stdout, stderr bytes.Buffer
+	ginkgo.It("rejects a target directory in global mode", func() {
+		home := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Setenv("HOME", home)
+		ginkgo.GinkgoT().Setenv("USERPROFILE", home)
+		var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"--global", "--merge"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("global merge init must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
+		gomega.Expect(RunMain([]string{"--global", ginkgo.GinkgoT().TempDir()}, &stdout, &stderr)).To(gomega.Equal(2))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("--global does not accept"))
+	})
 
-	preserved, err := os.ReadFile(filepath.Join(globalDir, "config.json"))
-	if err != nil {
-		t.Fatalf("read global config: %v", err)
-	}
-	if !bytes.Equal(preserved, sentinel) {
-		t.Fatalf("global merge must not overwrite existing config.json; got %q", preserved)
-	}
-	if _, err := os.Stat(filepath.Join(globalDir, "backends.json")); err != nil {
-		t.Fatalf("global merge must still create missing backends.json: %v", err)
-	}
-}
+	ginkgo.It("seeds non-empty prompt templates", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var stdout, stderr bytes.Buffer
 
-func TestRunInitMainGlobalRejectsTargetDirectory(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"--global", t.TempDir()}, &stdout, &stderr)
-	if code != 2 {
-		t.Fatalf("--global with target must exit 2; got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "--global does not accept") {
-		t.Fatalf("stderr should explain target rejection: %s", stderr.String())
-	}
-}
-
-// TestRunInitMainSeedsPromptTemplatesNonEmpty verifies Phase 7.2:
-// the canonical base prompt and chat profiles are embedded and copied
-// into .idiom/prompts/. Asserts the seeded files have non-empty
-// content (the embed didn't ship blank stubs).
-func TestRunInitMainSeedsPromptTemplatesNonEmpty(t *testing.T) {
-	root := t.TempDir()
-
-	var stdout, stderr bytes.Buffer
-
-	if code := RunMain([]string{root}, &stdout, &stderr); code != 0 {
-		t.Fatalf("init must exit 0; got %d (stderr=%s)", code, stderr.String())
-	}
-
-	for _, rel := range []string{"prompts/base.md", "prompts/profiles/coding.md", "prompts/profiles/claude-qwen-worker.md"} {
-		body, err := os.ReadFile(filepath.Join(root, ".idiom", rel))
-		if err != nil {
-			t.Fatalf("read seeded %s: %v", rel, err)
+		gomega.Expect(RunMain([]string{root}, &stdout, &stderr)).To(gomega.Equal(0), stderr.String())
+		for _, rel := range []string{
+			"prompts/base.md",
+			"prompts/profiles/coding.md",
+			"prompts/profiles/claude-qwen-worker.md",
+		} {
+			body, err := os.ReadFile(filepath.Join(root, ".idiom", rel))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(bytes.TrimSpace(body)).NotTo(gomega.BeEmpty(), "seeded %s is empty", rel)
 		}
+	})
 
-		if len(bytes.TrimSpace(body)) == 0 {
-			t.Fatalf("seeded %s is empty — go:embed produced an empty file", rel)
-		}
-	}
-}
+	ginkgo.It("rejects a missing target directory as an operator error", func() {
+		var stdout, stderr bytes.Buffer
 
-// TestRunInitMainRejectsMissingTargetDir verifies the input
-// validation: pointing at a nonexistent path is exit 2 (operator
-// error) with a clear message, not exit 1 (IO failure).
-func TestRunInitMainRejectsMissingTargetDir(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := RunMain([]string{"/definitely/no/such/path/idiom-init-test"}, &stdout, &stderr)
-
-	if code != 2 {
-		t.Fatalf("missing target dir must exit 2; got %d", code)
-	}
-
-	if !strings.Contains(stderr.String(), "does not exist") {
-		t.Fatalf("stderr should explain missing target: %s", stderr.String())
-	}
-}
+		gomega.Expect(RunMain([]string{"/definitely/no/such/path/idiom-init-test"}, &stdout, &stderr)).To(gomega.Equal(2))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("does not exist"))
+	})
+})

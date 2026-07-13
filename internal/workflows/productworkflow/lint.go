@@ -3,6 +3,7 @@ package productworkflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,16 +14,40 @@ import (
 )
 
 // LintEffortFolder runs deterministic product-workflow lint checks for an effort folder.
-func LintEffortFolder(root string) LintSummaryResult {
+func LintEffortFolder(effortRoot string) LintSummaryResult {
+	absRoot := filepath.Clean(effortRoot)
+	if resolvedRoot, err := filepath.Abs(effortRoot); err == nil {
+		absRoot = resolvedRoot
+	}
+	batch, err := openProductWorkflowMutationLease(absRoot)
+	if err != nil {
+		return LintSummaryResult{
+			Status:          ProductWorkflowStatusFail,
+			EffortRoot:      effortRoot,
+			CheckedFiles:    []string{},
+			Findings:        []LintSummaryFinding{{Code: "adr_batch_recovery_error", Path: "adrs/index.json", Message: err.Error()}},
+			NextValidAction: "recover the ADR batch transaction, then rerun `idiom product lint --effort-root <path>`",
+		}
+	}
+	defer batch.Close()
+
+	return lintEffortFolderRootObserved(absRoot, batch.root, nil)
+}
+
+func lintEffortFolderRootObserved(
+	effortRoot string,
+	root *os.Root,
+	recorder *workflowCompletionInputRecorder,
+) LintSummaryResult {
+	if recorder == nil {
+		recorder = newWorkflowCompletionInputRecorder()
+	}
 	result := LintSummaryResult{
-		EffortRoot:   root,
+		EffortRoot:   effortRoot,
 		CheckedFiles: []string{},
 		Findings:     []LintSummaryFinding{},
 	}
-	absRoot := filepath.Clean(root)
-	if resolvedRoot, err := filepath.Abs(root); err == nil {
-		absRoot = resolvedRoot
-	}
+	absRoot := filepath.Clean(effortRoot)
 	addFinding := func(code, relPath, message string) {
 		result.Findings = append(result.Findings, LintSummaryFinding{
 			Code:    code,
@@ -30,7 +55,6 @@ func LintEffortFolder(root string) LintSummaryResult {
 			Message: message,
 		})
 	}
-
 	var (
 		parsedCards          []EvidenceCard
 		parsedMatrix         *TraceabilityMatrix
@@ -44,23 +68,18 @@ func LintEffortFolder(root string) LintSummaryResult {
 	)
 
 	checkFile := func(relPath string, validate func([]byte) error) {
-		fullPath := filepath.Join(root, relPath)
-
 		result.CheckedFiles = append(result.CheckedFiles, relPath)
 
-		if info, statErr := os.Lstat(fullPath); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-			addFinding("symlink_file", relPath, "required file must not be a symlink")
-
-			return
-		} else if statErr != nil && !os.IsNotExist(statErr) {
-			addFinding("read_error", relPath, statErr.Error())
+		cleanRelPath, ok := cleanEffortRelativePath(relPath)
+		if !ok {
+			addFinding("invalid_path", relPath, "required file path must stay beneath the effort root")
 
 			return
 		}
 
-		data, err := os.ReadFile(fullPath)
+		data, err := recorder.ReadFile(root, cleanRelPath)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, os.ErrNotExist) {
 				addFinding("missing_file", relPath, "required file not found")
 			} else {
 				addFinding("read_error", relPath, err.Error())
@@ -151,9 +170,8 @@ func LintEffortFolder(root string) LintSummaryResult {
 	})
 
 	reportPaths := map[string]bool{}
-	reportsDir := filepath.Join(root, "reports")
-
-	entries, err := os.ReadDir(reportsDir)
+	entries, err := readEffortArtifactDirectoryRoot(root, "reports")
+	recorder.ObserveExternal(lintDirectoryCompletionInput(root, "reports", "reports-json-regular", entries, err))
 	if err != nil {
 		if os.IsNotExist(err) {
 			addFinding("missing_dir", "reports/", "required directory not found")
@@ -167,17 +185,25 @@ func LintEffortFolder(root string) LintSummaryResult {
 			}
 
 			relPath := filepath.Join("reports", entry.Name())
+			info, statErr := root.Lstat(relPath)
+			if statErr != nil {
+				addFinding("read_error", relPath, statErr.Error())
+				continue
+			}
 
 			result.CheckedFiles = append(result.CheckedFiles, relPath)
-			reportPaths[relPath] = true
 
-			if entry.Type()&os.ModeSymlink != 0 {
+			if info.Mode()&os.ModeSymlink != 0 {
 				addFinding("symlink_file", relPath, "report file must not be a symlink")
 
 				continue
 			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			reportPaths[relPath] = true
 
-			data, readErr := os.ReadFile(filepath.Join(reportsDir, entry.Name()))
+			data, readErr := recorder.ReadFile(root, relPath)
 			if readErr != nil {
 				addFinding("read_error", relPath, readErr.Error())
 
@@ -205,9 +231,9 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	briefPaths := map[string]bool{}
-	briefsDir := filepath.Join(root, "briefs")
-
-	if briefEntries, briefErr := os.ReadDir(briefsDir); briefErr == nil {
+	briefEntries, briefErr := readEffortArtifactDirectoryRoot(root, "briefs")
+	recorder.ObserveExternal(lintDirectoryCompletionInput(root, "briefs", "briefs-nondirectory", briefEntries, briefErr))
+	if briefErr == nil {
 		for _, be := range briefEntries {
 			if !be.IsDir() {
 				briefPaths[filepath.Join("briefs", be.Name())] = true
@@ -329,13 +355,16 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	{
-		repoRoot, ok := gitstate.MetadataRoot(root)
+		repoRoot, ok := lintGitMetadataRoot(effortRoot, recorder)
 		if !ok {
-			repoRoot = root
+			repoRoot = effortRoot
 		}
 
 		if parsedWorkflowState != nil {
 			parity := EvaluateObsidianParity(repoRoot, parsedWorkflowState, parsedLedger, parsedInvestigations)
+			for _, input := range parity.completionInputs {
+				recorder.ObserveExternal(input)
+			}
 
 			result.CheckedFiles = append(result.CheckedFiles, parity.CheckedFiles...)
 
@@ -415,9 +444,9 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	if len(atoms) > 0 {
-		if repoRoot, ok := gitstate.MetadataRoot(root); ok {
+		if repoRoot, ok := lintGitMetadataRoot(effortRoot, recorder); ok {
 			if rel, err := filepath.Rel(repoRoot, absRoot); err == nil {
-				gitPaths, err := gitstate.ChangedPathsSinceFirstPathCommit(context.Background(), repoRoot, rel)
+				gitPaths, err := lintGitChangedPaths(repoRoot, rel, recorder)
 				if err != nil {
 					gitPaths = nil
 				}
@@ -458,7 +487,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 		if len(commitAtoms) > 0 {
 			commitPaths := map[string][]string{}
 
-			if repoRoot, ok := gitstate.MetadataRoot(root); ok {
+			if repoRoot, ok := lintGitMetadataRoot(effortRoot, recorder); ok {
 				effortRel, relErr := filepath.Rel(repoRoot, absRoot)
 				if relErr != nil {
 					effortRel = ""
@@ -474,7 +503,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 				prefix := effortRel + "/"
 
 				for _, hash := range hashes {
-					paths, err := gitstate.CommitChangedPaths(context.Background(), repoRoot, hash)
+					paths, err := lintGitCommitChangedPaths(repoRoot, hash, recorder)
 					if err != nil {
 						continue
 					}
@@ -522,7 +551,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 		result.Status = ProductWorkflowStatusFail
 	}
 
-	wsData, wsErr := os.ReadFile(filepath.Join(root, WorkflowStateFileName))
+	wsData, wsErr := recorder.ReadFile(root, WorkflowStateFileName)
 	if wsErr == nil {
 		var ws struct {
 			ArtifactPaths map[string]string `json:"artifact_paths"`
@@ -549,6 +578,106 @@ func LintEffortFolder(root string) LintSummaryResult {
 		result.NextValidAction = "run `idiom product audit --effort-root <path>` for section-level checks"
 	}
 	return result
+}
+
+func lintDirectoryCompletionInput(
+	root *os.Root,
+	relPath string,
+	kind string,
+	entries []os.DirEntry,
+	readErr error,
+) workflowCompletionExternalInput {
+	value := lintDirectoryCompletionValue(root, relPath, kind, entries, readErr)
+
+	return workflowCompletionExternalInput{
+		key:   "effort-directory-membership:" + filepath.ToSlash(relPath) + "\x00" + kind,
+		value: value,
+		inspect: func() string {
+			current, err := readEffortArtifactDirectoryRoot(root, relPath)
+			return lintDirectoryCompletionValue(root, relPath, kind, current, err)
+		},
+	}
+}
+
+func lintDirectoryCompletionValue(
+	root *os.Root,
+	relPath string,
+	kind string,
+	entries []os.DirEntry,
+	readErr error,
+) string {
+	if errors.Is(readErr, os.ErrNotExist) {
+		return "missing"
+	}
+	if readErr != nil {
+		return "error"
+	}
+	var names []string
+	for _, entry := range entries {
+		switch kind {
+		case "reports-json-regular":
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			info, err := root.Lstat(filepath.Join(relPath, entry.Name()))
+			if err != nil {
+				return "error"
+			}
+			if info.Mode().IsRegular() {
+				names = append(names, entry.Name())
+			}
+		case "briefs-nondirectory":
+			if !entry.IsDir() {
+				names = append(names, entry.Name())
+			}
+		}
+	}
+	sort.Strings(names)
+
+	return workflowCompletionStringSliceValue(names, nil)
+}
+
+func lintGitMetadataRoot(effortRoot string, recorder *workflowCompletionInputRecorder) (string, bool) {
+	repoRoot, ok := gitstate.MetadataRoot(effortRoot)
+	value := fmt.Sprintf("%t:%s", ok, filepath.Clean(repoRoot))
+	recorder.ObserveExternal(workflowCompletionExternalInput{
+		key:   "git-metadata-root:" + filepath.Clean(effortRoot),
+		value: value,
+		inspect: func() string {
+			currentRoot, currentOK := gitstate.MetadataRoot(effortRoot)
+			return fmt.Sprintf("%t:%s", currentOK, filepath.Clean(currentRoot))
+		},
+	})
+
+	return repoRoot, ok
+}
+
+func lintGitChangedPaths(repoRoot, relPath string, recorder *workflowCompletionInputRecorder) ([]string, error) {
+	paths, err := gitstate.ChangedPathsSinceFirstPathCommit(context.Background(), repoRoot, relPath)
+	recorder.ObserveExternal(workflowCompletionExternalInput{
+		key:   "git-changed-paths:" + filepath.Clean(repoRoot) + "\x00" + filepath.ToSlash(relPath),
+		value: workflowCompletionStringSliceValue(paths, err),
+		inspect: func() string {
+			current, currentErr := gitstate.ChangedPathsSinceFirstPathCommit(context.Background(), repoRoot, relPath)
+			return workflowCompletionStringSliceValue(current, currentErr)
+		},
+	})
+
+	return paths, err
+}
+
+func lintGitCommitChangedPaths(repoRoot, hash string, recorder *workflowCompletionInputRecorder) ([]string, error) {
+	paths, err := gitstate.CommitChangedPaths(context.Background(), repoRoot, hash)
+	recorder.ObserveExternal(workflowCompletionExternalInput{
+		key:   "git-commit-paths:" + filepath.Clean(repoRoot) + "\x00" + hash,
+		value: workflowCompletionStringSliceValue(paths, err),
+		inspect: func() string {
+			current, currentErr := gitstate.CommitChangedPaths(context.Background(), repoRoot, hash)
+			return workflowCompletionStringSliceValue(current, currentErr)
+		},
+	})
+
+	return paths, err
 }
 
 func knownTDDIDSet(ledger *TDDLedger, records []ImplementationLedgerRecord) map[string]bool {

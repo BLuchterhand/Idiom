@@ -1,7 +1,6 @@
 package toolpolicy
 
 import (
-	"encoding/json"
 	"path"
 	"regexp"
 	"strings"
@@ -17,11 +16,6 @@ const (
 	None  Decision = ""
 )
 
-const (
-	toolNameShell = "shell"
-	toolNameBash  = "bash"
-)
-
 // Rule is a single `pattern -> decision` entry.
 type Rule struct {
 	Tool            string   `json:"tool,omitempty"`
@@ -32,23 +26,30 @@ type Rule struct {
 	Decision        Decision `json:"decision"`
 }
 
-// Request is the subset of a workspace tool request needed to evaluate
-// permission-rule targets. It keeps rule matching independent from the
-// full workspace tool DTO.
-type Request struct {
-	Tool        string
-	Command     string
-	Path        string
-	Destination string
-	Workdir     string
-	Moves       []Move
-	Args        json.RawMessage
-}
+// PatternKind selects the matching semantics for a precomputed pattern target.
+// Tool adapters own the mapping from concrete request shapes to these semantic
+// kinds; the policy matcher does not know transport-specific tool names.
+type PatternKind string
 
-// Move is the subset of a structured move request needed for permission
-// target selection.
-type Move struct {
-	Destination string
+const (
+	PatternPath    PatternKind = "path"
+	PatternCommand PatternKind = "command"
+)
+
+// Input contains only the semantic values consumed by permission rules.
+// Adapters must extract these values from their transport or tool request
+// before invoking the pure matcher.
+type Input struct {
+	Tool string
+	// Command may contain secrets and is matcher-only input. It must not be
+	// rendered in errors, events, or logs.
+	Command    string
+	PathTarget string
+	// PatternTarget may contain sensitive command, query, or URL text. It is
+	// matcher-only input and must not be rendered in errors, events, or logs.
+	PatternTarget    string
+	PatternKind      PatternKind
+	FallbackRuleKeys []string
 }
 
 // Policy is a flat permission policy used by child runners and other
@@ -69,22 +70,22 @@ type DecisionResult struct {
 }
 
 // Decide evaluates a flat policy with last-match-wins semantics. This keeps
-// explicit deny tails, such as shell redirection denials, stronger than earlier
+// explicit deny tails, such as command redirection denials, stronger than earlier
 // broad allow rules.
-func (p Policy) Decide(req Request) DecisionResult {
+func (p Policy) Decide(input Input) DecisionResult {
 	decision := p.Default
 	if decision == None {
 		decision = Allow
 	}
 
 	result := DecisionResult{
-		Tool:     strings.TrimSpace(req.Tool),
-		Target:   Target(req),
+		Tool:     strings.TrimSpace(input.Tool),
+		Target:   strings.TrimSpace(input.PathTarget),
 		Decision: decision,
 	}
 
 	for _, rule := range p.Rules {
-		if rule.Decision == None || !rule.Matches(req) {
+		if rule.Decision == None || !rule.Matches(input) {
 			continue
 		}
 
@@ -96,14 +97,14 @@ func (p Policy) Decide(req Request) DecisionResult {
 	return result
 }
 
-// Matches reports whether a flat policy rule applies to the request.
-func (r Rule) Matches(req Request) bool {
-	tool := strings.TrimSpace(req.Tool)
+// Matches reports whether a flat policy rule applies to the semantic input.
+func (r Rule) Matches(input Input) bool {
+	tool := strings.TrimSpace(input.Tool)
 	if r.Tool != "" && r.Tool != "*" && r.Tool != tool {
 		return false
 	}
 
-	command := strings.TrimSpace(req.Command)
+	command := strings.TrimSpace(input.Command)
 	if r.CommandPrefix != "" && !CommandMatchesPrefix(command, r.CommandPrefix) {
 		return false
 	}
@@ -113,7 +114,7 @@ func (r Rule) Matches(req Request) bool {
 	}
 
 	if r.PathPattern != "" {
-		target := Target(req)
+		target := strings.TrimSpace(input.PathTarget)
 		if target == "" {
 			return false
 		}
@@ -125,25 +126,26 @@ func (r Rule) Matches(req Request) bool {
 	}
 
 	if r.Pattern != "" {
-		return matchPattern(tool, r.Pattern, ExtractTarget(tool, req))
+		return matchPattern(input.PatternKind, r.Pattern, input.PatternTarget)
 	}
 
 	return true
 }
 
-// Match evaluates the first rule whose pattern matches the request and returns
+// Match evaluates the first rule whose pattern matches the semantic input and returns
 // its decision. Missing tools or empty rule sets return None.
-func Match(tool string, req Request, rules map[string][]Rule) Decision {
+func Match(input Input, rules map[string][]Rule) Decision {
 	if len(rules) == 0 {
 		return None
 	}
 
-	if decision := matchByKey(tool, req, rules, tool); decision != None {
-		return decision
-	}
+	tool := strings.TrimSpace(input.Tool)
+	keys := make([]string, 0, 1+len(input.FallbackRuleKeys))
+	keys = append(keys, tool)
+	keys = append(keys, input.FallbackRuleKeys...)
 
-	if strings.HasPrefix(tool, "mcp:") && tool != "mcp:*" {
-		if decision := matchByKey(tool, req, rules, "mcp:*"); decision != None {
+	for _, key := range keys {
+		if decision := matchByKey(input, rules, strings.TrimSpace(key)); decision != None {
 			return decision
 		}
 	}
@@ -151,15 +153,14 @@ func Match(tool string, req Request, rules map[string][]Rule) Decision {
 	return None
 }
 
-func matchByKey(tool string, req Request, rules map[string][]Rule, key string) Decision {
+func matchByKey(input Input, rules map[string][]Rule, key string) Decision {
 	toolRules, ok := rules[key]
 	if !ok || len(toolRules) == 0 {
 		return None
 	}
 
-	target := ExtractTarget(tool, req)
 	for _, rule := range toolRules {
-		if matchPattern(tool, rule.Pattern, target) {
+		if matchPattern(input.PatternKind, rule.Pattern, input.PatternTarget) {
 			if rule.Decision == None {
 				return Allow
 			}
@@ -171,69 +172,7 @@ func matchByKey(tool string, req Request, rules map[string][]Rule, key string) D
 	return None
 }
 
-// ExtractTarget returns the request field a rule should match for a tool.
-func ExtractTarget(tool string, req Request) string {
-	tool = strings.TrimSpace(tool)
-	switch {
-	case tool == toolNameShell || tool == toolNameBash:
-		return strings.TrimSpace(req.Command)
-	case strings.HasPrefix(tool, "mcp:"):
-		if q := stringFieldFromRawJSON(req.Args, "query"); q != "" {
-			return q
-		}
-
-		if u := stringFieldFromRawJSON(req.Args, "url"); u != "" {
-			return u
-		}
-
-		return ""
-	default:
-		return strings.TrimSpace(req.Path)
-	}
-}
-
-// Target returns the main path-like request target for permission snapshots and
-// flat policy path rules.
-func Target(req Request) string {
-	for _, value := range []string{req.Path, req.Destination, req.Workdir} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return strings.ReplaceAll(trimmed, "\\", "/")
-		}
-	}
-
-	if len(req.Moves) > 0 {
-		return strings.ReplaceAll(strings.TrimSpace(req.Moves[0].Destination), "\\", "/")
-	}
-
-	return ""
-}
-
-func stringFieldFromRawJSON(raw json.RawMessage, key string) string {
-	if len(raw) == 0 {
-		return ""
-	}
-
-	var probe map[string]json.RawMessage
-
-	if err := json.Unmarshal(raw, &probe); err != nil {
-		return ""
-	}
-
-	rawVal, ok := probe[key]
-	if !ok {
-		return ""
-	}
-
-	var s string
-
-	if err := json.Unmarshal(rawVal, &s); err != nil {
-		return ""
-	}
-
-	return s
-}
-
-func matchPattern(tool string, pattern string, target string) bool {
+func matchPattern(kind PatternKind, pattern string, target string) bool {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || pattern == "*" {
 		return true
@@ -243,15 +182,14 @@ func matchPattern(tool string, pattern string, target string) bool {
 		return false
 	}
 
-	switch tool {
-	case toolNameShell, toolNameBash:
-		return matchShell(pattern, target)
-	default:
-		return matchPath(pattern, target)
+	if kind == PatternCommand {
+		return matchCommand(pattern, target)
 	}
+
+	return matchPath(pattern, target)
 }
 
-func matchShell(pattern string, command string) bool {
+func matchCommand(pattern string, command string) bool {
 	if strings.HasSuffix(pattern, "*") {
 		prefix := strings.TrimRight(strings.TrimSuffix(pattern, "*"), " ")
 		if prefix == "" {
@@ -268,7 +206,7 @@ func matchShell(pattern string, command string) bool {
 	return command == pattern
 }
 
-// CommandMatchesPrefix matches a command prefix on shell-token boundaries.
+// CommandMatchesPrefix matches a command prefix on token boundaries.
 func CommandMatchesPrefix(command string, prefix string) bool {
 	if prefix == "" {
 		return true

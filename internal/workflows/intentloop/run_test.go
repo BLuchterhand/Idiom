@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	intentloopcontract "idiom/internal/contracts/intentloop"
@@ -15,6 +14,9 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/workflows/planexecute"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
 type intentLoopFailingWriter struct {
@@ -39,709 +41,599 @@ func (w *intentLoopFailAfterWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func TestRunRequiresInjectedPlanExecuteRunner(t *testing.T) {
-	var stderr bytes.Buffer
+var _ = ginkgo.Describe("Intent-loop execution", func() {
+	ginkgo.It("requires an injected plan-execute runner", func() {
+		var stderr bytes.Buffer
 
-	result := Run(intentLoopTestConfig(t.TempDir()), IntentLoopOptions{
-		SessionID: "loop-missing-runner",
-		PlanExecuteOptions: planexecute.Options{
-			Prompt: "fix it",
-		},
-	}, nil, nil, &bytes.Buffer{}, &stderr)
+		result := Run(intentLoopTestConfig(ginkgo.GinkgoT().TempDir()), IntentLoopOptions{
+			SessionID: "loop-missing-runner",
+			PlanExecuteOptions: planexecute.Options{
+				Prompt: "fix it",
+			},
+		}, nil, nil, &bytes.Buffer{}, &stderr)
 
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusFailed {
-		t.Fatalf("result = exit %d status %q", result.ExitCode, result.Status)
-	}
-	if !strings.Contains(result.TerminationReason, "injected plan-execute runner") {
-		t.Fatalf("TerminationReason = %q", result.TerminationReason)
-	}
-	if !strings.Contains(stderr.String(), "injected plan-execute runner") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-}
+		gomega.Expect(result.ExitCode).To(gomega.Equal(1))
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusFailed))
+		gomega.Expect(result.TerminationReason).To(gomega.ContainSubstring("injected plan-execute runner"))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("injected plan-execute runner"))
+	})
 
-func TestRunCompletesAfterRecoverableVerificationGap(t *testing.T) {
-	root := t.TempDir()
-	var calls int
-	var childPrompts []string
+	ginkgo.It("completes after a recoverable verification gap", ginkgo.Label("development-scenario", "integration", "contract"), func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var calls int
+		var childPrompts []string
 
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt:     intentLoopRequiredTestPrompt("go test ./..."),
-			JSONEvents: true,
-		},
-		MaxCycles: 3,
-		NewChildSessionID: func() string {
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt:     intentLoopRequiredTestPrompt("go test ./..."),
+				JSONEvents: true,
+			},
+			MaxCycles: 3,
+			NewChildSessionID: func() string {
+				calls++
+				return "child-" + string(rune('0'+calls))
+			},
+			RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+				childPrompts = append(childPrompts, opts.Prompt)
+				gomega.Expect(opts.ScopeExtractionPolicy).To(gomega.Equal(planexecute.ScopeExtractionFrozen))
+				gomega.Expect(opts.VerificationPlanExplicitCommands).To(gomega.Equal([]string{"go test ./..."}))
+
+				record := verificationTerminal(opts.SessionID, "go test ./...", false)
+				exitCode := 1
+				if calls == 2 {
+					record = verificationTerminal(opts.SessionID, "go test ./...", true)
+					exitCode = 0
+				}
+				return planexecute.RunResult{
+					ExitCode:       exitCode,
+					SessionID:      opts.SessionID,
+					Completion:     &record,
+					CompletionPath: ".idiom/plan-execute/sessions/" + opts.SessionID + ".terminal.json",
+				}
+			},
+			EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+				return 10
+			},
+		}, nil, nil, &bytes.Buffer{}, &bytes.Buffer{})
+
+		gomega.Expect(result.ExitCode).To(gomega.Equal(0), "reason=%s", result.TerminationReason)
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusCompleted))
+		gomega.Expect(calls).To(gomega.Equal(2))
+		gomega.Expect(result.State.Cycles).To(gomega.HaveLen(2))
+		gomega.Expect(result.State.Cycles[0].RemainingFailures).NotTo(gomega.BeEmpty())
+		gomega.Expect(result.State.Cycles[1].RemainingFailures).To(gomega.BeEmpty())
+		gomega.Expect(childPrompts).To(gomega.HaveLen(2))
+		gomega.Expect(childPrompts[1]).To(gomega.And(gomega.ContainSubstring("## Prior Cycles"), gomega.ContainSubstring("verification:go test ./...")))
+		gomega.Expect(result.StatePath).To(gomega.Equal(".idiom/intent-loop/sessions/" + result.SessionID + ".json"))
+	})
+
+	ginkgo.It("stops before dispatch when the start JSON event cannot be written", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var calls int
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt:     intentLoopRequiredTestPrompt("go test ./..."),
+				JSONEvents: true,
+			},
+			RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+				calls++
+				return planexecute.RunResult{ExitCode: 99}
+			},
+		}, nil, nil, intentLoopFailingWriter{err: errors.New("stdout closed")}, io.Discard)
+
+		gomega.Expect(calls).To(gomega.BeZero())
+		expectRunFailure(result, intentloopcontract.StatusFailed, "json_event_write_failed")
+	})
+
+	ginkgo.It("fails a terminal resume when its JSON event cannot be written", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state := NewState("terminal-json-failure", intentLoopRequiredTestPrompt("go test ./..."), IntentLoopContract{}, 3, time.Now())
+		state.Status = intentloopcontract.StatusCompleted
+		_, err := SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt:     intentLoopRequiredTestPrompt("go test ./..."),
+				JSONEvents: true,
+			},
+			Resume: state.SessionID,
+			RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+				calls++
+				return planexecute.RunResult{ExitCode: 99}
+			},
+		}, nil, nil, intentLoopFailingWriter{err: errors.New("stdout closed")}, io.Discard)
+
+		gomega.Expect(calls).To(gomega.BeZero())
+		expectRunFailure(result, intentloopcontract.StatusFailed, "json_event_write_failed")
+	})
+
+	ginkgo.It("fails an incomplete resume when cycle-complete JSON cannot be written", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		prompt := intentLoopRequiredTestPrompt("go test ./...")
+		cfg := intentLoopTestConfig(root)
+		opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt, JSONEvents: true}}
+		state := NewState("resume-json-failure", prompt, IntentLoopContract{}, 1, time.Now())
+		promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
+		state.Status = intentloopcontract.StatusRunning
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:          1,
+			Status:               "dispatched",
+			PlanExecuteSessionID: "child-1",
+			CyclePromptPath:      promptPath,
+			CyclePromptSHA256:    promptHash,
+			ChildIdentity:        &identity,
+		}}
+		_, err = SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		terminal := verificationTerminal("child-1", "go test ./...", true)
+		_, err = planexecute.SavePlanExecuteTerminalCompletionRecord(root, terminal)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		stdout := &intentLoopFailAfterWriter{allowedWrites: 1, err: errors.New("stdout closed")}
+		result := Run(cfg, IntentLoopOptions{
+			PlanExecuteOptions: opts.PlanExecuteOptions,
+			Resume:             state.SessionID,
+			RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+				ginkgo.Fail("existing terminal resume should not dispatch child")
+				return planexecute.RunResult{}
+			},
+			EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+				return 1
+			},
+		}, nil, nil, stdout, io.Discard)
+
+		expectRunFailure(result, intentloopcontract.StatusFailed, "json_event_write_failed")
+		gomega.Expect(stdout.writes).To(gomega.Equal(2))
+	})
+
+	ginkgo.It("stops when a failure set repeats", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var calls int
+
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt: intentLoopRequiredTestPrompt("go vet ./..."),
+			},
+			MaxCycles: 3,
+			NewChildSessionID: func() string {
+				calls++
+				return "repeat-child"
+			},
+			RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+				record := verificationTerminal(opts.SessionID, "go vet ./...", false)
+				return planexecute.RunResult{ExitCode: 1, SessionID: opts.SessionID, Completion: &record}
+			},
+			EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+				return 1
+			},
+		}, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusNoProgress), "reason=%s", result.TerminationReason)
+		gomega.Expect(result.ExitCode).To(gomega.Equal(1))
+		gomega.Expect(calls).To(gomega.Equal(2))
+		gomega.Expect(result.State.SeenFailureSets).To(gomega.HaveLen(1))
+	})
+
+	ginkgo.It("stops when the declared cycle budget is exhausted", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		var calls int
+
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt: intentLoopRequiredTestPrompt("go vet ./..."),
+			},
+			MaxCycles:         3,
+			CycleBudgetTokens: 5,
+			NewChildSessionID: func() string {
+				calls++
+				return "budget-child"
+			},
+			RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+				record := verificationTerminal(opts.SessionID, "go vet ./...", false)
+				record.Verification[0].Error = "different enough to avoid convergence"
+				return planexecute.RunResult{ExitCode: 1, SessionID: opts.SessionID, Completion: &record}
+			},
+			EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+				return 6
+			},
+		}, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusBudgetExhausted))
+		gomega.Expect(result.State.BudgetExhausted).To(gomega.BeTrue())
+		gomega.Expect(calls).To(gomega.Equal(1))
+	})
+
+	ginkgo.It("does not complete from a failed terminal record with a zero wrapper exit", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt: intentLoopRequiredTestPrompt("go test ./..."),
+			},
+			MaxCycles: 1,
+			NewChildSessionID: func() string {
+				return "failed-terminal-child"
+			},
+			RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+				record := verificationTerminal(opts.SessionID, "go test ./...", true)
+				record.FailureKind = plancontract.PlanExecuteFailureExecutorFailed
+				record.FailureReason = "terminal record failed after wrapper returned success"
+				record = plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
+				return planexecute.RunResult{ExitCode: 0, SessionID: opts.SessionID, Completion: &record}
+			},
+			EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+				return 1
+			},
+		}, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(result.Status).NotTo(gomega.Equal(intentloopcontract.StatusCompleted))
+		gomega.Expect(result.ExitCode).NotTo(gomega.BeZero())
+		gomega.Expect(result.State.Cycles).To(gomega.HaveLen(1))
+		gomega.Expect(result.State.Cycles[0].Status).To(gomega.Equal(intentloopcontract.CycleStatusFailed))
+		gomega.Expect(result.State.Cycles[0].FailureKind).To(gomega.Equal(string(plancontract.PlanExecuteFailureExecutorFailed)))
+	})
+
+	ginkgo.It("does not complete from a terminal record with validation failures", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt: intentLoopRequiredTestPrompt("go test ./..."),
+			},
+			MaxCycles: 1,
+			NewChildSessionID: func() string {
+				return "invalid-terminal-child"
+			},
+			RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+				record := verificationTerminal(opts.SessionID, "go test ./...", true)
+				record.RequiredEditPaths = []string{"pkg/feature.go"}
+				record = plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
+				return planexecute.RunResult{ExitCode: 0, SessionID: opts.SessionID, Completion: &record}
+			},
+			EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+				return 1
+			},
+		}, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(result.Status).NotTo(gomega.Equal(intentloopcontract.StatusCompleted))
+		gomega.Expect(result.ExitCode).NotTo(gomega.BeZero())
+		gomega.Expect(result.State.Cycles).To(gomega.HaveLen(1))
+		gomega.Expect(result.State.Cycles[0].Status).To(gomega.Equal(intentloopcontract.CycleStatusFailed))
+		gomega.Expect(evidenceGapsContain(result.State.Cycles[0].RemainingFailures, "terminal_completion", "terminal completion validation failure")).To(gomega.BeTrue())
+	})
+
+	ginkgo.It("returns a completed terminal session without dispatching a child", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+		state := NewState("terminal-session", intentLoopRequiredTestPrompt("go test ./..."), IntentLoopContract{}, 3, now)
+		state.Status = intentloopcontract.StatusCompleted
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:          1,
+			PlanExecuteSessionID: "child-1",
+			Status:               "completed",
+			ExitCode:             0,
+		}}
+		statePath, err := SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt: intentLoopRequiredTestPrompt("go test ./..."),
+			},
+			Resume: "terminal-session",
+			RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+				calls++
+				return planexecute.RunResult{ExitCode: 99}
+			},
+		}, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(calls).To(gomega.BeZero())
+		gomega.Expect(result.ExitCode).To(gomega.BeZero())
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusCompleted))
+		gomega.Expect(result.StatePath).To(gomega.Equal(statePath))
+		gomega.Expect(result.State.CurrentCycle).To(gomega.Equal(1))
+		gomega.Expect(result.State.Cycles).To(gomega.HaveLen(1))
+	})
+
+	ginkgo.It("returns a blocked terminal session without dispatching a child", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state := NewState("blocked-session", intentLoopRequiredTestPrompt("go test ./..."), IntentLoopContract{}, 3, time.Now())
+		state.Status = intentloopcontract.StatusBlocked
+		state.TerminationReason = "manual blocker"
+		_, err := SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		result := Run(intentLoopTestConfig(root), IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{
+				Prompt: intentLoopRequiredTestPrompt("go test ./..."),
+			},
+			Resume: "blocked-session",
+			RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+				calls++
+				return planexecute.RunResult{ExitCode: 99}
+			},
+		}, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(calls).To(gomega.BeZero())
+		gomega.Expect(result.ExitCode).To(gomega.Equal(1))
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusBlocked))
+		gomega.Expect(result.TerminationReason).To(gomega.Equal("manual blocker"))
+	})
+
+	ginkgo.It("resumes and folds a successful incomplete child terminal", ginkgo.Label("development-scenario", "integration", "contract"), func() {
+		root := ginkgo.GinkgoT().TempDir()
+		prompt := intentLoopRequiredTestPrompt("go test ./...")
+		cfg := intentLoopTestConfig(root)
+		opts := IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{Prompt: prompt},
+		}
+		state := NewState("resume-incomplete", prompt, IntentLoopContract{}, 1, time.Now())
+		promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
+		state.Status = intentloopcontract.StatusRunning
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:          1,
+			Status:               "dispatched",
+			PlanExecuteSessionID: "child-1",
+			CyclePromptPath:      promptPath,
+			CyclePromptSHA256:    promptHash,
+			ChildIdentity:        &identity,
+		}}
+		_, err = SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		opts.Resume = state.SessionID
+		opts.RunPlanExecute = func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
 			calls++
-			return "child-" + string(rune('0'+calls))
-		},
-		RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-			childPrompts = append(childPrompts, opts.Prompt)
-			if opts.ScopeExtractionPolicy != planexecute.ScopeExtractionFrozen {
-				t.Fatalf("ScopeExtractionPolicy = %q, want frozen", opts.ScopeExtractionPolicy)
-			}
-			if len(opts.VerificationPlanExplicitCommands) != 1 || opts.VerificationPlanExplicitCommands[0] != "go test ./..." {
-				t.Fatalf("explicit commands = %#v", opts.VerificationPlanExplicitCommands)
-			}
-
-			record := verificationTerminal(opts.SessionID, "go test ./...", false)
-			exitCode := 1
-			if calls == 2 {
-				record = verificationTerminal(opts.SessionID, "go test ./...", true)
-				exitCode = 0
-			}
-			return planexecute.RunResult{
-				ExitCode:       exitCode,
-				SessionID:      opts.SessionID,
-				Completion:     &record,
-				CompletionPath: ".idiom/plan-execute/sessions/" + opts.SessionID + ".terminal.json",
-			}
-		},
-		EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
-			return 10
-		},
-	}, nil, nil, &bytes.Buffer{}, &bytes.Buffer{})
-
-	if result.ExitCode != 0 || result.Status != intentloopcontract.StatusCompleted {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	if calls != 2 {
-		t.Fatalf("calls = %d, want 2", calls)
-	}
-	if len(result.State.Cycles) != 2 || len(result.State.Cycles[0].RemainingFailures) == 0 || len(result.State.Cycles[1].RemainingFailures) != 0 {
-		t.Fatalf("cycles = %#v", result.State.Cycles)
-	}
-	if len(childPrompts) != 2 || !strings.Contains(childPrompts[1], "## Prior Cycles") || !strings.Contains(childPrompts[1], "verification:go test ./...") {
-		t.Fatalf("second prompt did not carry prior failure evidence:\n%s", childPrompts[1])
-	}
-	if result.StatePath != ".idiom/intent-loop/sessions/"+result.SessionID+".json" {
-		t.Fatalf("StatePath = %q", result.StatePath)
-	}
-}
-
-func TestRunStopsOnStartJSONEventWriteFailure(t *testing.T) {
-	root := t.TempDir()
-	var calls int
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt:     intentLoopRequiredTestPrompt("go test ./..."),
-			JSONEvents: true,
-		},
-		RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
-			calls++
-			return planexecute.RunResult{ExitCode: 99}
-		},
-	}, nil, nil, intentLoopFailingWriter{err: errors.New("stdout closed")}, io.Discard)
-
-	if calls != 0 {
-		t.Fatalf("child run dispatched after JSON event write failure: %d", calls)
-	}
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusFailed || !strings.Contains(result.TerminationReason, "json_event_write_failed") {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-}
-
-func TestRunResumeTerminalStopsOnJSONEventWriteFailure(t *testing.T) {
-	root := t.TempDir()
-	state := NewState("terminal-json-failure", intentLoopRequiredTestPrompt("go test ./..."), IntentLoopContract{}, 3, time.Now())
-	state.Status = intentloopcontract.StatusCompleted
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	var calls int
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt:     intentLoopRequiredTestPrompt("go test ./..."),
-			JSONEvents: true,
-		},
-		Resume: state.SessionID,
-		RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
-			calls++
-			return planexecute.RunResult{ExitCode: 99}
-		},
-	}, nil, nil, intentLoopFailingWriter{err: errors.New("stdout closed")}, io.Discard)
-
-	if calls != 0 {
-		t.Fatalf("terminal resume dispatched child after JSON event write failure: %d", calls)
-	}
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusFailed || !strings.Contains(result.TerminationReason, "json_event_write_failed") {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-}
-
-func TestRunResumeIncompleteCycleStopsOnCycleCompleteJSONEventWriteFailure(t *testing.T) {
-	root := t.TempDir()
-	prompt := intentLoopRequiredTestPrompt("go test ./...")
-	cfg := intentLoopTestConfig(root)
-	opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt, JSONEvents: true}}
-	state := NewState("resume-json-failure", prompt, IntentLoopContract{}, 1, time.Now())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
-	state.Status = intentloopcontract.StatusRunning
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    promptHash,
-		ChildIdentity:        &identity,
-	}}
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-	terminal := verificationTerminal("child-1", "go test ./...", true)
-	if _, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, terminal); err != nil {
-		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
-	}
-
-	stdout := &intentLoopFailAfterWriter{allowedWrites: 1, err: errors.New("stdout closed")}
-	result := Run(cfg, IntentLoopOptions{
-		PlanExecuteOptions: opts.PlanExecuteOptions,
-		Resume:             state.SessionID,
-		RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
-			t.Fatal("existing terminal resume should not dispatch child")
-			return planexecute.RunResult{}
-		},
-		EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
-			return 1
-		},
-	}, nil, nil, stdout, io.Discard)
-
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusFailed || !strings.Contains(result.TerminationReason, "json_event_write_failed") {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	if stdout.writes != 2 {
-		t.Fatalf("writes = %d, want start event then failing cycle_complete", stdout.writes)
-	}
-}
-
-func TestRunStopsOnRepeatedFailureSet(t *testing.T) {
-	root := t.TempDir()
-	var calls int
-
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt: intentLoopRequiredTestPrompt("go vet ./..."),
-		},
-		MaxCycles: 3,
-		NewChildSessionID: func() string {
-			calls++
-			return "repeat-child"
-		},
-		RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-			record := verificationTerminal(opts.SessionID, "go vet ./...", false)
-			return planexecute.RunResult{ExitCode: 1, SessionID: opts.SessionID, Completion: &record}
-		},
-		EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
-			return 1
-		},
-	}, nil, nil, io.Discard, io.Discard)
-
-	if result.Status != intentloopcontract.StatusNoProgress || result.ExitCode != 1 {
-		t.Fatalf("result status = %q exit=%d reason=%q", result.Status, result.ExitCode, result.TerminationReason)
-	}
-	if calls != 2 {
-		t.Fatalf("calls = %d, want convergence on second repeated failure", calls)
-	}
-	if len(result.State.SeenFailureSets) != 1 {
-		t.Fatalf("SeenFailureSets = %#v", result.State.SeenFailureSets)
-	}
-}
-
-func TestRunStopsOnCycleBudgetExhaustion(t *testing.T) {
-	root := t.TempDir()
-	var calls int
-
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt: intentLoopRequiredTestPrompt("go vet ./..."),
-		},
-		MaxCycles:         3,
-		CycleBudgetTokens: 5,
-		NewChildSessionID: func() string {
-			calls++
-			return "budget-child"
-		},
-		RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-			record := verificationTerminal(opts.SessionID, "go vet ./...", false)
-			record.Verification[0].Error = "different enough to avoid convergence"
-			return planexecute.RunResult{ExitCode: 1, SessionID: opts.SessionID, Completion: &record}
-		},
-		EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
-			return 6
-		},
-	}, nil, nil, io.Discard, io.Discard)
-
-	if result.Status != intentloopcontract.StatusBudgetExhausted || !result.State.BudgetExhausted {
-		t.Fatalf("result status = %q exhausted=%v", result.Status, result.State.BudgetExhausted)
-	}
-	if calls != 1 {
-		t.Fatalf("calls = %d, want budget exhaustion after first cycle", calls)
-	}
-}
-
-func TestRunDoesNotCompleteWhenTerminalRecordFailedDespiteZeroExit(t *testing.T) {
-	root := t.TempDir()
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt: intentLoopRequiredTestPrompt("go test ./..."),
-		},
-		MaxCycles: 1,
-		NewChildSessionID: func() string {
-			return "failed-terminal-child"
-		},
-		RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
 			record := verificationTerminal(opts.SessionID, "go test ./...", true)
-			record.FailureKind = plancontract.PlanExecuteFailureExecutorFailed
-			record.FailureReason = "terminal record failed after wrapper returned success"
-			record = plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
 			return planexecute.RunResult{ExitCode: 0, SessionID: opts.SessionID, Completion: &record}
-		},
-		EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+		}
+		opts.EstimateCycleTokens = func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
 			return 1
-		},
-	}, nil, nil, io.Discard, io.Discard)
+		}
+		result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
 
-	if result.Status == intentloopcontract.StatusCompleted || result.ExitCode == 0 {
-		t.Fatalf("failed terminal record must not complete loop: status=%q exit=%d", result.Status, result.ExitCode)
-	}
-	if len(result.State.Cycles) != 1 || result.State.Cycles[0].Status != "failed" {
-		t.Fatalf("cycle should persist failed terminal authority: %#v", result.State.Cycles)
-	}
-	if got := result.State.Cycles[0].FailureKind; got != string(plancontract.PlanExecuteFailureExecutorFailed) {
-		t.Fatalf("cycle failure kind = %q, want %q", got, plancontract.PlanExecuteFailureExecutorFailed)
-	}
-}
+		gomega.Expect(calls).To(gomega.Equal(1))
+		gomega.Expect(result.ExitCode).To(gomega.BeZero(), "reason=%s", result.TerminationReason)
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusCompleted))
+		gomega.Expect(result.State.CurrentCycle).To(gomega.Equal(1))
+		gomega.Expect(result.State.Cycles).To(gomega.HaveLen(1))
+		gomega.Expect(result.State.Cycles[0].Status).To(gomega.Equal(intentloopcontract.CycleStatusCompleted))
+	})
 
-func TestRunDoesNotCompleteWhenTerminalRecordHasValidationFailures(t *testing.T) {
-	root := t.TempDir()
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt: intentLoopRequiredTestPrompt("go test ./..."),
-		},
-		MaxCycles: 1,
-		NewChildSessionID: func() string {
-			return "invalid-terminal-child"
-		},
-		RunPlanExecute: func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-			record := verificationTerminal(opts.SessionID, "go test ./...", true)
-			record.RequiredEditPaths = []string{"pkg/feature.go"}
-			record = plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
-			return planexecute.RunResult{ExitCode: 0, SessionID: opts.SessionID, Completion: &record}
-		},
-		EstimateCycleTokens: func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
-			return 1
-		},
-	}, nil, nil, io.Discard, io.Discard)
+	ginkgo.It("folds an existing child terminal without redispatch", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		prompt := intentLoopRequiredTestPrompt("go test ./...")
+		cfg := intentLoopTestConfig(root)
+		opts := IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{Prompt: prompt},
+		}
+		state := NewState("resume-existing-terminal", prompt, IntentLoopContract{}, 1, time.Now())
+		promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
+		state.Status = intentloopcontract.StatusRunning
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:          1,
+			Status:               "dispatched",
+			PlanExecuteSessionID: "child-1",
+			CyclePromptPath:      promptPath,
+			CyclePromptSHA256:    promptHash,
+			ChildIdentity:        &identity,
+		}}
+		_, err = SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if result.Status == intentloopcontract.StatusCompleted || result.ExitCode == 0 {
-		t.Fatalf("invalid terminal record must not complete loop: status=%q exit=%d", result.Status, result.ExitCode)
-	}
-	if len(result.State.Cycles) != 1 || result.State.Cycles[0].Status != "failed" {
-		t.Fatalf("cycle should persist failed terminal validation: %#v", result.State.Cycles)
-	}
-	if !evidenceGapsContain(result.State.Cycles[0].RemainingFailures, "terminal_completion", "terminal completion validation failure") {
-		t.Fatalf("cycle should persist terminal validation gap: %#v", result.State.Cycles[0].RemainingFailures)
-	}
-}
+		terminal := verificationTerminal("child-1", "go test ./...", true)
+		_, err = planexecute.SavePlanExecuteTerminalCompletionRecord(root, terminal)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-func TestRunResumeTerminalSessionDoesNotDispatchChild(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
-	state := NewState("terminal-session", intentLoopRequiredTestPrompt("go test ./..."), IntentLoopContract{}, 3, now)
-	state.Status = intentloopcontract.StatusCompleted
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		PlanExecuteSessionID: "child-1",
-		Status:               "completed",
-		ExitCode:             0,
-	}}
-	statePath, err := SaveState(root, &state)
-	if err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	var calls int
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt: intentLoopRequiredTestPrompt("go test ./..."),
-		},
-		Resume: "terminal-session",
-		RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+		var calls int
+		opts.Resume = state.SessionID
+		opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
 			calls++
 			return planexecute.RunResult{ExitCode: 99}
-		},
-	}, nil, nil, io.Discard, io.Discard)
+		}
+		opts.EstimateCycleTokens = func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
+			return 1
+		}
+		result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
 
-	if calls != 0 {
-		t.Fatalf("terminal resume dispatched %d child run(s)", calls)
-	}
-	if result.ExitCode != 0 || result.Status != intentloopcontract.StatusCompleted || result.StatePath != statePath {
-		t.Fatalf("result = exit %d status %q path %q", result.ExitCode, result.Status, result.StatePath)
-	}
-	if result.State.CurrentCycle != 1 || len(result.State.Cycles) != 1 {
-		t.Fatalf("terminal state should be unchanged, got cycle=%d cycles=%d", result.State.CurrentCycle, len(result.State.Cycles))
-	}
-}
+		gomega.Expect(calls).To(gomega.BeZero())
+		gomega.Expect(result.ExitCode).To(gomega.BeZero(), "reason=%s", result.TerminationReason)
+		gomega.Expect(result.Status).To(gomega.Equal(intentloopcontract.StatusCompleted))
+		gomega.Expect(result.State.CurrentCycle).To(gomega.Equal(1))
+		gomega.Expect(result.State.Cycles).To(gomega.HaveLen(1))
+		gomega.Expect(result.State.Cycles[0].Status).To(gomega.Equal(intentloopcontract.CycleStatusCompleted))
+	})
 
-func TestRunResumeBlockedTerminalSessionDoesNotDispatchChild(t *testing.T) {
-	root := t.TempDir()
-	state := NewState("blocked-session", intentLoopRequiredTestPrompt("go test ./..."), IntentLoopContract{}, 3, time.Now())
-	state.Status = intentloopcontract.StatusBlocked
-	state.TerminationReason = "manual blocker"
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
+	ginkgo.It("blocks non-resumable child progress without redispatch", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		prompt := intentLoopRequiredTestPrompt("go test ./...")
+		cfg := intentLoopTestConfig(root)
+		opts := IntentLoopOptions{
+			PlanExecuteOptions: planexecute.Options{Prompt: prompt},
+		}
+		state := NewState("resume-nonresumable-progress", prompt, IntentLoopContract{}, 1, time.Now())
+		promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
+		state.Status = intentloopcontract.StatusRunning
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:          1,
+			Status:               "dispatched",
+			PlanExecuteSessionID: "child-1",
+			CyclePromptPath:      promptPath,
+			CyclePromptSHA256:    promptHash,
+			ChildIdentity:        &identity,
+		}}
+		_, err = SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	var calls int
-	result := Run(intentLoopTestConfig(root), IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{
-			Prompt: intentLoopRequiredTestPrompt("go test ./..."),
-		},
-		Resume: "blocked-session",
-		RunPlanExecute: func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult {
+		progress := planexecute.NewProgressState("child-1", "cycle prompt", promptPath, nil, nil, time.Now())
+		progress.Phase = plancontract.PlanExecuteProgressPhasePlanning
+		progress.Status = plancontract.PlanExecuteProgressStatusRunning
+		_, err = planexecute.SaveProgressState(root, &progress)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		opts.Resume = state.SessionID
+		opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
 			calls++
 			return planexecute.RunResult{ExitCode: 99}
-		},
-	}, nil, nil, io.Discard, io.Discard)
+		}
+		result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
 
-	if calls != 0 {
-		t.Fatalf("blocked terminal resume dispatched %d child run(s)", calls)
-	}
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusBlocked || result.TerminationReason != "manual blocker" {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
+		gomega.Expect(calls).To(gomega.BeZero())
+		expectRunFailure(result, intentloopcontract.StatusBlocked, ResumeBlockChildProgressNotResumable)
+		assertPersistedBlockedResumeCycle(root, state.SessionID, ResumeBlockChildProgressNotResumable)
+	})
+
+	ginkgo.It("persists a cycle-prompt mismatch blocker without redispatch", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		prompt := intentLoopRequiredTestPrompt("go test ./...")
+		cfg := intentLoopTestConfig(root)
+		opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt}}
+		state := NewState("resume-prompt-mismatch", prompt, IntentLoopContract{}, 1, time.Now())
+		promptPath, _, err := SaveCyclePrompt(root, state.SessionID, 1, "changed cycle prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
+		state.Status = intentloopcontract.StatusRunning
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:          1,
+			Status:               intentloopcontract.CycleStatusDispatched,
+			PlanExecuteSessionID: "child-1",
+			CyclePromptPath:      promptPath,
+			CyclePromptSHA256:    sha256Hex("original cycle prompt"),
+			ChildIdentity:        &identity,
+		}}
+		_, err = SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		opts.Resume = state.SessionID
+		opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+			calls++
+			return planexecute.RunResult{ExitCode: 99}
+		}
+		result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(calls).To(gomega.BeZero())
+		expectRunFailure(result, intentloopcontract.StatusBlocked, ResumeBlockPromptMismatch)
+		assertPersistedBlockedResumeCycle(root, state.SessionID, ResumeBlockPromptMismatch)
+	})
+
+	ginkgo.It("persists a child-identity mismatch blocker without redispatch", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		prompt := intentLoopRequiredTestPrompt("go test ./...")
+		cfg := intentLoopTestConfig(root)
+		opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt}}
+		state := NewState("resume-child-identity-mismatch", prompt, IntentLoopContract{}, 1, time.Now())
+		promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
+		identity.ToolManifestSHA256 = "stale-tool-manifest"
+		state.Status = intentloopcontract.StatusRunning
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:          1,
+			Status:               intentloopcontract.CycleStatusDispatched,
+			PlanExecuteSessionID: "child-1",
+			CyclePromptPath:      promptPath,
+			CyclePromptSHA256:    promptHash,
+			ChildIdentity:        &identity,
+		}}
+		_, err = SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		opts.Resume = state.SessionID
+		opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+			calls++
+			return planexecute.RunResult{ExitCode: 99}
+		}
+		result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(calls).To(gomega.BeZero())
+		expectRunFailure(result, intentloopcontract.StatusBlocked, ResumeBlockChildIdentityMismatch)
+		assertPersistedBlockedResumeCycle(root, state.SessionID, ResumeBlockChildIdentityMismatch)
+	})
+
+	ginkgo.It("persists an external scoped-change blocker without redispatch", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("current"), 0o600)).To(gomega.Succeed())
+		prompt := intentLoopRequiredTestPrompt("go test ./...")
+		cfg := intentLoopTestConfig(root)
+		contract := IntentLoopContract{
+			ScopeContract: plancontract.PlanScopeContract{RequiredCoveragePaths: []string{"tracked.txt"}},
+		}
+		opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt}}
+		state := NewState("resume-external-scoped-change", prompt, contract, 1, time.Now())
+		promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
+		state.Status = intentloopcontract.StatusRunning
+		state.CurrentCycle = 1
+		state.Cycles = []CycleRecord{{
+			CycleNumber:              1,
+			Status:                   intentloopcontract.CycleStatusDispatched,
+			PlanExecuteSessionID:     "child-1",
+			CyclePromptPath:          promptPath,
+			CyclePromptSHA256:        promptHash,
+			PostRunScopedFingerprint: "stale-fingerprint",
+			ChildIdentity:            &identity,
+		}}
+		_, err = SaveState(root, &state)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var calls int
+		opts.Resume = state.SessionID
+		opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+			calls++
+			return planexecute.RunResult{ExitCode: 99}
+		}
+		result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
+
+		gomega.Expect(calls).To(gomega.BeZero())
+		expectRunFailure(result, intentloopcontract.StatusBlocked, ResumeBlockExternalScopedChange)
+		assertPersistedBlockedResumeCycle(root, state.SessionID, ResumeBlockExternalScopedChange)
+	})
+
+	ginkgo.It("rejects an unknown JSON event contract without output", func() {
+		var stdout bytes.Buffer
+
+		gomega.Expect(emitIntentLoopJSONEvent(&stdout, true, intentloopcontract.EventType("not_real"), nil)).To(gomega.HaveOccurred())
+		gomega.Expect(stdout.String()).To(gomega.BeEmpty())
+	})
+})
+
+func expectRunFailure(result IntentLoopResult, status intentloopcontract.Status, reasonSubstring string) {
+	gomega.Expect(result.ExitCode).To(gomega.Equal(1))
+	gomega.Expect(result.Status).To(gomega.Equal(status))
+	gomega.Expect(result.TerminationReason).To(gomega.ContainSubstring(reasonSubstring))
 }
 
-func TestRunResumeIncompleteCycleFoldsSuccessfulChildTerminal(t *testing.T) {
-	root := t.TempDir()
-	prompt := intentLoopRequiredTestPrompt("go test ./...")
-	cfg := intentLoopTestConfig(root)
-	opts := IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{Prompt: prompt},
-	}
-	state := NewState("resume-incomplete", prompt, IntentLoopContract{}, 1, time.Now())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
-	state.Status = intentloopcontract.StatusRunning
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    promptHash,
-		ChildIdentity:        &identity,
-	}}
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	var calls int
-	opts.Resume = state.SessionID
-	opts.RunPlanExecute = func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-		calls++
-		record := verificationTerminal(opts.SessionID, "go test ./...", true)
-		return planexecute.RunResult{ExitCode: 0, SessionID: opts.SessionID, Completion: &record}
-	}
-	opts.EstimateCycleTokens = func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
-		return 1
-	}
-	result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
-
-	if calls != 1 {
-		t.Fatalf("calls = %d, want resumed child only", calls)
-	}
-	if result.ExitCode != 0 || result.Status != intentloopcontract.StatusCompleted {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	if result.State.CurrentCycle != 1 || len(result.State.Cycles) != 1 || result.State.Cycles[0].Status != "completed" {
-		t.Fatalf("resumed cycle not folded into completed state: %#v", result.State.Cycles)
-	}
-}
-
-func TestRunResumeIncompleteCycleFoldsExistingChildTerminalWithoutDispatch(t *testing.T) {
-	root := t.TempDir()
-	prompt := intentLoopRequiredTestPrompt("go test ./...")
-	cfg := intentLoopTestConfig(root)
-	opts := IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{Prompt: prompt},
-	}
-	state := NewState("resume-existing-terminal", prompt, IntentLoopContract{}, 1, time.Now())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
-	state.Status = intentloopcontract.StatusRunning
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    promptHash,
-		ChildIdentity:        &identity,
-	}}
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	terminal := verificationTerminal("child-1", "go test ./...", true)
-	if _, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, terminal); err != nil {
-		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
-	}
-
-	var calls int
-	opts.Resume = state.SessionID
-	opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-		calls++
-		return planexecute.RunResult{ExitCode: 99}
-	}
-	opts.EstimateCycleTokens = func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int {
-		return 1
-	}
-	result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
-
-	if calls != 0 {
-		t.Fatalf("resume dispatched %d child run(s), want 0", calls)
-	}
-	if result.ExitCode != 0 || result.Status != intentloopcontract.StatusCompleted {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	if result.State.CurrentCycle != 1 || len(result.State.Cycles) != 1 || result.State.Cycles[0].Status != "completed" {
-		t.Fatalf("existing terminal was not folded into completed state: %#v", result.State.Cycles)
-	}
-}
-
-func TestRunResumeIncompleteCycleBlocksNonResumableChildProgressWithoutDispatch(t *testing.T) {
-	root := t.TempDir()
-	prompt := intentLoopRequiredTestPrompt("go test ./...")
-	cfg := intentLoopTestConfig(root)
-	opts := IntentLoopOptions{
-		PlanExecuteOptions: planexecute.Options{Prompt: prompt},
-	}
-	state := NewState("resume-nonresumable-progress", prompt, IntentLoopContract{}, 1, time.Now())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
-	state.Status = intentloopcontract.StatusRunning
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    promptHash,
-		ChildIdentity:        &identity,
-	}}
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	progress := planexecute.NewProgressState("child-1", "cycle prompt", promptPath, nil, nil, time.Now())
-	progress.Phase = plancontract.PlanExecuteProgressPhasePlanning
-	progress.Status = plancontract.PlanExecuteProgressStatusRunning
-	if _, err := planexecute.SaveProgressState(root, &progress); err != nil {
-		t.Fatalf("SaveProgressState: %v", err)
-	}
-
-	var calls int
-	opts.Resume = state.SessionID
-	opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-		calls++
-		return planexecute.RunResult{ExitCode: 99}
-	}
-	result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
-
-	if calls != 0 {
-		t.Fatalf("resume dispatched %d child run(s), want 0", calls)
-	}
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusBlocked || !strings.Contains(result.TerminationReason, ResumeBlockChildProgressNotResumable) {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	assertPersistedBlockedResumeCycle(t, root, state.SessionID, ResumeBlockChildProgressNotResumable)
-}
-
-func TestRunResumeIncompleteCyclePersistsPromptMismatchBlocker(t *testing.T) {
-	root := t.TempDir()
-	prompt := intentLoopRequiredTestPrompt("go test ./...")
-	cfg := intentLoopTestConfig(root)
-	opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt}}
-	state := NewState("resume-prompt-mismatch", prompt, IntentLoopContract{}, 1, time.Now())
-	promptPath, _, err := SaveCyclePrompt(root, state.SessionID, 1, "changed cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
-	state.Status = intentloopcontract.StatusRunning
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               intentloopcontract.CycleStatusDispatched,
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    sha256Hex("original cycle prompt"),
-		ChildIdentity:        &identity,
-	}}
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	var calls int
-	opts.Resume = state.SessionID
-	opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-		calls++
-		return planexecute.RunResult{ExitCode: 99}
-	}
-	result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
-
-	if calls != 0 {
-		t.Fatalf("resume dispatched %d child run(s), want 0", calls)
-	}
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusBlocked || !strings.Contains(result.TerminationReason, ResumeBlockPromptMismatch) {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	assertPersistedBlockedResumeCycle(t, root, state.SessionID, ResumeBlockPromptMismatch)
-}
-
-func TestRunResumeIncompleteCyclePersistsChildIdentityMismatchBlocker(t *testing.T) {
-	root := t.TempDir()
-	prompt := intentLoopRequiredTestPrompt("go test ./...")
-	cfg := intentLoopTestConfig(root)
-	opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt}}
-	state := NewState("resume-child-identity-mismatch", prompt, IntentLoopContract{}, 1, time.Now())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
-	identity.ToolManifestSHA256 = "stale-tool-manifest"
-	state.Status = intentloopcontract.StatusRunning
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               intentloopcontract.CycleStatusDispatched,
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    promptHash,
-		ChildIdentity:        &identity,
-	}}
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	var calls int
-	opts.Resume = state.SessionID
-	opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-		calls++
-		return planexecute.RunResult{ExitCode: 99}
-	}
-	result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
-
-	if calls != 0 {
-		t.Fatalf("resume dispatched %d child run(s), want 0", calls)
-	}
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusBlocked || !strings.Contains(result.TerminationReason, ResumeBlockChildIdentityMismatch) {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	assertPersistedBlockedResumeCycle(t, root, state.SessionID, ResumeBlockChildIdentityMismatch)
-}
-
-func TestRunResumeIncompleteCyclePersistsExternalScopedChangeBlocker(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("current"), 0o600); err != nil {
-		t.Fatalf("write scoped file: %v", err)
-	}
-	prompt := intentLoopRequiredTestPrompt("go test ./...")
-	cfg := intentLoopTestConfig(root)
-	contract := IntentLoopContract{
-		ScopeContract: plancontract.PlanScopeContract{RequiredCoveragePaths: []string{"tracked.txt"}},
-	}
-	opts := IntentLoopOptions{PlanExecuteOptions: planexecute.Options{Prompt: prompt}}
-	state := NewState("resume-external-scoped-change", prompt, contract, 1, time.Now())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := childIdentity(cfg, opts, state.Contract, childVerificationCommands(state, opts))
-	state.Status = intentloopcontract.StatusRunning
-	state.CurrentCycle = 1
-	state.Cycles = []CycleRecord{{
-		CycleNumber:              1,
-		Status:                   intentloopcontract.CycleStatusDispatched,
-		PlanExecuteSessionID:     "child-1",
-		CyclePromptPath:          promptPath,
-		CyclePromptSHA256:        promptHash,
-		PostRunScopedFingerprint: "stale-fingerprint",
-		ChildIdentity:            &identity,
-	}}
-	if _, err := SaveState(root, &state); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
-
-	var calls int
-	opts.Resume = state.SessionID
-	opts.RunPlanExecute = func(_ config.Config, _ planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
-		calls++
-		return planexecute.RunResult{ExitCode: 99}
-	}
-	result := Run(cfg, opts, nil, nil, io.Discard, io.Discard)
-
-	if calls != 0 {
-		t.Fatalf("resume dispatched %d child run(s), want 0", calls)
-	}
-	if result.ExitCode != 1 || result.Status != intentloopcontract.StatusBlocked || !strings.Contains(result.TerminationReason, ResumeBlockExternalScopedChange) {
-		t.Fatalf("result = exit %d status %q reason %q", result.ExitCode, result.Status, result.TerminationReason)
-	}
-	assertPersistedBlockedResumeCycle(t, root, state.SessionID, ResumeBlockExternalScopedChange)
-}
-
-func assertPersistedBlockedResumeCycle(t *testing.T, root string, sessionID string, wantKind string) {
-	t.Helper()
+func assertPersistedBlockedResumeCycle(root, sessionID, wantKind string) {
 	loaded, _, err := LoadState(root, sessionID)
-	if err != nil {
-		t.Fatalf("LoadState: %v", err)
-	}
-	if loaded.Status != intentloopcontract.StatusBlocked {
-		t.Fatalf("persisted status = %q, want %q", loaded.Status, intentloopcontract.StatusBlocked)
-	}
-	if len(loaded.Cycles) != 1 {
-		t.Fatalf("persisted cycles = %d, want 1", len(loaded.Cycles))
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(loaded.Status).To(gomega.Equal(intentloopcontract.StatusBlocked))
+	gomega.Expect(loaded.Cycles).To(gomega.HaveLen(1))
 	cycle := loaded.Cycles[0]
-	if cycle.Status != intentloopcontract.CycleStatusFailed {
-		t.Fatalf("persisted cycle status = %q, want %q", cycle.Status, intentloopcontract.CycleStatusFailed)
-	}
-	if !strings.Contains(cycle.FailureKind, wantKind) {
-		t.Fatalf("persisted failure kind = %q, want containing %q", cycle.FailureKind, wantKind)
-	}
-	if !strings.Contains(cycle.FailureReason, wantKind) {
-		t.Fatalf("persisted failure reason = %q, want containing %q", cycle.FailureReason, wantKind)
-	}
-}
-
-func TestEmitIntentLoopJSONEventRejectsUnknownContractEvent(t *testing.T) {
-	var stdout bytes.Buffer
-
-	if err := emitIntentLoopJSONEvent(&stdout, true, intentloopcontract.EventType("not_real"), nil); err == nil {
-		t.Fatal("expected unknown event type error")
-	}
-
-	if stdout.Len() != 0 {
-		t.Fatalf("unexpected JSON output for rejected event: %s", stdout.String())
-	}
+	gomega.Expect(cycle.Status).To(gomega.Equal(intentloopcontract.CycleStatusFailed))
+	gomega.Expect(cycle.FailureKind).To(gomega.ContainSubstring(wantKind))
+	gomega.Expect(cycle.FailureReason).To(gomega.ContainSubstring(wantKind))
 }
 
 func intentLoopTestConfig(root string) config.Config {

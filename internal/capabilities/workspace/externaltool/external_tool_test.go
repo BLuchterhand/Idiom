@@ -3,172 +3,109 @@ package externaltool
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestSubstituteArgsDropsMissingWholeToken(t *testing.T) {
-	got := SubstituteArgs("{optional}", map[string]any{})
-	if len(got) != 0 {
-		t.Fatalf("expected missing whole-token placeholder to drop, got %#v", got)
-	}
-}
+var _ = ginkgo.Describe("External tool arguments", func() {
+	ginkgo.DescribeTable("substitutes placeholders",
+		func(template string, input map[string]any, want []string) {
+			got := SubstituteArgs(template, input)
+			if len(want) == 0 {
+				gomega.Expect(got).To(gomega.BeEmpty())
+				return
+			}
+			gomega.Expect(got).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("drops a missing whole-token placeholder", "{optional}", map[string]any{}, []string{}),
+		ginkgo.Entry("expands a whole-token []any value", "{files}", map[string]any{
+			"files": []any{"native/src/a.cpp", "native/src/b.cpp"},
+		}, []string{"native/src/a.cpp", "native/src/b.cpp"}),
+		ginkgo.Entry("expands a whole-token string slice", "{files}", map[string]any{
+			"files": []string{"native/src/a.cpp", "native/src/b.cpp"},
+		}, []string{"native/src/a.cpp", "native/src/b.cpp"}),
+		ginkgo.Entry("serializes an embedded array without splitting the argument", "--files={files}", map[string]any{
+			"files": []any{"native/src/a.cpp", "native/src/b.cpp"},
+		}, []string{`--files=["native/src/a.cpp","native/src/b.cpp"]`}),
+		ginkgo.Entry("includes a truthy conditional", "{?terse:--terse}", map[string]any{"terse": true}, []string{"--terse"}),
+		ginkgo.Entry("drops a false conditional", "{?json:--json}", map[string]any{"terse": true}, []string{}),
+	)
+})
 
-func TestSubstituteArgsExpandsWholeTokenArray(t *testing.T) {
-	input := map[string]any{
-		"files": []any{"native/src/a.cpp", "native/src/b.cpp"},
-	}
-	got := SubstituteArgs("{files}", input)
-	want := []string{"native/src/a.cpp", "native/src/b.cpp"}
+var _ = ginkgo.Describe("External tool registry", func() {
+	ginkgo.It("classifies only read-only discovery tools", func() {
+		reg, err := NewRegistry([]Tool{
+			{Name: "lookup", Command: "true", ReadOnly: true, Discovery: true},
+			{Name: "queue_run", Command: "true", ReadOnly: false, Discovery: true},
+			{Name: "format", Command: "true", ReadOnly: true, Discovery: false},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("array expansion mismatch\nwant: %#v\n got: %#v", want, got)
-	}
-}
+		gomega.Expect(reg.IsReadOnlyDiscovery("lookup")).To(gomega.BeTrue())
+		gomega.Expect(reg.IsReadOnlyDiscovery("queue_run")).To(gomega.BeFalse())
+		gomega.Expect(reg.IsReadOnlyDiscovery("format")).To(gomega.BeFalse())
+		gomega.Expect(reg.IsReadOnlyDiscovery("missing")).To(gomega.BeFalse())
 
-func TestSubstituteArgsExpandsStringSlice(t *testing.T) {
-	input := map[string]any{
-		"files": []string{"native/src/a.cpp", "native/src/b.cpp"},
-	}
-	got := SubstituteArgs("{files}", input)
-	want := []string{"native/src/a.cpp", "native/src/b.cpp"}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("string slice mismatch\nwant: %#v\n got: %#v", want, got)
-	}
-}
-
-func TestSubstituteArgsDoesNotSplitEmbeddedArray(t *testing.T) {
-	input := map[string]any{
-		"files": []any{"native/src/a.cpp", "native/src/b.cpp"},
-	}
-	got := SubstituteArgs("--files={files}", input)
-	want := []string{`--files=["native/src/a.cpp","native/src/b.cpp"]`}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("embedded array mismatch\nwant: %#v\n got: %#v", want, got)
-	}
-}
-
-func TestSubstituteArgsConditionals(t *testing.T) {
-	input := map[string]any{"terse": true}
-	got := SubstituteArgs("{?terse:--terse}", input)
-	want := []string{"--terse"}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("truthy conditional mismatch\nwant: %#v\n got: %#v", want, got)
-	}
-
-	got = SubstituteArgs("{?json:--json}", input)
-	if len(got) != 0 {
-		t.Fatalf("expected false conditional to drop, got %#v", got)
-	}
-}
-
-func TestRegistryReadOnlyDiscoveryContract(t *testing.T) {
-	reg, err := NewRegistry([]Tool{
-		{Name: "lookup", Command: "true", ReadOnly: true, Discovery: true},
-		{Name: "queue_run", Command: "true", ReadOnly: false, Discovery: true},
-		{Name: "format", Command: "true", ReadOnly: true, Discovery: false},
+		tool, ok := reg.Tool("lookup")
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(tool.ReadOnly).To(gomega.BeTrue())
+		gomega.Expect(tool.Discovery).To(gomega.BeTrue())
 	})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
 
-	if !reg.IsReadOnlyDiscovery("lookup") {
-		t.Fatalf("lookup should be classified as read-only discovery")
-	}
+	ginkgo.It("filters missing relative and absolute commands", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(os.MkdirAll(filepath.Join(root, "scripts"), 0o755)).To(gomega.Succeed())
+		gomega.Expect(os.WriteFile(
+			filepath.Join(root, "scripts", "ok.sh"),
+			[]byte("#!/bin/sh\necho ok\n"),
+			0o755,
+		)).To(gomega.Succeed())
 
-	for _, name := range []string{"queue_run", "format", "missing"} {
-		if reg.IsReadOnlyDiscovery(name) {
-			t.Fatalf("%s should not be classified as read-only discovery", name)
+		reg, err := NewRegistry([]Tool{
+			{Name: "ok_relative", Command: "./scripts/ok.sh"},
+			{Name: "missing_absolute", Command: filepath.Join(root, "missing.sh")},
+			{Name: "missing_relative", Command: "./scripts/missing.sh"},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		names := reg.AvailableNames(root)
+		gomega.Expect(names).To(gomega.ContainElement("ok_relative"))
+		gomega.Expect(names).NotTo(gomega.ContainElements("missing_absolute", "missing_relative"))
+
+		for _, missing := range []string{"missing_absolute", "missing_relative"} {
+			ok, reason := reg.Availability(missing, root)
+			gomega.Expect(ok).To(gomega.BeFalse())
+			gomega.Expect(reason).NotTo(gomega.BeEmpty())
 		}
-	}
-
-	tool, ok := reg.Tool("lookup")
-	if !ok || !tool.ReadOnly || !tool.Discovery {
-		t.Fatalf("Tool lookup returned %#v, %v", tool, ok)
-	}
-}
-
-func TestRegistryAvailabilityFiltersMissingCommands(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
-		t.Fatalf("mkdir scripts: %v", err)
-	}
-
-	scriptPath := filepath.Join(root, "scripts", "ok.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
-		t.Fatalf("write script: %v", err)
-	}
-
-	reg, err := NewRegistry([]Tool{
-		{Name: "ok_relative", Command: "./scripts/ok.sh"},
-		{Name: "missing_absolute", Command: filepath.Join(root, "missing.sh")},
-		{Name: "missing_relative", Command: "./scripts/missing.sh"},
 	})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
 
-	names := reg.AvailableNames(root)
-	if !hasString(names, "ok_relative") {
-		t.Fatalf("expected available relative command, got %#v", names)
-	}
-
-	for _, missing := range []string{"missing_absolute", "missing_relative"} {
-		if hasString(names, missing) {
-			t.Fatalf("missing command %q should not be available: %#v", missing, names)
+	ginkgo.It("accepts a bare executable found on PATH", func() {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("executable shell fixture uses POSIX mode bits")
 		}
 
-		ok, reason := reg.Availability(missing, root)
-		if ok || reason == "" {
-			t.Fatalf("expected unavailable reason for %s, ok=%v reason=%q", missing, ok, reason)
-		}
-	}
-}
+		binDir := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(os.WriteFile(
+			filepath.Join(binDir, "idiom-external-ok"),
+			[]byte("#!/bin/sh\necho ok\n"),
+			0o755,
+		)).To(gomega.Succeed())
+		ginkgo.GinkgoT().Setenv("PATH", binDir)
 
-func TestRegistryAvailabilityAcceptsBareCommandOnPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("executable shell fixture uses POSIX mode bits")
-	}
+		reg, err := NewRegistry([]Tool{
+			{Name: "ok_path", Command: "idiom-external-ok"},
+			{Name: "missing_path", Command: "idiom-external-missing"},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	binDir := t.TempDir()
-	commandPath := filepath.Join(binDir, "idiom-external-ok")
-	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
-		t.Fatalf("write command: %v", err)
-	}
-	t.Setenv("PATH", binDir)
+		names := reg.AvailableNames(ginkgo.GinkgoT().TempDir())
+		gomega.Expect(names).To(gomega.ContainElement("ok_path"))
+		gomega.Expect(names).NotTo(gomega.ContainElement("missing_path"))
 
-	reg, err := NewRegistry([]Tool{
-		{Name: "ok_path", Command: "idiom-external-ok"},
-		{Name: "missing_path", Command: "idiom-external-missing"},
+		ok, reason := reg.Availability("missing_path", "")
+		gomega.Expect(ok).To(gomega.BeFalse())
+		gomega.Expect(reason).To(gomega.Equal("command not found on PATH"))
 	})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-
-	names := reg.AvailableNames(t.TempDir())
-	if !hasString(names, "ok_path") {
-		t.Fatalf("expected bare PATH command to be available, got %#v", names)
-	}
-	if hasString(names, "missing_path") {
-		t.Fatalf("missing bare PATH command should not be available: %#v", names)
-	}
-
-	ok, reason := reg.Availability("missing_path", "")
-	if ok || reason != "command not found on PATH" {
-		t.Fatalf("missing PATH command availability = %v, %q", ok, reason)
-	}
-}
-
-func hasString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-
-	return false
-}
+})

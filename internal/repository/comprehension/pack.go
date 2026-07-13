@@ -1,7 +1,9 @@
 package comprehension
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,8 +42,8 @@ type PackOptions struct {
 	// Intent overrides automatic intent detection from Task. Empty means
 	// detect from Task.
 	Intent Intent
-	// LearnedWeights overrides the on-disk persisted weights. Empty means
-	// load from .idiom/ranker/weights.json.
+	// LearnedWeights overrides the on-disk persisted weights. Nil loads the
+	// lock-consistent ranker snapshot from .idiom/ranker.
 	LearnedWeights map[string]float64
 	Freshness      *FreshnessDecision
 	// IncludeStaleRuntime is a debug/audit escape hatch. Normal packet
@@ -164,13 +166,15 @@ type PackEvidence struct {
 	Stale      bool   `json:"stale,omitempty"`
 }
 
-func Pack(opts PackOptions) (PackResult, error) {
-	ctx, err := preparePackContext(opts)
+func Pack(requestContext context.Context, opts PackOptions) (PackResult, error) {
+	ctx, err := preparePackContext(requestContext, opts)
 	if err != nil {
 		return PackResult{}, err
 	}
 
-	if cached, hit := loadCachedPack(ctx); hit {
+	if cached, hit, err := loadCachedPack(ctx); err != nil {
+		return PackResult{}, err
+	} else if hit {
 		return cached, nil
 	}
 
@@ -194,7 +198,8 @@ func Pack(opts PackOptions) (PackResult, error) {
 }
 
 type packContext struct {
-	opts PackOptions
+	requestContext context.Context
+	opts           PackOptions
 
 	root   string
 	task   string
@@ -218,6 +223,7 @@ type packContext struct {
 	matchedIDs        map[string]struct{}
 	requiredNodes     []Node
 	relationships     []Edge
+	learnedWeights    map[string]float64
 }
 
 type packCandidates struct {
@@ -228,7 +234,13 @@ type packCandidates struct {
 	runtimeOverlay runtimePackOverlay
 }
 
-func preparePackContext(opts PackOptions) (*packContext, error) {
+func preparePackContext(requestContext context.Context, opts PackOptions) (*packContext, error) {
+	if requestContext == nil {
+		return nil, errors.New("context pack request context is required")
+	}
+	if err := requestContext.Err(); err != nil {
+		return nil, err
+	}
 	root, err := normalizeRoot(opts.Root)
 	if err != nil {
 		return nil, err
@@ -265,8 +277,25 @@ func preparePackContext(opts PackOptions) (*packContext, error) {
 	if intent == "" {
 		intent = DetectIntent(opts.Task)
 	}
+	learnedWeights := cloneWeights(opts.LearnedWeights)
+	loadedRankerGeneration := ""
+	if opts.LearnedWeights == nil {
+		snapshot, loadErr := LoadRankerStateSnapshot(requestContext, root)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load ranker weights for context pack: %w", loadErr)
+		}
+		learnedWeights = snapshot.LearnedWeights()
+		loadedRankerGeneration = snapshot.Generation
+	}
 
 	workspaceStateFingerprints := packWorkspaceStateFingerprints(root, opts.LearnedWeights)
+	if opts.LearnedWeights == nil {
+		workspaceStateFingerprints.RankerWeightsFingerprint = loadedRankerGeneration
+		workspaceStateFingerprints.WorkspaceStateFingerprint = composeWorkspaceStateFingerprint(
+			loadedRankerGeneration,
+			workspaceStateFingerprints.RuntimeTracesFingerprint,
+		)
+	}
 	cacheKey := viewKeyFromOptions(PackOptions{
 		Task:                task,
 		Path:                opts.Path,
@@ -281,28 +310,33 @@ func preparePackContext(opts PackOptions) (*packContext, error) {
 	cacheState := GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "miss_recompute", "cache_miss")
 
 	return &packContext{
-		opts:       opts,
-		root:       root,
-		task:       task,
-		mode:       mode,
-		now:        now,
-		limit:      limit,
-		intent:     intent,
-		graph:      graph,
-		status:     status,
-		cacheKey:   cacheKey,
-		cacheState: cacheState,
+		requestContext: requestContext,
+		opts:           opts,
+		root:           root,
+		task:           task,
+		mode:           mode,
+		now:            now,
+		limit:          limit,
+		intent:         intent,
+		graph:          graph,
+		status:         status,
+		cacheKey:       cacheKey,
+		cacheState:     cacheState,
+		learnedWeights: learnedWeights,
 	}, nil
 }
 
-func loadCachedPack(ctx *packContext) (PackResult, bool) {
+func loadCachedPack(ctx *packContext) (PackResult, bool, error) {
 	// Try the packet cache even when unrelated workspace paths are stale.
 	// LoadView validates the cached row against its referenced paths,
 	// source fingerprints, workspace-state fingerprint, and current
 	// index_id before returning a hit. That scoped freshness check lets
 	// local models reuse task packets instead of paying for re-discovery
 	// just because another file elsewhere in the repo changed.
-	if cached, hit, err := LoadView(ctx.root, ctx.cacheKey); err != nil {
+	if cached, hit, err := LoadView(ctx.requestContext, ctx.root, ctx.cacheKey); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return PackResult{}, false, err
+		}
 		// I/O errors on the cache should not block the pack — drop the error and recompute.
 		_ = err
 		ctx.cacheState = GraphViewCacheStateForKey(ctx.cacheKey, ctx.graph.StoreKind, "fallback_recompute", "cache_load_error")
@@ -315,10 +349,10 @@ func loadCachedPack(ctx *packContext) (PackResult, bool) {
 
 		_ = savePack(ctx.root, cached)
 
-		return cached, true
+		return cached, true, nil
 	}
 
-	return PackResult{}, false
+	return PackResult{}, false, nil
 }
 
 func collectPackCandidates(ctx *packContext) packCandidates {
@@ -453,18 +487,11 @@ func addRuntimeOverlayToPack(ctx *packContext, files *packFileBuilder, tests *pa
 }
 
 func packRankInputs(ctx *packContext) RankInputs {
-	learnedWeights := ctx.opts.LearnedWeights
-	if learnedWeights == nil {
-		loaded, _ := LoadLearnedWeights(ctx.root)
-
-		learnedWeights = loaded
-	}
-
 	return RankInputs{
 		Graph:          &ctx.graph,
 		MatchedIDs:     ctx.matchedIDs,
 		Intent:         ctx.intent,
-		LearnedWeights: learnedWeights,
+		LearnedWeights: ctx.learnedWeights,
 		QueryTokens:    ctx.terms,
 		RequiredPaths:  ctx.requiredPathSet,
 	}
@@ -595,17 +622,24 @@ func addPackResultEvidence(result *PackResult) {
 // --- merged from pack_cache.go ---
 
 func packWorkspaceStateFingerprints(root string, learnedWeights map[string]float64) ComprehensionStateFingerprintSet {
-	state := ComprehensionStateFingerprints(root)
+	state := comprehensionStateFingerprintSet("", runtimeTracesStateFingerprint(root))
 	if learnedWeights == nil {
 		return state
 	}
 
-	data, _ := json.Marshal(learnedWeights)
-
-	state.RankerWeightsFingerprint = shortSHA256Hex(append([]byte("learned_weights_override\x00"), data...))
+	state.RankerWeightsFingerprint = packLearnedWeightsOverrideFingerprint(learnedWeights)
 	state.WorkspaceStateFingerprint = composeWorkspaceStateFingerprint(state.RankerWeightsFingerprint, state.RuntimeTracesFingerprint)
 
 	return state
+}
+
+func packLearnedWeightsOverrideFingerprint(learnedWeights map[string]float64) string {
+	if len(learnedWeights) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(learnedWeights)
+
+	return shortSHA256Hex(append([]byte("learned_weights_override\x00"), data...))
 }
 
 // viewKeyFromOptions builds the content-addressed cache key from

@@ -18,12 +18,13 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
+	"idiom/internal/workflows/featureplannerproduct"
 	"idiom/internal/workflows/featureplannerruntime"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recovery"
 )
 
-func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
+func (m *promptExecutionSession) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
 		return "", fmt.Errorf("feature-planner objective is required")
@@ -32,14 +33,14 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	m.emitJSONStart(objective)
 
 	if err := m.ensureServerReady(ctx); err != nil {
-		m.emitJSONError("server_not_ready", err.Error())
+		m.eventStream.emitError("server_not_ready", err.Error())
 
 		return "", err
 	}
 
 	productBrief, effortRoot, err := m.loadFeaturePlannerProductContext(objective)
 	if err != nil {
-		m.emitJSONError("product_context_unavailable", err.Error())
+		m.eventStream.emitError("product_context_unavailable", err.Error())
 
 		return "", err
 	}
@@ -55,7 +56,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 
 	operatorCommand := "/feature-planner " + objective
 
-	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: operatorCommand})
+	m.appendPromptTranscriptMessage(llama.ChatMessage{Role: "user", Content: operatorCommand})
 	m.logMessage("user", operatorCommand)
 	m.logMessage("route_plan", "initial=feature-planner reason=typed_feature_planner_command route_source=typed_command")
 	m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventStart), objective)
@@ -77,7 +78,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  productBrief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
-		WorkspaceRoot:         m.projectRoot(),
+		WorkspaceRoot:         resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace),
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope, writeEnvelopeExplicit)
@@ -86,7 +87,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
 	})
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -95,9 +96,9 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		m.logFeaturePlannerEvent(event)
 	}
 
-	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), result.State.SessionID, result.Events)
+	eventsPath, err := featureplanner.AppendEvents(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), result.State.SessionID, result.Events)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -106,25 +107,25 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 
 	statePath, err := m.saveFeaturePlannerStateAndPlanTab(&result.State)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
 
-	answer := formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, m.projectRoot())
+	answer := formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), answer)
 	m.updateDirectFeaturePlannerSession(result.State)
 
 	return m.finishPromptOnceReply(answer), nil
 }
 
-func (m *Model) closeFeaturePlannerTUISourceSatisfied(state featureplanner.FeatureState, brief featureplanner.ProductWorkflowBrief) (string, error) {
+func (m *promptExecutionSession) closeFeaturePlannerTUISourceSatisfied(state featureplanner.FeatureState, brief featureplanner.ProductWorkflowBrief) (string, error) {
 	state, event := featureplanner.ProductSourceSatisfiedCloseout(state, brief, brief.EffortID)
 	m.logFeaturePlannerEvent(event)
 
-	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), state.SessionID, []featureplanner.Event{event})
+	eventsPath, err := featureplanner.AppendEvents(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), state.SessionID, []featureplanner.Event{event})
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -133,19 +134,19 @@ func (m *Model) closeFeaturePlannerTUISourceSatisfied(state featureplanner.Featu
 
 	statePath, err := m.saveFeaturePlannerStateAndPlanTab(&state)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
 
-	answer := formatFeaturePlannerTUIAnswerForRoot(state, statePath, m.projectRoot())
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, statePath, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(state.Status), answer)
 	m.updateDirectFeaturePlannerSession(state)
 
 	return m.finishPromptOnceReply(answer), nil
 }
 
-func (m *Model) loadFeaturePlannerProductContext(objective string) (*featureplanner.ProductWorkflowBrief, string, error) {
+func (m *promptExecutionSession) loadFeaturePlannerProductContext(objective string) (*featureplanner.ProductWorkflowBrief, string, error) {
 	effortRoot, found := featurePlannerEffortRootFromObjective(objective)
 	if !found {
 		effortRoot = strings.TrimSpace(m.featurePlannerEffortRoot)
@@ -156,9 +157,9 @@ func (m *Model) loadFeaturePlannerProductContext(objective string) (*featureplan
 		return nil, "", nil
 	}
 
-	effortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
+	effortRoot = resolveFeaturePlannerEffortRoot(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), effortRoot)
 
-	brief, err := loadDirectFeaturePlannerProductBrief(effortRoot)
+	brief, err := featureplannerproduct.LoadBriefFromEffort(effortRoot)
 	if err != nil {
 		return nil, effortRoot, fmt.Errorf("load product workflow implementation handoff from %s: %w", effortRoot, err)
 	}
@@ -166,13 +167,13 @@ func (m *Model) loadFeaturePlannerProductContext(objective string) (*featureplan
 	return brief, effortRoot, nil
 }
 
-func (m *Model) resolveFeaturePlannerEffortRoot(effortRoot string) string {
+func resolveFeaturePlannerEffortRoot(projectRoot string, effortRoot string) string {
 	effortRoot = cleanFeaturePlannerEffortPathToken(effortRoot)
 	if filepath.IsAbs(effortRoot) {
 		return filepath.Clean(effortRoot)
 	}
 
-	if root := strings.TrimSpace(m.projectRoot()); root != "" {
+	if root := strings.TrimSpace(projectRoot); root != "" {
 		return filepath.Clean(filepath.Join(root, effortRoot))
 	}
 
@@ -230,13 +231,9 @@ func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
 	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
 
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := m.runFeaturePlannerCommandOnce(ctx, objective)
-		m.events <- streamDoneMsg{err: err}
-	}()
+	m.startPromptExecution(func(ctx context.Context, worker *promptExecutionSession) (string, error) {
+		return worker.runFeaturePlannerCommandOnce(ctx, objective)
+	})
 }
 
 func (m *Model) sendDirectFeaturePlannerAnswerAsync(answer string) {
@@ -245,22 +242,18 @@ func (m *Model) sendDirectFeaturePlannerAnswerAsync(answer string) {
 	m.currentTurnBusyStatus = busyStatusForPrompt(answer)
 	m.beginAgentHistoryTurn()
 
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := m.runDirectFeaturePlannerAnswerOnce(ctx, answer)
-		m.events <- streamDoneMsg{err: err}
-	}()
+	m.startPromptExecution(func(ctx context.Context, worker *promptExecutionSession) (string, error) {
+		return worker.runDirectFeaturePlannerAnswerOnce(ctx, answer)
+	})
 }
 
-func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer string) (string, error) {
+func (m *promptExecutionSession) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer string) (string, error) {
 	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
 	if sessionID == "" {
 		return "", fmt.Errorf("no active direct feature-planner session is waiting for an answer")
 	}
 
-	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
+	state, _, err := featureplanner.LoadState(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -282,7 +275,7 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  productBrief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
-		WorkspaceRoot:         m.projectRoot(),
+		WorkspaceRoot:         resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace),
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope, writeEnvelopeExplicit)
@@ -291,7 +284,7 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
 	})
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -300,9 +293,9 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 		m.logFeaturePlannerEvent(event)
 	}
 
-	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), result.State.SessionID, result.Events)
+	eventsPath, err := featureplanner.AppendEvents(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), result.State.SessionID, result.Events)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -310,7 +303,7 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 
 	statePath, err := m.saveFeaturePlannerStateAndPlanTab(&result.State)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -319,7 +312,7 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 		m.featurePlannerEffortRoot = effortRoot
 	}
 
-	reply := formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, m.projectRoot())
+	reply := formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), reply)
 	m.updateDirectFeaturePlannerSession(result.State)
 
@@ -364,14 +357,14 @@ func directFeaturePlannerPlanRevisionBypassesQuestionAuthority(state featureplan
 	return false
 }
 
-func (m *Model) productBriefForFeaturePlannerState(state featureplanner.FeatureState) (*featureplanner.ProductWorkflowBrief, string, error) {
+func (m *promptExecutionSession) productBriefForFeaturePlannerState(state featureplanner.FeatureState) (*featureplanner.ProductWorkflowBrief, string, error) {
 	effortRoot := strings.TrimSpace(state.EffortRoot)
 	if effortRoot == "" {
 		return nil, "", nil
 	}
 
-	effortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
-	brief, err := loadDirectFeaturePlannerProductBrief(effortRoot)
+	effortRoot = resolveFeaturePlannerEffortRoot(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), effortRoot)
+	brief, err := featureplannerproduct.LoadBriefFromEffort(effortRoot)
 	if err != nil {
 		return nil, effortRoot, err
 	}
@@ -379,13 +372,13 @@ func (m *Model) productBriefForFeaturePlannerState(state featureplanner.FeatureS
 	return brief, effortRoot, nil
 }
 
-func (m *Model) directFeaturePlannerShouldConsumeOperatorInput(input string) bool {
-	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
+func directFeaturePlannerShouldConsumeOperatorInput(projectRoot string, sessionID string, input string) bool {
+	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" || strings.TrimSpace(input) == "" {
 		return false
 	}
 
-	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
+	state, _, err := featureplanner.LoadState(projectRoot, sessionID)
 	if err != nil {
 		return false
 	}
@@ -622,7 +615,7 @@ func featurePlannerStateAcceptsDirectOperatorInput(state featureplanner.FeatureS
 	return featureplanner.CountOpenPlannerQuestions(state) > 0 || directFeaturePlannerStateNeedsRepairInstruction(state)
 }
 
-func (m *Model) updateDirectFeaturePlannerSession(state featureplanner.FeatureState) {
+func (m *promptExecutionSession) updateDirectFeaturePlannerSession(state featureplanner.FeatureState) {
 	switch state.Status {
 	case featureplanner.FeatureStatePlanningQuestion, featureplanner.FeatureStatePlanningRepair, featureplanner.FeatureStateStaleEditAnchor:
 		m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
@@ -631,18 +624,22 @@ func (m *Model) updateDirectFeaturePlannerSession(state featureplanner.FeatureSt
 	}
 }
 
-func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
-	return featureplannerruntime.CompleteModelTurn(ctx, m.client, prompt, m.chatOptions(), taskFamily, m.logFeaturePlannerInternalEvent)
+func (m *promptExecutionSession) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
+	return featureplannerruntime.CompleteModelTurn(ctx, m.client, prompt, chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride), taskFamily, m.logFeaturePlannerInternalEvent)
 }
 
 type featurePlannerAtomPlanExecuteRunner func(context.Context, string) (string, error)
 
-func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Context, prompt string, writeEnvelope []string, writeEnvelopeExplicit bool) (string, error) {
+func (m *promptExecutionSession) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Context, prompt string, writeEnvelope []string, writeEnvelopeExplicit bool) (string, error) {
 	return m.runFeaturePlannerAtomPlanExecuteWithRunner(ctx, prompt, writeEnvelope, writeEnvelopeExplicit, m.runPlanExecuteCommandOnce)
 }
 
-func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, prompt string, writeEnvelope []string, writeEnvelopeExplicit bool, runOnce featurePlannerAtomPlanExecuteRunner) (string, error) {
+func (m *promptExecutionSession) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, prompt string, writeEnvelope []string, writeEnvelopeExplicit bool, runOnce featurePlannerAtomPlanExecuteRunner) (string, error) {
 	m.logFeaturePlannerPlanExecuteGitHistoryRequirement()
+	invocationBinding, err := featureplanner.ParsePlanExecuteInvocationBinding(prompt)
+	if err != nil {
+		return "", err
+	}
 
 	priorSuppressTranscript := m.suppressPromptTranscript
 	priorWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
@@ -667,7 +664,7 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, 
 		answer = err.Error()
 	}
 
-	summary := m.featurePlannerPlanExecuteCompletionSummary(answer)
+	summary := invocationBinding.CorrelateCompletion(m.featurePlannerPlanExecuteCompletionSummary(answer))
 	if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPromptForSummary(prompt, summary); ok {
 		answer, err = runOnce(ctx, retryPrompt)
 		if err != nil {
@@ -678,7 +675,7 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, 
 			answer = err.Error()
 		}
 
-		summary = m.featurePlannerPlanExecuteCompletionSummary(answer)
+		summary = invocationBinding.CorrelateCompletion(m.featurePlannerPlanExecuteCompletionSummary(answer))
 	}
 
 	completion, err := encodeFeaturePlannerPlanExecuteCompletionSummary(summary)
@@ -693,7 +690,7 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, 
 
 var featurePlannerPlanExecuteGitHistoryRequirementRole = featureplannercontract.EventName(featureplannercontract.EventPlanExecuteGitHistoryRequirement)
 
-func (m *Model) logFeaturePlannerPlanExecuteGitHistoryRequirement() {
+func (m *promptExecutionSession) logFeaturePlannerPlanExecuteGitHistoryRequirement() {
 	m.logFeaturePlannerInternalEvent(featurePlannerPlanExecuteGitHistoryRequirementRole, featurePlannerPlanExecuteGitHistoryRequirementPayload())
 }
 
@@ -736,7 +733,7 @@ func planExecuteAnswerIsBlocked(answer string) bool {
 	return false
 }
 
-func (m *Model) featurePlannerPlanExecuteCompletionSummary(text string) featureplanner.PlanExecuteCompletionSummary {
+func (m *promptExecutionSession) featurePlannerPlanExecuteCompletionSummary(text string) featureplanner.PlanExecuteCompletionSummary {
 	summary := featureplanner.PlanExecuteCompletionSummaryFromOutput(text)
 	if m != nil {
 		summary = overlayFeaturePlannerPlanExecuteRunResult(summary, m.cfg.Workspace.Root, m.lastPlanExecuteRunResult)
@@ -871,7 +868,15 @@ func overlayFeaturePlannerPlanExecuteRunResult(summary featureplanner.PlanExecut
 		stateID = strings.TrimSuffix(filepath.Base(filepath.ToSlash(strings.TrimSpace(result.ResumeStatePath))), ".json")
 	}
 
-	if record, completionPath, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, stateID); err == nil && found {
+	record, completionPath, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, stateID)
+	if err != nil {
+		summary.Status = "failed"
+		summary.FailureKind = string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed)
+		summary.FailureReason = "load plan-execute terminal completion: " + err.Error()
+
+		return summary
+	}
+	if found {
 		summary = overlayFeaturePlannerPlanExecuteTerminalSummary(summary, plancontract.PlanExecuteTerminalCompletionEventFields(record, completionPath))
 		summary = overlayFeaturePlannerRecoverySidecarSummary(summary, root, stateID)
 
@@ -879,7 +884,14 @@ func overlayFeaturePlannerPlanExecuteRunResult(summary featureplanner.PlanExecut
 	}
 
 	state, statePath, found, err := planexecute.TryLoadProgressState(root, stateID)
-	if err != nil || !found {
+	if err != nil {
+		summary.Status = "failed"
+		summary.FailureKind = string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed)
+		summary.FailureReason = "load plan-execute progress: " + err.Error()
+
+		return summary
+	}
+	if !found {
 		return summary
 	}
 
@@ -932,7 +944,7 @@ func overlayFeaturePlannerPlanExecuteTerminalSummary(summary featureplanner.Plan
 	return featureplanner.MergePlanExecuteCompletionSummaries(summary, featureplanner.PlanExecuteCompletionSummaryFromFields(terminalFields))
 }
 
-func (m *Model) featurePlannerSessionID() string {
+func (m *promptExecutionSession) featurePlannerSessionID() string {
 	stamp := time.Now().UTC().Format("20060102-150405000000")
 
 	if m.debugLogPath != "" {
@@ -949,7 +961,7 @@ func (m *Model) featurePlannerSessionID() string {
 	return "tui-feature-planner-" + stamp
 }
 
-func (m *Model) logFeaturePlannerEvent(event featureplanner.Event) {
+func (m *promptExecutionSession) logFeaturePlannerEvent(event featureplanner.Event) {
 	event = sanitizeFeaturePlannerEventForConversation(event)
 
 	body, err := json.Marshal(event)
@@ -962,7 +974,7 @@ func (m *Model) logFeaturePlannerEvent(event featureplanner.Event) {
 	m.logFeaturePlannerInternalEvent(event.Type, string(body))
 }
 
-func (m *Model) logFeaturePlannerInternalEvent(role, content string) {
+func (m *promptExecutionSession) logFeaturePlannerInternalEvent(role, content string) {
 	if m == nil || m.debugLogger == nil {
 		return
 	}

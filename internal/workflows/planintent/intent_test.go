@@ -2,138 +2,54 @@ package planintent
 
 import (
 	"errors"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestValidateRequiresContractRequiredPathsExactly(t *testing.T) {
-	artifact := validReplaceArtifact()
-
-	artifact.Scope.RequiredEditPaths = []string{"internal/b.go"}
-
-	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
-
-	var validationErr *ValidationError
-
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-
-	if validationErr.Code != CodeRequiredScopeMismatch {
-		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeRequiredScopeMismatch)
-	}
-}
-
-func TestValidateRejectsCandidateOutsideContract(t *testing.T) {
-	artifact := validReplaceArtifact()
-
-	artifact.Scope.CandidateEditPaths = []string{"internal/other.go"}
-
-	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
-
-	var validationErr *ValidationError
-
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-
-	if validationErr.Code != CodeCandidateScopeRejected {
-		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeCandidateScopeRejected)
-	}
-}
-
-func TestValidateRejectsIntentOutsideContractScope(t *testing.T) {
-	artifact := validReplaceArtifact()
-
-	artifact.Intents[0].Path = "internal/other.go"
-
-	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
-
-	var validationErr *ValidationError
-
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-
-	if validationErr.Code != CodeIntentScopeRejected {
-		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeIntentScopeRejected)
-	}
-}
-
-func TestValidateAllowsTypedBlockerWithoutIntent(t *testing.T) {
-	artifact := Artifact{
-		SchemaVersion: SchemaVersion,
-		Source:        SourceArtifactDistiller,
-		Scope: Scope{
-			RequiredEditPaths: []string{"internal/a.go"},
+var _ = ginkgo.Describe("Plan intent validation", func() {
+	ginkgo.DescribeTable("rejects invalid scope and intent shapes",
+		func(mutate func(*Artifact), want string) {
+			artifact := validReplaceArtifact()
+			mutate(&artifact)
+			expectValidationError(artifact, want)
 		},
-		Blockers: []Blocker{{
-			Code:    "needs_source_evidence",
-			Message: "planner did not provide a current source body read",
-			Paths:   []string{"internal/a.go"},
-		}},
-	}
+		ginkgo.Entry("required scope mismatch", func(artifact *Artifact) {
+			artifact.Scope.RequiredEditPaths = []string{"internal/b.go"}
+		}, CodeRequiredScopeMismatch),
+		ginkgo.Entry("candidate outside contract", func(artifact *Artifact) {
+			artifact.Scope.CandidateEditPaths = []string{"internal/other.go"}
+		}, CodeCandidateScopeRejected),
+		ginkgo.Entry("intent outside contract", func(artifact *Artifact) {
+			artifact.Intents[0].Path = "internal/other.go"
+		}, CodeIntentScopeRejected),
+		ginkgo.Entry("mixed intent and blocker", func(artifact *Artifact) {
+			artifact.Blockers = []Blocker{{Code: CodeInvalidBlocker, Message: "source evidence is missing", Paths: []string{"internal/a.go"}}}
+		}, CodeInvalidBlocker),
+		ginkgo.Entry("malformed operation", func(artifact *Artifact) {
+			artifact.Intents[0].OldText = ""
+		}, CodeInvalidIntentShape),
+		ginkgo.Entry("malformed evidence reference", func(artifact *Artifact) {
+			artifact.Scope.EvidenceRefs = []string{"source:read_file\nraw body"}
+		}, CodeInvalidEvidenceRef),
+	)
 
-	if err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}}); err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-}
+	ginkgo.It("allows a typed blocker without an executable intent", func() {
+		artifact := Artifact{
+			SchemaVersion: SchemaVersion,
+			Source:        SourceArtifactDistiller,
+			Scope:         Scope{RequiredEditPaths: []string{"internal/a.go"}},
+			Blockers:      []Blocker{{Code: "needs_source_evidence", Message: "planner did not provide a current source body read", Paths: []string{"internal/a.go"}}},
+		}
+		gomega.Expect(Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})).To(gomega.Succeed())
+	})
+})
 
-func TestValidateRejectsMixedIntentAndBlockerArtifact(t *testing.T) {
-	artifact := validReplaceArtifact()
-
-	artifact.Blockers = []Blocker{{
-		Code:    CodeInvalidBlocker,
-		Message: "source evidence is missing",
-		Paths:   []string{"internal/a.go"},
-	}}
-
+func expectValidationError(artifact Artifact, want string) {
 	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
-
 	var validationErr *ValidationError
-
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-
-	if validationErr.Code != CodeInvalidBlocker {
-		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeInvalidBlocker)
-	}
-}
-
-func TestValidateRejectsMalformedOperationShape(t *testing.T) {
-	artifact := validReplaceArtifact()
-
-	artifact.Intents[0].OldText = ""
-
-	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
-
-	var validationErr *ValidationError
-
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-
-	if validationErr.Code != CodeInvalidIntentShape {
-		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeInvalidIntentShape)
-	}
-}
-
-func TestValidateRejectsMalformedEvidenceRefs(t *testing.T) {
-	artifact := validReplaceArtifact()
-
-	artifact.Scope.EvidenceRefs = []string{"source:read_file\nraw body"}
-
-	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
-
-	var validationErr *ValidationError
-
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-
-	if validationErr.Code != CodeInvalidEvidenceRef {
-		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeInvalidEvidenceRef)
-	}
+	gomega.Expect(errors.As(err, &validationErr)).To(gomega.BeTrue())
+	gomega.Expect(validationErr.Code).To(gomega.Equal(want))
 }
 
 func validReplaceArtifact() Artifact {
@@ -141,15 +57,10 @@ func validReplaceArtifact() Artifact {
 		SchemaVersion: SchemaVersion,
 		Source:        SourcePlanner,
 		TaskSummary:   "replace label",
-		Scope: Scope{
-			RequiredEditPaths: []string{"internal/a.go"},
-		},
+		Scope:         Scope{RequiredEditPaths: []string{"internal/a.go"}},
 		Intents: []Intent{{
-			Path:      "internal/a.go",
-			Operation: OperationReplaceExactText,
-			OldText:   "return old",
-			NewText:   "return next",
-			Purpose:   "replace old label",
+			Path: "internal/a.go", Operation: OperationReplaceExactText,
+			OldText: "return old", NewText: "return next", Purpose: "replace old label",
 		}},
 	}
 }

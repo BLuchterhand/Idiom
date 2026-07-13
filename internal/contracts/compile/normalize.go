@@ -313,7 +313,7 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 		&protocol.MalformedOutputPolicy,
 		&protocol.StaleAnchorPolicy,
 	)
-	normalizeStringSets(&protocol.VisibleTools)
+	normalizeStringSets(&protocol.VisibleTools, &protocol.HiddenTools)
 
 	if protocol.CallableTools != nil {
 		protocol.CallableToolsSpecified = true
@@ -330,11 +330,13 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 	normalizeStringSets(
 		&protocol.TerminalResponseShapes,
 		&protocol.StructuredSchemaNames,
-		&protocol.SourceBodyObligations,
 		&protocol.CompletedGitHistoryPaths,
 		&protocol.PendingGitHistoryPaths,
 	)
-	clampNonNegative(&protocol.RecoveryBudget)
+	normalizePathSets(&protocol.SourceBodyObligations, &protocol.GroundedSourceBodyPaths, &protocol.CandidateOnlyPaths)
+	normalizeEvidencePathSample(protocol.SourceBodyObligations, &protocol.SourceBodyObligationTotal, &protocol.SourceBodyObligationOmitted)
+	normalizeEvidencePathSample(protocol.GroundedSourceBodyPaths, &protocol.GroundedSourceBodyPathTotal, &protocol.GroundedSourceBodyPathOmitted)
+	normalizeEvidencePathSample(protocol.CandidateOnlyPaths, &protocol.CandidateOnlyPathTotal, &protocol.CandidateOnlyPathOmitted)
 }
 
 func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
@@ -354,13 +356,12 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 		&protocol.MalformedOutputPolicy,
 		&protocol.StaleAnchorPolicy,
 	)
-	normalizeStringSets(&protocol.SchemaNames, &protocol.VisibleTools, &protocol.CallableTools)
+	normalizeStringSets(&protocol.SchemaNames, &protocol.VisibleTools, &protocol.HiddenTools, &protocol.CallableTools)
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
 	protocol.InvalidActionClasses = canonicalActionClassStrings(protocol.InvalidActionClasses)
 	normalizeStringSets(
 		&protocol.TerminalResponseShapes,
 		&protocol.StructuredSchemaNames,
-		&protocol.SourceBodyObligations,
 		&protocol.CompletedGitHistoryPaths,
 		&protocol.PendingGitHistoryPaths,
 		&protocol.PathRoleSummary,
@@ -371,7 +372,10 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 		&protocol.Constraints,
 		&protocol.InvalidActions,
 	)
-	normalizePathSets(&protocol.RequiredEditCoverage)
+	normalizePathSets(&protocol.RequiredEditCoverage, &protocol.SourceBodyObligations, &protocol.GroundedSourceBodyPaths, &protocol.CandidateOnlyPaths)
+	normalizeEvidencePathSample(protocol.SourceBodyObligations, &protocol.SourceBodyObligationTotal, &protocol.SourceBodyObligationOmitted)
+	normalizeEvidencePathSample(protocol.GroundedSourceBodyPaths, &protocol.GroundedSourceBodyPathTotal, &protocol.GroundedSourceBodyPathOmitted)
+	normalizeEvidencePathSample(protocol.CandidateOnlyPaths, &protocol.CandidateOnlyPathTotal, &protocol.CandidateOnlyPathOmitted)
 	protocol.ActiveInvariantID = firstNonEmptyString(protocol.ActiveInvariantID, InvariantActiveAuthority)
 	normalizeCompactPacketProjection(&protocol.CompactPacket)
 }
@@ -498,6 +502,13 @@ func clampNonNegative(fields ...*int) {
 		if *field < 0 {
 			*field = 0
 		}
+	}
+}
+
+func normalizeEvidencePathSample(paths []string, total *int, omitted *int) {
+	clampNonNegative(total, omitted)
+	if *total == 0 {
+		*total = len(paths) + *omitted
 	}
 }
 

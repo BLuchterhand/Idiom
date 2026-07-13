@@ -1,0 +1,5 @@
+[
+  "{\"family\":\"architecture\",\"initial_lane\":\"architecture\",\"reason\":\"architecture_request\",\"contract\":\"architecture_assessment\"}",
+  "{\"tool\":\"read_file\",\"path\":\"README.md\",\"named_gap\":\"inspect the fixture boundary and purpose\",\"why_not_answering\":\"need source evidence for the architecture assessment\"}",
+  "`README.md` is the inspected path. Lines 1-5 identify this repository as a deterministic test fixture, so its boundary is a disposable local Git workspace: the harness can mutate and verify fixture files, then roll them back without treating fixture code as production. This conclusion is limited to that fixture boundary. Confidence: high."
+]

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"idiom/internal/platform/gitstate"
@@ -114,31 +115,42 @@ type SWEFileContentExpectation struct {
 }
 
 type SWECoverageContract struct {
-	MinTasks                   *int           `json:"min_tasks,omitempty"`
-	RequiredFamilies           []string       `json:"required_families,omitempty"`
-	RequiredTags               []string       `json:"required_tags,omitempty"`
-	RequiredFixtures           []string       `json:"required_fixtures,omitempty"`
-	RequiredTaskShapes         []string       `json:"required_task_shapes,omitempty"`
-	RequiredInitialLanes       []string       `json:"required_initial_lanes,omitempty"`
-	RequiredFollowupLanes      []string       `json:"required_followup_lanes,omitempty"`
-	RequiredRouteReasons       []string       `json:"required_route_reasons,omitempty"`
-	RequiredContracts          []string       `json:"required_contracts,omitempty"`
-	RequiredThoroughness       []string       `json:"required_thoroughness,omitempty"`
-	RequiredVerification       []string       `json:"required_verification,omitempty"`
-	RequiredScenarioAssertions []string       `json:"required_scenario_assertions,omitempty"`
-	RequiredOracleAssertions   []string       `json:"required_oracle_assertions,omitempty"`
-	RequiredReadinessActions   []string       `json:"required_readiness_actions,omitempty"`
-	RequiredDeepeningActions   []string       `json:"required_deepening_actions,omitempty"`
-	RequiredFinalCriticActions []string       `json:"required_final_critic_actions,omitempty"`
-	RequiredEffortLevels       []string       `json:"required_effort_levels,omitempty"`
-	RequiredLongHorizonActions []string       `json:"required_long_horizon_actions,omitempty"`
-	RequiredLongHorizonKinds   []string       `json:"required_long_horizon_kinds,omitempty"`
-	RequiredNegativeEvidence   []string       `json:"required_negative_evidence,omitempty"`
-	RequiredTools              []string       `json:"required_tools,omitempty"`
-	RequiredForbiddenTools     []string       `json:"required_forbidden_tools,omitempty"`
-	RequiredFileSurfaces       []string       `json:"required_file_surfaces,omitempty"`
-	RequiredEvidenceSurfaces   []string       `json:"required_evidence_surfaces,omitempty"`
-	MinTasksPerFamily          map[string]int `json:"min_tasks_per_family,omitempty"`
+	MinTasks                   *int                      `json:"min_tasks,omitempty"`
+	RequiredFamilies           []string                  `json:"required_families,omitempty"`
+	RequiredTags               []string                  `json:"required_tags,omitempty"`
+	RequiredFixtures           []string                  `json:"required_fixtures,omitempty"`
+	RequiredTaskShapes         []string                  `json:"required_task_shapes,omitempty"`
+	RequiredInitialLanes       []string                  `json:"required_initial_lanes,omitempty"`
+	RequiredFollowupLanes      []string                  `json:"required_followup_lanes,omitempty"`
+	RequiredRouteReasons       []string                  `json:"required_route_reasons,omitempty"`
+	RequiredContracts          []string                  `json:"required_contracts,omitempty"`
+	RequiredThoroughness       []string                  `json:"required_thoroughness,omitempty"`
+	RequiredVerification       []string                  `json:"required_verification,omitempty"`
+	RequiredScenarioAssertions []string                  `json:"required_scenario_assertions,omitempty"`
+	RequiredOracleAssertions   []string                  `json:"required_oracle_assertions,omitempty"`
+	RequiredReadinessActions   []string                  `json:"required_readiness_actions,omitempty"`
+	RequiredDeepeningActions   []string                  `json:"required_deepening_actions,omitempty"`
+	RequiredFinalCriticActions []string                  `json:"required_final_critic_actions,omitempty"`
+	RequiredEffortLevels       []string                  `json:"required_effort_levels,omitempty"`
+	RequiredLongHorizonActions []string                  `json:"required_long_horizon_actions,omitempty"`
+	RequiredLongHorizonKinds   []string                  `json:"required_long_horizon_kinds,omitempty"`
+	RequiredNegativeEvidence   []string                  `json:"required_negative_evidence,omitempty"`
+	RequiredTools              []string                  `json:"required_tools,omitempty"`
+	RequiredForbiddenTools     []string                  `json:"required_forbidden_tools,omitempty"`
+	RequiredFileSurfaces       []string                  `json:"required_file_surfaces,omitempty"`
+	RequiredEvidenceSurfaces   []string                  `json:"required_evidence_surfaces,omitempty"`
+	RequiredCrossProducts      []SWECoverageCrossProduct `json:"required_cross_products,omitempty"`
+	MinTasksPerFamily          map[string]int            `json:"min_tasks_per_family,omitempty"`
+}
+
+// SWECoverageCrossProduct requires one task to carry all listed dimensions.
+// It prevents aggregate coverage from claiming a lane and a behavior that are
+// exercised only by unrelated tasks.
+type SWECoverageCrossProduct struct {
+	Name                       string   `json:"name"`
+	RunnerMode                 string   `json:"runner_mode"`
+	RequiredTags               []string `json:"required_tags"`
+	RequiredScenarioAssertions []string `json:"required_scenario_assertions"`
 }
 
 type SWECoverageReport struct {
@@ -167,6 +179,7 @@ type SWECoverageReport struct {
 	ForbiddenTools                   map[string]int `json:"forbidden_tools,omitempty"`
 	FileSurfaces                     map[string]int `json:"file_surfaces,omitempty"`
 	EvidenceSurfaces                 map[string]int `json:"evidence_surfaces,omitempty"`
+	CrossProducts                    map[string]int `json:"cross_products,omitempty"`
 	MissingRequiredFamilies          []string       `json:"missing_required_families,omitempty"`
 	MissingRequiredTags              []string       `json:"missing_required_tags,omitempty"`
 	MissingRequiredFixtures          []string       `json:"missing_required_fixtures,omitempty"`
@@ -190,6 +203,7 @@ type SWECoverageReport struct {
 	MissingRequiredForbiddenTools    []string       `json:"missing_required_forbidden_tools,omitempty"`
 	MissingRequiredFileSurfaces      []string       `json:"missing_required_file_surfaces,omitempty"`
 	MissingRequiredEvidenceSurfaces  []string       `json:"missing_required_evidence_surfaces,omitempty"`
+	MissingRequiredCrossProducts     []string       `json:"missing_required_cross_products,omitempty"`
 	UnderrepresentedFamily           []string       `json:"underrepresented_family,omitempty"`
 	Findings                         []string       `json:"findings,omitempty"`
 }
@@ -270,6 +284,9 @@ func ReadSWESuite(path string) (SWESuite, error) {
 	if err != nil {
 		return suite, fmt.Errorf("read SWE suite: %w", err)
 	}
+	if err := rejectDuplicateJSONObjectKeys(data); err != nil {
+		return suite, fmt.Errorf("decode SWE suite: %w", err)
+	}
 
 	if err := json.Unmarshal(data, &suite); err != nil {
 		return suite, fmt.Errorf("decode SWE suite: %w", err)
@@ -333,8 +350,11 @@ func ValidateSWESuite(suite SWESuite) error {
 			return fmt.Errorf("SWE suite task %q missing scenario name", id)
 		}
 
-		if len(task.Scenario.PromptContains) == 0 && len(task.Scenario.PromptHistoryContains) == 0 && strings.TrimSpace(task.Prompt) != "" {
-			return fmt.Errorf("SWE suite task %q scenario should assert prompt text", id)
+		if len(task.Scenario.PromptContains) == 0 &&
+			strings.TrimSpace(task.Scenario.PromptSHA256) == "" &&
+			len(task.Scenario.PromptHistoryContains) == 0 &&
+			strings.TrimSpace(task.Prompt) != "" {
+			return fmt.Errorf("SWE suite task %q scenario should assert prompt content or privacy-safe prompt identity", id)
 		}
 	}
 
@@ -401,6 +421,12 @@ func LintSWESuite(suite SWESuite) []string {
 			addFinding(task, "read-only task must require no changed files")
 		}
 
+		if digest := strings.ToLower(strings.TrimSpace(task.Scenario.PromptSHA256)); digest != "" {
+			if !strings.HasPrefix(digest, "sha256:") || !validSHA256(strings.TrimPrefix(digest, "sha256:")) {
+				addFinding(task, "prompt_sha256 must be a sha256:-prefixed SHA-256 digest")
+			}
+		}
+
 		if taskHasTag(task, "negative-evidence") && !task.Oracle.RequireNoChangedFiles {
 			addFinding(task, "negative-evidence task must require no changed files")
 		}
@@ -465,6 +491,32 @@ func LintSWESuite(suite SWESuite) []string {
 			if expected.MinCount != nil && expected.MaxCount != nil && *expected.MinCount > *expected.MaxCount {
 				addFinding(task, "expected_recoveries[%d] min_count must be <= max_count", i)
 			}
+		}
+
+		for i, expected := range task.Scenario.RequireOrderedEvents {
+			if !orderedEventExpectationHasCriteria(expected) {
+				addFinding(task, "require_ordered_events[%d] must match type, role, tool, path, outcome, or contains", i)
+			}
+		}
+
+		seenModelRequestIndexes := make(map[int]struct{}, len(task.Scenario.RequireModelRequests))
+		for i, expected := range task.Scenario.RequireModelRequests {
+			if expected.Index < 0 {
+				addFinding(task, "require_model_requests[%d] index must be non-negative", i)
+			}
+			if _, seen := seenModelRequestIndexes[expected.Index]; seen {
+				addFinding(task, "require_model_requests[%d] duplicates request index %d", i, expected.Index)
+			}
+			seenModelRequestIndexes[expected.Index] = struct{}{}
+			for _, required := range expected.RequireTools {
+				if slices.Contains(expected.ForbidTools, required) {
+					addFinding(task, "require_model_requests[%d] both requires and forbids tool %q", i, required)
+				}
+			}
+		}
+
+		for _, finding := range validateTypedFactsExpectation(task.Scenario.RequireTypedFacts) {
+			addFinding(task, "%s", finding)
 		}
 
 		for _, expected := range task.Oracle.RequireFileContent {
@@ -607,6 +659,7 @@ func AnalyzeSWESuiteCoverage(suite SWESuite) SWECoverageReport {
 		ForbiddenTools:     make(map[string]int),
 		FileSurfaces:       make(map[string]int),
 		EvidenceSurfaces:   make(map[string]int),
+		CrossProducts:      make(map[string]int),
 	}
 	for _, task := range suite.Tasks {
 		family := normalizedCoverageKey(task.Family)
@@ -995,6 +1048,44 @@ func AnalyzeSWESuiteCoverage(suite SWESuite) SWECoverageReport {
 		if report.EvidenceSurfaces[surface] == 0 {
 			report.MissingRequiredEvidenceSurfaces = append(report.MissingRequiredEvidenceSurfaces, surface)
 			addFinding("required evidence surface %q is missing", surface)
+		}
+	}
+
+	seenCrossProducts := make(map[string]struct{}, len(contract.RequiredCrossProducts))
+	for i, required := range contract.RequiredCrossProducts {
+		name := normalizedCoverageKey(required.Name)
+		if name == "" {
+			addFinding("required cross-product %d is missing a name", i)
+			continue
+		}
+		if _, seen := seenCrossProducts[name]; seen {
+			addFinding("required cross-product %q is duplicated", name)
+			continue
+		}
+		seenCrossProducts[name] = struct{}{}
+
+		runnerMode := normalizedCoverageKey(required.RunnerMode)
+		if runnerMode == "" || !validSWERunnerMode(runnerMode) {
+			addFinding("required cross-product %q has invalid runner_mode %q", name, required.RunnerMode)
+			continue
+		}
+		if len(textutil.UniqueNonEmpty(required.RequiredTags)) == 0 {
+			addFinding("required cross-product %q has no required tags", name)
+			continue
+		}
+		if len(textutil.UniqueNonEmpty(required.RequiredScenarioAssertions)) == 0 {
+			addFinding("required cross-product %q has no required scenario assertions", name)
+			continue
+		}
+
+		for _, task := range suite.Tasks {
+			if taskMatchesCoverageCrossProduct(task, required) {
+				report.CrossProducts[name]++
+			}
+		}
+		if report.CrossProducts[name] == 0 {
+			report.MissingRequiredCrossProducts = append(report.MissingRequiredCrossProducts, name)
+			addFinding("required cross-product %q is missing", name)
 		}
 	}
 
@@ -1421,7 +1512,7 @@ func applyEvalLearnedWeights(workspaceRoot string, oracle SWEGroundednessOracle,
 		return rec
 	}
 
-	event, _, err := comprehension.ApplyVerifiedRankerLearning(root, comprehension.VerifiedRankerLearningRequest{
+	event, _, err := comprehension.ApplyVerifiedRankerLearning(context.Background(), root, comprehension.VerifiedRankerLearningRequest{
 		Source:   "eval",
 		Action:   rec.Action,
 		Score:    score,
@@ -1839,6 +1930,10 @@ func taskScenarioAssertions(task SWETask) []string {
 		assertions = append(assertions, "prompt_contains")
 	}
 
+	if strings.TrimSpace(scenario.PromptSHA256) != "" {
+		assertions = append(assertions, "prompt_sha256")
+	}
+
 	if len(scenario.PromptHistoryContains) > 0 {
 		assertions = append(assertions, "prompt_history_contains")
 	}
@@ -1993,6 +2088,18 @@ func taskScenarioAssertions(task SWETask) []string {
 
 	if len(scenario.RequireRunEvents) > 0 {
 		assertions = append(assertions, "run_events")
+	}
+
+	if len(scenario.RequireOrderedEvents) > 0 {
+		assertions = append(assertions, "ordered_events")
+	}
+
+	if len(scenario.RequireModelRequests) > 0 {
+		assertions = append(assertions, "model_requests")
+	}
+
+	if scenario.RequireTypedFacts != nil {
+		assertions = append(assertions, "typed_facts")
 	}
 
 	return textutil.UniqueNonEmpty(assertions)
@@ -2288,6 +2395,33 @@ func taskHasTag(task SWETask, tag string) bool {
 	}
 
 	return false
+}
+
+func taskMatchesCoverageCrossProduct(task SWETask, required SWECoverageCrossProduct) bool {
+	if normalizedCoverageKey(task.RunnerMode) != normalizedCoverageKey(required.RunnerMode) {
+		return false
+	}
+
+	for _, tag := range textutil.UniqueNonEmpty(required.RequiredTags) {
+		if !taskHasTag(task, tag) {
+			return false
+		}
+	}
+
+	assertions := make(map[string]struct{})
+	for _, assertion := range taskScenarioAssertions(task) {
+		assertion = normalizedCoverageKey(assertion)
+		if assertion != "" {
+			assertions[assertion] = struct{}{}
+		}
+	}
+	for _, assertion := range textutil.UniqueNonEmpty(required.RequiredScenarioAssertions) {
+		if _, ok := assertions[normalizedCoverageKey(assertion)]; !ok {
+			return false
+		}
+	}
+
+	return true
 }
 
 func taskHasAnyTag(task SWETask, tags ...string) bool {

@@ -1,0 +1,5 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/missing.go\",\"named_gap\":\"confirm whether the explicitly authorized new-file target already exists\",\"why_not_answering\":\"the requested path may be created only after its current workspace state is known\"}",
+  "{\"tool\":\"submit_plan\",\"rationale\":\"Create the explicitly authorized missing label source after the target probe confirmed it is absent.\",\"edits\":[{\"path\":\"internal/labels/missing.go\",\"old_text\":\"\",\"new_text\":\"package labels\\n\\nfunc MissingLabel() string {\\n\\treturn \\\"Save\\\"\\n}\\n\",\"replace_all\":true,\"purpose\":\"Create the authorized MissingLabel helper\"}]}",
+  "Decision: pass\n\nVerification Checklist:\n- Required behavior: MissingLabel returns \"Save\" after the submitted edit.\n- Scope safety: Only internal/labels/missing.go changed, inside the explicit authorized new-file scope.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
+]

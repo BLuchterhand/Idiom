@@ -95,6 +95,22 @@ func planExecuteHarnessObservedSourceEvidence(paths []string) []plancontract.Sou
 	return out
 }
 
+func planExecuteObservedSourceSatisfiedEvidence(declaredPaths []string, observedPaths []string) []plancontract.SourceSatisfiedEvidenceRef {
+	observed := make(map[string]struct{}, len(observedPaths))
+	for _, path := range plancontract.UniqueScopePaths(observedPaths) {
+		observed[path] = struct{}{}
+	}
+
+	accepted := make([]string, 0, len(declaredPaths))
+	for _, path := range plancontract.UniqueScopePaths(declaredPaths) {
+		if _, ok := observed[path]; ok {
+			accepted = append(accepted, path)
+		}
+	}
+
+	return planExecuteHarnessObservedSourceEvidence(accepted)
+}
+
 func ProgressStateHasTerminalCompletion(state ProgressState) bool {
 	if state.ReviewResumeReady() {
 		return false

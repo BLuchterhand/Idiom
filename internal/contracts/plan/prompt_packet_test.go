@@ -1,93 +1,71 @@
 package plan
 
 import (
-	"slices"
-	"testing"
-
 	"idiom/internal/contracts/workflowstate"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestPromptPacketDetectsStructuredContextPacket(t *testing.T) {
-	packet := PromptPacketFromPrompt(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`)
+var _ = Describe("Prompt packets", func() {
+	It("detects a dispatchable structured context packet", func() {
+		packet := PromptPacketFromPrompt(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`)
+		Expect(packet.Context.StructuredPacket).To(BeTrue())
+		Expect(packet.Context.Dispatchable).To(BeTrue())
+		Expect(packet.Context.LegacyHeadingFallback).To(BeFalse())
+		Expect(packet.TargetPacketMarkers).To(ContainElement("prompt_context:structured_packet"))
+		Expect(packet.Context.Reason).To(Equal("structured_packet"))
+	})
 
-	if !packet.Context.StructuredPacket || !packet.Context.Dispatchable || packet.Context.LegacyHeadingFallback {
-		t.Fatalf("structured packet should be dispatchable without heading fallback: %#v", packet.Context)
-	}
-	if !slices.Contains(packet.TargetPacketMarkers, "prompt_context:structured_packet") {
-		t.Fatalf("structured packet marker missing: %#v", packet.TargetPacketMarkers)
-	}
-	if packet.Context.Reason != "structured_packet" {
-		t.Fatalf("reason = %q, want structured_packet", packet.Context.Reason)
-	}
-}
+	DescribeTable("rejects incidental structured-packet mentions",
+		func(prompt string) {
+			Expect(PromptHasStructuredPacketMarker(prompt)).To(BeFalse())
+		},
+		Entry("incidental evidence field", `{"evidence":"one incidental field"}`),
+		Entry("packet name prose", `Document how planning_packet_v2 is named in prompts.`),
+		Entry("schema prose", `Document the "schema" for planning_packet_v2 prompts.`),
+	)
 
-func TestPromptPacketRejectsIncidentalStructuredPacketMentions(t *testing.T) {
-	for _, prompt := range []string{
-		`{"evidence":"one incidental field"}`,
-		`Document how planning_packet_v2 is named in prompts.`,
-		`Document the "schema" for planning_packet_v2 prompts.`,
-	} {
-		t.Run(prompt, func(t *testing.T) {
-			if PromptHasStructuredPacketMarker(prompt) {
-				t.Fatalf("incidental prose should not mark a structured packet: %q", prompt)
-			}
-		})
-	}
-}
-
-func TestPromptPacketContextHeadingFallbackRequiresContent(t *testing.T) {
-	packet := PromptPacketFromPrompt(`
+	It("requires content after a legacy context heading", func() {
+		packet := PromptPacketFromPrompt(`
 Context Packet:
 
 Required Behavior:
 - internal/surfaces/tui/app/prompt_routing.go
 `)
-	if packet.Context.StructuredPacket || packet.Context.LegacyHeadingFallback || packet.Context.Dispatchable {
-		t.Fatalf("empty context packet heading should not dispatch: %#v", packet.Context)
-	}
-	if packet.Context.State != workflowstate.StateTerminal || packet.Context.TerminalState != workflowstate.TerminalStateBlocked {
-		t.Fatalf("missing context should be terminal blocked: %#v", packet.Context)
-	}
-	if slices.Contains(packet.TargetPacketMarkers, "prompt_context:context_packet") {
-		t.Fatalf("empty heading should not create context packet marker: %#v", packet.TargetPacketMarkers)
-	}
-	if len(packet.EvidencePaths) != 0 {
-		t.Fatalf("empty heading should not borrow later behavior paths: %#v", packet.EvidencePaths)
-	}
-}
+		Expect(packet.Context.StructuredPacket).To(BeFalse())
+		Expect(packet.Context.LegacyHeadingFallback).To(BeFalse())
+		Expect(packet.Context.Dispatchable).To(BeFalse())
+		Expect(packet.Context.State).To(Equal(workflowstate.StateTerminal))
+		Expect(packet.Context.TerminalState).To(Equal(workflowstate.TerminalStateBlocked))
+		Expect(packet.TargetPacketMarkers).NotTo(ContainElement("prompt_context:context_packet"))
+		Expect(packet.EvidencePaths).To(BeEmpty())
+	})
 
-func TestPromptPacketContextHeadingCapturesTrailingColonPath(t *testing.T) {
-	packet := PromptPacketFromPrompt(`
+	It("captures a trailing-colon path under a context heading", func() {
+		packet := PromptPacketFromPrompt(`
 Context Packet:
 - internal/surfaces/tui/app/prompt_routing.go:
 `)
-	if !packet.Context.LegacyHeadingFallback || !packet.Context.Dispatchable {
-		t.Fatalf("path content should dispatch legacy context packet: %#v", packet.Context)
-	}
-	if !slices.Contains(packet.TargetPacketMarkers, "prompt_context:context_packet") {
-		t.Fatalf("context packet marker missing: %#v", packet.TargetPacketMarkers)
-	}
-	if !slices.Contains(packet.EvidencePaths, "internal/surfaces/tui/app/prompt_routing.go") {
-		t.Fatalf("context evidence path missing: %#v", packet.EvidencePaths)
-	}
-}
+		Expect(packet.Context.LegacyHeadingFallback).To(BeTrue())
+		Expect(packet.Context.Dispatchable).To(BeTrue())
+		Expect(packet.TargetPacketMarkers).To(ContainElement("prompt_context:context_packet"))
+		Expect(packet.EvidencePaths).To(ContainElement("internal/surfaces/tui/app/prompt_routing.go"))
+	})
 
-func TestPromptPacketContextHeadingAcceptsNestedEvidenceSection(t *testing.T) {
-	packet := PromptPacketFromPrompt(`
+	It("accepts a nested evidence section under a context heading", func() {
+		packet := PromptPacketFromPrompt(`
 Context Packet:
 Evidence:
 - internal/surfaces/tui/app/prompt_routing.go
 `)
-	if !packet.Context.LegacyHeadingFallback || !packet.Context.Dispatchable {
-		t.Fatalf("nested evidence should dispatch legacy context packet: %#v", packet.Context)
-	}
-	if !slices.Contains(packet.TargetPacketMarkers, "prompt_context:context_packet") {
-		t.Fatalf("context packet marker missing: %#v", packet.TargetPacketMarkers)
-	}
-}
+		Expect(packet.Context.LegacyHeadingFallback).To(BeTrue())
+		Expect(packet.Context.Dispatchable).To(BeTrue())
+		Expect(packet.TargetPacketMarkers).To(ContainElement("prompt_context:context_packet"))
+	})
 
-func TestPromptPacketIncludesScopeAndExactAnchorFacts(t *testing.T) {
-	packet := PromptPacketFromPrompt(`
+	It("includes scope and exact-anchor facts", func() {
+		packet := PromptPacketFromPrompt(`
 Allowed Edit Paths:
 - pkg/optional.go
 
@@ -98,22 +76,14 @@ Required edit paths: pkg/target.go
   "new_text": "after();"
 }
 `)
-	if !slices.Contains(packet.RequiredEditPaths, "pkg/target.go") {
-		t.Fatalf("required edit path missing: %#v", packet.RequiredEditPaths)
-	}
-	if !slices.Contains(packet.AllowedEditPaths, "pkg/optional.go") {
-		t.Fatalf("allowed edit path missing: %#v", packet.AllowedEditPaths)
-	}
-	if !packet.HasExactEditAnchor {
-		t.Fatal("structured old_text/new_text pair should count as exact anchor")
-	}
-	if !packet.HasRequiredEditPayload {
-		t.Fatal("exact edit anchor should count as required edit payload")
-	}
-}
+		Expect(packet.RequiredEditPaths).To(ContainElement("pkg/target.go"))
+		Expect(packet.AllowedEditPaths).To(ContainElement("pkg/optional.go"))
+		Expect(packet.HasExactEditAnchor).To(BeTrue())
+		Expect(packet.HasRequiredEditPayload).To(BeTrue())
+	})
 
-func TestPromptPacketRequiredEditsMarkerCountsAsRequiredPayload(t *testing.T) {
-	packet := PromptPacketFromPrompt(`
+	It("counts a required-edits marker as required payload", func() {
+		packet := PromptPacketFromPrompt(`
 ## Context Packet
 
 Evidence:
@@ -126,10 +96,7 @@ Add the helper:
 func helper() {}
 ` + "```" + `
 `)
-	if !slices.Contains(packet.TargetPacketMarkers, "prompt_context:required_edits") {
-		t.Fatalf("required edits marker missing: %#v", packet.TargetPacketMarkers)
-	}
-	if !packet.HasRequiredEditPayload {
-		t.Fatal("required edits marker should count as required edit payload")
-	}
-}
+		Expect(packet.TargetPacketMarkers).To(ContainElement("prompt_context:required_edits"))
+		Expect(packet.HasRequiredEditPayload).To(BeTrue())
+	})
+})

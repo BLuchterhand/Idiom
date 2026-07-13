@@ -4,58 +4,47 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestStoreFilePathRejectsInvalidArtifactNames(t *testing.T) {
-	root := t.TempDir()
-	for _, name := range []string{"", " ", "../plan.json", "nested/plan.json", "bad\x00name.json"} {
-		if _, _, err := StoreFilePath(root, name); err == nil {
-			t.Fatalf("StoreFilePath(%q) succeeded, want rejection", name)
+var _ = Describe("Plan artifact paths", func() {
+	DescribeTable("rejects invalid artifact names",
+		func(name string) {
+			_, _, err := StoreFilePath(GinkgoT().TempDir(), name)
+			Expect(err).To(HaveOccurred())
+		},
+		Entry("empty", ""),
+		Entry("whitespace", " "),
+		Entry("parent traversal", "../plan.json"),
+		Entry("nested path", "nested/plan.json"),
+		Entry("NUL byte", "bad\x00name.json"),
+	)
+
+	It("builds a contained artifact path", func() {
+		root := GinkgoT().TempDir()
+		full, rel, err := StoreFilePath(root, "plan.json")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rel).To(Equal(filepath.ToSlash(filepath.Join(".idiom", "plans", "plan.json"))))
+		Expect(strings.HasPrefix(full, filepath.Clean(root)+string(os.PathSeparator))).To(BeTrue())
+	})
+
+	It("builds a contained asset path", func() {
+		_, rel, err := StoreAssetPath(GinkgoT().TempDir(), "evidence.json")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rel).To(Equal(filepath.ToSlash(filepath.Join(".idiom", "plans", "assets", "evidence.json"))))
+	})
+
+	It("rejects a symlinked plans directory", func() {
+		root := GinkgoT().TempDir()
+		Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(Succeed())
+		err := os.Symlink(GinkgoT().TempDir(), filepath.Join(root, ".idiom", "plans"))
+		if err != nil {
+			Skip("symlinks are unavailable: " + err.Error())
 		}
-	}
-}
 
-func TestStoreFilePathBuildsContainedArtifactPath(t *testing.T) {
-	root := t.TempDir()
-	full, rel, err := StoreFilePath(root, "plan.json")
-	if err != nil {
-		t.Fatalf("StoreFilePath: %v", err)
-	}
-
-	wantRel := filepath.ToSlash(filepath.Join(".idiom", "plans", "plan.json"))
-	if rel != wantRel {
-		t.Fatalf("rel = %q, want %q", rel, wantRel)
-	}
-	if !strings.HasPrefix(full, filepath.Clean(root)+string(os.PathSeparator)) {
-		t.Fatalf("full path %q is not under root %q", full, root)
-	}
-}
-
-func TestStoreAssetPathBuildsContainedAssetPath(t *testing.T) {
-	root := t.TempDir()
-	_, rel, err := StoreAssetPath(root, "evidence.json")
-	if err != nil {
-		t.Fatalf("StoreAssetPath: %v", err)
-	}
-
-	wantRel := filepath.ToSlash(filepath.Join(".idiom", "plans", "assets", "evidence.json"))
-	if rel != wantRel {
-		t.Fatalf("rel = %q, want %q", rel, wantRel)
-	}
-}
-
-func TestStoreDirRejectsSymlinkedPlansDirectory(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
-	}
-	target := t.TempDir()
-	if err := os.Symlink(target, filepath.Join(root, ".idiom", "plans")); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-
-	if _, _, err := StoreDir(root); err == nil {
-		t.Fatal("StoreDir accepted symlinked .idiom/plans")
-	}
-}
+		_, _, err = StoreDir(root)
+		Expect(err).To(HaveOccurred())
+	})
+})

@@ -2,18 +2,24 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/runprofile"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/runtime/agent"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func decodeJSONEvents(t *testing.T, raw string) []map[string]any {
-	t.Helper()
+func decodeJSONEvents(t ginkgo.FullGinkgoTInterface, raw string) []map[string]any {
+	ginkgo.GinkgoHelper()
 
 	var out []map[string]any
 
@@ -24,8 +30,9 @@ func decodeJSONEvents(t *testing.T, raw string) []map[string]any {
 
 		var record map[string]any
 
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("decode JSONL %q: %v", line, err)
+		{
+			err := json.Unmarshal([]byte(line), &record)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode JSONL %q: %v", line, err))
 		}
 
 		out = append(out, record)
@@ -34,253 +41,237 @@ func decodeJSONEvents(t *testing.T, raw string) []map[string]any {
 	return out
 }
 
-func TestEmitJSONMessageOnlyKnownRoles(t *testing.T) {
+var _ = ginkgo.It("emit json message only known roles", func() {
+	t := ginkgo.GinkgoT()
 	var buf bytes.Buffer
 
 	model := &Model{}
 	model.SetJSONEventStream(&buf, "sess-1")
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 
-	model.emitJSONMessage("user", "hello")
-	model.emitJSONMessage("assistant", "hi")
-	model.emitJSONMessage("internal_kind", "should be filtered")
+	session.eventStream.emitMessage("user", "hello")
+	session.eventStream.emitMessage("assistant", "hi")
+	session.eventStream.emitMessage("internal_kind", "should be filtered")
 
 	events := decodeJSONEvents(t, buf.String())
-	if len(events) != 2 {
-		t.Fatalf("expected 2 events, got %d (%v)", len(events), events)
-	}
+	gomega.Expect(len(events)).To(gomega.Equal(2), fmt.Sprintf("expected 2 events, got %d (%v)", len(events), events))
 
 	for _, e := range events {
-		if e["session_id"] != "sess-1" {
-			t.Errorf("session_id missing on event: %v", e)
-		}
+		gomega.Expect(e["session_id"]).To(gomega.Equal("sess-1"), fmt.Sprintf("session_id missing on event: %v", e))
 
-		if e["type"] != "message" {
-			t.Errorf("expected type=message, got %v", e["type"])
-		}
+		gomega.Expect(e["type"]).To(gomega.Equal("message"), fmt.Sprintf("expected type=message, got %v", e["type"]))
 	}
 
-	if events[0]["role"] != "user" || events[1]["role"] != "assistant" {
-		t.Errorf("roles wrong: %v", events)
-	}
-}
+	gomega.Expect(events[0]["role"]).To(gomega.Equal("user"), fmt.Sprintf("roles wrong: %v", events))
+	gomega.Expect(events[1]["role"]).To(gomega.Equal("assistant"), fmt.Sprintf("roles wrong: %v", events))
+})
 
-func TestEmitJSONToolRequestAndResult(t *testing.T) {
+var _ = ginkgo.It("emit json tool request and result", func() {
+	t := ginkgo.GinkgoT()
 	var buf bytes.Buffer
 
 	model := &Model{}
 	model.SetJSONEventStream(&buf, "")
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 
-	model.emitJSONToolRequest(agent.ToolRequestEvent{
+	session.emitJSONToolRequest(agent.ToolRequestEvent{
 		Step: 3, Agent: "main",
 		Request: workspace.ToolRequest{Tool: "read_file", Path: "foo.go"},
 		Action:  "narrow",
 	})
-	model.emitJSONToolResult(agent.ToolResultEvent{
+	session.emitJSONToolResult(agent.ToolResultEvent{
 		Step: 3, Agent: "main",
 		Result: workspace.ToolResult{Tool: "read_file", Summary: "Read foo.go", Error: ""},
 	})
-	model.emitJSONToolResult(agent.ToolResultEvent{
+	session.emitJSONToolResult(agent.ToolResultEvent{
 		Step: 4, Agent: "main",
-		Result: workspace.ToolResult{Tool: "shell", Summary: "Ran cmd", Error: "boom"},
+		Result: workspace.ToolResult{
+			Tool:    "shell",
+			Summary: "Ran cmd",
+			Error:   "boom",
+			Facts: &toolfacts.ToolResultFacts{
+				RejectionDisposition:   toolfacts.ToolRejectionPolicyDenied,
+				RejectedWritePaths:     []string{"internal/feature/target.go"},
+				PendingSourceBodyPaths: []string{"internal/feature/source.go"},
+			},
+		},
 	})
 
 	events := decodeJSONEvents(t, buf.String())
-	if len(events) != 3 {
-		t.Fatalf("expected 3 events, got %d", len(events))
+	gomega.Expect(len(events)).To(gomega.Equal(3), fmt.Sprintf("expected 3 events, got %d", len(events)))
+
+	gomega.Expect(events[0]["type"]).To(gomega.Equal("tool_request"), fmt.Sprintf("bad tool_request event: %v", events[0]))
+	gomega.Expect(events[0]["tool"]).To(gomega.Equal("read_file"), fmt.Sprintf("bad tool_request event: %v", events[0]))
+	gomega.Expect(events[0]["path"]).To(gomega.Equal("foo.go"), fmt.Sprintf("bad tool_request event: %v", events[0]))
+
+	gomega.Expect(events[1]["type"]).To(gomega.Equal("tool_result"), fmt.Sprintf("bad tool_result event: %v", events[1]))
+	gomega.Expect(events[1]["summary"]).To(gomega.Equal("Read foo.go"), fmt.Sprintf("bad tool_result event: %v", events[1]))
+
+	{
+		_, hasErr := events[1]["error"]
+		gomega.Expect(hasErr).To(gomega.BeFalse(), fmt.Sprintf("successful result should omit error key: %v", events[1]))
 	}
 
-	if events[0]["type"] != "tool_request" || events[0]["tool"] != "read_file" || events[0]["path"] != "foo.go" {
-		t.Errorf("bad tool_request event: %v", events[0])
-	}
+	gomega.Expect(events[2]["error"]).To(gomega.Equal("boom"), fmt.Sprintf("expected error=boom: %v", events[2]))
+	gomega.Expect(events[2]["rejection_disposition"]).To(gomega.Equal("policy_denied"), fmt.Sprintf("expected typed rejection disposition: %v", events[2]))
+	gomega.Expect(events[2]["rejected_write_paths"]).To(gomega.Equal([]any{"internal/feature/target.go"}), fmt.Sprintf("expected rejected path facts: %v", events[2]))
+	gomega.Expect(events[2]["pending_source_body_paths"]).To(gomega.Equal([]any{"internal/feature/source.go"}), fmt.Sprintf("expected pending source facts: %v", events[2]))
+})
 
-	if events[1]["type"] != "tool_result" || events[1]["summary"] != "Read foo.go" {
-		t.Errorf("bad tool_result event: %v", events[1])
-	}
-
-	if _, hasErr := events[1]["error"]; hasErr {
-		t.Errorf("successful result should omit error key: %v", events[1])
-	}
-
-	if events[2]["error"] != "boom" {
-		t.Errorf("expected error=boom: %v", events[2])
-	}
-}
-
-func TestEmitJSONFinalAndError(t *testing.T) {
+var _ = ginkgo.It("emit json final and error", func() {
+	t := ginkgo.GinkgoT()
 	var buf bytes.Buffer
 
 	model := &Model{}
 	model.SetJSONEventStream(&buf, "")
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 
-	model.emitJSONStart("hello prompt")
-	model.emitJSONError("server_not_ready", "down")
-	model.emitJSONFinal("done text")
+	session.emitJSONStart("hello prompt")
+	session.eventStream.emitError("server_not_ready", "down")
+	session.emitJSONFinal("done text")
 
 	events := decodeJSONEvents(t, buf.String())
-	if len(events) != 3 {
-		t.Fatalf("expected 3 events, got %d", len(events))
-	}
+	gomega.Expect(len(events)).To(gomega.Equal(3), fmt.Sprintf("expected 3 events, got %d", len(events)))
 
-	if events[0]["type"] != "start" || events[0]["prompt"] != "hello prompt" {
-		t.Errorf("bad start event: %v", events[0])
-	}
+	gomega.Expect(events[0]["type"]).To(gomega.Equal("start"), fmt.Sprintf("bad start event: %v", events[0]))
+	gomega.Expect(events[0]["prompt"]).To(gomega.Equal("hello prompt"), fmt.Sprintf("bad start event: %v", events[0]))
 
-	if events[1]["type"] != "error" || events[1]["kind"] != "server_not_ready" || events[1]["message"] != "down" {
-		t.Errorf("bad error event: %v", events[1])
-	}
+	gomega.Expect(events[1]["type"]).To(gomega.Equal("error"), fmt.Sprintf("bad error event: %v", events[1]))
+	gomega.Expect(events[1]["kind"]).To(gomega.Equal("server_not_ready"), fmt.Sprintf("bad error event: %v", events[1]))
+	gomega.Expect(events[1]["message"]).To(gomega.Equal("down"), fmt.Sprintf("bad error event: %v", events[1]))
 
-	if events[2]["type"] != "final" || events[2]["content"] != "done text" {
-		t.Errorf("bad final event: %v", events[2])
-	}
-}
+	gomega.Expect(events[2]["type"]).To(gomega.Equal("final"), fmt.Sprintf("bad final event: %v", events[2]))
+	gomega.Expect(events[2]["content"]).To(gomega.Equal("done text"), fmt.Sprintf("bad final event: %v", events[2]))
+})
 
-func TestLogRunEventEmitsCompletionStatusJSON(t *testing.T) {
+var _ = ginkgo.It("log run event emits completion status json", func() {
+	t := ginkgo.GinkgoT()
 	var buf bytes.Buffer
 
 	model := &Model{}
 	model.SetJSONEventStream(&buf, "sess-1")
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 
-	model.logRunEvent(agent.RunEvent{
+	session.logRunEvent(agent.RunEvent{
 		Role:    "completion_status",
 		Content: `{"lane":"main","contract":"implementation_result","status":"blocked","blocker_kind":"required_edit_paths_remaining","edit_attempted":false}`,
 	})
 
 	events := decodeJSONEvents(t, buf.String())
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d (%v)", len(events), events)
-	}
+	gomega.Expect(len(events)).To(gomega.Equal(1), fmt.Sprintf("expected 1 event, got %d (%v)", len(events), events))
 
 	event := events[0]
-	if event["type"] != "completion_status" || event["status"] != "blocked" || event["contract"] != "implementation_result" {
-		t.Fatalf("bad completion_status event: %v", event)
-	}
+	gomega.Expect(event["type"]).To(gomega.Equal("completion_status"), fmt.Sprintf("bad completion_status event: %v", event))
+	gomega.Expect(event["status"]).To(gomega.Equal("blocked"), fmt.Sprintf("bad completion_status event: %v", event))
+	gomega.Expect(event["contract"]).To(gomega.Equal("implementation_result"), fmt.Sprintf("bad completion_status event: %v", event))
 
-	if event["blocker_kind"] != "required_edit_paths_remaining" || event["edit_attempted"] != false {
-		t.Fatalf("missing blocker metadata: %v", event)
-	}
+	gomega.Expect(event["blocker_kind"]).To(gomega.Equal("required_edit_paths_remaining"), fmt.Sprintf("missing blocker metadata: %v", event))
+	gomega.Expect(event["edit_attempted"]).To(gomega.Equal(false), fmt.Sprintf("missing blocker metadata: %v", event))
 
-	if event["session_id"] != "sess-1" {
-		t.Fatalf("session_id missing on completion_status event: %v", event)
-	}
-}
+	gomega.Expect(event["session_id"]).To(gomega.Equal("sess-1"), fmt.Sprintf("session_id missing on completion_status event: %v", event))
+})
 
-func TestLogRunEventEmitsImplementationLifecycleStateJSON(t *testing.T) {
+var _ = ginkgo.It("log run event emits implementation lifecycle state json", func() {
+	t := ginkgo.GinkgoT()
 	var buf bytes.Buffer
 
 	model := &Model{}
 	model.SetJSONEventStream(&buf, "sess-1")
+	session := newDetachedPromptExecutionSession(context.Background(), model)
 
-	model.logRunEvent(agent.RunEvent{
+	session.logRunEvent(agent.RunEvent{
 		Role:    "implementation_lifecycle_state",
 		Content: `{"phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"write_ready_nudge_count":2}`,
 	})
 
 	events := decodeJSONEvents(t, buf.String())
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d (%v)", len(events), events)
-	}
+	gomega.Expect(len(events)).To(gomega.Equal(1), fmt.Sprintf("expected 1 event, got %d (%v)", len(events), events))
 
 	event := events[0]
-	if event["type"] != "implementation_lifecycle_state" || event["phase"] != "implementation.target_write_ready" {
-		t.Fatalf("bad lifecycle event: %v", event)
-	}
+	gomega.Expect(event["type"]).To(gomega.Equal("implementation_lifecycle_state"), fmt.Sprintf("bad lifecycle event: %v", event))
+	gomega.Expect(event["phase"]).To(gomega.Equal("implementation.target_write_ready"), fmt.Sprintf("bad lifecycle event: %v", event))
 
-	if event["stop_reason"] != "model_call_budget_exhausted" || event["write_ready_nudge_count"] != float64(2) {
-		t.Fatalf("missing lifecycle metadata: %v", event)
-	}
+	gomega.Expect(event["stop_reason"]).To(gomega.Equal("model_call_budget_exhausted"), fmt.Sprintf("missing lifecycle metadata: %v", event))
+	gomega.Expect(event["write_ready_nudge_count"]).To(gomega.Equal(float64(2)), fmt.Sprintf("missing lifecycle metadata: %v", event))
 
-	if event["session_id"] != "sess-1" {
-		t.Fatalf("session_id missing on lifecycle event: %v", event)
-	}
-}
+	gomega.Expect(event["session_id"]).To(gomega.Equal("sess-1"), fmt.Sprintf("session_id missing on lifecycle event: %v", event))
+})
 
-func TestLogRunEventStoresInternalRecoveryAsRunEvent(t *testing.T) {
+var _ = ginkgo.It("log run event stores internal recovery as run event", func() {
+	t := ginkgo.GinkgoT()
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:  t.TempDir(),
-		Mode: transcript.DebugLogModeFull,
+		Mode: runprofile.DebugLogModeFull,
 	})
-	if err != nil {
-		t.Fatalf("NewDebugLogger: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("NewDebugLogger: %v", err))
 	defer logger.Close()
 
 	model := &Model{debugLogger: logger}
-	model.logRunEvent(agent.RunEvent{
+	session := newDetachedPromptExecutionSession(context.Background(), model)
+	session.logRunEvent(agent.RunEvent{
 		Role:    "completion_gate_recovery",
 		Content: "internal recovery prompt",
 	})
 
 	body, err := os.ReadFile(logger.Path())
-	if err != nil {
-		t.Fatalf("read debug log: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read debug log: %v", err))
 
-	if strings.Contains(string(body), `"type":"message"`) {
-		t.Fatalf("internal recovery event must not be written as a message record:\n%s", body)
-	}
+	gomega.Expect(strings.Contains(string(body), `"type":"message"`)).To(gomega.BeFalse(), fmt.Sprintf("internal recovery event must not be written as a message record:\n%s", body))
 
-	if !strings.Contains(string(body), `"type":"run_event"`) || !strings.Contains(string(body), `"role":"completion_gate_recovery"`) {
-		t.Fatalf("expected run_event record, got:\n%s", body)
-	}
-}
+	gomega.Expect(string(body)).To(gomega.ContainSubstring(`"type":"run_event"`), fmt.Sprintf("expected run_event record, got:\n%s", body))
+	gomega.Expect(string(body)).To(gomega.ContainSubstring(`"role":"completion_gate_recovery"`), fmt.Sprintf("expected run_event record, got:\n%s", body))
+})
 
-func TestLogRunEventStoresControlRailsAsRunEvent(t *testing.T) {
+var _ = ginkgo.It("log run event stores control rails as run event", func() {
+	t := ginkgo.GinkgoT()
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:  t.TempDir(),
-		Mode: transcript.DebugLogModeFull,
+		Mode: runprofile.DebugLogModeFull,
 	})
-	if err != nil {
-		t.Fatalf("NewDebugLogger: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("NewDebugLogger: %v", err))
 	defer logger.Close()
 
 	model := &Model{debugLogger: logger}
-	model.logRunEvent(agent.RunEvent{
+	session := newDetachedPromptExecutionSession(context.Background(), model)
+	session.logRunEvent(agent.RunEvent{
 		Role:    "control_rails",
 		Content: `{"allowed_tools":["read_file"]}`,
 	})
 
 	body, err := os.ReadFile(logger.Path())
-	if err != nil {
-		t.Fatalf("read debug log: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read debug log: %v", err))
 
-	if strings.Contains(string(body), `"type":"message"`) {
-		t.Fatalf("control_rails must not be written as a message record:\n%s", body)
-	}
+	gomega.Expect(strings.Contains(string(body), `"type":"message"`)).To(gomega.BeFalse(), fmt.Sprintf("control_rails must not be written as a message record:\n%s", body))
 
-	if !strings.Contains(string(body), `"type":"run_event"`) || !strings.Contains(string(body), `"role":"control_rails"`) {
-		t.Fatalf("expected control_rails run_event record, got:\n%s", body)
-	}
-}
+	gomega.Expect(string(body)).To(gomega.ContainSubstring(`"type":"run_event"`), fmt.Sprintf("expected control_rails run_event record, got:\n%s", body))
+	gomega.Expect(string(body)).To(gomega.ContainSubstring(`"role":"control_rails"`), fmt.Sprintf("expected control_rails run_event record, got:\n%s", body))
+})
 
-func TestJSONMessageSkipsControlRails(t *testing.T) {
+var _ = ginkgo.It("json message skips control rails", func() {
 	var buf bytes.Buffer
 
 	model := &Model{}
 	model.SetJSONEventStream(&buf, "sess-1")
-	model.emitJSONMessage("control_rails", `{"allowed_tools":["read_file"]}`)
+	session := newDetachedPromptExecutionSession(context.Background(), model)
+	session.eventStream.emitMessage("control_rails", `{"allowed_tools":["read_file"]}`)
 
-	if strings.TrimSpace(buf.String()) != "" {
-		t.Fatalf("control_rails must not be emitted as a JSON message event:\n%s", buf.String())
-	}
-}
+	gomega.Expect(strings.TrimSpace(buf.String())).To(gomega.Equal(""), fmt.Sprintf("control_rails must not be emitted as a JSON message event:\n%s", buf.String()))
+})
 
-func TestSetJSONEventStreamNilDisables(t *testing.T) {
+var _ = ginkgo.It("set json event stream nil disables", func() {
+	t := ginkgo.GinkgoT()
 	var buf bytes.Buffer
 
 	model := &Model{}
 	model.SetJSONEventStream(&buf, "")
-	model.emitJSONFinal("a")
+	enabled := newDetachedPromptExecutionSession(context.Background(), model)
+	enabled.emitJSONFinal("a")
 	model.SetJSONEventStream(nil, "")
-	model.emitJSONFinal("b")
+	disabled := newDetachedPromptExecutionSession(context.Background(), model)
+	disabled.emitJSONFinal("b")
 
 	events := decodeJSONEvents(t, buf.String())
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event after nil disable, got %d", len(events))
-	}
+	gomega.Expect(len(events)).To(gomega.Equal(1), fmt.Sprintf("expected 1 event after nil disable, got %d", len(events)))
 
-	if events[0]["content"] != "a" {
-		t.Errorf("expected only first event, got %v", events[0])
-	}
-}
+	gomega.Expect(events[0]["content"]).To(gomega.Equal("a"), fmt.Sprintf("expected only first event, got %v", events[0]))
+})

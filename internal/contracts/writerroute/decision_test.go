@@ -2,216 +2,169 @@ package writerroute
 
 import (
 	"encoding/json"
-	"reflect"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {
-	d1 := NewDecisionFromParams(DecisionParams{
-		Mode:               ModeAgenticGuarded,
-		Lane:               " implement ",
-		RequiredEditPaths:  []string{" internal/contracts/writerroute/decision.go ", "internal/contracts/writerroute/decision_test.go"},
-		EvidencePacketIDs:  []string{"pkt-2", " pkt-1 "},
-		ReasonCodes:        []ReasonCode{ReasonSingleFileGuardedWrite, ReasonLocalModelDefault},
-		EscalationTriggers: []string{"hosted_review", " stale_anchor "},
-		TaskFamily:         " artifact_final_answer ",
-	})
-	d2 := NewDecisionFromParams(DecisionParams{
-		Mode:               ModeAgenticGuarded,
-		Lane:               "implement",
-		RequiredEditPaths:  []string{"internal/contracts/writerroute/decision_test.go", "internal/contracts/writerroute/decision.go"},
-		EvidencePacketIDs:  []string{"pkt-1", "pkt-2"},
-		ReasonCodes:        []ReasonCode{ReasonLocalModelDefault, ReasonSingleFileGuardedWrite},
-		EscalationTriggers: []string{"stale_anchor", "hosted_review"},
-		TaskFamily:         "artifact_final_answer",
-	})
+var _ = ginkgo.Describe("Writer route decisions", func() {
+	ginkgo.It("normalizes set-like inputs into a stable route ID", func() {
+		d1 := NewDecisionFromParams(DecisionParams{
+			Mode:               ModeAgenticGuarded,
+			Lane:               " implement ",
+			RequiredEditPaths:  []string{" internal/contracts/writerroute/decision.go ", "internal/contracts/writerroute/decision_test.go"},
+			EvidencePacketIDs:  []string{"pkt-2", " pkt-1 "},
+			ReasonCodes:        []ReasonCode{ReasonSingleFileGuardedWrite, ReasonLocalModelDefault},
+			EscalationTriggers: []string{"hosted_review", " stale_anchor "},
+			TaskFamily:         " artifact_final_answer ",
+		})
+		d2 := NewDecisionFromParams(DecisionParams{
+			Mode:               ModeAgenticGuarded,
+			Lane:               "implement",
+			RequiredEditPaths:  []string{"internal/contracts/writerroute/decision_test.go", "internal/contracts/writerroute/decision.go"},
+			EvidencePacketIDs:  []string{"pkt-1", "pkt-2"},
+			ReasonCodes:        []ReasonCode{ReasonLocalModelDefault, ReasonSingleFileGuardedWrite},
+			EscalationTriggers: []string{"stale_anchor", "hosted_review"},
+			TaskFamily:         "artifact_final_answer",
+		})
 
-	if d1.RouteID == "" {
-		t.Fatal("RouteID must be computed")
-	}
+		gomega.Expect(d1.RouteID).NotTo(gomega.BeEmpty())
+		gomega.Expect(d1.RouteID).To(gomega.Equal(d2.RouteID))
+		gomega.Expect(d1.RequiredEditPaths).To(gomega.Equal([]string{
+			"internal/contracts/writerroute/decision.go",
+			"internal/contracts/writerroute/decision_test.go",
+		}))
+		gomega.Expect(d1.ReasonCodes).To(gomega.Equal([]string{
+			"route.local_model_default",
+			"route.single_file_guarded_write",
+		}))
 
-	if d1.RouteID != d2.RouteID {
-		t.Fatalf("RouteID should be stable across set-like slice order: got %q vs %q", d1.RouteID, d2.RouteID)
-	}
-
-	wantPaths := []string{"internal/contracts/writerroute/decision.go", "internal/contracts/writerroute/decision_test.go"}
-	if !reflect.DeepEqual(d1.RequiredEditPaths, wantPaths) {
-		t.Fatalf("RequiredEditPaths normalized = %#v, want %#v", d1.RequiredEditPaths, wantPaths)
-	}
-
-	wantReasons := []string{"route.local_model_default", "route.single_file_guarded_write"}
-	if !reflect.DeepEqual(d1.ReasonCodes, wantReasons) {
-		t.Fatalf("ReasonCodes normalized = %#v, want %#v", d1.ReasonCodes, wantReasons)
-	}
-
-	d3 := NewDecisionFromParams(DecisionParams{Mode: ModePlanSubmission, Lane: "implement", TaskFamily: "artifact_final_answer"})
-	if d1.RouteID == d3.RouteID {
-		t.Fatal("different writer modes should produce different RouteIDs")
-	}
-}
-
-func TestWriterRouteDecision_EventFields(t *testing.T) {
-	d := NewDecisionFromParams(DecisionParams{
-		Mode:               ModePlanSubmission,
-		Lane:               "plan-execute",
-		PlannerModel:       "planner-model",
-		ExecutorModel:      "executor-model",
-		ReviewerModel:      "reviewer-model",
-		ClassifierModel:    "classifier-model",
-		EffectiveModel:     "planner-model",
-		RoleAliases:        map[string]string{" Planner ": "planner-model", "executor": "executor-model"},
-		RiskTier:           "low",
-		ScopeTier:          "single_atom",
-		VerificationOwner:  VerificationOwnerPlannerOwned,
-		RequiredEditPaths:  []string{"b.go", "a.go"},
-		EvidencePacketIDs:  []string{"pkt-1"},
-		ReasonCodes:        []ReasonCode{ReasonMultiFilePlanExecute},
-		EscalationTriggers: []string{"hosted_review"},
-		UserOverride:       true,
-		TaskFamily:         "plan_then_execute_planner",
+		differentMode := NewDecisionFromParams(DecisionParams{
+			Mode:       ModePlanSubmission,
+			Lane:       "implement",
+			TaskFamily: "artifact_final_answer",
+		})
+		gomega.Expect(differentMode.RouteID).NotTo(gomega.Equal(d1.RouteID))
 	})
 
-	fields := d.EventFields()
-	expected := map[string]interface{}{
-		"schema_version":      SchemaVersion,
-		"route_id":            d.RouteID,
-		"task_family":         "plan_then_execute_planner",
-		"writer_mode":         string(ModePlanSubmission),
-		"lane":                "plan-execute",
-		"planner_model":       "planner-model",
-		"executor_model":      "executor-model",
-		"reviewer_model":      "reviewer-model",
-		"classifier_model":    "classifier-model",
-		"effective_model":     "planner-model",
-		"role_aliases":        map[string]string{"planner": "planner-model", "executor": "executor-model"},
-		"risk_tier":           "low",
-		"cost_tier":           "local_first",
-		"scope_tier":          "single_atom",
-		"verification_owner":  "planner_owned",
-		"review_policy":       "local_first",
-		"required_edit_paths": []string{"a.go", "b.go"},
-		"evidence_packet_ids": []string{"pkt-1"},
-		"reason_codes":        []string{"route.multi_file_plan_execute"},
-		"escalation_triggers": []string{"hosted_review"},
-		"user_override":       true,
-	}
+	ginkgo.It("projects normalized decision data into event fields", func() {
+		decision := NewDecisionFromParams(DecisionParams{
+			Mode:               ModePlanSubmission,
+			Lane:               "plan-execute",
+			PlannerModel:       "planner-model",
+			ExecutorModel:      "executor-model",
+			ReviewerModel:      "reviewer-model",
+			ClassifierModel:    "classifier-model",
+			EffectiveModel:     "planner-model",
+			RoleAliases:        map[string]string{" Planner ": "planner-model", "executor": "executor-model"},
+			RiskTier:           "low",
+			ScopeTier:          "single_atom",
+			VerificationOwner:  VerificationOwnerPlannerOwned,
+			RequiredEditPaths:  []string{"b.go", "a.go"},
+			EvidencePacketIDs:  []string{"pkt-1"},
+			ReasonCodes:        []ReasonCode{ReasonMultiFilePlanExecute},
+			EscalationTriggers: []string{"hosted_review"},
+			UserOverride:       true,
+			TaskFamily:         "plan_then_execute_planner",
+		})
 
-	for key, want := range expected {
-		if got, ok := fields[key]; !ok {
-			t.Fatalf("EventFields missing key %q", key)
-		} else if !reflect.DeepEqual(got, want) {
-			t.Fatalf("EventFields[%q] = %#v, want %#v", key, got, want)
-		}
-	}
-}
-
-func TestWriterRouteDecision_Defaults(t *testing.T) {
-	d := NewDecisionFromParams(DecisionParams{
-		Mode:              ModeAgenticGuarded,
-		Lane:              "implement",
-		RequiredEditPaths: []string{"main.go"},
+		gomega.Expect(decision.EventFields()).To(gomega.Equal(map[string]interface{}{
+			"schema_version":      SchemaVersion,
+			"route_id":            decision.RouteID,
+			"task_family":         "plan_then_execute_planner",
+			"writer_mode":         string(ModePlanSubmission),
+			"lane":                "plan-execute",
+			"planner_model":       "planner-model",
+			"executor_model":      "executor-model",
+			"reviewer_model":      "reviewer-model",
+			"classifier_model":    "classifier-model",
+			"effective_model":     "planner-model",
+			"role_aliases":        map[string]string{"planner": "planner-model", "executor": "executor-model"},
+			"risk_tier":           "low",
+			"cost_tier":           "local_first",
+			"scope_tier":          "single_atom",
+			"verification_owner":  "planner_owned",
+			"review_policy":       "local_first",
+			"required_edit_paths": []string{"a.go", "b.go"},
+			"evidence_packet_ids": []string{"pkt-1"},
+			"reason_codes":        []string{"route.multi_file_plan_execute"},
+			"escalation_triggers": []string{"hosted_review"},
+			"user_override":       true,
+		}))
 	})
 
-	if d.SchemaVersion != SchemaVersion {
-		t.Fatalf("SchemaVersion = %q, want %q", d.SchemaVersion, SchemaVersion)
-	}
+	ginkgo.It("applies local-first single-atom defaults", func() {
+		decision := NewDecisionFromParams(DecisionParams{
+			Mode:              ModeAgenticGuarded,
+			Lane:              "implement",
+			RequiredEditPaths: []string{"main.go"},
+		})
 
-	if d.CostTier != "local_first" {
-		t.Fatalf("CostTier = %q, want local_first", d.CostTier)
-	}
-
-	if d.ReviewPolicy != "local_first" {
-		t.Fatalf("ReviewPolicy = %q, want local_first", d.ReviewPolicy)
-	}
-
-	if d.ScopeTier != "single_atom" {
-		t.Fatalf("ScopeTier = %q, want single_atom when required edit paths exist", d.ScopeTier)
-	}
-
-	if d.RouteID == "" {
-		t.Fatal("RouteID must be computed")
-	}
-}
-
-func TestWriterRouteDecision_ModeConstants(t *testing.T) {
-	expectedModes := map[WriterMode]string{
-		ModeAgenticGuarded:             "agentic_guarded",
-		ModePlanSubmission:             "plan_submission",
-		ModeDeterministicArtifactApply: "deterministic_artifact_apply",
-		ModeHostMaterializedArtifact:   "host_materialized_artifact",
-		ModeReadOnly:                   "read_only",
-	}
-
-	for mode, want := range expectedModes {
-		if string(mode) != want {
-			t.Errorf("WriterMode(%q) = %q, want %q", mode, string(mode), want)
-		}
-	}
-}
-
-func TestWriterRouteCommandEventNameValidatesSurfaceAndEvent(t *testing.T) {
-	got, err := CommandEventName(CommandSurfaceImplement, EventWriterRouteDecision)
-	if err != nil {
-		t.Fatalf("CommandEventName returned error: %v", err)
-	}
-	if got != "idiom.implement.writer_route_decision" {
-		t.Fatalf("CommandEventName = %q, want idiom.implement.writer_route_decision", got)
-	}
-
-	if _, err := CommandEventName(CommandSurface("idiom.unknown"), EventWriterRouteDecision); err == nil {
-		t.Fatal("expected unknown surface error")
-	}
-	if _, err := CommandEventName(CommandSurfaceLane, EventType("not_real")); err == nil {
-		t.Fatal("expected unknown event type error")
-	}
-}
-
-func TestWriterRouteDecision_JSONEventFieldMapping(t *testing.T) {
-	d := NewDecisionFromParams(DecisionParams{
-		Mode:               ModeAgenticGuarded,
-		Lane:               "implement",
-		PlannerModel:       "qwen-2.5-72b",
-		ExecutorModel:      "qwen-2.5-72b",
-		CostTier:           "local_first",
-		ReviewPolicy:       "local_first",
-		ScopeTier:          "single_atom",
-		VerificationOwner:  VerificationOwnerExecutor,
-		RequiredEditPaths:  []string{"main.go"},
-		EvidencePacketIDs:  []string{"pkt-1"},
-		ReasonCodes:        []ReasonCode{ReasonSingleFileGuardedWrite},
-		EscalationTriggers: []string{"stale_anchor"},
-		UserOverride:       true,
-		TaskFamily:         "artifact_final_answer",
+		gomega.Expect(decision.SchemaVersion).To(gomega.Equal(SchemaVersion))
+		gomega.Expect(decision.CostTier).To(gomega.Equal("local_first"))
+		gomega.Expect(decision.ReviewPolicy).To(gomega.Equal("local_first"))
+		gomega.Expect(decision.ScopeTier).To(gomega.Equal("single_atom"))
+		gomega.Expect(decision.RouteID).NotTo(gomega.BeEmpty())
 	})
 
-	data, err := json.Marshal(d)
-	if err != nil {
-		t.Fatalf("json.Marshal failed: %v", err)
-	}
+	ginkgo.DescribeTable("exposes stable writer mode values",
+		func(mode WriterMode, want string) {
+			gomega.Expect(string(mode)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("agentic guarded", ModeAgenticGuarded, "agentic_guarded"),
+		ginkgo.Entry("plan submission", ModePlanSubmission, "plan_submission"),
+		ginkgo.Entry("deterministic artifact apply", ModeDeterministicArtifactApply, "deterministic_artifact_apply"),
+		ginkgo.Entry("host-materialized artifact", ModeHostMaterializedArtifact, "host_materialized_artifact"),
+		ginkgo.Entry("read only", ModeReadOnly, "read_only"),
+	)
 
-	var jsonMap map[string]interface{}
+	ginkgo.It("builds command event names only from declared surfaces and events", func() {
+		name, err := CommandEventName(CommandSurfaceImplement, EventWriterRouteDecision)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(name).To(gomega.Equal("idiom.implement.writer_route_decision"))
 
-	if err := json.Unmarshal(data, &jsonMap); err != nil {
-		t.Fatalf("json.Unmarshal failed: %v", err)
-	}
+		_, err = CommandEventName(CommandSurface("idiom.unknown"), EventWriterRouteDecision)
+		gomega.Expect(err).To(gomega.HaveOccurred())
 
-	fields := d.EventFields()
-	for key := range jsonMap {
-		if _, ok := fields[key]; !ok {
-			t.Errorf("EventFields missing key %q that is present in JSON", key)
+		_, err = CommandEventName(CommandSurfaceLane, EventType("not_real"))
+		gomega.Expect(err).To(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("keeps non-empty event fields aligned with JSON fields", func() {
+		decision := NewDecisionFromParams(DecisionParams{
+			Mode:               ModeAgenticGuarded,
+			Lane:               "implement",
+			PlannerModel:       "qwen-2.5-72b",
+			ExecutorModel:      "qwen-2.5-72b",
+			CostTier:           "local_first",
+			ReviewPolicy:       "local_first",
+			ScopeTier:          "single_atom",
+			VerificationOwner:  VerificationOwnerExecutor,
+			RequiredEditPaths:  []string{"main.go"},
+			EvidencePacketIDs:  []string{"pkt-1"},
+			ReasonCodes:        []ReasonCode{ReasonSingleFileGuardedWrite},
+			EscalationTriggers: []string{"stale_anchor"},
+			UserOverride:       true,
+			TaskFamily:         "artifact_final_answer",
+		})
+
+		data, err := json.Marshal(decision)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		var jsonFields map[string]interface{}
+		gomega.Expect(json.Unmarshal(data, &jsonFields)).To(gomega.Succeed())
+
+		eventFields := decision.EventFields()
+		for key := range jsonFields {
+			gomega.Expect(eventFields).To(gomega.HaveKey(key))
 		}
-	}
-
-	for key, val := range fields {
-		if isEmptyEventField(val) {
-			continue
+		for key, value := range eventFields {
+			if !isEmptyEventField(value) {
+				gomega.Expect(jsonFields).To(gomega.HaveKey(key))
+			}
 		}
-
-		if _, ok := jsonMap[key]; !ok {
-			t.Errorf("non-empty EventFields key %q not found in JSON", key)
-		}
-	}
-}
+	})
+})
 
 func isEmptyEventField(value interface{}) bool {
 	switch v := value.(type) {

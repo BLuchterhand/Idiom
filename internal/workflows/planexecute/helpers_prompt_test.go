@@ -1,13 +1,15 @@
 package planexecute
 
 import (
+	"fmt"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	planartifact "idiom/internal/contracts/planartifact"
 )
 
-func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T) {
+var _ = ginkgo.It("plan execute planner system addendum frontloads planner protocol", func() {
 	got := PlanExecutePlannerSystemAddendumWithObligations([]string{"a.go", "b_test.go"}, nil, nil)
 	for _, want := range []string{
 		"executable plan artifact, not a narrative implementation answer",
@@ -36,9 +38,8 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"history evidence is present for every selected existing edit path",
 		"Do not treat a source read or history read as plan coverage",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("planner addendum missing %q:\n%s", want, got)
-		}
+		gomega.Expect(strings.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("planner addendum missing %q:\n%s", want, got))
+
 	}
 
 	for _, stale := range []string{
@@ -47,13 +48,12 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"path/from/required_edit_paths",
 		"After any required history evidence is present",
 	} {
-		if strings.Contains(got, stale) {
-			t.Fatalf("planner addendum retained stale wording %q:\n%s", stale, got)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(got, stale)).To(gomega.BeFalse(), fmt.Sprintf("planner addendum retained stale wording %q:\n%s", stale, got))
 
-func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) {
+	}
+})
+
+var _ = ginkgo.It("plan execute review repair prompt carries submit plan quality bar", func() {
 	got := PlanExecuteReviewRepairPrompt(
 		"Implement behavior.",
 		planartifact.PlanArtifact{
@@ -88,9 +88,8 @@ func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) 
 		"Corrective plan shape:",
 		"Blocker shape:",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("review-repair prompt missing %q:\n%s", want, got)
-		}
+		gomega.Expect(strings.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("review-repair prompt missing %q:\n%s", want, got))
+
 	}
 
 	for _, stale := range []string{
@@ -98,13 +97,12 @@ func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) 
 		"Line-range `content` for non-trivial source/test repairs",
 		"Whole-file/new-file",
 	} {
-		if strings.Contains(got, stale) {
-			t.Fatalf("review-repair prompt retained stale wording %q:\n%s", stale, got)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(got, stale)).To(gomega.BeFalse(), fmt.Sprintf("review-repair prompt retained stale wording %q:\n%s", stale, got))
 
-func TestReviewAnswerPassContradictionRejectsPlaceholderChecklist(t *testing.T) {
+	}
+})
+
+var _ = ginkgo.It("review answer pass contradiction rejects placeholder checklist", func() {
 	answer := strings.Join([]string{
 		"Decision: pass",
 		"",
@@ -112,6 +110,6 @@ func TestReviewAnswerPassContradictionRejectsPlaceholderChecklist(t *testing.T) 
 		"- Required behavior: cite a checked fact from Phase/Diff Evidence.",
 	}, "\n")
 	if reason := ReviewAnswerPassContradictionReason(answer); reason != "placeholder_checklist_item" {
-		t.Fatalf("placeholder checklist should be contradictory, got %q", reason)
+		ginkgo.Fail(fmt.Sprintf("placeholder checklist should be contradictory, got %q", reason))
 	}
-}
+})

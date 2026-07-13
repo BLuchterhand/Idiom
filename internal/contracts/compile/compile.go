@@ -13,14 +13,14 @@ func CompilePlanExecutePlanner(input PlanExecutePlannerInput) (CompileResult, er
 		return CompileResult{}, err
 	}
 
-	runtime := compileRuntimeEnvelope(normalized)
+	runtime := compileRuntimeEnvelope(normalized.Runtime)
 
 	contract, err := compileAutonomyContract(normalized, runtime)
 	if err != nil {
 		return CompileResult{}, err
 	}
 
-	protocol, err := compileProtocolProjection(normalized, runtime, contract)
+	protocol, err := compilePlanExecuteModelProtocol(normalized, contract)
 	if err != nil {
 		return CompileResult{}, err
 	}
@@ -78,27 +78,27 @@ func compileAutonomyContract(input PlanExecutePlannerInput, runtime RuntimeEnvel
 	return contract, nil
 }
 
-func compileRuntimeEnvelope(input PlanExecutePlannerInput) RuntimeEnvelope {
+func compileRuntimeEnvelope(input RuntimeEnvelopeInput) RuntimeEnvelope {
 	envelope := RuntimeEnvelope{
-		BackendKind:          input.Runtime.BackendKind,
-		ModelAlias:           input.Runtime.ModelAlias,
-		ModelRole:            input.Runtime.ModelRole,
-		ParserTransportMode:  input.Runtime.ParserTransportMode,
-		ToolTransportMode:    input.Runtime.ToolTransportMode,
-		ParserContract:       input.Runtime.ParserContract,
-		NativeToolPolicy:     input.Runtime.NativeToolPolicy,
-		SupportsNativeTools:  input.Runtime.SupportsNativeTools,
-		ForceNativeTools:     input.Runtime.ForceNativeTools,
-		ToolChoice:           input.Runtime.ToolChoice,
-		ResponseFormat:       input.Runtime.ResponseFormat,
-		ThinkingPolicy:       input.Runtime.ThinkingPolicy,
-		ThinkingBudget:       input.Runtime.ThinkingBudget,
-		EffectiveMaxTokens:   input.Runtime.EffectiveMaxTokens,
-		ContextBudget:        input.Runtime.ContextBudget,
-		QueueState:           input.Runtime.QueueState,
-		ReadinessProfile:     input.Runtime.ReadinessProfile,
-		EnforcementMode:      input.Runtime.EnforcementMode,
-		DegradationDecisions: append([]DegradationDecision(nil), input.Runtime.DegradationDecisions...),
+		BackendKind:          input.BackendKind,
+		ModelAlias:           input.ModelAlias,
+		ModelRole:            input.ModelRole,
+		ParserTransportMode:  input.ParserTransportMode,
+		ToolTransportMode:    input.ToolTransportMode,
+		ParserContract:       input.ParserContract,
+		NativeToolPolicy:     input.NativeToolPolicy,
+		SupportsNativeTools:  input.SupportsNativeTools,
+		ForceNativeTools:     input.ForceNativeTools,
+		ToolChoice:           input.ToolChoice,
+		ResponseFormat:       input.ResponseFormat,
+		ThinkingPolicy:       input.ThinkingPolicy,
+		ThinkingBudget:       input.ThinkingBudget,
+		EffectiveMaxTokens:   input.EffectiveMaxTokens,
+		ContextBudget:        input.ContextBudget,
+		QueueState:           input.QueueState,
+		ReadinessProfile:     input.ReadinessProfile,
+		EnforcementMode:      input.EnforcementMode,
+		DegradationDecisions: append([]DegradationDecision(nil), input.DegradationDecisions...),
 		ActiveInvariantID:    InvariantActiveAuthority,
 	}
 	normalizeRuntimeEnvelope(&envelope)
@@ -108,80 +108,62 @@ func compileRuntimeEnvelope(input PlanExecutePlannerInput) RuntimeEnvelope {
 	return envelope
 }
 
-func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnvelope, contract autonomy.AutonomyContract) (ModelProtocolProjection, error) {
+// CompileModelProtocol compiles one model-visible protocol from an explicit,
+// workflow-neutral surface. It intentionally supplies no workflow actions or
+// terminal outcomes; callers such as plan-execute must adapt their own defaults
+// before calling this owner.
+func CompileModelProtocol(input ModelProtocolInput) (ModelProtocolProjection, error) {
+	runtime := compileRuntimeEnvelope(input.Runtime)
 	protocol := ModelProtocolProjection{
-		ContractID:               contract.ContractID,
-		ContractVersion:          contract.SchemaVersion,
-		SchemaNames:              compileProtocolSchemaNames(input.Protocol.StructuredSchemaNames),
-		PhaseID:                  input.Protocol.PhaseID,
-		ParserMode:               firstNonEmptyString(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
-		ToolTransportMode:        runtime.ToolTransportMode,
-		ParserTransportMode:      runtime.ParserTransportMode,
-		ParserContract:           runtime.ParserContract,
-		NativeToolPolicy:         runtime.NativeToolPolicy,
-		SupportsNativeTools:      runtime.SupportsNativeTools,
-		ForceNativeTools:         runtime.ForceNativeTools,
-		ToolChoice:               runtime.ToolChoice,
-		ResponseFormat:           runtime.ResponseFormat,
-		ExpectedVisibleOutput:    input.Protocol.ExpectedVisibleOutput,
-		VisibleTools:             append([]string(nil), input.Protocol.VisibleTools...),
-		HiddenTools:              append([]string(nil), input.Protocol.HiddenTools...),
-		CallableTools:            append([]string(nil), input.Protocol.CallableTools...),
-		CallableActionClasses:    append([]string(nil), input.Protocol.CallableActionClasses...),
-		InvalidActionClasses:     append([]string(nil), input.Protocol.InvalidActionClasses...),
-		TerminalResponseShapes:   append([]string(nil), input.Protocol.TerminalResponseShapes...),
-		StructuredSchemaNames:    append([]string(nil), input.Protocol.StructuredSchemaNames...),
-		MalformedOutputPolicy:    input.Protocol.MalformedOutputPolicy,
-		StaleAnchorPolicy:        input.Protocol.StaleAnchorPolicy,
-		SourceBodyObligations:    append([]string(nil), input.Protocol.SourceBodyObligations...),
-		CompletedGitHistoryPaths: append([]string(nil), input.Protocol.CompletedGitHistoryPaths...),
-		PendingGitHistoryPaths:   append([]string(nil), input.Protocol.PendingGitHistoryPaths...),
-		RequiredEditCoverage:     append([]string(nil), input.RequiredEditPaths...),
-		PathRoleSummary:          compileProtocolPathRoleSummary(contract.PathRoles),
-		VerificationObligations:  compileProtocolVerificationObligations(input),
-		RequiredTools:            append([]string(nil), input.RequiredTools...),
-		ReadinessGate:            append([]string(nil), input.ReadinessGate...),
-		Constraints:              append([]string(nil), input.Constraints...),
-		InvalidActions:           append([]string(nil), input.InvalidActions...),
-		RecoveryBudget:           input.Protocol.RecoveryBudget,
-		ActiveInvariantID:        InvariantActiveAuthority,
+		ContractID:                    input.ContractID,
+		ContractVersion:               firstNonEmptyString(input.ContractVersion, autonomy.SchemaVersion),
+		SchemaNames:                   compileProtocolSchemaNames(input.Protocol.StructuredSchemaNames),
+		PhaseID:                       input.Protocol.PhaseID,
+		ParserMode:                    firstNonEmptyString(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
+		ToolTransportMode:             runtime.ToolTransportMode,
+		ParserTransportMode:           runtime.ParserTransportMode,
+		ParserContract:                runtime.ParserContract,
+		NativeToolPolicy:              runtime.NativeToolPolicy,
+		SupportsNativeTools:           runtime.SupportsNativeTools,
+		ForceNativeTools:              runtime.ForceNativeTools,
+		ToolChoice:                    runtime.ToolChoice,
+		ResponseFormat:                runtime.ResponseFormat,
+		ExpectedVisibleOutput:         input.Protocol.ExpectedVisibleOutput,
+		VisibleTools:                  append([]string(nil), input.Protocol.VisibleTools...),
+		HiddenTools:                   append([]string(nil), input.Protocol.HiddenTools...),
+		CallableTools:                 append([]string(nil), input.Protocol.CallableTools...),
+		CallableActionClasses:         append([]string(nil), input.Protocol.CallableActionClasses...),
+		InvalidActionClasses:          append([]string(nil), input.Protocol.InvalidActionClasses...),
+		TerminalResponseShapes:        append([]string(nil), input.Protocol.TerminalResponseShapes...),
+		StructuredSchemaNames:         append([]string(nil), input.Protocol.StructuredSchemaNames...),
+		MalformedOutputPolicy:         input.Protocol.MalformedOutputPolicy,
+		StaleAnchorPolicy:             input.Protocol.StaleAnchorPolicy,
+		SourceBodyObligations:         append([]string(nil), input.Protocol.SourceBodyObligations...),
+		SourceBodyObligationTotal:     input.Protocol.SourceBodyObligationTotal,
+		SourceBodyObligationOmitted:   input.Protocol.SourceBodyObligationOmitted,
+		GroundedSourceBodyPaths:       append([]string(nil), input.Protocol.GroundedSourceBodyPaths...),
+		GroundedSourceBodyPathTotal:   input.Protocol.GroundedSourceBodyPathTotal,
+		GroundedSourceBodyPathOmitted: input.Protocol.GroundedSourceBodyPathOmitted,
+		CandidateOnlyPaths:            append([]string(nil), input.Protocol.CandidateOnlyPaths...),
+		CandidateOnlyPathTotal:        input.Protocol.CandidateOnlyPathTotal,
+		CandidateOnlyPathOmitted:      input.Protocol.CandidateOnlyPathOmitted,
+		CompletedGitHistoryPaths:      append([]string(nil), input.Protocol.CompletedGitHistoryPaths...),
+		PendingGitHistoryPaths:        append([]string(nil), input.Protocol.PendingGitHistoryPaths...),
+		RequiredEditCoverage:          append([]string(nil), input.RequiredEditCoverage...),
+		PathRoleSummary:               append([]string(nil), input.PathRoleSummary...),
+		VerificationObligations:       append([]string(nil), input.VerificationObligations...),
+		RequiredTools:                 append([]string(nil), input.RequiredTools...),
+		ReadinessGate:                 append([]string(nil), input.ReadinessGate...),
+		Constraints:                   append([]string(nil), input.Constraints...),
+		InvalidActions:                append([]string(nil), input.InvalidActions...),
+		ActiveInvariantID:             InvariantActiveAuthority,
 	}
-	if len(protocol.VisibleTools) == 0 {
-		protocol.VisibleTools = append([]string(nil), input.AllowedTools...)
-	}
-
 	if !input.Protocol.CallableToolsSpecified && len(protocol.CallableTools) == 0 {
 		protocol.CallableTools = append([]string(nil), protocol.VisibleTools...)
 	}
 
-	if protocol.PhaseID == "" {
-		protocol.PhaseID = string(TurnPhaseRequiredSource)
-	}
-
 	if protocol.ExpectedVisibleOutput == "" {
 		protocol.ExpectedVisibleOutput = "parser_readable_tool_or_terminal_outcome"
-	}
-
-	if len(protocol.CallableActionClasses) == 0 {
-		protocol.CallableActionClasses = []string{
-			string(autonomy.ActionClassRead),
-			string(autonomy.ActionClassSearch),
-			string(autonomy.ActionClassSubmitPlan),
-			string(autonomy.ActionClassSourceSatisfied),
-			string(autonomy.ActionClassBlocker),
-		}
-	}
-
-	if len(protocol.InvalidActionClasses) == 0 {
-		protocol.InvalidActionClasses = []string{
-			string(autonomy.ActionClassPerEditWrite),
-			string(autonomy.ActionClassVerify),
-			string(autonomy.ActionClassProseFinal),
-		}
-	}
-
-	if len(protocol.TerminalResponseShapes) == 0 {
-		protocol.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	}
 
 	protocol.SafeAlternatives = compileProtocolSafeAlternatives(protocol.TerminalResponseShapes, protocol.CallableActionClasses)
@@ -190,28 +172,84 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	}
 
 	protocol.SchemaNames = compileProtocolSchemaNames(protocol.StructuredSchemaNames)
-	protocol.CompactPacket = compileCompactPacketProjection(input, contract, protocol)
+	protocol.CompactPacket = compileModelProtocolContextPacket(input.ContextPacket, protocol)
 
 	if protocol.MalformedOutputPolicy == "" {
 		protocol.MalformedOutputPolicy = "recover_with_same_protocol_projection"
 	}
 
-	if protocol.StaleAnchorPolicy == "" {
-		protocol.StaleAnchorPolicy = "bounded_source_refresh_before_submit_plan"
-	}
-
-	if protocol.RecoveryBudget == 0 {
-		protocol.RecoveryBudget = 2
-	}
-
 	normalizeProtocolProjection(&protocol)
 
-	if err := validateProtocolProjection(protocol, input.ToolMetadata); err != nil {
+	if err := validateProtocolProjection(protocol); err != nil {
 		return ModelProtocolProjection{}, err
 	}
 
 	protocol.ProtocolHash = stableHashID("protocol", protocol)
 	protocol.CompactPacket.ProtocolHash = protocol.ProtocolHash
+
+	return protocol, nil
+}
+
+func compilePlanExecuteModelProtocol(input PlanExecutePlannerInput, contract autonomy.AutonomyContract) (ModelProtocolProjection, error) {
+	protocolInput := input.Protocol
+	if len(protocolInput.VisibleTools) == 0 {
+		protocolInput.VisibleTools = append([]string(nil), input.AllowedTools...)
+	}
+	if !protocolInput.CallableToolsSpecified && len(protocolInput.CallableTools) == 0 {
+		protocolInput.CallableTools = append([]string(nil), protocolInput.VisibleTools...)
+	}
+	if protocolInput.PhaseID == "" {
+		protocolInput.PhaseID = string(TurnPhaseRequiredSource)
+	}
+	if len(protocolInput.CallableActionClasses) == 0 {
+		protocolInput.CallableActionClasses = []string{
+			string(autonomy.ActionClassRead),
+			string(autonomy.ActionClassSearch),
+			string(autonomy.ActionClassSubmitPlan),
+			string(autonomy.ActionClassSourceSatisfied),
+			string(autonomy.ActionClassBlocker),
+		}
+	}
+	if len(protocolInput.InvalidActionClasses) == 0 {
+		protocolInput.InvalidActionClasses = []string{
+			string(autonomy.ActionClassPerEditWrite),
+			string(autonomy.ActionClassVerify),
+			string(autonomy.ActionClassProseFinal),
+		}
+	}
+	if len(protocolInput.TerminalResponseShapes) == 0 {
+		protocolInput.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+	}
+	if protocolInput.StaleAnchorPolicy == "" {
+		protocolInput.StaleAnchorPolicy = "bounded_source_refresh_before_submit_plan"
+	}
+
+	protocol, err := CompileModelProtocol(ModelProtocolInput{
+		ContractID:              contract.ContractID,
+		ContractVersion:         contract.SchemaVersion,
+		Runtime:                 input.Runtime,
+		Protocol:                protocolInput,
+		RequiredEditCoverage:    input.RequiredEditPaths,
+		PathRoleSummary:         compileProtocolPathRoleSummary(contract.PathRoles),
+		VerificationObligations: compileProtocolVerificationObligations(input),
+		RequiredTools:           input.RequiredTools,
+		ReadinessGate:           input.ReadinessGate,
+		Constraints:             input.Constraints,
+		InvalidActions:          input.InvalidActions,
+		ContextPacket: ModelProtocolContextPacketInput{
+			TargetRefs:     append(append([]string(nil), input.TargetRefs...), input.TargetPacket...),
+			PathRefs:       compileCompactPacketPathRefs(input),
+			EvidenceRefs:   compileCompactPacketEvidenceRefs(input, contract),
+			ObligationRefs: obligationIDs(contract.Obligations),
+		},
+	})
+	if err != nil {
+		return ModelProtocolProjection{}, err
+	}
+
+	if err := validatePlanExecuteProtocolProjection(protocol, input.ToolMetadata); err != nil {
+		return ModelProtocolProjection{}, err
+	}
 
 	return protocol, nil
 }
@@ -245,14 +283,14 @@ func compileProtocolSchemaNames(structuredSchemas []string) []string {
 	}, structuredSchemas...))
 }
 
-func compileCompactPacketProjection(input PlanExecutePlannerInput, contract autonomy.AutonomyContract, protocol ModelProtocolProjection) autonomy.ContextPacket {
+func compileModelProtocolContextPacket(input ModelProtocolContextPacketInput, protocol ModelProtocolProjection) autonomy.ContextPacket {
 	packet := autonomy.ContextPacket{
 		SchemaVersion:    autonomy.ContextPacketSchemaVersion,
 		ContractID:       protocol.ContractID,
-		TargetRefs:       sortedStrings(append(append([]string(nil), input.TargetRefs...), input.TargetPacket...)),
-		PathRefs:         compileCompactPacketPathRefs(input),
-		EvidenceRefs:     compileCompactPacketEvidenceRefs(input, contract),
-		ObligationRefs:   obligationIDs(contract.Obligations),
+		TargetRefs:       sortedStrings(input.TargetRefs),
+		PathRefs:         uniquePaths(input.PathRefs),
+		EvidenceRefs:     sortedStrings(input.EvidenceRefs),
+		ObligationRefs:   sortedStrings(input.ObligationRefs),
 		SchemaNames:      compileProtocolSchemaNames(protocol.StructuredSchemaNames),
 		RedactionMarkers: []string{"metadata_only", "prompt_omitted", "transcript_omitted", "file_content_omitted", "secrets_omitted"},
 	}

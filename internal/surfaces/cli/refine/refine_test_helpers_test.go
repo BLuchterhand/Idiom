@@ -3,15 +3,13 @@ package refine
 import (
 	"context"
 	"io"
-	"testing"
 	"time"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
 	"idiom/internal/workflows/brieflint"
 )
 
-func stubRefineLint(t *testing.T, reportStub func(path string) (brieflint.Report, error), textStub func(path string, stdout, stderr io.Writer) (brieflint.TextRun, error)) {
-	t.Helper()
-
+func stubRefineLint(reportStub func(path string) (brieflint.Report, error), textStub func(path string, stdout, stderr io.Writer) (brieflint.TextRun, error)) {
 	origReport := refineBuildLintReport
 	origText := refineRunLintText
 
@@ -25,17 +23,14 @@ func stubRefineLint(t *testing.T, reportStub func(path string) (brieflint.Report
 			return textStub(path, stdout, stderr)
 		}
 	}
-
-	t.Cleanup(func() {
+	ginkgo.DeferCleanup(func() {
 		refineBuildLintReport = origReport
 		refineRunLintText = origText
 	})
 }
 
-func stubRefineLintPass(t *testing.T) {
-	t.Helper()
-
-	stubRefineLint(t, func(path string) (brieflint.Report, error) {
+func stubRefineLintPass() {
+	stubRefineLint(func(path string) (brieflint.Report, error) {
 		return brieflint.Report{Brief: path, Exit: 0}, nil
 	}, func(string, io.Writer, io.Writer) (brieflint.TextRun, error) {
 		return brieflint.TextRun{Exit: 0}, nil

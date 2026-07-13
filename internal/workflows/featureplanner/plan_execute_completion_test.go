@@ -3,12 +3,14 @@ package featureplanner
 import (
 	"fmt"
 	"strings"
-	"testing"
 
 	plancontract "idiom/internal/contracts/plan"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestPlanExecuteTerminalContractDecisionClass(t *testing.T) {
+var _ = ginkgo.Describe("plan execute terminal contract decision class", func() {
 	tests := []struct {
 		name   string
 		fields map[string]any
@@ -56,15 +58,16 @@ func TestPlanExecuteTerminalContractDecisionClass(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := plancontract.DecidePlanExecuteTerminalCompletionFields(tt.fields, nil).Class; got != tt.want {
-				t.Fatalf("PlanExecuteCompletionTerminalClass = %q, want %q", got, tt.want)
+		ginkgo.It(tt.name, func() {
+			{
+				got := plancontract.DecidePlanExecuteTerminalCompletionFields(tt.fields, nil).Class
+				gomega.Expect(got).To(gomega.Equal(tt.want), fmt.Sprintf("PlanExecuteCompletionTerminalClass = %q, want %q", got, tt.want))
 			}
+
 		})
 	}
-}
-
-func TestPlanExecuteTerminalContractDecisionReasons(t *testing.T) {
+})
+var _ = ginkgo.Describe("plan execute terminal contract decision reasons", func() {
 	tests := []struct {
 		name       string
 		fields     map[string]any
@@ -114,29 +117,31 @@ func TestPlanExecuteTerminalContractDecisionReasons(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			got := plancontract.DecidePlanExecuteTerminalCompletionFields(tt.fields, nil)
-			if got.Class != tt.wantClass || got.Reason != tt.wantReason {
-				t.Fatalf("decision = %#v, want class=%q reason=%q", got, tt.wantClass, tt.wantReason)
-			}
+			gomega.Expect(got.Class).To(gomega.Equal(tt.wantClass), fmt.Sprintf("decision = %#v, want class=%q reason=%q", got, tt.wantClass, tt.wantReason))
+			gomega.Expect(got.Reason).To(gomega.Equal(tt.wantReason), fmt.Sprintf("decision = %#v, want class=%q reason=%q", got, tt.wantClass, tt.wantReason))
+
 		})
 	}
-}
-
-func TestPlanExecuteCompletionFieldsPreservesExitCodeForTerminalDecision(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields preserves exit code for terminal decision", func() {
 	output := `{"type":"idiom.plan_execute.terminal_completion","terminal_class":"success","status":"completed","exit_code":1}`
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
+	{
 
-	if got := completionFieldInt(fields, "exit_code"); got != 1 {
-		t.Fatalf("exit_code = %#v, want 1; fields=%+v", got, fields)
+		got := completionFieldInt(fields, "exit_code")
+		gomega.Expect(got).To(gomega.Equal(1), fmt.Sprintf("exit_code = %#v, want 1; fields=%+v", got, fields))
 	}
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("terminal class = %q, want %q; fields=%+v", got, plancontract.PlanExecuteTerminalDecisionBlocked, fields)
-	}
-}
+	{
 
-func TestPlanExecuteCompletionFieldsUsesTerminalRecordAsSerializationSource(t *testing.T) {
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("terminal class = %q, want %q; fields=%+v", got, plancontract.PlanExecuteTerminalDecisionBlocked, fields))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion fields uses terminal record as serialization source", func() {
 	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
 		Status:        plancontract.PlanExecuteTerminalStatusCompleted,
 		Phase:         plancontract.PlanExecuteProgressPhaseComplete,
@@ -152,70 +157,88 @@ func TestPlanExecuteCompletionFieldsUsesTerminalRecordAsSerializationSource(t *t
 	}
 
 	fields := summary.Fields()
+	{
 
-	if got := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldStatus); got != string(plancontract.PlanExecuteTerminalStatusCompleted) {
-		t.Fatalf("status = %q, want terminal record status; fields=%#v", got, fields)
+		got := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldStatus)
+		gomega.Expect(got).To(gomega.Equal(string(plancontract.PlanExecuteTerminalStatusCompleted)), fmt.Sprintf("status = %q, want terminal record status; fields=%#v", got, fields))
 	}
-	if got := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldFailureKind); got != "" {
-		t.Fatalf("failure_kind = %q, want terminal record to suppress stale summary failure; fields=%#v", got, fields)
-	}
-	if got := completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldChangedPaths); len(got) != 1 || got[0] != "a.go" {
-		t.Fatalf("changed_paths = %#v, want terminal record paths; fields=%#v", got, fields)
-	}
-}
+	{
 
-func TestPlanExecuteCompletionFieldsIgnoresUnknownPlanExecuteEventName(t *testing.T) {
+		got := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldFailureKind)
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("failure_kind = %q, want terminal record to suppress stale summary failure; fields=%#v", got, fields))
+	}
+	{
+
+		got := completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldChangedPaths)
+		gomega.Expect(got).To(gomega.HaveLen(1), fmt.Sprintf("changed_paths = %#v, want terminal record paths; fields=%#v", got, fields))
+		gomega.Expect(got[0]).To(gomega.Equal("a.go"), fmt.Sprintf("changed_paths = %#v, want terminal record paths; fields=%#v", got, fields))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion fields ignores unknown plan execute event name", func() {
 	output := `{"type":"idiom.plan_execute.not_real","terminal_class":"success","status":"completed","phase":"complete","review_status":"passed"}`
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
+	{
 
-	if got := CompletionFieldString(fields, "status"); got != "" {
-		t.Fatalf("status = %q, want unknown event ignored; fields=%+v", got, fields)
+		got := CompletionFieldString(fields, "status")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("status = %q, want unknown event ignored; fields=%+v", got, fields))
 	}
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("decision = %q, want blocked for ignored unknown event; fields=%+v", got, fields)
-	}
-}
+	{
 
-func TestPlanExecuteCompletionFieldsBlocksInvalidPlanExecuteEventName(t *testing.T) {
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("decision = %q, want blocked for ignored unknown event; fields=%+v", got, fields))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion fields blocks invalid plan execute event name", func() {
 	output := fmt.Sprintf(`{"type":%q,"terminal_class":"success","status":"completed","phase":"complete","review_status":"passed"}`,
 		plancontract.PlanExecuteInvalidEventName(plancontract.PlanExecuteEventVerification))
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
+	{
 
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("decision = %q, want blocked for invalid event; fields=%+v", got, fields)
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("decision = %q, want blocked for invalid event; fields=%+v", got, fields))
 	}
-	if got := completionFieldStringSlice(fields, "validation_failures"); len(got) != 1 || got[0] != "invalid_plan_execute_event:verification" {
-		t.Fatalf("validation_failures = %#v, want invalid event marker; fields=%+v", got, fields)
-	}
-}
+	{
 
-func TestPlanExecuteCompletionFieldsTreatsSourceSatisfiedEventAsEvidenceOnly(t *testing.T) {
+		got := completionFieldStringSlice(fields, "validation_failures")
+		gomega.Expect(got).To(gomega.HaveLen(1), fmt.Sprintf("validation_failures = %#v, want invalid event marker; fields=%+v", got, fields))
+		gomega.Expect(got[0]).To(gomega.Equal("invalid_plan_execute_event:verification"), fmt.Sprintf("validation_failures = %#v, want invalid event marker; fields=%+v", got, fields))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion fields treats source satisfied event as evidence only", func() {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.source_satisfied","source_satisfied_evidence_paths":["pkg/feature.go"],"reason":"planner reported requested final state already present"}`,
 	}, "\n")
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
+	{
 
-	if got := CompletionFieldString(fields, "status"); got != "" {
-		t.Fatalf("status = %q, want no terminal status from intermediate source_satisfied event; fields=%+v", got, fields)
+		got := CompletionFieldString(fields, "status")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("status = %q, want no terminal status from intermediate source_satisfied event; fields=%+v", got, fields))
+	}
+	{
+
+		got := CompletionFieldString(fields, "outcome")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("outcome = %q, want no terminal outcome from intermediate source_satisfied event; fields=%+v", got, fields))
+	}
+	{
+
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("terminal class = %q, want blocked without terminal_completion record; fields=%+v", got, fields))
+	}
+	{
+
+		got := completionFieldStringSlice(fields, "source_satisfied_evidence_paths")
+		gomega.Expect(got).To(gomega.HaveLen(1), fmt.Sprintf("source satisfied evidence paths = %#v", got))
+		gomega.Expect(got[0]).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("source satisfied evidence paths = %#v", got))
 	}
 
-	if got := CompletionFieldString(fields, "outcome"); got != "" {
-		t.Fatalf("outcome = %q, want no terminal outcome from intermediate source_satisfied event; fields=%+v", got, fields)
-	}
-
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("terminal class = %q, want blocked without terminal_completion record; fields=%+v", got, fields)
-	}
-
-	if got := completionFieldStringSlice(fields, "source_satisfied_evidence_paths"); len(got) != 1 || got[0] != "pkg/feature.go" {
-		t.Fatalf("source satisfied evidence paths = %#v", got)
-	}
-}
-
-func TestPlanExecuteCompletionFieldsPrefersLaterConcreteReviewRepairState(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields prefers later concrete review repair state", func() {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.resume_state_saved","ts":"2026-06-07T12:00:00Z","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact"}`,
 		`{"type":"idiom.plan_execute.review_repair_blocked","ts":"2026-06-07T12:01:00Z","state_path":".idiom/plan-execute/sessions/active.json","phase":"review_repair","status":"blocked","review_status":"blocked","failure_kind":"review_repair_blocked","failure_reason":"review repair remained blocked","changed_paths":["internal/surfaces/tui/app/feature.go"]}`,
@@ -231,18 +254,19 @@ func TestPlanExecuteCompletionFieldsPrefersLaterConcreteReviewRepairState(t *tes
 		"failure_reason": "review repair remained blocked",
 		"progress_path":  ".idiom/plan-execute/sessions/active.json",
 	} {
-		if got := fmt.Sprint(fields[key]); got != want {
-			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		{
+			got := fmt.Sprint(fields[key])
+			gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("%s = %q, want %q; fields=%+v", key, got, want, fields))
 		}
+
 	}
 
 	changed, _ := fields["changed_paths"].([]string)
-	if len(changed) != 1 || changed[0] != "internal/surfaces/tui/app/feature.go" {
-		t.Fatalf("changed_paths = %#v, want active changed path; fields=%+v", fields["changed_paths"], fields)
-	}
-}
+	gomega.Expect(changed).To(gomega.HaveLen(1), fmt.Sprintf("changed_paths = %#v, want active changed path; fields=%+v", fields["changed_paths"], fields))
+	gomega.Expect(changed[0]).To(gomega.Equal("internal/surfaces/tui/app/feature.go"), fmt.Sprintf("changed_paths = %#v, want active changed path; fields=%+v", fields["changed_paths"], fields))
 
-func TestPlanExecuteCompletionFieldsPreservesRecoverySidecarMetadata(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields preserves recovery sidecar metadata", func() {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.resume_state_saved","ts":"2026-06-07T12:00:00Z","state_path":".idiom/plan-execute/sessions/pe.json","phase":"planning","status":"failed","failure_kind":"missing_edit_path_without_new_file_authorization","failure_reason":"plan would create missing edit path without new-file authorization"}`,
 		`{"type":"idiom.plan_execute.recovery_failure_record_written","ts":"2026-06-07T12:00:01Z","failure_id":"failure-123","failure_kind":"missing_edit_path_without_new_file_authorization","record_path":".idiom/recovery/failures/failure-123.json","next_valid_action":"review_decomposition"}`,
@@ -259,77 +283,90 @@ func TestPlanExecuteCompletionFieldsPreservesRecoverySidecarMetadata(t *testing.
 		"packet_path":       ".idiom/recovery/packets/failure-123.json",
 		"next_valid_action": "review_decomposition",
 	} {
-		if got := fmt.Sprint(fields[key]); got != want {
-			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		{
+			got := fmt.Sprint(fields[key])
+			gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("%s = %q, want %q; fields=%+v", key, got, want, fields))
 		}
-	}
-}
 
-func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("plan execute completion fields later completed state clears earlier failure", func() {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","exit_code":1,"failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact","failure_id":"failure-123","record_path":".idiom/recovery/failures/failure-123.json","packet_path":".idiom/recovery/failure-123/packet.json","next_valid_action":"review_decomposition","validation_failures":["exit_code_nonzero"],"source_sanity":[{"kind":"source_sanity","path":"pkg/feature.go","status":"failed","error":"compile failed"}],"verification_rejects":[{"command":"go test ./pkg","reason":"unsupported_verification_command"}]}`,
 		`{"type":"idiom.plan_execute.completed","state_path":".idiom/plan-execute/sessions/active.json","phase":"complete","status":"completed","review_status":"skipped","review_repair_skipped":true}`,
 	}, "\n")
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
+	{
 
-	if got := fmt.Sprint(fields["status"]); got != "completed" {
-		t.Fatalf("status = %q, want completed; fields=%+v", got, fields)
+		got := fmt.Sprint(fields["status"])
+		gomega.Expect(got).To(gomega.Equal("completed"), fmt.Sprintf("status = %q, want completed; fields=%+v", got, fields))
 	}
+	{
 
-	if got := CompletionFieldString(fields, "failure_kind"); got != "" {
-		t.Fatalf("failure_kind = %q, want cleared earlier planning failure; fields=%+v", got, fields)
+		got := CompletionFieldString(fields, "failure_kind")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("failure_kind = %q, want cleared earlier planning failure; fields=%+v", got, fields))
 	}
+	{
 
-	if got, ok := fields["exit_code"]; ok {
-		t.Fatalf("exit_code = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+		got, ok := fields["exit_code"]
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("exit_code = %#v, want cleared earlier planning failure; fields=%+v", got, fields))
 	}
+	{
 
-	if got, ok := fields["validation_failures"]; ok {
-		t.Fatalf("validation_failures = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+		got, ok := fields["validation_failures"]
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("validation_failures = %#v, want cleared earlier planning failure; fields=%+v", got, fields))
 	}
+	{
 
-	if got, ok := fields["verification_rejects"]; ok {
-		t.Fatalf("verification_rejects = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+		got, ok := fields["verification_rejects"]
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("verification_rejects = %#v, want cleared earlier planning failure; fields=%+v", got, fields))
 	}
+	{
 
-	if got, ok := fields["source_sanity"]; ok {
-		t.Fatalf("source_sanity = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+		got, ok := fields["source_sanity"]
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("source_sanity = %#v, want cleared earlier planning failure; fields=%+v", got, fields))
 	}
 
 	for _, key := range []string{"failure_id", "record_path", "packet_path", "next_valid_action"} {
-		if got, ok := fields[key]; ok {
-			t.Fatalf("%s = %#v, want cleared earlier planning failure; fields=%+v", key, got, fields)
+		{
+			got, ok := fields[key]
+			gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("%s = %#v, want cleared earlier planning failure; fields=%+v", key, got, fields))
 		}
+
+	}
+	{
+
+		got := fmt.Sprint(fields["progress_path"])
+		gomega.Expect(got).To(gomega.Equal(".idiom/plan-execute/sessions/active.json"), fmt.Sprintf("progress_path = %q, want active progress path; fields=%+v", got, fields))
+	}
+	{
+
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionCompleted), fmt.Sprintf("terminal class = %q, want completed; fields=%+v", got, fields))
 	}
 
-	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
-		t.Fatalf("progress_path = %q, want active progress path; fields=%+v", got, fields)
-	}
-
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
-		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
-	}
-}
-
-func TestPlanExecuteCompletionFieldsKeepsTerminalCompletionSourceSatisfied(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields keeps terminal completion source satisfied", func() {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.completed","status":"completed","phase":"review_repair"}`,
 		`{"type":"idiom.plan_execute.terminal_completion","terminal_class":"success","status":"source-satisfied","outcome":"source_satisfied","phase":"complete","required_edit_paths":["pkg/feature.go"],"source_satisfied_evidence_paths":["pkg/feature.go"],"source_satisfied_evidence":[{"path":"pkg/feature.go","kind":"harness_observed_source"}]}`,
 	}, "\n")
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
+	{
 
-	if got := CompletionFieldString(fields, "status"); got != "source-satisfied" {
-		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
+		got := CompletionFieldString(fields, "status")
+		gomega.Expect(got).To(gomega.Equal("source-satisfied"), fmt.Sprintf("status = %q, want source-satisfied; fields=%+v", got, fields))
+	}
+	{
+
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionCompleted), fmt.Sprintf("terminal class = %q, want completed; fields=%+v", got, fields))
 	}
 
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
-		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
-	}
-}
-
-func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields preserves scope contract without generic alias", func() {
 	output := `{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","scope_contract_id":"scope-123","scope_contract_hash":"scope-hash-123"}`
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
@@ -338,17 +375,21 @@ func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t 
 		"scope_contract_id":   "scope-123",
 		"scope_contract_hash": "scope-hash-123",
 	} {
-		if got := CompletionFieldString(fields, key); got != want {
-			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		{
+			got := CompletionFieldString(fields, key)
+			gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("%s = %q, want %q; fields=%+v", key, got, want, fields))
 		}
-	}
 
-	if got := CompletionFieldString(fields, "contract_id"); got != "" {
-		t.Fatalf("contract_id = %q, want empty generic contract id for scope-only record; fields=%+v", got, fields)
 	}
+	{
 
-	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
-		t.Fatalf("contract_hash = %q, want empty generic contract hash for scope-only record; fields=%+v", got, fields)
+		got := CompletionFieldString(fields, "contract_id")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("contract_id = %q, want empty generic contract id for scope-only record; fields=%+v", got, fields))
+	}
+	{
+
+		got := CompletionFieldString(fields, "contract_hash")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("contract_hash = %q, want empty generic contract hash for scope-only record; fields=%+v", got, fields))
 	}
 
 	fromFields := PlanExecuteCompletionSummaryFromFields(map[string]any{
@@ -356,40 +397,47 @@ func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t 
 		"scope_contract_id":   "scope-fields",
 		"scope_contract_hash": "scope-fields-hash",
 	}).Fields()
-	if got := CompletionFieldString(fromFields, "contract_id"); got != "" {
-		t.Fatalf("contract_id = %q, want empty generic contract id for scope-only fields; fields=%+v", got, fromFields)
+	{
+		got := CompletionFieldString(fromFields, "contract_id")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("contract_id = %q, want empty generic contract id for scope-only fields; fields=%+v", got, fromFields))
+	}
+	{
+
+		got := CompletionFieldString(fromFields, "contract_hash")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("contract_hash = %q, want empty generic contract hash for scope-only fields; fields=%+v", got, fromFields))
+	}
+	{
+
+		got := CompletionFieldString(fromFields, "scope_contract_id")
+		gomega.Expect(got).To(gomega.Equal("scope-fields"), fmt.Sprintf("scope_contract_id = %q, want scope-fields; fields=%+v", got, fromFields))
+	}
+	{
+
+		got := CompletionFieldString(fromFields, "scope_contract_hash")
+		gomega.Expect(got).To(gomega.Equal("scope-fields-hash"), fmt.Sprintf("scope_contract_hash = %q, want scope-fields-hash; fields=%+v", got, fromFields))
 	}
 
-	if got := CompletionFieldString(fromFields, "contract_hash"); got != "" {
-		t.Fatalf("contract_hash = %q, want empty generic contract hash for scope-only fields; fields=%+v", got, fromFields)
-	}
-
-	if got := CompletionFieldString(fromFields, "scope_contract_id"); got != "scope-fields" {
-		t.Fatalf("scope_contract_id = %q, want scope-fields; fields=%+v", got, fromFields)
-	}
-
-	if got := CompletionFieldString(fromFields, "scope_contract_hash"); got != "scope-fields-hash" {
-		t.Fatalf("scope_contract_hash = %q, want scope-fields-hash; fields=%+v", got, fromFields)
-	}
-}
-
-func TestPlanExecuteCompletionFieldsNormalizesLegacyContractHashToSnapshot(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields normalizes legacy contract hash to snapshot", func() {
 	fields := PlanExecuteCompletionSummaryFromOutput(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","contract_id":"parent-contract","contract_hash":"snapshot-hash-1"}`).Fields()
+	{
 
-	if got := CompletionFieldString(fields, "contract_id"); got != "parent-contract" {
-		t.Fatalf("contract_id = %q, want parent-contract; fields=%+v", got, fields)
+		got := CompletionFieldString(fields, "contract_id")
+		gomega.Expect(got).To(gomega.Equal("parent-contract"), fmt.Sprintf("contract_id = %q, want parent-contract; fields=%+v", got, fields))
+	}
+	{
+
+		got := CompletionFieldString(fields, "snapshot_hash")
+		gomega.Expect(got).To(gomega.Equal("snapshot-hash-1"), fmt.Sprintf("snapshot_hash = %q, want legacy contract_hash normalized; fields=%+v", got, fields))
+	}
+	{
+
+		got := CompletionFieldString(fields, "contract_hash")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("contract_hash = %q, want no parallel contract_hash authority; fields=%+v", got, fields))
 	}
 
-	if got := CompletionFieldString(fields, "snapshot_hash"); got != "snapshot-hash-1" {
-		t.Fatalf("snapshot_hash = %q, want legacy contract_hash normalized; fields=%+v", got, fields)
-	}
-
-	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
-		t.Fatalf("contract_hash = %q, want no parallel contract_hash authority; fields=%+v", got, fields)
-	}
-}
-
-func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion merge and overlay preserve scope contract fields", func() {
 	merged := MergePlanExecuteCompletionSummaries(
 		PlanExecuteCompletionSummary{
 			Status:            "running",
@@ -406,17 +454,21 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *test
 		"scope_contract_id":   "scope-123",
 		"scope_contract_hash": "scope-hash-123",
 	} {
-		if got := CompletionFieldString(merged, key); got != want {
-			t.Fatalf("merged %s = %q, want %q; fields=%+v", key, got, want, merged)
+		{
+			got := CompletionFieldString(merged, key)
+			gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("merged %s = %q, want %q; fields=%+v", key, got, want, merged))
 		}
-	}
 
-	if got := CompletionFieldString(merged, "contract_id"); got != "" {
-		t.Fatalf("merged contract_id = %q, want empty generic contract id; fields=%+v", got, merged)
 	}
+	{
 
-	if got := CompletionFieldString(merged, "contract_hash"); got != "" {
-		t.Fatalf("merged contract_hash = %q, want empty generic contract hash; fields=%+v", got, merged)
+		got := CompletionFieldString(merged, "contract_id")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("merged contract_id = %q, want empty generic contract id; fields=%+v", got, merged))
+	}
+	{
+
+		got := CompletionFieldString(merged, "contract_hash")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("merged contract_hash = %q, want empty generic contract hash; fields=%+v", got, merged))
 	}
 
 	fields := map[string]any{
@@ -430,25 +482,29 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *test
 			"scope_contract_hash": "scope-overlay-hash",
 		}),
 	).Fields()
+	{
 
-	if got := CompletionFieldString(fields, "scope_contract_id"); got != "scope-overlay" {
-		t.Fatalf("overlaid scope_contract_id = %q, want scope-overlay; fields=%+v", got, fields)
+		got := CompletionFieldString(fields, "scope_contract_id")
+		gomega.Expect(got).To(gomega.Equal("scope-overlay"), fmt.Sprintf("overlaid scope_contract_id = %q, want scope-overlay; fields=%+v", got, fields))
+	}
+	{
+
+		got := CompletionFieldString(fields, "scope_contract_hash")
+		gomega.Expect(got).To(gomega.Equal("scope-overlay-hash"), fmt.Sprintf("overlaid scope_contract_hash = %q, want scope-overlay-hash; fields=%+v", got, fields))
+	}
+	{
+
+		got := CompletionFieldString(fields, "contract_id")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("overlaid contract_id = %q, want empty generic contract id; fields=%+v", got, fields))
+	}
+	{
+
+		got := CompletionFieldString(fields, "contract_hash")
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("overlaid contract_hash = %q, want empty generic contract hash; fields=%+v", got, fields))
 	}
 
-	if got := CompletionFieldString(fields, "scope_contract_hash"); got != "scope-overlay-hash" {
-		t.Fatalf("overlaid scope_contract_hash = %q, want scope-overlay-hash; fields=%+v", got, fields)
-	}
-
-	if got := CompletionFieldString(fields, "contract_id"); got != "" {
-		t.Fatalf("overlaid contract_id = %q, want empty generic contract id; fields=%+v", got, fields)
-	}
-
-	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
-		t.Fatalf("overlaid contract_hash = %q, want empty generic contract hash; fields=%+v", got, fields)
-	}
-}
-
-func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion merge and overlay preserve nonzero exit code", func() {
 	merged := MergePlanExecuteCompletionSummaries(
 		PlanExecuteCompletionSummary{
 			Status:        "completed",
@@ -459,12 +515,15 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.
 			ExitCode: 1,
 		},
 	).Fields()
+	{
 
-	if got := merged["exit_code"]; got != 1 {
-		t.Fatalf("merged exit_code = %#v, want 1; fields=%+v", got, merged)
+		got := merged["exit_code"]
+		gomega.Expect(got).To(gomega.Equal(1), fmt.Sprintf("merged exit_code = %#v, want 1; fields=%+v", got, merged))
 	}
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("merged terminal class = %q, want blocked; fields=%+v", got, merged)
+	{
+
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("merged terminal class = %q, want blocked; fields=%+v", got, merged))
 	}
 
 	fields := map[string]any{
@@ -476,16 +535,19 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.
 		PlanExecuteCompletionSummaryFromFields(fields),
 		PlanExecuteCompletionSummaryFromFields(map[string]any{"exit_code": 1}),
 	).Fields()
+	{
 
-	if got := fields["exit_code"]; got != 1 {
-		t.Fatalf("overlaid exit_code = %#v, want 1; fields=%+v", got, fields)
+		got := fields["exit_code"]
+		gomega.Expect(got).To(gomega.Equal(1), fmt.Sprintf("overlaid exit_code = %#v, want 1; fields=%+v", got, fields))
 	}
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("overlaid terminal class = %q, want blocked; fields=%+v", got, fields)
-	}
-}
+	{
 
-func TestPlanExecuteCompletionMergePreservesSparseValidationFailure(t *testing.T) {
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("overlaid terminal class = %q, want blocked; fields=%+v", got, fields))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion merge preserves sparse validation failure", func() {
 	merged := MergePlanExecuteCompletionSummaries(
 		PlanExecuteCompletionSummary{
 			Status:        "completed",
@@ -496,16 +558,20 @@ func TestPlanExecuteCompletionMergePreservesSparseValidationFailure(t *testing.T
 			ValidationFailures: []string{"exit_code_nonzero"},
 		},
 	).Fields()
+	{
 
-	if got := completionFieldStringSlice(merged, "validation_failures"); len(got) != 1 || got[0] != "exit_code_nonzero" {
-		t.Fatalf("validation_failures = %#v, want sparse failure preserved; fields=%+v", got, merged)
+		got := completionFieldStringSlice(merged, "validation_failures")
+		gomega.Expect(got).To(gomega.HaveLen(1), fmt.Sprintf("validation_failures = %#v, want sparse failure preserved; fields=%+v", got, merged))
+		gomega.Expect(got[0]).To(gomega.Equal("exit_code_nonzero"), fmt.Sprintf("validation_failures = %#v, want sparse failure preserved; fields=%+v", got, merged))
 	}
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
-	}
-}
+	{
 
-func TestPlanExecuteCompletionMergePreservesSparseVerificationReject(t *testing.T) {
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("terminal class = %q, want blocked; fields=%+v", got, merged))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion merge preserves sparse verification reject", func() {
 	merged := MergePlanExecuteCompletionSummaries(
 		PlanExecuteCompletionSummary{
 			Status:        "completed",
@@ -521,15 +587,16 @@ func TestPlanExecuteCompletionMergePreservesSparseVerificationReject(t *testing.
 	).Fields()
 
 	rejects, _ := merged["verification_rejects"].([]plancontract.VerificationReject)
-	if len(rejects) != 1 || rejects[0].Command != "go test ./pkg" {
-		t.Fatalf("verification_rejects = %#v, want sparse reject preserved; fields=%+v", merged["verification_rejects"], merged)
-	}
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
-	}
-}
+	gomega.Expect(rejects).To(gomega.HaveLen(1), fmt.Sprintf("verification_rejects = %#v, want sparse reject preserved; fields=%+v", merged["verification_rejects"], merged))
+	gomega.Expect(rejects[0].Command).To(gomega.Equal("go test ./pkg"), fmt.Sprintf("verification_rejects = %#v, want sparse reject preserved; fields=%+v", merged["verification_rejects"], merged))
+	{
 
-func TestPlanExecuteCompletionMergePreservesSparseSourceSanityFailure(t *testing.T) {
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("terminal class = %q, want blocked; fields=%+v", got, merged))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion merge preserves sparse source sanity failure", func() {
 	merged := MergePlanExecuteCompletionSummaries(
 		PlanExecuteCompletionSummary{
 			Status:        "completed",
@@ -547,23 +614,25 @@ func TestPlanExecuteCompletionMergePreservesSparseSourceSanityFailure(t *testing
 	).Fields()
 
 	checks, _ := merged["source_sanity"].([]plancontract.PhaseEvidenceCheck)
-	if len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
-		t.Fatalf("source_sanity = %#v, want sparse failure preserved; fields=%+v", merged["source_sanity"], merged)
-	}
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
-	}
-}
+	gomega.Expect(checks).To(gomega.HaveLen(1), fmt.Sprintf("source_sanity = %#v, want sparse failure preserved; fields=%+v", merged["source_sanity"], merged))
+	gomega.Expect(checks[0].Path).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("source_sanity = %#v, want sparse failure preserved; fields=%+v", merged["source_sanity"], merged))
+	{
 
-func TestPlanExecuteCompletionFieldsTrustsTerminalAcceptanceEvidence(t *testing.T) {
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(merged, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("terminal class = %q, want blocked; fields=%+v", got, merged))
+	}
+
+})
+var _ = ginkgo.It("plan execute completion fields trusts terminal acceptance evidence", func() {
 	fields := PlanExecuteCompletionSummaryFromOutput(`{"type":"idiom.plan_execute.terminal_completion","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`).Fields()
+	{
 
-	if got := fields["acceptance_evidence_trusted"]; got != true {
-		t.Fatalf("acceptance_evidence_trusted = %#v, want true; fields=%+v", got, fields)
+		got := fields["acceptance_evidence_trusted"]
+		gomega.Expect(got).To(gomega.Equal(true), fmt.Sprintf("acceptance_evidence_trusted = %#v, want true; fields=%+v", got, fields))
 	}
-}
 
-func TestTrustObservedPlanExecuteCompletionFieldsMarksProducerTrust(t *testing.T) {
+})
+var _ = ginkgo.It("trust observed plan execute completion fields marks producer trust", func() {
 	fields := map[string]any{
 		"status":                  "completed",
 		"terminal_class":          "completed",
@@ -572,14 +641,14 @@ func TestTrustObservedPlanExecuteCompletionFieldsMarksProducerTrust(t *testing.T
 	}
 
 	TrustObservedPlanExecuteCompletionFields(fields)
+	{
 
-	if got := fields["acceptance_evidence_trusted"]; got != true {
-		t.Fatalf("observed terminal completion should trust acceptance evidence; fields=%+v", fields)
+		got := fields["acceptance_evidence_trusted"]
+		gomega.Expect(got).To(gomega.Equal(true), fmt.Sprintf("observed terminal completion should trust acceptance evidence; fields=%+v", fields))
 	}
 
-}
-
-func TestTrustObservedPlanExecuteCompletionFieldsDoesNotRegisterFailedTerminal(t *testing.T) {
+})
+var _ = ginkgo.It("trust observed plan execute completion fields does not register failed terminal", func() {
 	fields := map[string]any{
 		"status":                  "failed",
 		"terminal_class":          "failed",
@@ -587,22 +656,23 @@ func TestTrustObservedPlanExecuteCompletionFieldsDoesNotRegisterFailedTerminal(t
 	}
 
 	TrustObservedPlanExecuteCompletionFields(fields)
+	{
 
-	if got := fields["acceptance_evidence_trusted"]; got == true {
-		t.Fatalf("failed terminal completion should not trust acceptance evidence; fields=%+v", fields)
+		got := fields["acceptance_evidence_trusted"]
+		gomega.Expect(got).NotTo(gomega.Equal(true), fmt.Sprintf("failed terminal completion should not trust acceptance evidence; fields=%+v", fields))
 	}
 
-}
-
-func TestPlanExecuteCompletionFieldsDoesNotTrustLegacyAcceptanceEvidence(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields does not trust legacy acceptance evidence", func() {
 	fields := PlanExecuteCompletionSummaryFromOutput(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`).Fields()
+	{
 
-	if got := fields["acceptance_evidence_trusted"]; got == true {
-		t.Fatalf("legacy completion should not trust acceptance evidence; fields=%+v", fields)
+		got := fields["acceptance_evidence_trusted"]
+		gomega.Expect(got).NotTo(gomega.Equal(true), fmt.Sprintf("legacy completion should not trust acceptance evidence; fields=%+v", fields))
 	}
-}
 
-func TestPlanExecuteCompletionSummaryMergeReplacesSourceSanityEvidence(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion summary merge replaces source sanity evidence", func() {
 	fields := map[string]any{
 		"status": "running",
 		"source_sanity": []any{
@@ -623,12 +693,12 @@ func TestPlanExecuteCompletionSummaryMergeReplacesSourceSanityEvidence(t *testin
 	).Fields()
 
 	checks, ok := fields["source_sanity"].([]plancontract.PhaseEvidenceCheck)
-	if !ok || len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
-		t.Fatalf("source_sanity overlay = %#v, want only current terminal evidence; fields=%+v", fields["source_sanity"], fields)
-	}
-}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("source_sanity overlay = %#v, want only current terminal evidence; fields=%+v", fields["source_sanity"], fields))
+	gomega.Expect(checks).To(gomega.HaveLen(1), fmt.Sprintf("source_sanity overlay = %#v, want only current terminal evidence; fields=%+v", fields["source_sanity"], fields))
+	gomega.Expect(checks[0].Path).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("source_sanity overlay = %#v, want only current terminal evidence; fields=%+v", fields["source_sanity"], fields))
 
-func TestPlanExecuteCompletionSummaryMergeReplacesAcceptanceEvidence(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion summary merge replaces acceptance evidence", func() {
 	fields := map[string]any{
 		"status":                      "running",
 		"acceptance_evidence_ids":     []any{"stale-acceptance"},
@@ -642,17 +712,19 @@ func TestPlanExecuteCompletionSummaryMergeReplacesAcceptanceEvidence(t *testing.
 			"phase":  "complete",
 		}),
 	).Fields()
+	{
 
-	if _, ok := fields["acceptance_evidence_ids"]; ok {
-		t.Fatalf("stale acceptance_evidence_ids survived overlay: fields=%+v", fields)
+		_, ok := fields["acceptance_evidence_ids"]
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("stale acceptance_evidence_ids survived overlay: fields=%+v", fields))
+	}
+	{
+
+		_, ok := fields["acceptance_evidence_trusted"]
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("stale acceptance_evidence_trusted survived overlay: fields=%+v", fields))
 	}
 
-	if _, ok := fields["acceptance_evidence_trusted"]; ok {
-		t.Fatalf("stale acceptance_evidence_trusted survived overlay: fields=%+v", fields)
-	}
-}
-
-func TestPlanExecuteCompletionSummaryMergeReplacesWriteAllowedPaths(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion summary merge replaces write allowed paths", func() {
 	fields := map[string]any{
 		"status":              "running",
 		"write_allowed_paths": []any{"pkg/stale.go"},
@@ -668,12 +740,12 @@ func TestPlanExecuteCompletionSummaryMergeReplacesWriteAllowedPaths(t *testing.T
 	).Fields()
 
 	paths, ok := fields["write_allowed_paths"].([]string)
-	if !ok || len(paths) != 1 || paths[0] != "pkg/feature.go" {
-		t.Fatalf("write_allowed_paths overlay = %#v, want only current terminal envelope; fields=%+v", fields["write_allowed_paths"], fields)
-	}
-}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("write_allowed_paths overlay = %#v, want only current terminal envelope; fields=%+v", fields["write_allowed_paths"], fields))
+	gomega.Expect(paths).To(gomega.HaveLen(1), fmt.Sprintf("write_allowed_paths overlay = %#v, want only current terminal envelope; fields=%+v", fields["write_allowed_paths"], fields))
+	gomega.Expect(paths[0]).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("write_allowed_paths overlay = %#v, want only current terminal envelope; fields=%+v", fields["write_allowed_paths"], fields))
 
-func TestPlanExecuteCompletionSummaryMergeNestedFailureOverridesWrapperCompleted(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion summary merge nested failure overrides wrapper completed", func() {
 	fields := map[string]any{
 		"status":        "completed",
 		"phase":         "complete",
@@ -697,39 +769,43 @@ func TestPlanExecuteCompletionSummaryMergeNestedFailureOverridesWrapperCompleted
 		"failure_reason": "nested plan-execute failed before handoff",
 		"progress_path":  ".idiom/plan-execute/sessions/nested.json",
 	} {
-		if got := fmt.Sprint(fields[key]); got != want {
-			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		{
+			got := fmt.Sprint(fields[key])
+			gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("%s = %q, want %q; fields=%+v", key, got, want, fields))
 		}
+
+	}
+	{
+
+		got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class
+		gomega.Expect(got).To(gomega.Equal(plancontract.PlanExecuteTerminalDecisionBlocked), fmt.Sprintf("terminal class = %q, want blocked; fields=%+v", got, fields))
 	}
 
-	if got := plancontract.DecidePlanExecuteTerminalCompletionFields(fields, nil).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
-		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
-	}
-}
-
-func TestPlanExecuteCompletionFieldsDegradedInheritsEarlierProgressPath(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields degraded inherits earlier progress path", func() {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/active.json","phase":"executor","status":"running","changed_paths":["internal/surfaces/tui/app/feature.go"]}`,
 		`{"type":"idiom.plan_execute.review_repair_degraded","phase":"review_repair","status":"degraded","review_status":"degraded","failure_kind":"review_model_error","failure_reason":"review model returned invalid JSON"}`,
 	}, "\n")
 
 	fields := PlanExecuteCompletionSummaryFromOutput(output).Fields()
+	{
 
-	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
-		t.Fatalf("progress_path = %q, want inherited path; fields=%+v", got, fields)
+		got := fmt.Sprint(fields["progress_path"])
+		gomega.Expect(got).To(gomega.Equal(".idiom/plan-execute/sessions/active.json"), fmt.Sprintf("progress_path = %q, want inherited path; fields=%+v", got, fields))
 	}
 
 	changed, _ := fields["changed_paths"].([]string)
-	if len(changed) != 1 || changed[0] != "internal/surfaces/tui/app/feature.go" {
-		t.Fatalf("changed_paths = %#v, want inherited changed path; fields=%+v", fields["changed_paths"], fields)
+	gomega.Expect(changed).To(gomega.HaveLen(1), fmt.Sprintf("changed_paths = %#v, want inherited changed path; fields=%+v", fields["changed_paths"], fields))
+	gomega.Expect(changed[0]).To(gomega.Equal("internal/surfaces/tui/app/feature.go"), fmt.Sprintf("changed_paths = %#v, want inherited changed path; fields=%+v", fields["changed_paths"], fields))
+	{
+
+		got := fmt.Sprint(fields["failure_kind"])
+		gomega.Expect(got).To(gomega.Equal("review_model_error"), fmt.Sprintf("failure_kind = %q, want review_model_error; fields=%+v", got, fields))
 	}
 
-	if got := fmt.Sprint(fields["failure_kind"]); got != "review_model_error" {
-		t.Fatalf("failure_kind = %q, want review_model_error; fields=%+v", got, fields)
-	}
-}
-
-func TestPlanExecuteCompletionFieldsPreserveOwnerTerminalProjection(t *testing.T) {
+})
+var _ = ginkgo.It("plan execute completion fields preserve owner terminal projection", func() {
 	summary := PlanExecuteCompletionSummaryFromFields(map[string]any{
 		"type":                             plancontract.PlanExecuteTerminalCompletionRecordType,
 		"status":                           "failed",
@@ -753,13 +829,14 @@ func TestPlanExecuteCompletionFieldsPreserveOwnerTerminalProjection(t *testing.T
 		"acceptance_evidence_claims",
 		"failure_invariants",
 	} {
-		if _, ok := fields[key]; !ok {
-			t.Fatalf("owner terminal field %q was dropped: %#v", key, fields)
+		{
+			_, ok := fields[key]
+			gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("owner terminal field %q was dropped: %#v", key, fields))
 		}
-	}
-}
 
-func TestPlanExecuteRecoveryRetryPromptBuildsAnchorRefreshAddendum(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("plan execute recovery retry prompt builds anchor refresh addendum", func() {
 	prompt, ok := PlanExecuteRecoveryRetryPromptForSummary("implement atom", PlanExecuteCompletionSummaryFromFields(map[string]any{
 		"failure_kind":      "planner_blocked",
 		"failure_reason":    "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h",
@@ -769,9 +846,7 @@ func TestPlanExecuteRecoveryRetryPromptBuildsAnchorRefreshAddendum(t *testing.T)
 			"native/src/simulation/world/collapse_event.h",
 		},
 	}))
-	if !ok {
-		t.Fatal("expected retry prompt")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected retry prompt"))
 
 	for _, want := range []string{
 		"implement atom",
@@ -780,19 +855,19 @@ func TestPlanExecuteRecoveryRetryPromptBuildsAnchorRefreshAddendum(t *testing.T)
 		"First read source for `native/src/simulation/world/collapse_event.h`",
 		"then produce one valid `submit_plan`",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("retry prompt missing %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("retry prompt missing %q:\n%s", want, prompt))
 
-func TestPlanExecuteRecoveryRetryPromptIgnoresHumanBlocker(t *testing.T) {
-	if prompt, ok := PlanExecuteRecoveryRetryPromptForSummary("implement atom", PlanExecuteCompletionSummaryFromFields(map[string]any{
-		"failure_kind":        "planner_blocked",
-		"failure_reason":      "<<QUESTION>>: product owner must clarify scope",
-		"next_valid_action":   "answer_blocker",
-		"required_edit_paths": []any{"docs/feature.md"},
-	})); ok {
-		t.Fatalf("unexpected retry prompt for human blocker:\n%s", prompt)
 	}
-}
+})
+var _ = ginkgo.It("plan execute recovery retry prompt ignores human blocker", func() {
+	{
+		prompt, ok := PlanExecuteRecoveryRetryPromptForSummary("implement atom", PlanExecuteCompletionSummaryFromFields(map[string]any{
+			"failure_kind":        "planner_blocked",
+			"failure_reason":      "<<QUESTION>>: product owner must clarify scope",
+			"next_valid_action":   "answer_blocker",
+			"required_edit_paths": []any{"docs/feature.md"},
+		}))
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("unexpected retry prompt for human blocker:\n%s", prompt))
+	}
+
+})

@@ -32,10 +32,8 @@ type promptExecutionPlan struct {
 	runtimeBrief workerruntime.WorkerRuntimeBrief
 }
 
-// RunPromptOnce is the single entry point every caller uses to send one
-// prompt and get one reply. There are no resume variants, no lane
-// dispatch, no task-memory gates — OpenCode's shape is one loop.
-func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error) {
+// runPromptOnce sends one prompt through the session-owned execution path.
+func (m *promptExecutionSession) runPromptOnce(ctx context.Context, prompt string) (string, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
@@ -53,23 +51,37 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 		return m.runFeaturePlannerCommandOnce(ctx, objective)
 	}
 
-	if m.directPlanExecuteApprovalShouldConsumeOperatorInput(prompt) {
-		return m.runDirectPlanExecuteApprovalAnswerOnce(prompt)
-	}
-
 	m.emitJSONStart(prompt)
 
 	if err := m.ensureServerReady(ctx); err != nil {
-		m.emitJSONError("server_not_ready", err.Error())
+		m.eventStream.emitError("server_not_ready", err.Error())
 
 		return "", err
 	}
 
-	if m.directFeaturePlannerShouldConsumeOperatorInput(prompt) {
+	if directFeaturePlannerShouldConsumeOperatorInput(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), m.directFeaturePlannerSessionID, prompt) {
 		return m.runDirectFeaturePlannerAnswerOnce(ctx, prompt)
 	}
 
 	return m.runStandardPromptOnce(ctx, prompt)
+}
+
+// RunPromptOnce is the synchronous engine boundary used by headless runtime
+// sessions. The turn still executes against the same concrete session type as
+// interactive workers, then projects its durable state back to the engine.
+func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error) {
+	if m == nil {
+		return "", fmt.Errorf("prompt model is not initialized")
+	}
+
+	session := newPromptExecutionSession(ctx, m, m.events, false)
+	answer, err := session.runPromptOnce(session.promptExecutionContext, prompt)
+	m.promptRuntimeCompletionState = clonePromptRuntimeCompletionState(session.promptRuntimeCompletionState)
+	m.backendRuntimeState = session.backendRuntimeState
+	m.messages = cloneChatMessages(session.messages)
+	m.messagesRevision = session.messagesRevision
+
+	return answer, err
 }
 
 func typedPromptCommandObjective(prompt string, command string) (string, bool) {
@@ -83,11 +95,8 @@ func typedPromptCommandObjective(prompt string, command string) (string, bool) {
 	return objective, objective != ""
 }
 
-func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (string, error) {
+func (m *promptExecutionSession) runStandardPromptOnce(ctx context.Context, prompt string) (string, error) {
 	m.lastAssistantReasoningContent = ""
-	if !m.suppressPromptTranscript {
-		m.thoughts.reset()
-	}
 
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
 
@@ -107,7 +116,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 
 	defer restoreRoute()
 
-	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
+	chatOpts := tuneChatOptionsForPlan(chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride), plan)
 
 	chatOpts = applyMaxTokensOverride(chatOpts, m.maxTokensOverride)
 
@@ -117,13 +126,13 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 
 	suppressTranscript := m.suppressPromptTranscript
 	if !suppressTranscript {
-		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
+		m.appendPromptTranscriptMessage(llama.ChatMessage{Role: "user", Content: prompt})
 		m.logMessage("user", prompt)
 	} else if m.debugLogger != nil {
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested prompt (%d chars)", len(prompt)))
 	}
 
-	history := m.requestMessages()
+	history := m.requestMessages(ctx)
 	if suppressTranscript {
 		history = append(history, llama.ChatMessage{Role: "user", Content: prompt})
 	}
@@ -133,7 +142,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 		m.logMessage("active_feature_planner_plan_context", activePlanContext)
 	}
 
-	plan = promptExecutionPlanWithConversationContext(prompt, conversationHistory, plan, m.projectRoot())
+	plan = promptExecutionPlanWithConversationContext(prompt, conversationHistory, plan, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 
 	m.logMessage("thinking_config", samplingSummaryForOptions(chatOpts))
 
@@ -146,7 +155,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 
 	reply, err := m.runAgentTurn(ctx, prompt, history, chatOpts, plan)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -165,7 +174,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 //
 // Detection is conservative and sniffs the MODEL'S OWN refusal language,
 // never the user's prompt — see laneSwitchReferralPatterns.
-func (m *Model) applyLaneSwitchReferralIfAny(prompt, reply string) string {
+func (m *promptExecutionSession) applyLaneSwitchReferralIfAny(prompt, reply string) string {
 	recommended, ok := laneSwitchReferralFromReply(reply)
 	if !ok {
 		return reply
@@ -180,10 +189,10 @@ func (m *Model) applyLaneSwitchReferralIfAny(prompt, reply string) string {
 	return reply
 }
 
-func (m *Model) recordPromptRouteWithoutExecution(prompt string, plan promptExecutionPlan) {
+func (m *promptExecutionSession) recordPromptRouteWithoutExecution(prompt string, plan promptExecutionPlan) {
 	suppressTranscript := m.suppressPromptTranscript
 	if !suppressTranscript {
-		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
+		m.appendPromptTranscriptMessage(llama.ChatMessage{Role: "user", Content: prompt})
 		m.logMessage("user", prompt)
 	} else if m.debugLogger != nil {
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed confirmation prompt (%d chars)", len(prompt)))
@@ -198,7 +207,7 @@ func (m *Model) recordPromptRouteWithoutExecution(prompt string, plan promptExec
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(prompt, plan))
 }
 
-func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt string, plan promptExecutionPlan) func() {
+func (m *promptExecutionSession) applyDirectImplementationPromptRoute(ctx context.Context, prompt string, plan promptExecutionPlan) func() {
 	if m == nil {
 		return func() {}
 	}
@@ -214,7 +223,7 @@ func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt
 	return m.applyExecutorPromptRoute(ctx, "implementation direct runner", false)
 }
 
-func (m *Model) recoverDirectImplementationContext(prompt string, plan promptExecutionPlan) promptExecutionPlan {
+func (m *promptExecutionSession) recoverDirectImplementationContext(prompt string, plan promptExecutionPlan) promptExecutionPlan {
 	if !m.shouldPreloadDirectImplementationContext(prompt, plan) {
 		return plan
 	}
@@ -225,7 +234,7 @@ func (m *Model) recoverDirectImplementationContext(prompt string, plan promptExe
 		Mode:        "implement",
 		Title:       prompt,
 		Brief:       prompt,
-		ProjectRoot: m.projectRoot(),
+		ProjectRoot: resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace),
 		Limit:       8,
 		Timeout:     directImplementContextPreloadTimeout,
 	}, &diagnostics, planexecuteadapters.Dependencies().RunPromptContextTool)
@@ -249,7 +258,7 @@ func (m *Model) recoverDirectImplementationContext(prompt string, plan promptExe
 	return plan
 }
 
-func (m *Model) shouldPreloadDirectImplementationContext(prompt string, plan promptExecutionPlan) bool {
+func (m *promptExecutionSession) shouldPreloadDirectImplementationContext(prompt string, plan promptExecutionPlan) bool {
 	if m == nil || m.workspace == nil {
 		return false
 	}
@@ -272,7 +281,7 @@ func (m *Model) shouldPreloadDirectImplementationContext(prompt string, plan pro
 		return false
 	}
 
-	return strings.TrimSpace(m.cfg.Chat.ImplementationDispatch) == "plan_execute"
+	return m.cfg.Chat.ImplementationDispatch.IsPlanExecute()
 }
 
 // directImplementContextPreloadTimeout bounds the optional context_pack
@@ -329,7 +338,7 @@ func directContextPacketLines(section string) []string {
 	return lines
 }
 
-func (m *Model) finishPromptOnceReply(reply string) string {
+func (m *promptExecutionSession) finishPromptOnceReply(reply string) string {
 	m.takeLastAssistantReasoningContent()
 
 	if m.suppressPromptTranscript {
@@ -358,25 +367,15 @@ func (m *Model) finishPromptOnceReply(reply string) string {
 		reply = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
 	}
 
-	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply})
+	m.appendPromptTranscriptMessage(llama.ChatMessage{Role: "assistant", Content: reply})
 	m.logMessage("assistant", reply)
 	m.emitJSONFinal(reply)
 
 	return reply
 }
 
-// currentMode resolves the Mode selected for this session. Defaults to
-// BuildMode if the user hasn't picked one.
-func (m *Model) currentMode() modepolicy.Mode {
-	if strings.TrimSpace(m.agentModeName) != "" {
-		return modepolicy.ModeOrDefault(m.agentModeName)
-	}
-
-	return modepolicy.ModeOrDefault(m.cfg.Chat.AgentMode)
-}
-
-func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) promptExecutionPlan {
-	mode := m.currentMode()
+func (m *promptExecutionSession) buildPromptExecutionPlan(ctx context.Context, prompt string) promptExecutionPlan {
+	mode := currentMode(m.agentModeName, m.cfg.Chat.AgentMode)
 	if family := strings.TrimSpace(m.forcedTaskFamily); family != "" {
 		route := normalizeTurnRoutePlan(turnRoutePlan{
 			Family: family,
@@ -438,7 +437,7 @@ func routePathLooksLikeGDScript(path string) bool {
 	return strings.EqualFold(filepath.Ext(strings.TrimSpace(filepath.ToSlash(path))), ".gd")
 }
 
-func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutionPlan {
+func (m *promptExecutionSession) planExecuteCommandExecutionPlan(objective string) promptExecutionPlan {
 	mode := modepolicy.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
 		Family:      string(autonomy.TaskFamilyPlanThenExecutePlanner),
@@ -453,7 +452,7 @@ func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutio
 	}
 }
 
-func (m *Model) implementCommandExecutionPlan(objective string) promptExecutionPlan {
+func (m *promptExecutionSession) implementCommandExecutionPlan(objective string) promptExecutionPlan {
 	mode := modepolicy.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
 		Family:      "implementation",
@@ -468,14 +467,10 @@ func (m *Model) implementCommandExecutionPlan(objective string) promptExecutionP
 	}
 }
 
-func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string) (string, error) {
+func (m *promptExecutionSession) runPlanExecuteCommandOnce(ctx context.Context, objective string) (string, error) {
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
 		return "", fmt.Errorf("plan-execute objective is required")
-	}
-
-	if !m.suppressPromptTranscript {
-		m.thoughts.reset()
 	}
 
 	m.lastPlanExecuteRunResult = nil
@@ -488,13 +483,13 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 
 	suppressTranscript := m.suppressPromptTranscript
 	if !suppressTranscript {
-		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: objective})
+		m.appendPromptTranscriptMessage(llama.ChatMessage{Role: "user", Content: objective})
 		m.logMessage("user", objective)
 	} else if m.debugLogger != nil {
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested plan-execute command (%d chars)", len(objective)))
 	}
 
-	plan = promptExecutionPlanWithConversationContext(objective, m.conversationFollowupHistory(objective, suppressTranscript), plan, m.projectRoot())
+	plan = promptExecutionPlanWithConversationContext(objective, m.conversationFollowupHistory(objective, suppressTranscript), plan, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
 		m.logMessage("route_plan", summary)
@@ -505,7 +500,7 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 
 	reply, err := m.runImplementationViaPlanExecute(ctx, objective, plan)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -513,20 +508,16 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 	return m.finishPromptOnceReply(reply), nil
 }
 
-func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (string, error) {
+func (m *promptExecutionSession) runImplementCommandOnce(ctx context.Context, objective string) (string, error) {
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
 		return "", fmt.Errorf("implement objective is required")
 	}
 
-	if !m.suppressPromptTranscript {
-		m.thoughts.reset()
-	}
-
 	m.emitJSONStart(objective)
 
 	if err := m.ensureServerReady(ctx); err != nil {
-		m.emitJSONError("server_not_ready", err.Error())
+		m.eventStream.emitError("server_not_ready", err.Error())
 
 		return "", err
 	}
@@ -539,7 +530,7 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 
 	defer restoreRoute()
 
-	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
+	chatOpts := tuneChatOptionsForPlan(chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride), plan)
 
 	chatOpts = applyMaxTokensOverride(chatOpts, m.maxTokensOverride)
 
@@ -549,18 +540,18 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 
 	suppressTranscript := m.suppressPromptTranscript
 	if !suppressTranscript {
-		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: objective})
+		m.appendPromptTranscriptMessage(llama.ChatMessage{Role: "user", Content: objective})
 		m.logMessage("user", objective)
 	} else if m.debugLogger != nil {
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested implement command (%d chars)", len(objective)))
 	}
 
-	history := m.requestMessages()
+	history := m.requestMessages(ctx)
 	if suppressTranscript {
 		history = append(history, llama.ChatMessage{Role: "user", Content: objective})
 	}
 
-	plan = promptExecutionPlanWithConversationContext(objective, m.conversationFollowupHistory(objective, suppressTranscript), plan, m.projectRoot())
+	plan = promptExecutionPlanWithConversationContext(objective, m.conversationFollowupHistory(objective, suppressTranscript), plan, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 
 	m.logMessage("thinking_config", samplingSummaryForOptions(chatOpts))
 
@@ -573,7 +564,7 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 
 	reply, err := m.runAgentTurn(ctx, objective, history, chatOpts, plan)
 	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
+		m.eventStream.emitError("run_failed", err.Error())
 
 		return "", err
 	}
@@ -581,7 +572,7 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 	return m.finishPromptOnceReply(reply), nil
 }
 
-func (m *Model) conversationFollowupHistory(currentPrompt string, suppressTranscript bool) []llama.ChatMessage {
+func (m *promptExecutionSession) conversationFollowupHistory(currentPrompt string, suppressTranscript bool) []llama.ChatMessage {
 	if m == nil {
 		return nil
 	}
@@ -599,11 +590,11 @@ func (m *Model) conversationFollowupHistory(currentPrompt string, suppressTransc
 	return modelPayloadHistory(history)
 }
 
-func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerruntime.WorkerRuntimeBrief {
-	return m.runtimeBriefForRouteMode(route, m.currentMode(), prompt)
+func (m *promptExecutionSession) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerruntime.WorkerRuntimeBrief {
+	return m.runtimeBriefForRouteMode(route, currentMode(m.agentModeName, m.cfg.Chat.AgentMode), prompt)
 }
 
-func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
+func (m *promptExecutionSession) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
 	route = normalizeTurnRoutePlan(route, mode)
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedToolsForTaskFamily(route.Family))
 	if m != nil && m.planExecuteActive && strings.TrimSpace(m.forcedTaskFamily) == string(autonomy.TaskFamilyDirectQuestion) {
@@ -720,7 +711,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 		brief.Readiness.OpenObligations = appendUniqueBriefStrings(brief.Readiness.OpenObligations, m.forcedReadinessOpenObligations...)
 	}
 
-	if plan := defaultVerificationPlan(m.projectRoot()); len(brief.VerificationPlan) == 0 {
+	if plan := defaultVerificationPlan(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace)); len(brief.VerificationPlan) == 0 {
 		brief.VerificationPlan = plan
 	}
 
@@ -797,7 +788,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 	return brief
 }
 
-func (m *Model) workspaceHasGitMetadata() bool {
+func (m *promptExecutionSession) workspaceHasGitMetadata() bool {
 	if m == nil || m.workspace == nil {
 		return false
 	}
@@ -883,7 +874,7 @@ func runtimeBriefHasNonPromptEditSetObligation(obligations plancontract.EditSetO
 	return false
 }
 
-func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (plancontract.PlanScopeContract, bool) {
+func (m *promptExecutionSession) planExecuteRuntimeScopeContract(route turnRoutePlan) (plancontract.PlanScopeContract, bool) {
 	if m == nil || !m.planExecuteActive || !workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 		return plancontract.PlanScopeContract{}, false
 	}
@@ -1061,7 +1052,7 @@ func applyMaxTokensOverride(opts llama.ChatOptions, maxTokens int) llama.ChatOpt
 	return opts
 }
 
-func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
+func (m *promptExecutionSession) greenfieldCreationRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
 	if m == nil || m.workspace == nil || m.suppressGreenfieldConfirmation {
 		return false
 	}
@@ -1084,7 +1075,7 @@ func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promp
 	return !hasReadableWorkspaceFiles(m.workspace.Root())
 }
 
-func (m *Model) readOnlyEditRequestRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
+func (m *promptExecutionSession) readOnlyEditRequestRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
 	if m == nil || m.workspace == nil {
 		return false
 	}

@@ -1,6 +1,7 @@
 package ranker
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -25,8 +26,9 @@ type Deps struct {
 }
 
 type nudgeOptions struct {
-	Config string
-	Note   string
+	Config    string
+	Note      string
+	RequestID string
 }
 
 func Run(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Deps) int {
@@ -73,10 +75,10 @@ func (deps Deps) withDefaults() Deps {
 
 func printUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
-	fmt.Fprintln(stderr, "  idiom ranker boost    [--config path] [--note text] <file> [<file> ...]")
-	fmt.Fprintln(stderr, "  idiom ranker penalize [--config path] [--note text] <file> [<file> ...]")
-	fmt.Fprintln(stderr, "  idiom ranker reset    [--config path]")
-	fmt.Fprintln(stderr, "  idiom ranker rollback [--config path] --event event_id")
+	fmt.Fprintln(stderr, "  idiom ranker boost    [--config path] [--note text] [--request-id id] <file> [<file> ...]")
+	fmt.Fprintln(stderr, "  idiom ranker penalize [--config path] [--note text] [--request-id id] <file> [<file> ...]")
+	fmt.Fprintln(stderr, "  idiom ranker reset    [--config path] [--request-id id]")
+	fmt.Fprintln(stderr, "  idiom ranker rollback [--config path] [--request-id id] --event event_id")
 	fmt.Fprintln(stderr, "  idiom ranker show     [--config path] [--json]")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Manually nudge per-file ranker weights stored under .idiom/ranker/weights.json.")
@@ -92,6 +94,7 @@ func runNudge(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.Config, "config", opts.Config, "path to config file")
 	fs.StringVar(&opts.Note, "note", "", "optional note recorded in the learning log")
+	fs.StringVar(&opts.RequestID, "request-id", "", "stable caller correlation used to make retries idempotent")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -118,33 +121,15 @@ func runNudge(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.
 		return 1
 	}
 
-	updateOpts := comprehension.UpdateLearnedWeightsOptions{}
-
-	switch action {
-	case "boost":
-		updateOpts.Boost = files
-	case "penalize":
-		updateOpts.Penalty = files
-	default:
+	if action != "boost" && action != "penalize" {
 		fmt.Fprintf(stderr, "unknown ranker nudge action: %s\n", action)
 
 		return 2
 	}
 
-	weights, err := comprehension.UpdateLearnedWeights(root, updateOpts)
+	_, weights, err := comprehension.ApplyManualRankerNudge(context.Background(), root, action, files, opts.Note, opts.RequestID)
 	if err != nil {
 		fmt.Fprintf(stderr, "ranker %s failed: %v\n", action, err)
-
-		return 1
-	}
-
-	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
-		Source: "cli",
-		Action: action,
-		Files:  files,
-		Note:   opts.Note,
-	}); err != nil {
-		fmt.Fprintf(stderr, "ranker %s log append failed: %v\n", action, err)
 
 		return 1
 	}
@@ -159,6 +144,7 @@ func runReset(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.
 	fs := flag.NewFlagSet("idiom ranker reset", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.Config, "config", opts.Config, "path to config file")
+	fs.StringVar(&opts.RequestID, "request-id", "", "stable caller correlation used to make retries idempotent")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -184,17 +170,8 @@ func runReset(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.
 		return 1
 	}
 
-	if err := comprehension.SaveLearnedWeights(root, map[string]float64{}); err != nil {
+	if _, err := comprehension.ResetLearnedRankerWeights(context.Background(), root, opts.RequestID); err != nil {
 		fmt.Fprintf(stderr, "ranker reset failed: %v\n", err)
-
-		return 1
-	}
-
-	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
-		Source: "cli",
-		Action: "reset",
-	}); err != nil {
-		fmt.Fprintf(stderr, "ranker reset log append failed: %v\n", err)
 
 		return 1
 	}
@@ -207,13 +184,15 @@ func runReset(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.
 
 func runRollback(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Deps) int {
 	opts := struct {
-		Config  string
-		EventID string
+		Config    string
+		EventID   string
+		RequestID string
 	}{Config: "config.json"}
 	fs := flag.NewFlagSet("idiom ranker rollback", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.Config, "config", opts.Config, "path to config file")
 	fs.StringVar(&opts.EventID, "event", "", "learning event id to restore from")
+	fs.StringVar(&opts.RequestID, "request-id", "", "stable caller correlation used to make retries idempotent")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -245,7 +224,7 @@ func runRollback(args []string, stdout io.Writer, stderr io.Writer, rec *telemet
 		return 1
 	}
 
-	weights, entry, err := comprehension.RestoreLearnedWeightsFromLearningLog(root, opts.EventID)
+	weights, entry, err := comprehension.RestoreLearnedWeightsFromLearningLog(context.Background(), root, opts.EventID, opts.RequestID)
 	if err != nil {
 		fmt.Fprintf(stderr, "ranker rollback failed: %v\n", err)
 
@@ -292,21 +271,15 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		return 1
 	}
 
-	weights, err := comprehension.LoadLearnedWeights(root)
+	snapshot, err := comprehension.LoadRankerStateSnapshot(context.Background(), root)
 	if err != nil {
 		fmt.Fprintf(stderr, "ranker show failed: %v\n", err)
 
 		return 1
 	}
 
-	logEntries, err := comprehension.ReadLearningLog(root)
-	if err != nil {
-		fmt.Fprintf(stderr, "ranker show log read failed: %v\n", err)
-
-		return 1
-	}
-
-	summary := comprehension.SummarizeLearningLog(logEntries)
+	weights := snapshot.LearnedWeights()
+	summary := comprehension.SummarizeLearningLog(snapshot.LearningEntries())
 	deps.LogPhase(rec, "ranker_show", map[string]any{"weight_count": len(weights), "log_entries": summary.TotalEntries})
 
 	if opts.JSON {

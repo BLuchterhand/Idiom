@@ -1,35 +1,28 @@
 package cliassets
 
 import (
-	"slices"
 	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestAssetsExposeExpectedBundles(t *testing.T) {
-	preloadKinds, err := BriefPreloadKinds()
-	if err != nil {
-		t.Fatalf("list brief preload kinds: %v", err)
-	}
+var _ = ginkgo.Describe("Embedded CLI assets", func() {
+	ginkgo.It("exposes the expected prompt and skill bundles", func() {
+		preloadKinds, err := BriefPreloadKinds()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(preloadKinds).To(gomega.ContainElement("generic"))
 
-	if !slices.Contains(preloadKinds, "generic") {
-		t.Fatalf("expected generic preload kind, got %#v", preloadKinds)
-	}
+		body, err := LanePrompt("implement", "preamble.md")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(strings.TrimSpace(body)).NotTo(gomega.BeEmpty())
 
-	if body, err := LanePrompt("implement", "preamble.md"); err != nil || strings.TrimSpace(body) == "" {
-		t.Fatalf("expected embedded implement preamble, body=%q err=%v", body, err)
-	}
+		body, err = LaneRule("brief-skeleton.md")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(strings.TrimSpace(body)).NotTo(gomega.BeEmpty())
 
-	if body, err := LaneRule("brief-skeleton.md"); err != nil || strings.TrimSpace(body) == "" {
-		t.Fatalf("expected embedded brief-skeleton rule, body=%q err=%v", body, err)
-	}
-
-	skillNames, err := SkillNames()
-	if err != nil {
-		t.Fatalf("list skill names: %v", err)
-	}
-
-	if !slices.Contains(skillNames, "orchestrator-workflow") {
-		t.Fatalf("expected orchestrator-workflow skill, got %#v", skillNames)
-	}
-}
+		skillNames, err := SkillNames()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(skillNames).To(gomega.ContainElement("orchestrator-workflow"))
+	})
+})

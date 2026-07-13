@@ -2,15 +2,18 @@ package brief
 
 import (
 	"bytes"
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
-	"testing"
 )
 
-func TestRunBriefPreview(t *testing.T) {
-	tmpDir := t.TempDir()
-	briefPath := filepath.Join(tmpDir, "test-brief.md")
-	briefContent := `# Test Brief
+var _ = ginkgo.Describe("brief", func() {
+	ginkgo.It("run brief preview", func() {
+		tmpDir := ginkgo.GinkgoT().TempDir()
+		briefPath := filepath.Join(tmpDir, "test-brief.md")
+		briefContent := `# Test Brief
 
 ## Problem
 
@@ -36,25 +39,16 @@ Some state.
 
 test done.
 `
+		gomega.Expect(os.WriteFile(briefPath, []byte(briefContent), 0o644)).To(gomega.Succeed())
 
-	if err := os.WriteFile(briefPath, []byte(briefContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
+		var stdout, stderr bytes.Buffer
 
-	var stdout, stderr bytes.Buffer
+		exit := runBriefPreview([]string{briefPath}, &stdout, &stderr, nil)
+		gomega.Expect(exit).To(gomega.Equal(0), fmt.Sprintf("expected exit 0, got %d: %s", exit, stderr.String()))
 
-	exit := runBriefPreview([]string{briefPath}, &stdout, &stderr, nil)
+		out := stdout.String()
+		gomega.Expect(out).To(gomega.ContainSubstring("Files To Modify: 2"), fmt.Sprintf("expected 'Files To Modify: 2' in output, got:\n%s", out))
+		gomega.Expect(out).To(gomega.ContainSubstring("Lint: OK"), fmt.Sprintf("expected 'Lint: OK' in output, got:\n%s", out))
 
-	if exit != 0 {
-		t.Fatalf("expected exit 0, got %d: %s", exit, stderr.String())
-	}
-
-	out := stdout.String()
-	if !bytes.Contains([]byte(out), []byte("Files To Modify: 2")) {
-		t.Errorf("expected 'Files To Modify: 2' in output, got:\n%s", out)
-	}
-
-	if !bytes.Contains([]byte(out), []byte("Lint: OK")) {
-		t.Errorf("expected 'Lint: OK' in output, got:\n%s", out)
-	}
-}
+	})
+})

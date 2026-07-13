@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/contracts/sourcekind"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
@@ -23,11 +25,105 @@ import (
 const (
 	SubmitPlanEmptyEditsCode                      = "submit_plan.empty_edits"
 	SubmitPlanSourceSatisfiedTerminalRequiredCode = "submit_plan.source_satisfied_terminal_required"
+	SubmitPlanInvalidEditShapeCode                = "submit_plan.invalid_edit_shape"
+	SubmitPlanOversizedInsertionCode              = "submit_plan.oversized_insertion"
+	SubmitPlanNoOpEditCode                        = "submit_plan.no_op_edit"
+	SubmitPlanInvalidAnchorCode                   = "submit_plan.invalid_anchor"
+	SubmitPlanSyntaxValidationCode                = "submit_plan.syntax_validation"
+	SubmitPlanWholeFileRewriteCode                = "submit_plan.whole_file_rewrite"
 )
 
 const PlanEditAnchorProvenanceSchemaVersion = "idiom.plan_edit_anchor.v1"
 
 const planInlineTextSpillThreshold = 4096
+
+type submitPlanDiagnosticError struct {
+	err       error
+	kind      toolfacts.SubmitPlanDiagnosticKind
+	path      string
+	startLine int
+	endLine   int
+}
+
+func (e *submitPlanDiagnosticError) Error() string {
+	if e == nil || e.err == nil {
+		return "submit_plan rejected"
+	}
+	return e.err.Error()
+}
+
+func (e *submitPlanDiagnosticError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func newSubmitPlanDiagnosticError(kind toolfacts.SubmitPlanDiagnosticKind, path string, startLine int, endLine int, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &submitPlanDiagnosticError{err: err, kind: kind, path: path, startLine: startLine, endLine: endLine}
+}
+
+func submitPlanEditDiagnosticError(kind toolfacts.SubmitPlanDiagnosticKind, edit planartifact.PlanEdit, err error) error {
+	startLine := edit.StartLine
+	endLine := edit.EndLine
+	if startLine == 0 && edit.InsertAfterLine > 0 {
+		startLine = edit.InsertAfterLine
+		endLine = edit.InsertAfterLine
+	}
+	return newSubmitPlanDiagnosticError(kind, edit.Path, startLine, endLine, err)
+}
+
+func submitPlanDiagnosticCode(kind toolfacts.SubmitPlanDiagnosticKind) string {
+	switch kind {
+	case toolfacts.SubmitPlanDiagnosticOversizedInsertion:
+		return SubmitPlanOversizedInsertionCode
+	case toolfacts.SubmitPlanDiagnosticNoOpEdit:
+		return SubmitPlanNoOpEditCode
+	case toolfacts.SubmitPlanDiagnosticInvalidAnchor:
+		return SubmitPlanInvalidAnchorCode
+	case toolfacts.SubmitPlanDiagnosticSyntaxValidation:
+		return SubmitPlanSyntaxValidationCode
+	case toolfacts.SubmitPlanDiagnosticWholeFileRewrite:
+		return SubmitPlanWholeFileRewriteCode
+	default:
+		return SubmitPlanInvalidEditShapeCode
+	}
+}
+
+func (m *Manager) attachSubmitPlanDiagnostic(result ToolResult, err error) ToolResult {
+	var diagnosticErr *submitPlanDiagnosticError
+	if !errors.As(err, &diagnosticErr) || diagnosticErr == nil {
+		return result
+	}
+
+	canonicalID := ""
+	if path := strings.TrimSpace(diagnosticErr.path); path != "" {
+		identity, canonicalErr := m.CanonicalizeWorkspacePath(path, "")
+		if canonicalErr != nil {
+			return result
+		}
+		canonicalID = identity.CanonicalID
+	}
+
+	code := submitPlanDiagnosticCode(diagnosticErr.kind)
+	facts := toolfacts.NewSubmitPlanDiagnosticFacts(toolfacts.SubmitPlanDiagnostic{
+		Code:        code,
+		Kind:        diagnosticErr.kind,
+		CanonicalID: canonicalID,
+		StartLine:   diagnosticErr.startLine,
+		EndLine:     diagnosticErr.endLine,
+	})
+	if facts == nil {
+		return result
+	}
+
+	result.Code = code
+	result.Facts = facts
+	return result
+}
 
 func submitPlanNoOpEditGuidanceForPath(path string) string {
 	path = strings.TrimSpace(path)
@@ -42,7 +138,13 @@ func submitPlanNoOpEditGuidanceForPath(path string) string {
 // returns the path so the caller (orchestrator) can find and execute
 // it. The artifact lives under .idiom/plans/<timestamp>.json by
 // default.
-func (m *Manager) submitPlan(_ context.Context, req ToolRequest) ToolResult {
+func (m *Manager) submitPlan(ctx context.Context, req ToolRequest) ToolResult {
+	identity, _ := executionSessionIdentityFromContext(ctx)
+	sessionID := identity.sessionID
+	if identity.explicit && sessionID == "" {
+		return toolInvalidArgumentResult(ToolNameSubmitPlan, "submit_plan rejected", "execution session id is required")
+	}
+
 	if req.PlanArtifact == nil && len(req.Edits) == 0 {
 		if SubmitPlanRequestClaimsSourceSatisfied(req) {
 			errorMessage := fmt.Sprintf("submit_plan cannot carry a source-satisfied/no-op closeout. Answer `%s` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.", plancontract.SourceSatisfiedDecision)
@@ -71,7 +173,7 @@ func (m *Manager) submitPlan(_ context.Context, req ToolRequest) ToolResult {
 	created := time.Now().UTC().Format(time.RFC3339Nano)
 	planID := "plan_" + stamp
 
-	artifact, err := newPlanArtifactFromSubmitPlanRequest(req, m.cfg.SessionID, created, planID)
+	artifact, err := newPlanArtifactFromSubmitPlanRequest(req, sessionID, created, planID)
 	if err != nil {
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.InvalidArgument, reasonPlanSubmissionRejected)
 	}
@@ -120,21 +222,26 @@ func (m *Manager) submitPlan(_ context.Context, req ToolRequest) ToolResult {
 
 	for i, edit := range validationArtifact.Edits {
 		if err := validatePlanEdit(edit); err != nil {
-			return toolFailureResult(ToolNameSubmitPlan, "submit_plan rejected", fmt.Sprintf("edits[%d] path %q: %s", i, edit.Path, err.Error()), failures.InvalidArgument, reasonPlanSubmissionRejected)
+			result := toolFailureResult(ToolNameSubmitPlan, "submit_plan rejected", fmt.Sprintf("edits[%d] path %q: %s", i, edit.Path, err.Error()), failures.InvalidArgument, reasonPlanSubmissionRejected)
+			return m.attachSubmitPlanDiagnostic(result, err)
 		}
 
 		if err := m.validatePlanEditAgainstWorkspace(edit); err != nil {
-			return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err), failures.FailedPrecondition, reasonPlanSubmissionRejected)
+			wrapped := fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err)
+			result := toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", wrapped, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+			return m.attachSubmitPlanDiagnostic(result, wrapped)
 		}
 	}
 
 	if err := m.validatePlanEditSequenceAgainstWorkspace(validationArtifact.Edits); err != nil {
-		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+		result := toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+		return m.attachSubmitPlanDiagnostic(result, err)
 	}
 
 	artifact.Edits, err = AttachPlanEditAnchorProvenance(m.cfg.Root, artifact.Edits)
 	if err != nil {
-		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+		result := toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+		return m.attachSubmitPlanDiagnostic(result, err)
 	}
 
 	if err := planartifact.ValidatePlanArtifact(artifact); err != nil {
@@ -161,7 +268,7 @@ func (m *Manager) submitPlan(_ context.Context, req ToolRequest) ToolResult {
 
 	artifact.Edits = edits
 	artifact = planartifact.NormalizeForSubmit(artifact, planartifact.NormalizeForSubmitOptions{
-		SessionID:     m.cfg.SessionID,
+		SessionID:     sessionID,
 		Created:       created,
 		PlanID:        planID,
 		LegacyRequest: req.PlanArtifact == nil,
@@ -244,11 +351,11 @@ func planArtifactAllowsMixedSourceSatisfiedRationale(artifact planartifact.PlanA
 // depend on workspace policy or planner repair guidance.
 func validatePlanEdit(edit planartifact.PlanEdit) error {
 	if err := planartifact.ValidatePlanEditShape(edit); err != nil {
-		return err
+		return newSubmitPlanDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidEditShape, edit.Path, edit.StartLine, edit.EndLine, err)
 	}
 
 	if err := validatePlanEditAnchorProvenanceShape(edit.AnchorProvenance); err != nil {
-		return err
+		return newSubmitPlanDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit.Path, edit.StartLine, edit.EndLine, err)
 	}
 
 	hasOldText := strings.TrimSpace(edit.OldText) != ""
@@ -256,20 +363,26 @@ func validatePlanEdit(edit planartifact.PlanEdit) error {
 
 	if edit.InsertAfterLine > 0 {
 		if len(edit.Content) > planInlineTextSpillThreshold {
-			return fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions in existing files, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content", planInlineTextSpillThreshold)
+			return newSubmitPlanDiagnosticError(
+				toolfacts.SubmitPlanDiagnosticOversizedInsertion,
+				edit.Path,
+				edit.InsertAfterLine,
+				edit.InsertAfterLine,
+				fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions in existing files, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content", planInlineTextSpillThreshold),
+			)
 		}
 	}
 
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
-		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidanceForPath(edit.Path))
+		return newSubmitPlanDiagnosticError(toolfacts.SubmitPlanDiagnosticNoOpEdit, edit.Path, 0, 0, fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidanceForPath(edit.Path)))
 	}
 
 	if field, marker := planEditPlaceholderField(edit); field != "" {
-		return fmt.Errorf("%s contains placeholder edit body marker %q; submit complete executable source text, or answer <<QUESTION>> with the missing body/anchor blocker", field, marker)
+		return newSubmitPlanDiagnosticError(toolfacts.SubmitPlanDiagnosticPlaceholderBody, edit.Path, edit.StartLine, edit.EndLine, fmt.Errorf("%s contains placeholder edit body marker %q; submit complete executable source text, or answer <<QUESTION>> with the missing body/anchor blocker", field, marker))
 	}
 
 	if reason := PlanEditUnsupportedProofClaimReason(edit); reason != "" {
-		return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, reason)
+		return newSubmitPlanDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidEditShape, edit.Path, edit.StartLine, edit.EndLine, fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, reason))
 	}
 
 	return nil
@@ -468,7 +581,7 @@ func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []planartifact.P
 
 		provenance, err := buildPlanEditAnchorProvenance(workspaceRoot, edit)
 		if err != nil {
-			return nil, fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err)
+			return nil, submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err))
 		}
 
 		out[i].AnchorProvenance = &provenance
@@ -922,16 +1035,16 @@ func planEditPurposeIsVerificationOnly(purpose string) bool {
 func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) error {
 	path, err := m.pathAccess.ResolvePath(edit.Path, "")
 	if err != nil {
-		return fmt.Errorf("plan edit preflight could not resolve path %q: %w", edit.Path, err)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidEditShape, edit, fmt.Errorf("plan edit preflight could not resolve path %q: %w", edit.Path, err))
 	}
 
 	body, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("plan edit preflight could not read %s: %w", edit.Path, err)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("plan edit preflight could not read %s: %w", edit.Path, err))
 	}
 
 	if err == nil && planEditIsWholeFileWrite(edit) && IsCompletedPlanningArtifact(path, body) {
-		return fmt.Errorf("whole-file edit would overwrite completed planning artifact %s; use a bounded anchored edit or ask the user to reopen/replace the completed artifact explicitly", edit.Path)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticWholeFileRewrite, edit, fmt.Errorf("whole-file edit would overwrite completed planning artifact %s; use a bounded anchored edit or ask the user to reopen/replace the completed artifact explicitly", edit.Path))
 	}
 
 	if err == nil {
@@ -943,11 +1056,11 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 	oldText := edit.OldText
 	if strings.TrimSpace(oldText) == "" && err != nil {
 		if edit.InsertAfterLine > 0 {
-			return fmt.Errorf("insert_after_line preflight could not read existing %s: %w", edit.Path, err)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("insert_after_line preflight could not read existing %s: %w", edit.Path, err))
 		}
 
 		if edit.StartLine > 0 || edit.EndLine > 0 {
-			return fmt.Errorf("line-range preflight could not read existing %s: %w", edit.Path, err)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("line-range preflight could not read existing %s: %w", edit.Path, err))
 		}
 
 		return nil
@@ -956,7 +1069,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 	if strings.TrimSpace(oldText) == "" {
 		updated, changed, previewErr := PreviewPlanEditContent(string(body), edit)
 		if previewErr != nil {
-			return previewErr
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, previewErr)
 		}
 
 		if changed {
@@ -966,21 +1079,29 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 					errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
 				}
 
-				return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, errorText)
+				kind := toolfacts.SubmitPlanDiagnosticInvalidEditShape
+				startLine := edit.StartLine
+				endLine := edit.EndLine
+				if recovery, pending := m.writeGuard.PendingEditRecovery(path); pending {
+					kind = toolfacts.SubmitPlanDiagnosticSyntaxValidation
+					startLine = recovery.line
+					endLine = recovery.line
+				}
+				return newSubmitPlanDiagnosticError(kind, edit.Path, startLine, endLine, fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, errorText))
 			}
 
 			if err := validateContentOnlyPlanEditAgainstCurrentSource(path, string(body), edit); err != nil {
 				return err
 			}
 		} else {
-			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticNoOpEdit, edit, fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path)))
 		}
 
 		return nil
 	}
 
 	if err != nil {
-		return fmt.Errorf("old_text preflight could not read %s: %w", edit.Path, err)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("old_text preflight could not read %s: %w", edit.Path, err))
 	}
 
 	current := string(body)
@@ -988,18 +1109,18 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 
 	if matchCount == 0 {
 		if containsSearchContentLineTruncationMarker(oldText) {
-			return fmt.Errorf("old_text for %s contains a search_content truncation marker; truncated search output is not an exact edit anchor. Use read_file with the match line's start_line/end_line to copy exact source, or use start_line/end_line+content", edit.Path)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("old_text for %s contains a search_content truncation marker; truncated search output is not an exact edit anchor. Use read_file with the match line's start_line/end_line to copy exact source, or use start_line/end_line+content", edit.Path))
 		}
 
 		if textutil.ContainsFold(current, oldText) {
-			return fmt.Errorf("old_text did not appear in %s, but a case-insensitive match exists; preserve exact casing from the file or use start_line/end_line+content", edit.Path)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("old_text did not appear in %s, but a case-insensitive match exists; preserve exact casing from the file or use start_line/end_line+content", edit.Path))
 		}
 
 		if planEditReplacementAlreadyPresent(current, edit) {
-			return fmt.Errorf("old_text did not appear in %s, but the replacement text already appears in the file; if every required edit is already present, close the planner phase with `%s` and per-path current-state evidence instead of submitting stale edits", edit.Path, plancontract.SourceSatisfiedDecision)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticNoOpEdit, edit, fmt.Errorf("old_text did not appear in %s, but the replacement text already appears in the file; if every required edit is already present, close the planner phase with `%s` and per-path current-state evidence instead of submitting stale edits", edit.Path, plancontract.SourceSatisfiedDecision))
 		}
 
-		return fmt.Errorf("old_text did not appear in %s; copy the exact substring from the file or use start_line/end_line+content", edit.Path)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("old_text did not appear in %s; copy the exact substring from the file or use start_line/end_line+content", edit.Path))
 	}
 
 	if matchCount > 1 && !edit.ReplaceAll {
@@ -1008,20 +1129,28 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 			guidance = "; " + strings.ReplaceAll(guidance, "\n", "; ")
 		}
 
-		return fmt.Errorf("old_text matched %d locations in %s%s; submit_plan rejects ambiguous substring edits before executor writes. Extend old_text with surrounding context, use start_line/end_line+content, or set replace_all=true when every occurrence is intended", matchCount, edit.Path, guidance)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("old_text matched %d locations in %s%s; submit_plan rejects ambiguous substring edits before executor writes. Extend old_text with surrounding context, use start_line/end_line+content, or set replace_all=true when every occurrence is intended", matchCount, edit.Path, guidance))
 	}
 
 	updated, changed, previewErr := PreviewPlanEditContent(current, edit)
 	if previewErr != nil {
-		return previewErr
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, previewErr)
 	}
 
 	if changed {
 		if rejected := m.writeGuard.RejectPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, body, []byte(updated), m.pathAccess.DisplayPath); rejected != nil {
-			return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, strings.TrimSpace(rejected.Error))
+			kind := toolfacts.SubmitPlanDiagnosticInvalidEditShape
+			startLine := edit.StartLine
+			endLine := edit.EndLine
+			if recovery, pending := m.writeGuard.PendingEditRecovery(path); pending {
+				kind = toolfacts.SubmitPlanDiagnosticSyntaxValidation
+				startLine = recovery.line
+				endLine = recovery.line
+			}
+			return newSubmitPlanDiagnosticError(kind, edit.Path, startLine, endLine, fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, strings.TrimSpace(rejected.Error)))
 		}
 	} else {
-		return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticNoOpEdit, edit, fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path)))
 	}
 
 	return nil
@@ -1033,7 +1162,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 	for i, edit := range edits {
 		path, err := m.pathAccess.ResolvePath(edit.Path, "")
 		if err != nil {
-			return fmt.Errorf("edits[%d]: plan edit preflight could not resolve path %q: %w", i, edit.Path, err)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidEditShape, edit, fmt.Errorf("edits[%d]: plan edit preflight could not resolve path %q: %w", i, edit.Path, err))
 		}
 
 		body, ok := projected[path]
@@ -1043,7 +1172,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 				if os.IsNotExist(err) && planEditIsWholeFileWrite(edit) {
 					body = nil
 				} else {
-					return fmt.Errorf("edits[%d]: plan edit preflight could not read %s: %w", i, edit.Path, err)
+					return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("edits[%d]: plan edit preflight could not read %s: %w", i, edit.Path, err))
 				}
 			}
 
@@ -1051,7 +1180,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 		}
 
 		if planEditIsWholeFileWrite(edit) && IsCompletedPlanningArtifact(path, body) {
-			return fmt.Errorf("edits[%d]: whole-file edit would overwrite completed planning artifact %s; use a bounded anchored edit or ask the user to reopen/replace the completed artifact explicitly", i, edit.Path)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticWholeFileRewrite, edit, fmt.Errorf("edits[%d]: whole-file edit would overwrite completed planning artifact %s; use a bounded anchored edit or ask the user to reopen/replace the completed artifact explicitly", i, edit.Path))
 		}
 
 		if rejectErr := RejectExistingSourceWholeFileRewrite(path, body, edit); rejectErr != nil {
@@ -1060,11 +1189,11 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 
 		updated, changed, previewErr := PreviewPlanEditContent(string(body), edit)
 		if previewErr != nil {
-			return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, previewErr.Error())
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, previewErr.Error()))
 		}
 
 		if !changed {
-			return fmt.Errorf("edits[%d]: edit would not change %s after applying prior plan edits; %s", i, edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticNoOpEdit, edit, fmt.Errorf("edits[%d]: edit would not change %s after applying prior plan edits; %s", i, edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path)))
 		}
 
 		if rejected := m.writeGuard.RejectPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, body, []byte(updated), m.pathAccess.DisplayPath); rejected != nil {
@@ -1073,12 +1202,20 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 				errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
 			}
 
-			return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, errorText)
+			kind := toolfacts.SubmitPlanDiagnosticInvalidEditShape
+			startLine := edit.StartLine
+			endLine := edit.EndLine
+			if recovery, pending := m.writeGuard.PendingEditRecovery(path); pending {
+				kind = toolfacts.SubmitPlanDiagnosticSyntaxValidation
+				startLine = recovery.line
+				endLine = recovery.line
+			}
+			return newSubmitPlanDiagnosticError(kind, edit.Path, startLine, endLine, fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, errorText))
 		}
 
 		if strings.TrimSpace(edit.OldText) == "" {
 			if err := validateContentOnlyPlanEditAgainstCurrentSource(path, string(body), edit); err != nil {
-				return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, err.Error())
+				return fmt.Errorf("edits[%d]: after applying prior plan edits: %w", i, err)
 			}
 		}
 
@@ -1100,7 +1237,7 @@ func validateContentOnlyPlanEditAgainstCurrentSource(path string, current string
 	}
 
 	if (edit.StartLine > 0 || edit.InsertAfterLine > 0) && sourceEditContentDuplicatesExistingBlock(current, edit) {
-		return fmt.Errorf("content-only edit would duplicate an existing source block in %s; remove this edit and use source_satisfied_paths if the requested final state already exists, or submit an old_text/new_text edit anchored to the current source", filepath.ToSlash(path))
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticNoOpEdit, edit, fmt.Errorf("content-only edit would duplicate an existing source block in %s; remove this edit and use source_satisfied_paths if the requested final state already exists, or submit an old_text/new_text edit anchored to the current source", filepath.ToSlash(path)))
 	}
 
 	return nil
@@ -1115,7 +1252,7 @@ func RejectExistingSourceWholeFileRewrite(path string, current []byte, edit plan
 		return nil
 	}
 
-	return fmt.Errorf("whole-file replace_all edit would rewrite existing source file %s; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path))
+	return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticWholeFileRewrite, edit, fmt.Errorf("whole-file replace_all edit would rewrite existing source file %s; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path)))
 }
 
 func validateSourceLineRangePlanEdit(path string, current string, edit planartifact.PlanEdit) error {
@@ -1143,7 +1280,7 @@ func validateSourceLineRangePlanEdit(path string, current string, edit planartif
 	}
 
 	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, edit.StartLine, edit.Content) {
-		return fmt.Errorf("line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range; use old_text/new_text with a unique current-source anchor for insertions", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range; use old_text/new_text with a unique current-source anchor for insertions", filepath.ToSlash(path), edit.StartLine, edit.EndLine))
 	}
 
 	selectedLines := textutil.NonEmptyTrimmedLines(selected)
@@ -1161,7 +1298,7 @@ func validateSourceLineRangePlanEdit(path string, current string, edit planartif
 		}
 	}
 
-	return fmt.Errorf("source line-range edit for %s lines %d-%d expands the selected range but does not preserve any selected anchor line; for insertions, use old_text/new_text or replace the anchor line(s) with unchanged anchor line(s) plus new content", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+	return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidEditShape, edit, fmt.Errorf("source line-range edit for %s lines %d-%d expands the selected range but does not preserve any selected anchor line; for insertions, use old_text/new_text or replace the anchor line(s) with unchanged anchor line(s) plus new content", filepath.ToSlash(path), edit.StartLine, edit.EndLine))
 }
 
 // RejectExistingSourceDestructiveLineRangeRewrite rejects line-range edits that
@@ -1183,14 +1320,14 @@ func RejectExistingSourceDestructiveLineRangeRewrite(path string, current string
 
 	selectedLineCount := edit.EndLine - edit.StartLine + 1
 	if selectedLineCount >= len(spans) {
-		return fmt.Errorf("line-range replacement for %s lines %d-%d would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticWholeFileRewrite, edit, fmt.Errorf("line-range replacement for %s lines %d-%d would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine))
 	}
 
 	selectedNonEmpty := len(textutil.NonEmptyTrimmedLines(current[spans[edit.StartLine-1].start:spans[edit.EndLine-1].end]))
 	replacementNonEmpty := len(textutil.NonEmptyTrimmedLines(edit.Content))
 
 	if selectedLineCount >= 40 && selectedNonEmpty >= 20 && replacementNonEmpty*2 < selectedNonEmpty {
-		return fmt.Errorf("line-range replacement for %s lines %d-%d would collapse %d non-empty source lines to %d; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine, selectedNonEmpty, replacementNonEmpty)
+		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("line-range replacement for %s lines %d-%d would collapse %d non-empty source lines to %d; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine, selectedNonEmpty, replacementNonEmpty))
 	}
 
 	return nil
@@ -1205,13 +1342,13 @@ func RejectSourceLineRangeTopLevelConstructDrift(path string, selected string, e
 
 	if edit.StartLine > 1 && !selectedHasPreprocessor {
 		if directive := firstFileScopePrologueDirective(edit.Content); directive != "" {
-			return fmt.Errorf("line-range replacement for %s lines %d-%d introduces file-scope preprocessor directive %q into a range that did not select existing preprocessor context; use a top-of-file anchored edit or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine, directive)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("line-range replacement for %s lines %d-%d introduces file-scope preprocessor directive %q into a range that did not select existing preprocessor context; use a top-of-file anchored edit or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine, directive))
 		}
 	}
 
 	if edit.StartLine == 1 && !selectedHasPreprocessor {
 		if directive := leadingHeaderGuardDirective(edit.Content); directive != "" {
-			return fmt.Errorf("line-range replacement for %s lines %d-%d starts a header guard before selecting the existing file prologue/include guard; use a bounded anchor that includes the current guard/include line or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+			return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("line-range replacement for %s lines %d-%d starts a header guard before selecting the existing file prologue/include guard; use a bounded anchor that includes the current guard/include line or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine))
 		}
 	}
 

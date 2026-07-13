@@ -6,15 +6,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/llama/llamamocks"
 	"idiom/internal/runtime/workerruntime"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 )
 
 const testBackendsJSON = `{
@@ -31,27 +34,29 @@ const testBackendsJSON = `{
   }
 }`
 
-func writeTestBackendsJSON(t *testing.T, root string) {
-	t.Helper()
+func writeTestBackendsJSON(t ginkgo.FullGinkgoTInterface, root string) {
+	ginkgo.GinkgoHelper()
 
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
 	}
 
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(testBackendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends.json: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(testBackendsJSON), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
 	}
 }
 
-func newTestModelWithWorkspace(t *testing.T) *Model {
-	t.Helper()
+func newTestModelWithWorkspace(t ginkgo.FullGinkgoTInterface) *Model {
+	ginkgo.GinkgoHelper()
 
 	root := t.TempDir()
 	writeTestBackendsJSON(t, root)
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	thinkingOn := true
-	stub := &stubLLMClient{}
+	client := llamamocks.NewMockLLMClient(gomock.NewController(t))
 
 	return &Model{
 		cfg: config.Config{
@@ -64,192 +69,166 @@ func newTestModelWithWorkspace(t *testing.T) *Model {
 		},
 		workspace:   ws,
 		plannerSpec: config.Default().LlamaServer,
-		client:      stub,
-		runner:      &agent.Runner{Client: stub},
+		client:      client,
 	}
 }
 
-func TestSlashModelShowsCurrentModel(t *testing.T) {
+var _ = ginkgo.It("use config planner model keeps client controller and reused classifier in lockstep", ginkgo.Label("development-scenario", "integration", "contract", "race-contract"), func() {
+	oldSpec := config.LlamaServer{Kind: config.BackendLlama, Model: "old-role-model", BaseURL: "http://old.invalid"}
+	oldClient := llama.NewClient(oldSpec.BaseURL, time.Second)
+	oldController := llama.NewServerController(oldSpec, oldClient)
+	configuredSpec := config.LlamaServer{Kind: config.BackendLlama, Model: "configured-model", BaseURL: "http://configured.invalid"}
+	m := &Model{
+		cfg:                  config.Config{LlamaServer: configuredSpec},
+		plannerSpec:          oldSpec,
+		client:               oldClient,
+		controller:           oldController,
+		summaryClient:        oldClient,
+		summaryController:    oldController,
+		backendRuntimeState:  backendRuntimeState{managedServer: true},
+		managedServers:       newManagedServerRegistry(),
+		backgroundOperations: newBackgroundOperationGroup(),
+	}
+
+	m.UseConfigPlannerModel()
+
+	gomega.Expect(m.plannerSpec).To(gomega.Equal(configuredSpec))
+	gomega.Expect(m.client).NotTo(gomega.BeIdenticalTo(oldClient))
+	gomega.Expect(m.controller).NotTo(gomega.BeNil())
+	gomega.Expect(m.controller).NotTo(gomega.BeIdenticalTo(oldController))
+	gomega.Expect(m.summaryClient).To(gomega.BeIdenticalTo(m.client), "classifier reuse should follow the explicit planner client")
+	gomega.Expect(m.summaryController).To(gomega.BeNil(), "classifier reuse must not create a second owner for the planner controller")
+	gomega.Expect(m.managedServers.snapshot()).To(gomega.ContainElement(oldController))
+	gomega.Expect(m.managedServer).To(gomega.BeFalse())
+
+	distinctClassifierSpec := config.LlamaServer{Kind: config.BackendLlama, Model: "classifier-model", BaseURL: "http://classifier.invalid"}
+	distinctClassifier := llama.NewClient(distinctClassifierSpec.BaseURL, time.Second)
+	distinctClassifierController := llama.NewServerController(distinctClassifierSpec, distinctClassifier)
+	m.summaryClient = distinctClassifier
+	m.summaryController = distinctClassifierController
+	m.cfg.LlamaServer = config.LlamaServer{Kind: config.BackendDeepSeek, Model: "hosted-configured-model"}
+	m.UseConfigPlannerModel()
+
+	gomega.Expect(m.controller).To(gomega.BeNil(), "hosted planner selection must not retain a launchable controller")
+	gomega.Expect(m.summaryClient).To(gomega.BeIdenticalTo(distinctClassifier), "distinct classifier client must remain independent")
+	gomega.Expect(m.summaryController).To(gomega.BeIdenticalTo(distinctClassifierController))
+})
+
+var _ = ginkgo.It("slash model shows current model", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.modelID = "qwen3.6-35b"
+	client := m.client.(*llamamocks.MockLLMClient)
+	client.EXPECT().ListModels(gomock.Any()).Return(nil, nil).Times(1)
 
 	m.slashModel("/model", []string{"/model"})
 
-	if m.status == "" {
-		t.Fatal("expected non-empty status for /model")
-	}
+	gomega.Expect(m.status).NotTo(gomega.Equal(""), fmt.Sprint("expected non-empty status for /model"))
 
 	for _, name := range []string{"glm-5.1", "local-qwen", "minimax-m2.7", "local-no-max"} {
-		if !containsSubstring(m.status, name) {
-			t.Fatalf("expected /model to include %q, got %q", name, m.status)
-		}
+		gomega.Expect(m.status).To(gomega.ContainSubstring(name), fmt.Sprintf("expected /model to include %q, got %q", name, m.status))
 	}
-}
+})
 
-func TestSlashModelListShowsModels(t *testing.T) {
+var _ = ginkgo.It("slash model list shows models", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.modelID = "qwen3.6-35b"
-	m.client = &stubLLMClient{}
-
+	client := m.client.(*llamamocks.MockLLMClient)
+	client.EXPECT().ListModels(gomock.Any()).Return(nil, nil).Times(1)
 	m.slashModel("/model list", []string{"/model", "list"})
 
-	if m.status == "" {
-		t.Fatal("expected non-empty status for /model list")
-	}
+	gomega.Expect(m.status).NotTo(gomega.Equal(""), fmt.Sprint("expected non-empty status for /model list"))
 
 	for _, name := range []string{"glm-5.1", "local-qwen", "minimax-m2.7", "local-no-max"} {
-		if !containsSubstring(m.status, name) {
-			t.Fatalf("expected /model list to include %q, got %q", name, m.status)
-		}
+		gomega.Expect(m.status).To(gomega.ContainSubstring(name), fmt.Sprintf("expected /model list to include %q, got %q", name, m.status))
 	}
-}
+})
 
-type stubLLMClient struct{}
-
-type failingListModelsClient struct {
-	stubLLMClient
-	err error
-}
-
-func (f *failingListModelsClient) ListModels(_ context.Context) ([]llama.ModelInfo, error) {
-	return nil, f.err
-}
-
-type reachableListModelsClient struct {
-	stubLLMClient
-	models []llama.ModelInfo
-}
-
-func (r *reachableListModelsClient) ListModels(_ context.Context) ([]llama.ModelInfo, error) {
-	return r.models, nil
-}
-
-func (s *stubLLMClient) CompleteChat(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions) (string, error) {
-	return "", nil
-}
-func (s *stubLLMClient) CompleteChatMessage(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions) (llama.ChatMessage, error) {
-	return llama.ChatMessage{}, nil
-}
-func (s *stubLLMClient) StreamChat(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions, _ func(string) error) error {
-	return nil
-}
-func (s *stubLLMClient) ListModels(_ context.Context) ([]llama.ModelInfo, error) {
-	return nil, nil
-}
-func (s *stubLLMClient) Backend() string           { return "stub" }
-func (s *stubLLMClient) SupportsNativeTools() bool { return false }
-
-func TestApplyModelSwapHostedSetsThinkingFloor(t *testing.T) {
+var _ = ginkgo.It("apply model swap hosted sets thinking floor", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("glm-5.1")
 
-	if m.modelID != "glm-5.1" {
-		t.Fatalf("expected modelID glm-5.1, got %q", m.modelID)
-	}
+	gomega.Expect(m.modelID).To(gomega.Equal("glm-5.1"), fmt.Sprintf("expected modelID glm-5.1, got %q", m.modelID))
 
-	if !m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=true for hosted model")
-	}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeTrue(), fmt.Sprint("expected modelThinkingFloor=true for hosted model"))
 
-	if m.maxTokensOverride != 8192 {
-		t.Fatalf("expected maxTokensOverride=8192, got %d", m.maxTokensOverride)
-	}
-}
+	gomega.Expect(m.maxTokensOverride).To(gomega.Equal(8192), fmt.Sprintf("expected maxTokensOverride=8192, got %d", m.maxTokensOverride))
+})
 
-func TestApplyModelSwapMinimaxSetsThinkingFloor(t *testing.T) {
+var _ = ginkgo.It("apply model swap minimax sets thinking floor", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("minimax-m2.7")
 
-	if m.modelID != "MiniMax-M2.7" {
-		t.Fatalf("expected request modelID MiniMax-M2.7, got %q", m.modelID)
-	}
+	gomega.Expect(m.modelID).To(gomega.Equal("MiniMax-M2.7"), fmt.Sprintf("expected request modelID MiniMax-M2.7, got %q", m.modelID))
 
-	if m.activeModelDisplayID() != "minimax-m2.7" {
-		t.Fatalf("expected display model minimax-m2.7, got %q", m.activeModelDisplayID())
-	}
+	gomega.Expect(activeModelDisplayID(m.modelDisplayID, m.modelID)).To(gomega.Equal("minimax-m2.7"), fmt.Sprintf("expected display model minimax-m2.7, got %q", activeModelDisplayID(m.modelDisplayID, m.modelID)))
 
-	if !m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=true for minimax hosted model")
-	}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeTrue(), fmt.Sprint("expected modelThinkingFloor=true for minimax hosted model"))
 
-	if m.maxTokensOverride != 4096 {
-		t.Fatalf("expected maxTokensOverride=4096, got %d", m.maxTokensOverride)
-	}
-}
+	gomega.Expect(m.maxTokensOverride).To(gomega.Equal(4096), fmt.Sprintf("expected maxTokensOverride=4096, got %d", m.maxTokensOverride))
+})
 
-func TestApplyModelSwapMLXSetsThinkingFloor(t *testing.T) {
+var _ = ginkgo.It("apply model swap mlx sets thinking floor", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("local-qwen")
 
-	if m.modelID != "Qwen/Qwen3.6-35B" {
-		t.Fatalf("expected request modelID Qwen/Qwen3.6-35B, got %q", m.modelID)
-	}
+	gomega.Expect(m.modelID).To(gomega.Equal("Qwen/Qwen3.6-35B"), fmt.Sprintf("expected request modelID Qwen/Qwen3.6-35B, got %q", m.modelID))
 
-	if m.activeModelDisplayID() != "local-qwen" {
-		t.Fatalf("expected display model local-qwen, got %q", m.activeModelDisplayID())
-	}
+	gomega.Expect(activeModelDisplayID(m.modelDisplayID, m.modelID)).To(gomega.Equal("local-qwen"), fmt.Sprintf("expected display model local-qwen, got %q", activeModelDisplayID(m.modelDisplayID, m.modelID)))
 
-	if !m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=true for MLX local model")
-	}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeTrue(), fmt.Sprint("expected modelThinkingFloor=true for MLX local model"))
 
-	if m.maxTokensOverride != 8192 {
-		t.Fatalf("expected maxTokensOverride=8192 from backends.json, got %d", m.maxTokensOverride)
-	}
-}
+	gomega.Expect(m.maxTokensOverride).To(gomega.Equal(8192), fmt.Sprintf("expected maxTokensOverride=8192 from backends.json, got %d", m.maxTokensOverride))
+})
 
-func TestApplyModelSwapLocalWithNoMaxTokens(t *testing.T) {
+var _ = ginkgo.It("apply model swap local with no max tokens", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("local-no-max")
 
-	if m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=false for local model")
-	}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeFalse(), fmt.Sprint("expected modelThinkingFloor=false for local model"))
 
-	if m.maxTokensOverride != 0 {
-		t.Fatalf("expected maxTokensOverride=0 when backends.json omits max_tokens, got %d", m.maxTokensOverride)
-	}
-}
+	gomega.Expect(m.maxTokensOverride).To(gomega.Equal(0), fmt.Sprintf("expected maxTokensOverride=0 when backends.json omits max_tokens, got %d", m.maxTokensOverride))
+})
 
-func TestApplyModelSwapHostedToLocalResetsThinkingFloor(t *testing.T) {
+var _ = ginkgo.It("apply model swap hosted to local resets thinking floor", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("glm-5.1")
 
-	if !m.modelThinkingFloor {
-		t.Fatal("setup: expected thinking floor after hosted swap")
-	}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeTrue(), fmt.Sprint("setup: expected thinking floor after hosted swap"))
 
 	m.applyModelSwap("local-no-max")
 
-	if m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=false after swapping from hosted to non-MLX local")
-	}
-}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeFalse(), fmt.Sprint("expected modelThinkingFloor=false after swapping from hosted to non-MLX local"))
+})
 
-func TestApplyModelSwapLocalToHostedSetsThinkingFloor(t *testing.T) {
+var _ = ginkgo.It("apply model swap local to hosted sets thinking floor", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("local-no-max")
 
-	if m.modelThinkingFloor {
-		t.Fatal("setup: expected no thinking floor after non-MLX local swap")
-	}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeFalse(), fmt.Sprint("setup: expected no thinking floor after non-MLX local swap"))
 
 	m.applyModelSwap("glm-5.1")
 
-	if !m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=true after swapping from local to hosted")
-	}
-}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeTrue(), fmt.Sprint("expected modelThinkingFloor=true after swapping from local to hosted"))
+})
 
-func TestApplyModelSwapWithoutBackendsSetsModelIDOnly(t *testing.T) {
+var _ = ginkgo.It("apply model swap without backends sets model id only", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	m := &Model{
@@ -260,34 +239,25 @@ func TestApplyModelSwapWithoutBackendsSetsModelIDOnly(t *testing.T) {
 
 	m.applyModelSwap("some-model")
 
-	if m.modelID != "some-model" {
-		t.Fatalf("expected modelID some-model, got %q", m.modelID)
-	}
+	gomega.Expect(m.modelID).To(gomega.Equal("some-model"), fmt.Sprintf("expected modelID some-model, got %q", m.modelID))
 
-	if m.activeModelDisplayID() != "some-model" {
-		t.Fatalf("expected display model some-model, got %q", m.activeModelDisplayID())
-	}
+	gomega.Expect(activeModelDisplayID(m.modelDisplayID, m.modelID)).To(gomega.Equal("some-model"), fmt.Sprintf("expected display model some-model, got %q", activeModelDisplayID(m.modelDisplayID, m.modelID)))
 
-	if m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=false when no backends.json")
-	}
+	gomega.Expect(m.modelThinkingFloor).To(gomega.BeFalse(), fmt.Sprint("expected modelThinkingFloor=false when no backends.json"))
 
-	if m.maxTokensOverride != 0 {
-		t.Fatalf("expected maxTokensOverride=0 when no backends.json, got %d", m.maxTokensOverride)
-	}
-}
+	gomega.Expect(m.maxTokensOverride).To(gomega.Equal(0), fmt.Sprintf("expected maxTokensOverride=0 when no backends.json, got %d", m.maxTokensOverride))
+})
 
-func TestApplyModelSwapEmptyNameShowsUsage(t *testing.T) {
+var _ = ginkgo.It("apply model swap empty name shows usage", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("")
 
-	if m.status != "Usage: /model [list|name]" {
-		t.Fatalf("expected usage message, got %q", m.status)
-	}
-}
+	gomega.Expect(m.status).To(gomega.Equal("Usage: /model [list|name]"), fmt.Sprintf("expected usage message, got %q", m.status))
+})
 
-func TestRoutingHostedThinkingFloorPreservesThinking(t *testing.T) {
+var _ = ginkgo.It("routing hosted thinking floor preserves thinking", func() {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
@@ -304,20 +274,15 @@ func TestRoutingHostedThinkingFloorPreservesThinking(t *testing.T) {
 
 	tuned := tuneChatOptionsForPlan(opts, plan)
 
-	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
-		t.Fatal("expected thinking ON for hosted model with read-only profile (thinking floor)")
-	}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking ON for hosted model with read-only profile (thinking floor)"))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeTrue(), fmt.Sprint("expected thinking ON for hosted model with read-only profile (thinking floor)"))
 
-	if tuned.PreserveThinking != true {
-		t.Fatal("expected PreserveThinking=true for hosted model")
-	}
+	gomega.Expect(tuned.PreserveThinking).To(gomega.Equal(true), fmt.Sprint("expected PreserveThinking=true for hosted model"))
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("expected direct_answer floor of 4096 (8192 exceeds, should stay), got %d", tuned.MaxTokens)
-	}
-}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("expected direct_answer floor of 4096 (8192 exceeds, should stay), got %d", tuned.MaxTokens))
+})
 
-func TestRoutingHostedThinkingFloorWithMaxTokensOverride(t *testing.T) {
+var _ = ginkgo.It("routing hosted thinking floor with max tokens override", func() {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
@@ -336,16 +301,13 @@ func TestRoutingHostedThinkingFloorWithMaxTokensOverride(t *testing.T) {
 
 	tuned = applyMaxTokensOverride(tuned, 8192)
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("expected maxTokensOverride to win over contract clamp, got %d", tuned.MaxTokens)
-	}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("expected maxTokensOverride to win over contract clamp, got %d", tuned.MaxTokens))
 
-	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
-		t.Fatal("expected thinking ON for hosted model")
-	}
-}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking ON for hosted model"))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeTrue(), fmt.Sprint("expected thinking ON for hosted model"))
+})
 
-func TestRoutingLocalModelDisablesThinkingForReadOnly(t *testing.T) {
+var _ = ginkgo.It("routing local model disables thinking for read only", func() {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
@@ -362,20 +324,15 @@ func TestRoutingLocalModelDisablesThinkingForReadOnly(t *testing.T) {
 
 	tuned := tuneChatOptionsForPlan(opts, plan)
 
-	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
-		t.Fatal("expected thinking ON for local model with direct_answer read-only (conversation lane preserves thinking)")
-	}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking ON for local model with direct_answer read-only (conversation lane preserves thinking)"))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeTrue(), fmt.Sprint("expected thinking ON for local model with direct_answer read-only (conversation lane preserves thinking)"))
 
-	if !tuned.PreserveThinking {
-		t.Fatal("expected PreserveThinking=true for direct_answer read-only route")
-	}
+	gomega.Expect(tuned.PreserveThinking).To(gomega.BeTrue(), fmt.Sprint("expected PreserveThinking=true for direct_answer read-only route"))
 
-	if !tuned.ChatTemplateKwargs {
-		t.Fatal("expected ChatTemplateKwargs=true for read-only route")
-	}
-}
+	gomega.Expect(tuned.ChatTemplateKwargs).To(gomega.BeTrue(), fmt.Sprint("expected ChatTemplateKwargs=true for read-only route"))
+})
 
-func TestRoutingLocalModelMaxTokensOverrideWinsOverClamp(t *testing.T) {
+var _ = ginkgo.It("routing local model max tokens override wins over clamp", func() {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
@@ -394,16 +351,13 @@ func TestRoutingLocalModelMaxTokensOverrideWinsOverClamp(t *testing.T) {
 
 	tuned = applyMaxTokensOverride(tuned, 8192)
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("expected maxTokensOverride=8192 to win over 4096 clamp, got %d", tuned.MaxTokens)
-	}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("expected maxTokensOverride=8192 to win over 4096 clamp, got %d", tuned.MaxTokens))
 
-	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
-		t.Fatal("expected thinking ON for direct_answer read-only (conversation lane preserves thinking)")
-	}
-}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking ON for direct_answer read-only (conversation lane preserves thinking)"))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeTrue(), fmt.Sprint("expected thinking ON for direct_answer read-only (conversation lane preserves thinking)"))
+})
 
-func TestDisableThinkingOverrideWinsOverThinkingFloor(t *testing.T) {
+var _ = ginkgo.It("disable thinking override wins over thinking floor", func() {
 	thinkingOn := true
 	m := &Model{
 		cfg: config.Config{
@@ -413,24 +367,21 @@ func TestDisableThinkingOverrideWinsOverThinkingFloor(t *testing.T) {
 				MaxTokens:        8192,
 			},
 		},
-		modelID: "glm-5.1",
+		backendRuntimeState: backendRuntimeState{modelID: "glm-5.1"},
 	}
 
 	m.modelThinkingFloor = true
 	m.SetDisableThinkingOverride(true)
 
-	opts := m.chatOptions()
+	opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 
-	if opts.EnableThinking == nil || *opts.EnableThinking {
-		t.Fatal("expected thinking OFF when disableThinkingOverride=true even with thinking floor")
-	}
+	gomega.Expect(opts.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking OFF when disableThinkingOverride=true even with thinking floor"))
+	gomega.Expect(*opts.EnableThinking).To(gomega.BeFalse(), fmt.Sprint("expected thinking OFF when disableThinkingOverride=true even with thinking floor"))
 
-	if opts.ModelThinkingFloor != true {
-		t.Fatal("expected ModelThinkingFloor still true in chat options (routing should see it)")
-	}
-}
+	gomega.Expect(opts.ModelThinkingFloor).To(gomega.Equal(true), fmt.Sprint("expected ModelThinkingFloor still true in chat options (routing should see it)"))
+})
 
-func TestDisableThinkingOverrideAndRoutingStillDisablesThinkingForHosted(t *testing.T) {
+var _ = ginkgo.It("disable thinking override and routing still disables thinking for hosted", func() {
 	m := &Model{
 		cfg: config.Config{
 			Chat: config.Chat{
@@ -439,17 +390,16 @@ func TestDisableThinkingOverrideAndRoutingStillDisablesThinkingForHosted(t *test
 				MaxTokens:        8192,
 			},
 		},
-		modelID: "glm-5.1",
+		backendRuntimeState: backendRuntimeState{modelID: "glm-5.1"},
 	}
 
 	m.modelThinkingFloor = true
 	m.SetDisableThinkingOverride(true)
 
-	opts := m.chatOptions()
+	opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 
-	if opts.EnableThinking == nil || *opts.EnableThinking {
-		t.Fatal("expected thinking OFF from disable override before routing")
-	}
+	gomega.Expect(opts.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking OFF from disable override before routing"))
+	gomega.Expect(*opts.EnableThinking).To(gomega.BeFalse(), fmt.Sprint("expected thinking OFF from disable override before routing"))
 
 	plan := promptExecutionPlan{
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -459,12 +409,12 @@ func TestDisableThinkingOverrideAndRoutingStillDisablesThinkingForHosted(t *test
 	}
 	tuned := tuneChatOptionsForPlan(opts, plan)
 
-	if tuned.EnableThinking == nil || *tuned.EnableThinking {
-		t.Fatal("expected thinking to stay OFF after routing (already off, floor irrelevant)")
-	}
-}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking to stay OFF after routing (already off, floor irrelevant)"))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeFalse(), fmt.Sprint("expected thinking to stay OFF after routing (already off, floor irrelevant)"))
+})
 
-func TestFullFlowHostedModelSwapPreservesThinkingAndTokens(t *testing.T) {
+var _ = ginkgo.It("full flow hosted model swap preserves thinking and tokens", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 	thinkingOn := true
 
@@ -475,7 +425,7 @@ func TestFullFlowHostedModelSwapPreservesThinkingAndTokens(t *testing.T) {
 
 	m.applyModelSwap("glm-5.1")
 
-	opts := m.chatOptions()
+	opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 	plan := promptExecutionPlan{
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			PermissionProfile: "read_only_workspace",
@@ -486,16 +436,14 @@ func TestFullFlowHostedModelSwapPreservesThinkingAndTokens(t *testing.T) {
 
 	tuned = applyMaxTokensOverride(tuned, m.maxTokensOverride)
 
-	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
-		t.Fatal("expected thinking ON for hosted glm-5.1 on read-only route")
-	}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking ON for hosted glm-5.1 on read-only route"))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeTrue(), fmt.Sprint("expected thinking ON for hosted glm-5.1 on read-only route"))
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("expected maxTokens=8192 (override wins over 4096 clamp), got %d", tuned.MaxTokens)
-	}
-}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("expected maxTokens=8192 (override wins over 4096 clamp), got %d", tuned.MaxTokens))
+})
 
-func TestFullFlowLocalModelSwapDisablesThinkingButOverrideWinsOnTokens(t *testing.T) {
+var _ = ginkgo.It("full flow local model swap disables thinking but override wins on tokens", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 	thinkingOn := true
 
@@ -506,7 +454,7 @@ func TestFullFlowLocalModelSwapDisablesThinkingButOverrideWinsOnTokens(t *testin
 
 	m.applyModelSwap("local-qwen")
 
-	opts := m.chatOptions()
+	opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 	plan := promptExecutionPlan{
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			PermissionProfile: "read_only_workspace",
@@ -517,125 +465,98 @@ func TestFullFlowLocalModelSwapDisablesThinkingButOverrideWinsOnTokens(t *testin
 
 	tuned = applyMaxTokensOverride(tuned, m.maxTokensOverride)
 
-	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
-		t.Fatal("expected thinking ON for direct_answer conversation lane (preserves thinking)")
-	}
+	gomega.Expect(tuned.EnableThinking).To(gomega.Not(gomega.BeNil()), fmt.Sprint("expected thinking ON for direct_answer conversation lane (preserves thinking)"))
+	gomega.Expect(*tuned.EnableThinking).To(gomega.BeTrue(), fmt.Sprint("expected thinking ON for direct_answer conversation lane (preserves thinking)"))
 
-	if tuned.MaxTokens != 8192 {
-		t.Fatalf("expected maxTokens=8192 (override wins over 4096 clamp), got %d", tuned.MaxTokens)
-	}
-}
+	gomega.Expect(tuned.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("expected maxTokens=8192 (override wins over 4096 clamp), got %d", tuned.MaxTokens))
+})
 
-func TestBackendsModelByAlias(t *testing.T) {
+var _ = ginkgo.It("backends model by alias", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeTestBackendsJSON(t, root)
 
 	file, found, err := backends.LoadFromProjectRoot(root)
-	if err != nil {
-		t.Fatalf("load backends: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("load backends: %v", err))
 
-	if !found {
-		t.Fatal("expected backends.json to be found")
-	}
+	gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprint("expected backends.json to be found"))
 
 	model, ok := file.ModelByAlias("glm-5.1")
-	if !ok {
-		t.Fatal("expected to find glm-5.1 alias")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected to find glm-5.1 alias"))
 
-	if model.Kind != "zai" || model.MaxTokens != 8192 {
-		t.Fatalf("unexpected model: %#v", model)
-	}
+	gomega.Expect(model.Kind).To(gomega.Equal("zai"), fmt.Sprintf("unexpected model: %#v", model))
+	gomega.Expect(model.MaxTokens).To(gomega.Equal(8192), fmt.Sprintf("unexpected model: %#v", model))
 
 	model, ok = file.ModelByAlias("local-qwen")
-	if !ok {
-		t.Fatal("expected to find local-qwen alias")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprint("expected to find local-qwen alias"))
 
-	if model.Kind != "mlx" {
-		t.Fatalf("expected kind=mlx, got %q", model.Kind)
-	}
+	gomega.Expect(model.Kind).To(gomega.Equal("mlx"), fmt.Sprintf("expected kind=mlx, got %q", model.Kind))
 
 	_, ok = file.ModelByAlias("nonexistent")
-	if ok {
-		t.Fatal("expected nonexistent alias to not be found")
-	}
-}
+	gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprint("expected nonexistent alias to not be found"))
+})
 
-func TestApplyModelSwapSetsSwappedFlag(t *testing.T) {
+var _ = ginkgo.It("apply model swap sets swapped flag", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
-	if m.modelSwapped {
-		t.Fatal("expected modelSwapped=false before swap")
-	}
+	gomega.Expect(m.modelSwapped).To(gomega.BeFalse(), fmt.Sprint("expected modelSwapped=false before swap"))
 
 	m.applyModelSwap("glm-5.1")
 
-	if !m.modelSwapped {
-		t.Fatal("expected modelSwapped=true after /model swap")
-	}
-}
+	gomega.Expect(m.modelSwapped).To(gomega.BeTrue(), fmt.Sprint("expected modelSwapped=true after /model swap"))
+})
 
-func TestEnsureServerReadyDoesNotRevertSwappedModelWhenUnreachable(t *testing.T) {
+var _ = ginkgo.It("ensure server ready does not revert swapped model when unreachable", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
+	client := m.client.(*llamamocks.MockLLMClient)
 	m.applyModelSwap("local-qwen")
 
-	if m.modelID != "Qwen/Qwen3.6-35B" {
-		t.Fatalf("setup: expected request modelID Qwen/Qwen3.6-35B, got %q", m.modelID)
-	}
+	gomega.Expect(m.modelID).To(gomega.Equal("Qwen/Qwen3.6-35B"), fmt.Sprintf("setup: expected request modelID Qwen/Qwen3.6-35B, got %q", m.modelID))
 
-	if m.activeModelDisplayID() != "local-qwen" {
-		t.Fatalf("setup: expected display model local-qwen, got %q", m.activeModelDisplayID())
-	}
+	gomega.Expect(activeModelDisplayID(m.modelDisplayID, m.modelID)).To(gomega.Equal("local-qwen"), fmt.Sprintf("setup: expected display model local-qwen, got %q", activeModelDisplayID(m.modelDisplayID, m.modelID)))
 
 	origSpec := m.plannerSpec
 
-	m.client = &failingListModelsClient{err: fmt.Errorf("connection refused")}
+	client.EXPECT().ListModels(gomock.Any()).Return(nil, fmt.Errorf("connection refused")).Times(1)
+	m.client = client
 	m.controller = nil
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err := m.ensureServerReady(ctx)
-	if err == nil {
-		t.Fatal("expected error when swapped model server is unreachable")
-	}
+	session := newDetachedPromptExecutionSession(ctx, m)
+	err := session.ensureServerReady(ctx)
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected error when swapped model server is unreachable"))
 
-	if !strings.Contains(err.Error(), "swapped model") {
-		t.Fatalf("expected swapped-model error, got %q", err.Error())
-	}
+	gomega.Expect(strings.Contains(err.Error(), "swapped model")).To(gomega.BeTrue(), fmt.Sprintf("expected swapped-model error, got %q", err.Error()))
 
-	if m.modelID != "Qwen/Qwen3.6-35B" {
-		t.Fatalf("request modelID should NOT be reverted, got %q", m.modelID)
-	}
+	gomega.Expect(session.modelID).To(gomega.Equal("Qwen/Qwen3.6-35B"), fmt.Sprintf("request modelID should NOT be reverted, got %q", session.modelID))
 
-	if m.activeModelDisplayID() != "local-qwen" {
-		t.Fatalf("display model should NOT be reverted, got %q", m.activeModelDisplayID())
-	}
+	gomega.Expect(activeModelDisplayID(session.modelDisplayID, session.modelID)).To(gomega.Equal("local-qwen"), fmt.Sprintf("display model should NOT be reverted, got %q", activeModelDisplayID(session.modelDisplayID, session.modelID)))
 
-	if m.plannerSpec.EndpointBaseURL() != origSpec.EndpointBaseURL() {
-		t.Fatal("plannerSpec should not be mutated on failure")
-	}
-}
+	gomega.Expect(session.plannerSpec.EndpointBaseURL()).To(gomega.Equal(origSpec.EndpointBaseURL()), fmt.Sprint("plannerSpec should not be mutated on failure"))
+})
 
-func TestEnsureServerReadySucceedsForReachableSwappedModel(t *testing.T) {
+var _ = ginkgo.It("ensure server ready succeeds for reachable swapped model", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
+	client := m.client.(*llamamocks.MockLLMClient)
 	m.applyModelSwap("local-qwen")
 
-	m.client = &reachableListModelsClient{
-		models: []llama.ModelInfo{{ID: "local-qwen"}},
-	}
+	client.EXPECT().ListModels(gomock.Any()).Return([]llama.ModelInfo{{ID: "local-qwen"}}, nil).Times(1)
+	m.client = client
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err := m.ensureServerReady(ctx)
-	if err != nil {
-		t.Fatalf("expected no error for reachable swapped server, got %v", err)
-	}
-}
+	session := newDetachedPromptExecutionSession(ctx, m)
+	err := session.ensureServerReady(ctx)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("expected no error for reachable swapped server, got %v", err))
+})
 
-func TestEnsureServerReadyDisplaysAliasWithoutChangingRequestModel(t *testing.T) {
+var _ = ginkgo.It("ensure server ready displays alias without changing request model", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithWorkspace(t)
 
 	m.plannerSpec = config.LlamaServer{
@@ -645,46 +566,30 @@ func TestEnsureServerReadyDisplaysAliasWithoutChangingRequestModel(t *testing.T)
 		Host:        "127.0.0.1",
 		Port:        11434,
 	}
-	m.client = &reachableListModelsClient{
-		models: []llama.ModelInfo{{ID: "default-reported-model"}},
-	}
+	client := m.client.(*llamamocks.MockLLMClient)
+	client.EXPECT().ListModels(gomock.Any()).Return([]llama.ModelInfo{{ID: "default-reported-model"}}, nil).Times(1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	session := newDetachedPromptExecutionSession(ctx, m)
 
-	if err := m.ensureServerReady(ctx); err != nil {
-		t.Fatalf("ensureServerReady: %v", err)
+	{
+		err := session.ensureServerReady(ctx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ensureServerReady: %v", err))
 	}
 
-	if m.modelID != "/models/local-coder-mlx" {
-		t.Fatalf("request modelID should remain backend path, got %q", m.modelID)
-	}
+	gomega.Expect(session.modelID).To(gomega.Equal("/models/local-coder-mlx"), fmt.Sprintf("request modelID should remain backend path, got %q", session.modelID))
 
-	if m.activeModelDisplayID() != "local-coder" {
-		t.Fatalf("display model should use alias, got %q", m.activeModelDisplayID())
-	}
+	gomega.Expect(activeModelDisplayID(session.modelDisplayID, session.modelID)).To(gomega.Equal("local-coder"), fmt.Sprintf("display model should use alias, got %q", activeModelDisplayID(session.modelDisplayID, session.modelID)))
 
-	if opts := m.chatOptions(); opts.Model != "/models/local-coder-mlx" {
-		t.Fatalf("chat options should use request model path, got %q", opts.Model)
+	{
+		opts := chatOptions(session.cfg.Chat, session.modelID, session.modelThinkingFloor, session.disableThinkingOverride)
+		gomega.Expect(opts.Model).To(gomega.Equal("/models/local-coder-mlx"), fmt.Sprintf("chat options should use request model path, got %q", opts.Model))
 	}
-}
+})
 
 func boolPtr(b bool) *bool {
 	return &b
-}
-
-func containsSubstring(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || containsSubstrHelper(s, sub))
-}
-
-func containsSubstrHelper(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-
-	return false
 }
 
 const multiProfileBackendsJSON = `{
@@ -714,21 +619,23 @@ const multiProfileBackendsJSON = `{
   }
 }`
 
-func newTestModelWithMultiProfile(t *testing.T) *Model {
-	t.Helper()
+func newTestModelWithMultiProfile(t ginkgo.FullGinkgoTInterface) *Model {
+	ginkgo.GinkgoHelper()
 
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir .idiom: %v", err)
+	{
+		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
 	}
 
-	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(multiProfileBackendsJSON), 0o644); err != nil {
-		t.Fatalf("write backends.json: %v", err)
+	{
+		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(multiProfileBackendsJSON), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
 	}
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	thinkingOn := true
-	stub := &stubLLMClient{}
+	client := llamamocks.NewMockLLMClient(gomock.NewController(t))
 
 	return &Model{
 		cfg: config.Config{
@@ -741,16 +648,18 @@ func newTestModelWithMultiProfile(t *testing.T) *Model {
 		},
 		workspace:   ws,
 		plannerSpec: config.Default().LlamaServer,
-		client:      stub,
-		runner:      &agent.Runner{Client: stub},
+		client:      client,
 	}
 }
 
-func TestModelAliasDiscoveryCollectsAllProfileModels(t *testing.T) {
+var _ = ginkgo.It("model alias discovery collects all profile models", func() {
+	t := ginkgo.GinkgoT()
 	m := newTestModelWithMultiProfile(t)
 
 	m.modelID = "qwen3.6-35b"
 
+	client := m.client.(*llamamocks.MockLLMClient)
+	client.EXPECT().ListModels(gomock.Any()).Return(nil, nil).Times(1)
 	aliases := m.collectAllAliases()
 
 	for _, want := range []string{"qwen3.6-35b", "qwen3-coder-30b", "MiniMax-M2.7", "glm-5.1", "glm-5.2"} {
@@ -763,8 +672,6 @@ func TestModelAliasDiscoveryCollectsAllProfileModels(t *testing.T) {
 			}
 		}
 
-		if !found {
-			t.Errorf("expected alias %q in collected aliases, got %v", want, aliases)
-		}
+		gomega.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("expected alias %q in collected aliases, got %v", want, aliases))
 	}
-}
+})

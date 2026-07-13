@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
@@ -27,441 +30,327 @@ func (w implementFailingWriter) Write([]byte) (int, error) {
 	return 0, w.err
 }
 
-func TestRunImplementMainForcesImplementationTaskFamily(t *testing.T) {
-	configPath := writeMainConfig(t)
+var _ = ginkgo.Describe("implementcmd", func() {
+	ginkgo.It("run implement main forces implementation task family", func() {
+		configPath := writeMainConfig()
 
-	var (
-		stdout, stderr bytes.Buffer
-		gotPrompt      string
-		gotOpts        cmdruntime.RunOptions
-	)
+		var (
+			stdout, stderr bytes.Buffer
+			gotPrompt      string
+			gotOpts        cmdruntime.RunOptions
+		)
 
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath, "-prompt", "modify exactly one file; do not run tests"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			gotPrompt = prompt
-			gotOpts = opts
+		code := RunMainWithTelemetry(
+			[]string{"-config", configPath, "-prompt", "modify exactly one file; do not run tests"},
+			&stdout,
+			&stderr,
+			func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+				gotPrompt = prompt
+				gotOpts = opts
 
-			return "done", nil
-		},
-		nil,
-	)
+				return "done", nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("expected exit 0, got %d stderr=%s", code, stderr.String()))
+		gomega.Expect(gotPrompt).To(gomega.Equal("modify exactly one file; do not run tests"), fmt.Sprintf("prompt not forwarded: %q", gotPrompt))
+		gomega.Expect(gotOpts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyImplementation)), fmt.Sprintf("TaskFamily = %q, want implementation", gotOpts.TaskFamily))
+		gomega.Expect(gotOpts.PlannerOwnedVerification).To(gomega.BeFalse(), "idiom implement should keep build/test verification available by default")
+		gomega.Expect(strings.TrimSpace(stdout.String())).To(gomega.Equal("done"), fmt.Sprintf("stdout = %q, want done", stdout.String()))
 
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
+	})
+	ginkgo.It("run implement main can delegate build tests to planner", func() {
+		configPath := writeMainConfig()
 
-	if gotPrompt != "modify exactly one file; do not run tests" {
-		t.Fatalf("prompt not forwarded: %q", gotPrompt)
-	}
+		var (
+			stdout, stderr bytes.Buffer
+			gotOpts        cmdruntime.RunOptions
+		)
 
-	if gotOpts.TaskFamily != "implementation" {
-		t.Fatalf("TaskFamily = %q, want implementation", gotOpts.TaskFamily)
-	}
+		code := RunMainWithTelemetry(
+			[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification"},
+			&stdout,
+			&stderr,
+			func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+				gotOpts = opts
+				return "done", nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("expected exit 0, got %d stderr=%s", code, stderr.String()))
+		gomega.Expect(gotOpts.PlannerOwnedVerification).To(gomega.BeTrue(), "--planner-owned-verification should mark build/test verification as caller-owned")
 
-	if gotOpts.PlannerOwnedVerification {
-		t.Fatal("idiom implement should keep build/test verification available by default")
-	}
+	})
+	ginkgo.It("run implement main can disable thinking", func() {
+		configPath := writeMainConfig()
 
-	if strings.TrimSpace(stdout.String()) != "done" {
-		t.Fatalf("stdout = %q, want done", stdout.String())
-	}
-}
+		var (
+			stdout, stderr bytes.Buffer
+			gotOpts        cmdruntime.RunOptions
+		)
 
-func TestRunImplementMainCanDelegateBuildTestsToPlanner(t *testing.T) {
-	configPath := writeMainConfig(t)
+		code := RunMainWithTelemetry(
+			[]string{"-config", configPath, "-prompt", "write the brief", "-no-thinking"},
+			&stdout,
+			&stderr,
+			func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+				gotOpts = opts
+				return "done", nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("expected exit 0, got %d stderr=%s", code, stderr.String()))
+		gomega.Expect(gotOpts.DisableThinking).To(gomega.BeTrue(), "--no-thinking should force request-level thinking off")
 
-	var (
-		stdout, stderr bytes.Buffer
-		gotOpts        cmdruntime.RunOptions
-	)
+	})
+	ginkgo.It("run implement main reads prompt file and honors json", func() {
+		configPath := writeMainConfig()
+		promptPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "brief.md")
+		gomega.Expect(os.WriteFile(promptPath, []byte("implement this\n"), 0o644)).To(gomega.Succeed())
 
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			gotOpts = opts
-			return "done", nil
-		},
-		nil,
-	)
+		var (
+			stdout, stderr bytes.Buffer
+			gotOpts        cmdruntime.RunOptions
+		)
 
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
+		code := RunMainWithTelemetry(
+			[]string{"-config", configPath, "-prompt-file", promptPath, "-json", "-resume", "prior"},
+			&stdout,
+			&stderr,
+			func(_ config.Config, prompt string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
+				gotOpts = opts
+				gomega.Expect(prompt).To(gomega.Equal("implement this"), fmt.Sprintf("prompt = %q, want implement this", prompt))
 
-	if !gotOpts.PlannerOwnedVerification {
-		t.Fatal("--planner-owned-verification should mark build/test verification as caller-owned")
-	}
-}
+				_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
 
-func TestRunImplementMainCanDisableThinking(t *testing.T) {
-	configPath := writeMainConfig(t)
+				return "ok", nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("expected exit 0, got %d stderr=%s", code, stderr.String()))
+		gomega.Expect(gotOpts.JSONEvents).To(gomega.BeTrue(), fmt.Sprintf("unexpected opts: %#v", gotOpts))
+		gomega.Expect(gotOpts.Resume).To(gomega.Equal("prior"), fmt.Sprintf("unexpected opts: %#v", gotOpts))
+		gomega.Expect(gotOpts.TaskFamily).To(gomega.Equal(string(autonomy.TaskFamilyImplementation)), fmt.Sprintf("unexpected opts: %#v", gotOpts))
+		gomega.Expect(gotOpts.PlannerOwnedVerification).To(gomega.BeFalse(), fmt.Sprintf("unexpected opts: %#v", gotOpts))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"type":"final"`), fmt.Sprintf("JSON mode should only emit runner JSONL, got %q", stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"content":"ok"`), fmt.Sprintf("JSON mode should only emit runner JSONL, got %q", stdout.String()))
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("ok\n"), fmt.Sprintf("JSON mode should only emit runner JSONL, got %q", stdout.String()))
 
-	var (
-		stdout, stderr bytes.Buffer
-		gotOpts        cmdruntime.RunOptions
-	)
+		writerRouteEventName, err := writerroute.CommandEventName(writerroute.CommandSurfaceImplement, writerroute.EventWriterRouteDecision)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("writer route event name: %v", err))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"type":"`+writerRouteEventName+`"`), fmt.Sprintf("implement JSON should report writer route decision, got %q", stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"writer_mode":"agentic_guarded"`), fmt.Sprintf("implement JSON should report writer route decision, got %q", stdout.String()))
 
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath, "-prompt", "write the brief", "-no-thinking"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			gotOpts = opts
-			return "done", nil
-		},
-		nil,
-	)
+		events := jsoneventstest.DecodeLines(ginkgo.GinkgoT(), stdout.String())
+		event, ok := jsoneventstest.FindByType(events, writerRouteEventName)
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("missing direct implement writer route event in %q", stdout.String()))
+		gomega.Expect(event["writer_mode"]).To(gomega.Equal("agentic_guarded"), fmt.Sprintf("unexpected direct implement route event: %#v", event))
+		gomega.Expect(event["lane"]).To(gomega.Equal("implement"), fmt.Sprintf("unexpected direct implement route event: %#v", event))
+		gomega.Expect(event["verification_owner"]).To(gomega.Equal("executor"), fmt.Sprintf("unexpected direct implement route event: %#v", event))
+		gomega.Expect(jsonEventStringSliceContains(event["reason_codes"], "route.local_model_default")).To(gomega.BeTrue(), fmt.Sprintf("direct implement route should explain local model default: %#v", event))
 
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
+	})
+	ginkgo.It("run implement main returns json event writer error", func() {
+		configPath := writeMainConfig()
+		want := errors.New("stdout closed")
+		var stderr bytes.Buffer
 
-	if !gotOpts.DisableThinking {
-		t.Fatal("--no-thinking should force request-level thinking off")
-	}
-}
+		code := RunMainWithTelemetry(
+			[]string{"-config", configPath, "-prompt", "implement this", "-json"},
+			implementFailingWriter{err: want},
+			&stderr,
+			func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				ginkgo.Fail("prompt runner should not run after json event writer failure")
+				return "", nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("exit code = %d, want 1", code))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("implement: write json event"), fmt.Sprintf("stderr = %q, want actionable writer error", stderr.String()))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring(want.Error()), fmt.Sprintf("stderr = %q, want actionable writer error", stderr.String()))
 
-func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
-	configPath := writeMainConfig(t)
-	promptPath := filepath.Join(t.TempDir(), "brief.md")
+	})
+	ginkgo.It("run implement main rejects missing prompt", func() {
+		configPath := writeMainConfig()
 
-	if err := os.WriteFile(promptPath, []byte("implement this\n"), 0o644); err != nil {
-		t.Fatalf("write prompt: %v", err)
-	}
+		var stdout, stderr bytes.Buffer
 
-	var (
-		stdout, stderr bytes.Buffer
-		gotOpts        cmdruntime.RunOptions
-	)
+		code := RunMainWithTelemetry(
+			[]string{"-config", configPath},
+			&stdout,
+			&stderr,
+			func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				ginkgo.Fail("prompt runner should not be called")
 
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath, "-prompt-file", promptPath, "-json", "-resume", "prior"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
-			gotOpts = opts
+				return "", nil
+			},
+			nil,
+		)
+		gomega.Expect(code).To(gomega.Equal(2), fmt.Sprintf("expected prompt validation failure, code=%d stderr=%s", code, stderr.String()))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("provide --prompt"), fmt.Sprintf("expected prompt validation failure, code=%d stderr=%s", code, stderr.String()))
 
-			if prompt != "implement this" {
-				t.Fatalf("prompt = %q, want implement this", prompt)
-			}
+	})
+	ginkgo.It("implement telemetry includes local ops and queue metadata only", func() {
+		configPath := writeMainConfig()
+		telemetryDir := ginkgo.GinkgoT().TempDir()
 
-			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
+		rec, err := telemetry.Open(telemetry.Options{Dir: telemetryDir, Command: "implement", Args: []string{"implement", "--prompt", "SECRET raw prompt body"}, WorkspaceRoot: "/workspace"})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("telemetry.Open: %v", err))
 
-			return "ok", nil
-		},
-		nil,
-	)
+		var stdout, stderr bytes.Buffer
 
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
+		code := RunMainWithTelemetry(
+			[]string{"-config", configPath, "-prompt", "modify a file", "-json"},
+			&stdout,
+			&stderr,
+			func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+				gomega.Expect(opts.Telemetry).To(gomega.Equal(rec), "implement runner should receive telemetry recorder")
 
-	if !gotOpts.JSONEvents || gotOpts.Resume != "prior" || gotOpts.TaskFamily != "implementation" || gotOpts.PlannerOwnedVerification {
-		t.Fatalf("unexpected opts: %#v", gotOpts)
-	}
+				return "done", nil
+			},
+			rec,
+		)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("expected exit 0, got %d stderr=%s", code, stderr.String()))
+		gomega.Expect(rec.CloseWithFields(0, nil)).To(gomega.Succeed())
 
-	if !strings.Contains(stdout.String(), `"type":"final"`) || strings.Contains(stdout.String(), "ok\n") && !strings.Contains(stdout.String(), `"content":"ok"`) {
-		t.Fatalf("JSON mode should only emit runner JSONL, got %q", stdout.String())
-	}
+		records := readMainTelemetryRecords(onlyTelemetryFile(telemetryDir))
+		start := findTelemetryRecord(records, "implement_start")
+		gomega.Expect(start).NotTo(gomega.Equal(nil), fmt.Sprintf("missing implement_start telemetry: %#v", records))
 
-	writerRouteEventName, err := writerroute.CommandEventName(writerroute.CommandSurfaceImplement, writerroute.EventWriterRouteDecision)
-	if err != nil {
-		t.Fatalf("writer route event name: %v", err)
-	}
+		localOps, ok := start["local_ops"].(map[string]any)
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("implement_start missing local ops evidence: %#v", start))
+		gomega.Expect(localOps["context_budget_state"]).NotTo(gomega.BeEmpty(), fmt.Sprintf("implement_start missing local ops evidence: %#v", start))
+		gomega.Expect(localOps["classifier_state"]).NotTo(gomega.BeEmpty(), fmt.Sprintf("implement_start missing local ops evidence: %#v", start))
+		gomega.Expect(localOps["backend_configured"]).NotTo(gomega.BeNil(), fmt.Sprintf("implement_start missing local ops evidence: %#v", start))
 
-	if !strings.Contains(stdout.String(), `"type":"`+writerRouteEventName+`"`) ||
-		!strings.Contains(stdout.String(), `"writer_mode":"agentic_guarded"`) {
+		queue := findTelemetryRecord(records, "implement_queue")
+		gomega.Expect(queue).NotTo(gomega.BeNil(), fmt.Sprintf("missing implement queue telemetry: %#v", records))
+		gomega.Expect(queue["wait_ms"]).NotTo(gomega.BeNil(), fmt.Sprintf("missing implement queue telemetry: %#v", records))
+		gomega.Expect(queue["state"]).NotTo(gomega.BeEmpty(), fmt.Sprintf("missing implement queue telemetry: %#v", records))
 
-		t.Fatalf("implement JSON should report writer route decision, got %q", stdout.String())
-	}
+		rendered, _ := json.Marshal(records)
+		for _, forbidden := range []string{"modify a file", "SECRET raw prompt body"} {
+			gomega.Expect(string(rendered)).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("telemetry leaked prompt content %q in %s", forbidden, rendered))
 
-	events := jsoneventstest.DecodeLines(t, stdout.String())
-	event, ok := jsoneventstest.FindByType(events, writerRouteEventName)
-
-	if !ok {
-		t.Fatalf("missing direct implement writer route event in %q", stdout.String())
-	}
-
-	if event["writer_mode"] != "agentic_guarded" || event["lane"] != "implement" || event["verification_owner"] != "executor" {
-		t.Fatalf("unexpected direct implement route event: %#v", event)
-	}
-
-	if !jsonEventStringSliceContains(event["reason_codes"], "route.local_model_default") {
-		t.Fatalf("direct implement route should explain local model default: %#v", event)
-	}
-}
-
-func TestRunImplementMainReturnsJSONEventWriterError(t *testing.T) {
-	configPath := writeMainConfig(t)
-	want := errors.New("stdout closed")
-	var stderr bytes.Buffer
-
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath, "-prompt", "implement this", "-json"},
-		implementFailingWriter{err: want},
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not run after json event writer failure")
-			return "", nil
-		},
-		nil,
-	)
-
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1", code)
-	}
-	if !strings.Contains(stderr.String(), "implement: write json event") || !strings.Contains(stderr.String(), want.Error()) {
-		t.Fatalf("stderr = %q, want actionable writer error", stderr.String())
-	}
-}
-
-func TestRunImplementMainRejectsMissingPrompt(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath},
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not be called")
-
-			return "", nil
-		},
-		nil,
-	)
-
-	if code != 2 || !strings.Contains(stderr.String(), "provide --prompt") {
-		t.Fatalf("expected prompt validation failure, code=%d stderr=%s", code, stderr.String())
-	}
-}
-
-func TestImplementTelemetryIncludesLocalOpsAndQueueMetadataOnly(t *testing.T) {
-	configPath := writeMainConfig(t)
-	telemetryDir := t.TempDir()
-
-	rec, err := telemetry.Open(telemetry.Options{Dir: telemetryDir, Command: "implement", Args: []string{"implement", "--prompt", "SECRET raw prompt body"}, WorkspaceRoot: "/workspace"})
-	if err != nil {
-		t.Fatalf("telemetry.Open: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMainWithTelemetry(
-		[]string{"-config", configPath, "-prompt", "modify a file", "-json"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.Telemetry != rec {
-				t.Fatal("implement runner should receive telemetry recorder")
-			}
-
-			return "done", nil
-		},
-		rec,
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	if err := rec.CloseWithFields(0, nil); err != nil {
-		t.Fatalf("rec.Close: %v", err)
-	}
-
-	records := readMainTelemetryRecords(t, onlyTelemetryFile(t, telemetryDir))
-	start := findTelemetryRecord(records, "implement_start")
-
-	if start == nil {
-		t.Fatalf("missing implement_start telemetry: %#v", records)
-	}
-
-	localOps, ok := start["local_ops"].(map[string]any)
-	if !ok || localOps["context_budget_state"] == "" || localOps["classifier_state"] == "" || localOps["backend_configured"] == nil {
-		t.Fatalf("implement_start missing local ops evidence: %#v", start)
-	}
-
-	queue := findTelemetryRecord(records, "implement_queue")
-	if queue == nil || queue["wait_ms"] == nil || queue["state"] == "" {
-		t.Fatalf("missing implement queue telemetry: %#v", records)
-	}
-
-	rendered, _ := json.Marshal(records)
-	for _, forbidden := range []string{"modify a file", "SECRET raw prompt body"} {
-		if strings.Contains(string(rendered), forbidden) {
-			t.Fatalf("telemetry leaked prompt content %q in %s", forbidden, rendered)
 		}
-	}
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"type":"idiom.implement.queue_`), fmt.Sprintf("implement JSON stream should include queue event, got %q", stdout.String()))
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("acquired_or_unavailable"), fmt.Sprintf("implement JSON stream should include queue event, got %q", stdout.String()))
 
-	if !strings.Contains(stdout.String(), `"type":"idiom.implement.queue_`) || strings.Contains(stdout.String(), "acquired_or_unavailable") {
-		t.Fatalf("implement JSON stream should include queue event, got %q", stdout.String())
-	}
-}
+	})
+	ginkgo.It("implement queue telemetry reports unavailable as degraded", func() {
+		ginkgo.GinkgoT().
+			Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
+		ginkgo.GinkgoT().
+			Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(ginkgo.GinkgoT().TempDir(), "missing.sock"))
 
-func TestImplementQueueTelemetryReportsUnavailableAsDegraded(t *testing.T) {
-	t.Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
-	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+		rec, err := telemetry.Open(telemetry.Options{Dir: ginkgo.GinkgoT().TempDir(), Command: "implement", WorkspaceRoot: "/workspace"})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("telemetry.Open: %v", err))
 
-	rec, err := telemetry.Open(telemetry.Options{Dir: t.TempDir(), Command: "implement", WorkspaceRoot: "/workspace"})
-	if err != nil {
-		t.Fatalf("telemetry.Open: %v", err)
-	}
+		var stdout, stderr bytes.Buffer
 
-	var stdout, stderr bytes.Buffer
+		queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
+		queueResult.Release()
+		gomega.Expect(rec.CloseWithFields(0, nil)).To(gomega.Succeed())
 
-	queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
-	queueResult.Release()
+		records := readMainTelemetryRecords(rec.Path())
+		queue := findTelemetryRecord(records, "implement_queue")
+		gomega.Expect(queue).NotTo(gomega.Equal(nil), fmt.Sprintf("missing implement queue telemetry: %#v", records))
+		gomega.Expect(queue["state"]).To(gomega.Equal("unavailable"), fmt.Sprintf("unavailable queue telemetry should be explicit and degraded, got %#v", queue))
+		gomega.Expect(queue["degraded"]).To(gomega.Equal(true), fmt.Sprintf("unavailable queue telemetry should be explicit and degraded, got %#v", queue))
+		gomega.Expect(queue["reason_class"]).To(gomega.Equal("daemon_unreachable"), fmt.Sprintf("unavailable queue telemetry should be explicit and degraded, got %#v", queue))
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("queue_acquired"), fmt.Sprintf("unavailable queue JSON event should not report acquisition, got %q", stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"type":"idiom.implement.queue_unavailable"`), fmt.Sprintf("unavailable queue JSON event should not report acquisition, got %q", stdout.String()))
 
-	if err := rec.CloseWithFields(0, nil); err != nil {
-		t.Fatalf("rec.Close: %v", err)
-	}
+	})
+	ginkgo.It("implement queue telemetry reports real acquire", func() {
+		ginkgo.GinkgoT().
+			Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
 
-	records := readMainTelemetryRecords(t, rec.Path())
-	queue := findTelemetryRecord(records, "implement_queue")
+		sock := filepath.Join("/tmp", "idiom-"+strings.NewReplacer("/", "_").Replace(ginkgo.GinkgoT().Name())+".sock")
 
-	if queue == nil {
-		t.Fatalf("missing implement queue telemetry: %#v", records)
-	}
+		_ = os.Remove(sock)
 
-	if queue["state"] != "unavailable" || queue["degraded"] != true || queue["reason_class"] != "daemon_unreachable" {
-		t.Fatalf("unavailable queue telemetry should be explicit and degraded, got %#v", queue)
-	}
+		defer os.Remove(sock)
 
-	if strings.Contains(stdout.String(), "queue_acquired") || !strings.Contains(stdout.String(), `"type":"idiom.implement.queue_unavailable"`) {
-		t.Fatalf("unavailable queue JSON event should not report acquisition, got %q", stdout.String())
-	}
-}
+		srv := runner.NewServer(runner.Config{Pools: map[string]runner.PoolConfig{"qwen-coder": {MaxInFlight: 1}}}, sock)
+		gomega.Expect(srv.Start()).To(gomega.Succeed())
 
-func TestImplementQueueTelemetryReportsRealAcquire(t *testing.T) {
-	t.Setenv("IDIOM_QUEUE_POOL", "qwen-coder")
+		defer srv.Stop()
+		ginkgo.GinkgoT().
+			Setenv("IDIOM_QUEUE_SOCKET", sock)
 
-	sock := filepath.Join("/tmp", "idiom-"+strings.NewReplacer("/", "_").Replace(t.Name())+".sock")
+		rec, err := telemetry.Open(telemetry.Options{Dir: ginkgo.GinkgoT().TempDir(), Command: "implement", WorkspaceRoot: "/workspace"})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("telemetry.Open: %v", err))
 
-	_ = os.Remove(sock)
+		var stdout, stderr bytes.Buffer
 
-	defer os.Remove(sock)
+		queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
+		queueResult.Release()
+		gomega.Expect(rec.CloseWithFields(0, nil)).To(gomega.Succeed())
 
-	srv := runner.NewServer(runner.Config{Pools: map[string]runner.PoolConfig{"qwen-coder": {MaxInFlight: 1}}}, sock)
-	if err := srv.Start(); err != nil {
-		t.Fatalf("start queue server: %v", err)
-	}
+		records := readMainTelemetryRecords(rec.Path())
+		queue := findTelemetryRecord(records, "implement_queue")
+		gomega.Expect(queue).NotTo(gomega.Equal(nil), fmt.Sprintf("missing implement queue telemetry: %#v", records))
+		gomega.Expect(queue["state"]).To(gomega.Equal("acquired"), fmt.Sprintf("real queue acquire should report acquired/non-degraded, got %#v", queue))
+		gomega.Expect(queue["degraded"]).To(gomega.Equal(false), fmt.Sprintf("real queue acquire should report acquired/non-degraded, got %#v", queue))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"type":"idiom.implement.queue_acquired"`), fmt.Sprintf("acquired queue JSON event missing, got %q", stdout.String()))
 
-	defer srv.Stop()
-
-	t.Setenv("IDIOM_QUEUE_SOCKET", sock)
-
-	rec, err := telemetry.Open(telemetry.Options{Dir: t.TempDir(), Command: "implement", WorkspaceRoot: "/workspace"})
-	if err != nil {
-		t.Fatalf("telemetry.Open: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
-	queueResult.Release()
-
-	if err := rec.CloseWithFields(0, nil); err != nil {
-		t.Fatalf("rec.Close: %v", err)
-	}
-
-	records := readMainTelemetryRecords(t, rec.Path())
-	queue := findTelemetryRecord(records, "implement_queue")
-
-	if queue == nil {
-		t.Fatalf("missing implement queue telemetry: %#v", records)
-	}
-
-	if queue["state"] != "acquired" || queue["degraded"] != false {
-		t.Fatalf("real queue acquire should report acquired/non-degraded, got %#v", queue)
-	}
-
-	if !strings.Contains(stdout.String(), `"type":"idiom.implement.queue_acquired"`) {
-		t.Fatalf("acquired queue JSON event missing, got %q", stdout.String())
-	}
-}
-
-func TestModelCloseoutWritesImplementTelemetryAndOneSessionSummary(t *testing.T) {
-	root := t.TempDir()
-	cfg := config.Config{
-		AppName: "Idiom",
-		Chat: config.Chat{
-			DebugLogDir:           filepath.Join(root, "logs", "conversations"),
-			RequestTimeoutSeconds: 1,
-		},
-		Workspace: config.Workspace{Root: root, CWD: root},
-	}
-
-	rec, err := telemetry.Open(telemetry.Options{Dir: filepath.Join(root, "telemetry"), Command: "implement", WorkspaceRoot: root})
-	if err != nil {
-		t.Fatalf("telemetry.Open: %v", err)
-	}
-
-	model := app.New(cfg)
-	closeout := cmdruntime.ModelCloseout(rec, model, "prompt", "implementation")
-
-	_ = rec.RegisterCloseout(closeout)
-
-	if err := rec.CloseWithFields(143, map[string]any{"reason": "signal"}); err != nil {
-		t.Fatalf("rec.CloseWithFields: %v", err)
-	}
-
-	if err := rec.CloseWithFields(0, nil); err != nil {
-		t.Fatalf("second rec.Close: %v", err)
-	}
-
-	summaries := readAppSessionSummaryRecordsForMain(t, model.DebugLogPath())
-	if len(summaries) != 1 {
-		t.Fatalf("expected exactly one session_summary, got %d in %#v", len(summaries), summaries)
-	}
-
-	records := readMainTelemetryRecords(t, onlyTelemetryFile(t, filepath.Join(root, "telemetry")))
-	closeouts := 0
-	modelCloseouts := 0
-
-	for _, record := range records {
-		if record["type"] == "model_session_closeout" {
-			modelCloseouts++
-
-			if record["summary_event"] != "session_summary" || record["session_id"] == "" || record["model_closed"] != true {
-				t.Fatalf("model closeout should carry completed session summary metadata: %#v", record)
-			}
+	})
+	ginkgo.It("model closeout writes implement telemetry and one session summary", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		cfg := config.Config{
+			AppName: "Idiom",
+			Chat: config.Chat{
+				DebugLogDir:           filepath.Join(root, "logs", "conversations"),
+				RequestTimeoutSeconds: 1,
+			},
+			Workspace: config.Workspace{Root: root, CWD: root},
 		}
 
-		if record["type"] == "implement_session_closeout" {
-			closeouts++
+		rec, err := telemetry.Open(telemetry.Options{Dir: filepath.Join(root, "telemetry"), Command: "implement", WorkspaceRoot: root})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("telemetry.Open: %v", err))
 
-			if record["summary_event"] != "session_summary" || record["session_id"] == "" {
-				t.Fatalf("closeout should carry metadata-only session summary fields: %#v", record)
+		model := app.New(cfg)
+		closeout := cmdruntime.ModelCloseout(rec, model, "prompt", string(autonomy.TaskFamilyImplementation))
+
+		_ = rec.RegisterCloseout(func() { _ = closeout() })
+		gomega.Expect(rec.CloseWithFields(143, map[string]any{"reason": "signal"})).To(gomega.Succeed())
+		gomega.Expect(rec.CloseWithFields(0, nil)).To(gomega.Succeed())
+
+		summaries := readAppSessionSummaryRecordsForMain(model.DebugLogPath())
+		gomega.Expect(summaries).To(gomega.HaveLen(1), fmt.Sprintf("expected exactly one session_summary, got %d in %#v", len(summaries), summaries))
+
+		records := readMainTelemetryRecords(onlyTelemetryFile(filepath.Join(root, "telemetry")))
+		closeouts := 0
+		modelCloseouts := 0
+
+		for _, record := range records {
+			if record["type"] == "model_session_closeout" {
+				modelCloseouts++
+				gomega.Expect(record["summary_event"]).To(gomega.Equal("session_summary"), fmt.Sprintf("model closeout should carry completed session summary metadata: %#v", record))
+				gomega.Expect(record["session_id"]).NotTo(gomega.BeEmpty(), fmt.Sprintf("model closeout should carry completed session summary metadata: %#v", record))
+				gomega.Expect(record["model_closed"]).To(gomega.Equal(true), fmt.Sprintf("model closeout should carry completed session summary metadata: %#v", record))
+
+			}
+
+			if record["type"] == "implement_session_closeout" {
+				closeouts++
+				gomega.Expect(record["summary_event"]).To(gomega.Equal("session_summary"), fmt.Sprintf("closeout should carry metadata-only session summary fields: %#v", record))
+				gomega.Expect(record["session_id"]).NotTo(gomega.BeEmpty(), fmt.Sprintf("closeout should carry metadata-only session summary fields: %#v", record))
+
 			}
 		}
-	}
+		gomega.Expect(closeouts).To(gomega.Equal(1), fmt.Sprintf("expected one implement_session_closeout, got %d in %#v", closeouts, records))
+		gomega.Expect(modelCloseouts).To(gomega.Equal(1), fmt.Sprintf("expected one model_session_closeout, got %d in %#v", modelCloseouts, records))
 
-	if closeouts != 1 {
-		t.Fatalf("expected one implement_session_closeout, got %d in %#v", closeouts, records)
-	}
+	})
+})
 
-	if modelCloseouts != 1 {
-		t.Fatalf("expected one model_session_closeout, got %d in %#v", modelCloseouts, records)
-	}
-}
-
-func onlyTelemetryFile(t *testing.T, dir string) string {
-	t.Helper()
+func onlyTelemetryFile(dir string) string {
 
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read telemetry dir: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("expected one telemetry file, got %d", len(entries))
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read telemetry dir: %v", err))
+	gomega.Expect(entries).To(gomega.HaveLen(1), fmt.Sprintf("expected one telemetry file, got %d", len(entries)))
 
 	return filepath.Join(dir, entries[0].Name())
 }
@@ -476,13 +365,10 @@ func findTelemetryRecord(records []map[string]any, eventType string) map[string]
 	return nil
 }
 
-func readAppSessionSummaryRecordsForMain(t *testing.T, path string) []map[string]any {
-	t.Helper()
+func readAppSessionSummaryRecordsForMain(path string) []map[string]any {
 
 	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		t.Fatalf("read debug log: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read debug log: %v", err))
 
 	var summaries []map[string]any
 
@@ -492,10 +378,7 @@ func readAppSessionSummaryRecordsForMain(t *testing.T, path string) []map[string
 		}
 
 		var record map[string]any
-
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("unmarshal %q: %v", line, err)
-		}
+		gomega.Expect(json.Unmarshal([]byte(line), &record)).To(gomega.Succeed())
 
 		if record["type"] == "session_summary" {
 			summaries = append(summaries, record)

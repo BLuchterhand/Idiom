@@ -145,6 +145,23 @@ func (projection PlanExecuteToolSurfaceProjection) WithSubmitPlanTerminal() Plan
 	return projection
 }
 
+// WithPermissionAuthorizedInspection keeps already-authorized, non-mutating
+// inspection additive to a planner phase. Phase-specific terminal obligations
+// remain intact; only the callable inspection tools and their owned action
+// classes are removed from the invalid set.
+func (projection PlanExecuteToolSurfaceProjection) WithPermissionAuthorizedInspection(inspection PermissionAuthorizedInspectionProjection) PlanExecuteToolSurfaceProjection {
+	projection = projection.Clone()
+	tools := inspection.ToolNames()
+	classes := inspection.ActionClasses()
+	projection.ParserVisibleTools = textutil.Merge(projection.ParserVisibleTools, tools)
+	projection.CallableTools = textutil.Merge(projection.CallableTools, tools)
+	projection.AllowedActionClasses = textutil.Merge(projection.AllowedActionClasses, classes)
+	for _, class := range classes {
+		projection.InvalidActionClasses = removePlanExecuteActionClass(projection.InvalidActionClasses, class)
+	}
+	return projection
+}
+
 func (projection PlanExecuteToolSurfaceProjection) WithNativeSubmitPlanOnly() PlanExecuteToolSurfaceProjection {
 	projection = projection.Clone()
 	projection.AllowedActionClasses = []string{planExecuteActionSubmitPlan}
@@ -258,10 +275,9 @@ func ImplementationTargetWriteReadySourceRefreshTools(tools []string) []string {
 	return FilterToolNames(tools, ToolNameReadFile, ToolNameSearchContent, ToolNameFileStats)
 }
 
-func ImplementationVerificationReadyHasAdditiveWrite(tools []string) bool {
+func ImplementationVerificationReadyHasWrite(tools []string) bool {
 	for _, tool := range tools {
-		switch strings.TrimSpace(tool) {
-		case ToolNameWriteFile, ToolNameApplyPatch, ToolNameMkdir:
+		if ClassifyTool(strings.TrimSpace(tool)) == CategoryWrite {
 			return true
 		}
 	}

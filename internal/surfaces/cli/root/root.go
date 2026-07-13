@@ -9,6 +9,9 @@ import (
 	"idiom/internal/capabilities/workspace"
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/evidence/productevidence"
+	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/config"
+	runtimesession "idiom/internal/runtime/session"
 	architectcmd "idiom/internal/surfaces/cli/architect"
 	atomcmd "idiom/internal/surfaces/cli/atom"
 	auditcmd "idiom/internal/surfaces/cli/audit"
@@ -32,6 +35,7 @@ import (
 	skillscmd "idiom/internal/surfaces/cli/skills"
 	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 	toolcmd "idiom/internal/surfaces/cli/tool"
+	"idiom/internal/surfaces/tui/app"
 )
 
 type Options struct {
@@ -53,96 +57,148 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	return runMainWithTelemetryDir(args, stdout, stderr, commandTelemetryDir)
 }
 
-func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, telemetryDir string) (code int) {
-	rec := cmdtelemetry.OpenRecorder(rootTelemetryCommandName(args), args, cmdtelemetry.RecorderOptions{Dir: telemetryDir, Version: version})
-	if rec != nil {
-		stopTelemetrySignalHandler := cmdtelemetry.InstallSignalHandler(rec)
-		defer func() {
-			stopTelemetrySignalHandler()
+func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, telemetryDir string) int {
+	promptRun, promptsRun := cmdruntime.NewHeadlessRunners(func(cfg config.Config) runtimesession.Engine {
+		return app.New(cfg)
+	})
+	tuiRun := cmdruntime.NewTUIRunner(func(cfg config.Config) cmdruntime.InteractiveModel {
+		return app.New(cfg)
+	})
 
-			if recovered := recover(); recovered != nil {
+	rec := cmdtelemetry.OpenRecorder(rootTelemetryCommandName(args), args, cmdtelemetry.RecorderOptions{Dir: telemetryDir, Version: version})
+	dispatch := func() int {
+		if len(args) > 0 {
+			subcommand := args[0]
+			subcommandArgs := args[1:]
+
+			switch subcommand {
+			case "run":
+				return headlesscmd.Run(subcommandArgs, os.Stdin, stdout, stderr, promptRun, promptsRun, rec)
+			case "serve":
+				return headlesscmd.RunServe(subcommandArgs, stdout, stderr)
+			case "session":
+				return headlesscmd.RunSession(subcommandArgs, stdout, stderr)
+			case "contract":
+				return headlesscmd.RunContract(subcommandArgs, stdout, stderr)
+			case "decision":
+				return headlesscmd.RunDecision(subcommandArgs, stdout, stderr)
+			case "tool":
+				return toolcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "mcp":
+				return mcpcmd.RunWithTelemetryAndVersion(subcommandArgs, stdout, stderr, rec, version)
+			case "atom":
+				return atomcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "artifact":
+				return runArtifactMainWithTelemetry(subcommandArgs, stdout, stderr, promptRun, rec)
+			case string(lanecontract.LaneImplement):
+				return implementcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, promptRun, rec)
+			case string(lanecontract.LanePlanExecute):
+				return planexecutecmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, promptRun, rec)
+			case "feature-planner":
+				return featureplannercmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec, featurePlannerDependencies(promptRun))
+			case "recover":
+				return recovercmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "lane":
+				return lanecmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, promptRun, rec)
+			case "backend":
+				return backendcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "profile":
+				return profilecmd.Run(subcommandArgs, stdout, stderr)
+			case "architect":
+				return architectcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "audit":
+				return auditcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "ranker":
+				return runRankerMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "brief":
+				return briefcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "coding-rules":
+				return codingrulescmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "probe":
+				return probecmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "queue":
+				return queuecmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "local-ops":
+				return runLocalOpsMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "product":
+				return productcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			case "product-evidence":
+				return productevidence.RunProductEvidenceMainWithTelemetry(subcommandArgs, stdout, stderr, rec, productEvidenceDeps())
+			case "release":
+				return productevidence.RunReleaseMainWithTelemetry(subcommandArgs, stdout, stderr, rec, productEvidenceDeps())
+			case "init":
+				return initcmd.RunMain(subcommandArgs, stdout, stderr)
+			case "skills":
+				return skillscmd.RunMain(subcommandArgs, stdout, stderr)
+			case "version":
+				return runVersionMain(subcommandArgs, stdout, stderr)
+			case "doctor":
+				return doctorcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			}
+		}
+
+		return cmdruntime.RunWithTelemetry(args, stdout, stderr, tuiRun, cmdruntime.RunServerOnlyWithTelemetry, cmdruntime.RunListSessions, runVersionMain, rec)
+	}
+
+	if rec == nil {
+		return dispatch()
+	}
+
+	return runWithTelemetrySignalArbitration(rec, dispatch)
+}
+
+type rootDispatchOutcome struct {
+	code      int
+	recovered any
+}
+
+func runWithTelemetrySignalArbitration(rec *telemetry.Recorder, dispatch func() int) (code int) {
+	signalHandler := cmdtelemetry.InstallSignalHandler(rec)
+	defer func() {
+		recovered := recover()
+		signalResult, signalHandled := signalHandler.StopAndWait()
+
+		switch {
+		case recovered != nil:
+			// A signal-owned closeout has already emitted the sole process-exit
+			// record. Otherwise preserve the panic record before rethrowing.
+			if !signalHandled {
 				_ = rec.CloseWithFields(2, map[string]any{
 					"reason": "panic",
 					"panic":  fmt.Sprint(recovered),
 				})
-				panic(recovered)
 			}
-
+			panic(recovered)
+		case signalHandled:
+			code = signalResult.ExitCode
+		default:
 			_ = rec.CloseWithFields(code, nil)
-		}()
-	}
-
-	if len(args) > 0 {
-		subcommand := args[0]
-		subcommandArgs := args[1:]
-
-		switch subcommand {
-		case "run":
-			return headlesscmd.Run(subcommandArgs, os.Stdin, stdout, stderr, cmdruntime.RunPromptOnce, cmdruntime.RunPromptsOnce, rec)
-		case "serve":
-			return headlesscmd.RunServe(subcommandArgs, stdout, stderr)
-		case "session":
-			return headlesscmd.RunSession(subcommandArgs, stdout, stderr)
-		case "contract":
-			return headlesscmd.RunContract(subcommandArgs, stdout, stderr)
-		case "decision":
-			return headlesscmd.RunDecision(subcommandArgs, stdout, stderr)
-		case "tool":
-			return toolcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "mcp":
-			return mcpcmd.RunWithTelemetryAndVersion(subcommandArgs, stdout, stderr, rec, version)
-		case "atom":
-			return atomcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "artifact":
-			return runArtifactMainWithTelemetry(subcommandArgs, stdout, stderr, cmdruntime.RunPromptOnce, rec)
-		case string(lanecontract.LaneImplement):
-			return implementcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, cmdruntime.RunPromptOnce, rec)
-		case string(lanecontract.LanePlanExecute):
-			return planexecutecmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, cmdruntime.RunPromptOnce, rec)
-		case "feature-planner":
-			return featureplannercmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec, featurePlannerDependencies())
-		case "recover":
-			return recovercmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "lane":
-			return lanecmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "backend":
-			return backendcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "profile":
-			return profilecmd.Run(subcommandArgs, stdout, stderr)
-		case "architect":
-			return architectcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "audit":
-			return auditcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "ranker":
-			return runRankerMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "brief":
-			return briefcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "coding-rules":
-			return codingrulescmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "probe":
-			return probecmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "queue":
-			return queuecmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "local-ops":
-			return runLocalOpsMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "product":
-			return productcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
-		case "product-evidence":
-			return productevidence.RunProductEvidenceMainWithTelemetry(subcommandArgs, stdout, stderr, rec, productEvidenceDeps())
-		case "release":
-			return productevidence.RunReleaseMainWithTelemetry(subcommandArgs, stdout, stderr, rec, productEvidenceDeps())
-		case "init":
-			return initcmd.RunMain(subcommandArgs, stdout, stderr)
-		case "skills":
-			return skillscmd.RunMain(subcommandArgs, stdout, stderr)
-		case "version":
-			return runVersionMain(subcommandArgs, stdout, stderr)
-		case "doctor":
-			return doctorcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		}
-	}
+	}()
 
-	return cmdruntime.RunWithTelemetry(args, stdout, stderr, cmdruntime.RunTUI, cmdruntime.RunServerOnlyWithTelemetry, cmdruntime.RunListSessions, runVersionMain, rec)
+	outcomes := make(chan rootDispatchOutcome, 1)
+	go func() {
+		outcome := rootDispatchOutcome{}
+		defer func() {
+			outcome.recovered = recover()
+			outcomes <- outcome
+		}()
+		outcome.code = dispatch()
+	}()
+
+	select {
+	case outcome := <-outcomes:
+		if outcome.recovered != nil {
+			panic(outcome.recovered)
+		}
+
+		return outcome.code
+	case <-signalHandler.Done():
+		// The deferred arbitration adopts the signal result after its recorder
+		// closeout has completed. A non-cooperative dispatch may still be
+		// running, but main now owns the single process return that terminates it.
+		return 0
+	}
 }
 
 func rootTelemetryCommandName(args []string) string {

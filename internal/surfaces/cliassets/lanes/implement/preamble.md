@@ -4,8 +4,8 @@ This run was launched with `idiom implement`, so the harness has already selecte
 the write-capable implementation contract. Treat the brief below as the planner
 target packet.
 
-Per-edit write tools (`edit_file`, `write_file`, `append_file`, `apply_patch`,
-`delegate_edit`) are the load-bearing surface for this lane. Do NOT call
+Per-edit write tools (`edit_file`, `write_file`, `append_file`, and `apply_patch`)
+are the load-bearing surface for this lane. Do NOT call
 `submit_plan` here — that is the plan-execute lane's planner-phase write and
 will produce a plan artifact instead of a real edit if invoked from this lane.
 If the brief looks better-suited to multi-file structured planning, stop with

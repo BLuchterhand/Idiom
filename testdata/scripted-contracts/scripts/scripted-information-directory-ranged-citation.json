@@ -1,0 +1,4 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"inspect the exact source range needed for the answer\"}",
+  "The `internal/labels/` package contains the label helper. In `internal/labels/labels.go:1-5`, ShortLabel returns `Save changes`."
+]

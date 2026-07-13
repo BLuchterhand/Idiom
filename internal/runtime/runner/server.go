@@ -52,8 +52,8 @@ type pool struct {
 }
 
 // job is the runner-internal view of a queued or running task. The
-// connection handler that owns the job watches grantedCh + posCh; the
-// dispatcher (anyone holding Server.mu) closes grantedCh on promotion
+// connection handler that owns the job watches grantedCh, canceledCh, and
+// posCh. The dispatcher (anyone holding Server.mu) closes grantedCh on promotion
 // and pushes onto posCh on shifts.
 //
 // posCh is buffered so a slow consumer doesn't block the dispatcher;
@@ -67,9 +67,11 @@ type job struct {
 	SubmittedAt time.Time
 	StartedAt   time.Time
 
-	grantedCh chan struct{}
-	posCh     chan int
-	grantOnce sync.Once
+	grantedCh  chan struct{}
+	canceledCh chan struct{}
+	posCh      chan int
+	grantOnce  sync.Once
+	cancelOnce sync.Once
 }
 
 // NewServer constructs a server with the given config and socket
@@ -282,6 +284,10 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 			if err := writeJSON(conn, Response{JobID: j.ID, Pool: j.Pool, Position: pos}); err != nil {
 				return
 			}
+		case <-j.canceledCh:
+			_ = writeJSON(conn, Response{Error: fmt.Sprintf("job %q canceled while waiting", j.ID)})
+
+			return
 		case <-disconnect:
 			return
 		case <-s.closed:
@@ -348,6 +354,7 @@ func (s *Server) enqueue(poolName, label, client string) (*job, int, error) {
 		Client:      client,
 		SubmittedAt: time.Now(),
 		grantedCh:   make(chan struct{}),
+		canceledCh:  make(chan struct{}),
 		// Buffered: dispatcher pushes non-blocking; missed updates
 		// are harmless because the next shift refreshes everyone.
 		posCh: make(chan int, 4),
@@ -441,6 +448,7 @@ func (s *Server) cancel(jobID string) (bool, string) {
 		p.waiting = updated
 
 		delete(s.jobs, jobID)
+		j.cancelOnce.Do(func() { close(j.canceledCh) })
 		s.broadcastPositions(p)
 
 		return true, ""

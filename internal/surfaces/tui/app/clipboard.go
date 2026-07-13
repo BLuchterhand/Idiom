@@ -52,33 +52,33 @@ func (m *Model) copyConversationContent(rawTarget string) (string, string, error
 	case "last", "assistant", "response":
 		content, ok := lastMessageContent(m.messages, "assistant")
 		if !ok {
-			return "", "", fmt.Errorf("No assistant response to copy.")
+			return "", "", fmt.Errorf("no assistant response to copy")
 		}
 
 		return "last assistant response", content, nil
 	case "all", "transcript":
 		content := formatConversationTranscript(m.messages)
 		if content == "" {
-			return "", "", fmt.Errorf("No conversation transcript to copy.")
+			return "", "", fmt.Errorf("no conversation transcript to copy")
 		}
 
 		return "conversation transcript", content, nil
 	case "visible", "view", "window":
 		content := cleanVisibleViewportText(m.viewport.View())
 		if strings.TrimSpace(content) == "" {
-			return "", "", fmt.Errorf("No visible conversation text to copy.")
+			return "", "", fmt.Errorf("no visible conversation text to copy")
 		}
 
 		return "visible conversation window", content, nil
 	case "selected", "history":
 		content, ok := m.selectedHistoryContent()
 		if !ok {
-			return "", "", fmt.Errorf("No selected history entry to copy.")
+			return "", "", fmt.Errorf("no selected history entry to copy")
 		}
 
 		return "selected history entry", content, nil
 	default:
-		return "", "", fmt.Errorf("Usage: /copy [last|all|visible|selected]")
+		return "", "", fmt.Errorf("usage: /copy [last|all|visible|selected]")
 	}
 }
 

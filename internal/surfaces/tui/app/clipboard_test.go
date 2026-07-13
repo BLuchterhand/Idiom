@@ -1,19 +1,21 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/runtime/llama"
 )
 
-func TestCopyConversationContentLastAssistant(t *testing.T) {
+var _ = ginkgo.It("copy conversation content last assistant", func() {
 	m := &Model{
 		messages: []llama.ChatMessage{
 			{Role: "assistant", Content: "first answer"},
@@ -23,16 +25,13 @@ func TestCopyConversationContentLastAssistant(t *testing.T) {
 	}
 
 	target, content, err := m.copyConversationContent("last")
-	if err != nil {
-		t.Fatalf("copyConversationContent returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("copyConversationContent returned error: %v", err))
 
-	if target != "last assistant response" || content != "first answer" {
-		t.Fatalf("target/content = %q/%q, want last assistant response/first answer", target, content)
-	}
-}
+	gomega.Expect(target).To(gomega.Equal("last assistant response"), fmt.Sprintf("target/content = %q/%q, want last assistant response/first answer", target, content))
+	gomega.Expect(content).To(gomega.Equal("first answer"), fmt.Sprintf("target/content = %q/%q, want last assistant response/first answer", target, content))
+})
 
-func TestCopyConversationContentTranscriptFormatsMessages(t *testing.T) {
+var _ = ginkgo.It("copy conversation content transcript formats messages", func() {
 	m := &Model{
 		messages: []llama.ChatMessage{
 			{Role: "user", Content: "question"},
@@ -42,32 +41,25 @@ func TestCopyConversationContentTranscriptFormatsMessages(t *testing.T) {
 	}
 
 	_, content, err := m.copyConversationContent("all")
-	if err != nil {
-		t.Fatalf("copyConversationContent returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("copyConversationContent returned error: %v", err))
 
 	want := "You:\nquestion\n\nAssistant:\nanswer"
-	if content != want {
-		t.Fatalf("transcript content = %q, want %q", content, want)
-	}
-}
+	gomega.Expect(content).To(gomega.Equal(want), fmt.Sprintf("transcript content = %q, want %q", content, want))
+})
 
-func TestCopyConversationContentVisibleStripsANSI(t *testing.T) {
+var _ = ginkgo.It("copy conversation content visible strips ansi", func() {
 	vp := viewport.New(40, 10)
 	vp.SetContent("\x1b[31mred\x1b[0m\nplain")
 
 	m := &Model{viewport: vp}
 	_, content, err := m.copyConversationContent("visible")
-	if err != nil {
-		t.Fatalf("copyConversationContent returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("copyConversationContent returned error: %v", err))
 
-	if strings.Contains(content, "\x1b") || content != "red\nplain" {
-		t.Fatalf("visible content = %q, want ANSI-free red/plain text", content)
-	}
-}
+	gomega.Expect(content).To(gomega.Not(gomega.ContainSubstring("\x1b")), fmt.Sprintf("visible content = %q, want ANSI-free red/plain text", content))
+	gomega.Expect(content).To(gomega.Equal("red\nplain"), fmt.Sprintf("visible content = %q, want ANSI-free red/plain text", content))
+})
 
-func TestCopyConversationContentSelectedHistoryRequiresFocusedPanel(t *testing.T) {
+var _ = ginkgo.It("copy conversation content selected history requires focused panel", func() {
 	m := &Model{
 		history: historyState{
 			panelOpen: true,
@@ -81,23 +73,21 @@ func TestCopyConversationContentSelectedHistoryRequiresFocusedPanel(t *testing.T
 	}
 
 	_, content, err := m.copyConversationContent("selected")
-	if err != nil {
-		t.Fatalf("copyConversationContent returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("copyConversationContent returned error: %v", err))
 
-	if content != "second\n\nthird" {
-		t.Fatalf("selected content = %q, want joined selected entry", content)
-	}
+	gomega.Expect(content).To(gomega.Equal("second\n\nthird"), fmt.Sprintf("selected content = %q, want joined selected entry", content))
 
 	m.history.focused = false
-	if _, _, err := m.copyConversationContent("selected"); err == nil {
-		t.Fatal("selected copy should require a focused history panel")
+	{
+		_, _, err := m.copyConversationContent("selected")
+		gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("selected copy should require a focused history panel"))
 	}
-}
+})
 
-func TestClipboardCommandForRuntimeUsesPlatformCommand(t *testing.T) {
+var _ = ginkgo.It("clipboard command for runtime uses platform command", func() {
+	t := ginkgo.GinkgoT()
 	if runtime.GOOS == "windows" {
-		t.Skip("executable fixture uses POSIX mode bits")
+		ginkgo.Skip(fmt.Sprint("executable fixture uses POSIX mode bits"))
 	}
 
 	binDir := t.TempDir()
@@ -106,18 +96,16 @@ func TestClipboardCommandForRuntimeUsesPlatformCommand(t *testing.T) {
 	t.Setenv("PATH", binDir)
 
 	spec, err := clipboardCommandForRuntime("darwin")
-	if err != nil {
-		t.Fatalf("clipboardCommandForRuntime returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("clipboardCommandForRuntime returned error: %v", err))
 
-	if spec.name != pbcopy || len(spec.args) != 0 {
-		t.Fatalf("spec = %#v, want pbcopy without args", spec)
-	}
-}
+	gomega.Expect(spec.name).To(gomega.Equal(pbcopy), fmt.Sprintf("spec = %#v, want pbcopy without args", spec))
+	gomega.Expect(len(spec.args)).To(gomega.Equal(0), fmt.Sprintf("spec = %#v, want pbcopy without args", spec))
+})
 
-func TestClipboardCommandForRuntimeFallsBackOnLinux(t *testing.T) {
+var _ = ginkgo.It("clipboard command for runtime falls back on linux", func() {
+	t := ginkgo.GinkgoT()
 	if runtime.GOOS == "windows" {
-		t.Skip("executable fixture uses POSIX mode bits")
+		ginkgo.Skip(fmt.Sprint("executable fixture uses POSIX mode bits"))
 	}
 
 	binDir := t.TempDir()
@@ -126,37 +114,31 @@ func TestClipboardCommandForRuntimeFallsBackOnLinux(t *testing.T) {
 	t.Setenv("PATH", binDir)
 
 	spec, err := clipboardCommandForRuntime("linux")
-	if err != nil {
-		t.Fatalf("clipboardCommandForRuntime returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("clipboardCommandForRuntime returned error: %v", err))
 
-	if spec.name != xclip || strings.Join(spec.args, " ") != "-selection clipboard" {
-		t.Fatalf("spec = %#v, want xclip clipboard command", spec)
-	}
-}
+	gomega.Expect(spec.name).To(gomega.Equal(xclip), fmt.Sprintf("spec = %#v, want xclip clipboard command", spec))
+	gomega.Expect(strings.Join(spec.args, " ")).To(gomega.Equal("-selection clipboard"), fmt.Sprintf("spec = %#v, want xclip clipboard command", spec))
+})
 
-func writeClipboardExecutable(t *testing.T, path string) {
-	t.Helper()
+func writeClipboardExecutable(t ginkgo.FullGinkgoTInterface, path string) {
+	ginkgo.GinkgoHelper()
 
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write executable %s: %v", path, err)
+	{
+		err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write executable %s: %v", path, err))
 	}
 }
 
-func TestSelectionModeToggleDisablesAndRestoresMouse(t *testing.T) {
+var _ = ginkgo.It("selection mode toggle disables and restores mouse", func() {
 	m := &Model{}
 
 	cmd := m.enableMouseSelectionMode()
-	if cmd == nil || !m.mouseSelectionMode {
-		t.Fatal("enableMouseSelectionMode should enter selection mode and return a command")
-	}
+	gomega.Expect(cmd).To(gomega.Not(gomega.BeNil()), fmt.Sprint("enableMouseSelectionMode should enter selection mode and return a command"))
+	gomega.Expect(m.mouseSelectionMode).To(gomega.BeTrue(), fmt.Sprint("enableMouseSelectionMode should enter selection mode and return a command"))
 
 	cmd, handled := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyEsc})
-	if !handled || cmd == nil {
-		t.Fatal("Esc should leave selection mode and return a mouse-enable command")
-	}
+	gomega.Expect(handled).To(gomega.BeTrue(), fmt.Sprint("Esc should leave selection mode and return a mouse-enable command"))
+	gomega.Expect(cmd).To(gomega.Not(gomega.BeNil()), fmt.Sprint("Esc should leave selection mode and return a mouse-enable command"))
 
-	if m.mouseSelectionMode {
-		t.Fatal("selection mode should be off after Esc")
-	}
-}
+	gomega.Expect(m.mouseSelectionMode).To(gomega.BeFalse(), fmt.Sprint("selection mode should be off after Esc"))
+})

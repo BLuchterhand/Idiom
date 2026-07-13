@@ -3,29 +3,30 @@ package root
 import (
 	"bytes"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestRunMainHeadlessInvalidSessionRejectsBeforeModel(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeMainConfigRoot(t, root)
+var _ = ginkgo.Describe("Headless CLI", ginkgo.Label("e2e"), func() {
+	ginkgo.It("rejects an invalid session before reaching the model", func() {
+		t := ginkgo.GinkgoT()
+		root := t.TempDir()
+		configPath := writeMainConfigRoot(t, root)
 
-	var stdout, stderr bytes.Buffer
-	code := RunMain([]string{
-		"run",
-		"--config", configPath,
-		"--prompt", "should not reach model",
-		"--session", "../escape",
-	}, &stdout, &stderr, Options{})
+		var stdout, stderr bytes.Buffer
+		code := RunMain([]string{
+			"run",
+			"--config", configPath,
+			"--prompt", "should not reach model",
+			"--session", "../escape",
+		}, &stdout, &stderr, Options{})
 
-	if code != 2 {
-		t.Fatalf("exit = %d, want 2 stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "invalid run id") {
-		t.Fatalf("stderr should explain invalid run id, got %q", stderr.String())
-	}
-	if matches, _ := filepath.Glob(filepath.Join(root, ".idiom", "runs", "*.completion.json")); len(matches) != 0 {
-		t.Fatalf("invalid session should not write completion artifacts: %#v", matches)
-	}
-}
+		gomega.Expect(code).To(gomega.Equal(2), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("invalid run id"))
+
+		matches, err := filepath.Glob(filepath.Join(root, ".idiom", "runs", "*.completion.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(matches).To(gomega.BeEmpty())
+	})
+})

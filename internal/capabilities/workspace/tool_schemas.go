@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"strconv"
 	"strings"
 
 	"idiom/internal/contracts/taskledger"
@@ -134,14 +135,34 @@ func contextToolInputSchema() string {
 		`,"limit":` + tooljsonschema.IntegerProperty("optional max items to return; varies by tool")
 }
 
+func taskLedgerBlockerSubjectSchema() string {
+	variants := []string{
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectArtifact, `^workspace:.+$`, "workspace-backed artifact reference"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectCommand, `^executable:[A-Za-z0-9][A-Za-z0-9._+-]*$`, "exact executable reference"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectConfiguration, `^workspace:.+$`, "workspace-backed configuration reference"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectEnvironmentVariable, `^[A-Za-z_][A-Za-z0-9_]*$`, "case-preserving POSIX environment variable name"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectPermission, `^protected_path:.+$`, "configured protected workspace path"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectPolicy, `^tool_rule:.+$`, "configured workspace tool rule"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectService, `^uri:[A-Za-z][A-Za-z0-9+.-]*://.+$`, "absolute service URI"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectTool, `^\S+$`, "known workspace tool identifier"),
+		taskLedgerBlockerSubjectSchemaVariant(TaskLedgerBlockerSubjectWorkspacePath, `^\S.*$`, "workspace path resolved by canonical identity"),
+	}
+
+	return `{"type":"object","description":"structured identity of the concrete blocked subject; namespace-specific validation is owned by the workspace manager","oneOf":[` + strings.Join(variants, ",") + `]}`
+}
+
+func taskLedgerBlockerSubjectSchemaVariant(namespace TaskLedgerBlockerSubjectNamespace, pattern string, description string) string {
+	return `{"type":"object","properties":{"namespace":{"type":"string","enum":[` + strconv.Quote(string(namespace)) + `]},"id":{"type":"string","pattern":` + strconv.Quote(pattern) + `,"description":` + strconv.Quote(description) + `}},"required":["namespace","id"],"additionalProperties":false}`
+}
+
 func baseToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:        ToolNameTaskLedger,
-			Description: "Track complex multi-step work. Keep at most one item in_progress. When an item will touch files, list them in `paths` so the plan panel attaches the completed write to this item instead of adding a duplicate line. When marking mutation work completed, cite host-backed evidence refs such as `write:path`, `read:path`, `verify:command`, or `artifact:id`.",
+			Description: "Track complex multi-step work. Keep at most one item in_progress. When an item will touch files, list them in `paths` so the plan panel attaches the completed write to this item instead of adding a duplicate line. Completed mutation work cites host-backed evidence refs. Blocked work uses the typed blocker object with a concrete kind, subject, and reason.",
 			ParametersJSON: tooljsonschema.Object(
 				[]string{"todos"},
-				`"todos":{"type":"array","items":{"type":"object","properties":{"id":`+tooljsonschema.StringProperty("stable id")+`,"content":`+tooljsonschema.StringProperty("what needs doing")+`,"status":{"type":"string","enum":`+tooljsonschema.StringEnum(taskledger.Values())+`},"evidence":`+tooljsonschema.StringProperty("for completed mutation items, refs backed by prior tool results, e.g. write:README.md; verify:go test ./...")+`,"paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative files this item will touch"}},"required":["id","content","status"]}}`,
+				`"todos":{"type":"array","items":{"type":"object","properties":{"id":`+tooljsonschema.StringProperty("stable id")+`,"content":`+tooljsonschema.StringProperty("what needs doing")+`,"status":{"type":"string","enum":`+tooljsonschema.StringEnum(taskledger.Values())+`},"evidence":`+tooljsonschema.StringProperty("for completed mutation items only: refs backed by prior tool results, e.g. write:README.md; verify:go test ./...")+`,"blocker":{"type":"object","description":"required when status is blocked; do not encode blocker authority in evidence prose","properties":{"kind":{"type":"string","enum":`+tooljsonschema.StringEnum(TaskLedgerBlockerKindValues())+`},"subject":`+taskLedgerBlockerSubjectSchema()+`,"reason":`+tooljsonschema.StringProperty("specific reason the subject currently blocks this item")+`},"required":["kind","subject","reason"]},"paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative files this item will touch"}},"required":["id","content","status"]}}`,
 			),
 		},
 		{
@@ -319,7 +340,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        ToolNameContextQuery,
-			Description: "Query idiom's persistent codebase graph for repository, package, file, symbol, summary, import, call, or test relationships without dumping raw source. Results are observational and include confidence/staleness.",
+			Description: "Query idiom's persistent codebase graph for repository, package, file, symbol, summary, import, call, or test relationships without dumping raw source. Results are observational, include confidence/staleness, and use bounded semantic and operational projections.",
 			ParametersJSON: tooljsonschema.Object(
 				nil,
 				`"query":`+tooljsonschema.StringProperty("natural-language or keyword query")+`,"pattern":`+tooljsonschema.StringProperty("optional symbol or handle hint")+`,`+contextToolInputSchema()+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"include_evidence":`+tooljsonschema.BooleanProperty("include edge evidence such as path/line")+`,`+freshnessPolicyProps(),
@@ -497,14 +518,6 @@ func baseToolDefinitions() []ToolDefinition {
 			Name:           ToolNameSubmitPlan,
 			Description:    "Submit a durable structured edit plan in plan-then-execute mode. Planner phases use it for supported edit plans; review-repair phases use it only for new corrective edits when a checklist item fails. Clean review-repair closes with Decision: pass instead. Legacy callers may send rationale, pack_id, and edits at the top level; edits must be a JSON array, not a quoted JSON string. Structured callers may send plan_artifact with task, contract, packet, paths, evidence, unresolved_questions, verification_obligations, approval, handoff, and edits. Approval carries stable scope_id, approved_paths, pending_paths, and execution_permission; partial approval may execute only approved scope. Handoff carries a stable id used by executor/audit events. Use this in lieu of per-edit tool calls when the lane is plan-only. Every edit body must be executable final content: no placeholders, ellipses, TODO markers, existing-code comments, omitted bodies, pseudo-code, or prose descriptions. Four edit shapes: (1) substring — path+old_text+new_text replaces the first match; use for exact replacements; empty new_text deletes old_text; set replace_all:true to replace every occurrence of a non-empty old_text; (2) line-range — path+start_line+end_line+non-empty content replaces exactly lines [start_line, end_line] with complete replacement content; use for replacements, including large additions by replacing the anchor line(s) with the unchanged anchor line(s) plus inserted content. For source files, content-only line-range additions must preserve selected anchor line(s) or use old_text/new_text instead, and must not duplicate a source block already present elsewhere in the file; (3) insertion — path+insert_after_line+small inline non-empty content inserts after an existing 1-based line in an existing file and does not replace current lines; do not combine with old_text/new_text, start_line/end_line, replace_all, or content_ref; (4) missing/new-file — path+new_text+replace_all:true with EMPTY old_text writes new_text as the complete file body, creating the file if it doesn't exist. Existing source/test files must use bounded anchored edits, not whole-file replace_all. Large new_text/content bodies are automatically spilled to artifact refs after submission, except insert_after_line which requires inline content in this change. When you used context_pack to localize the work, pass its pack_id back so the executor can rehydrate the same cached view instead of re-discovering.",
 			ParametersJSON: submitPlanParametersSchema(),
-		},
-		{
-			Name:        ToolNameDelegateEdit,
-			Description: "Hand a single file edit to the configured executor model (the executor-role backend, when one is declared in .idiom/backends.json or as the cfg.Implementer block). The executor receives the spec, emits the workspace tool call, and the runner dispatches it. Use this when you have already decided the exact change and want to keep your own context focused on planning the next path instead of re-reading the file you just wrote. Falls back to direct dispatch if no executor is configured or it returns an unparseable reply, so the lane never stalls. Requires a path plus EITHER old_text+new_text OR start_line+end_line+content.",
-			ParametersJSON: tooljsonschema.Object(
-				[]string{"path"},
-				`"path":`+tooljsonschema.StringProperty("file path")+`,"start_line":`+tooljsonschema.IntegerProperty("1-based start for the line-range shape; use with end_line and content")+`,"end_line":`+tooljsonschema.IntegerProperty("1-based end for the line-range shape; use with start_line and content")+`,"old_text":`+tooljsonschema.StringProperty("exact text to replace for the exact-match shape; use with new_text")+`,"new_text":`+tooljsonschema.StringProperty("replacement text for the exact-match shape; use with old_text")+`,"content":`+tooljsonschema.StringProperty("replacement content for the line-range shape; use with start_line and end_line")+`,"replace_all":`+tooljsonschema.BooleanProperty("replace every occurrence of old_text instead of just the first")+`,"purpose":`+tooljsonschema.StringProperty("one sentence: what the executor should do and why"),
-			),
 		},
 		{
 			Name:        ToolNameGoMoveDeclarations,

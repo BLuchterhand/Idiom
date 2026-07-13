@@ -1,19 +1,15 @@
 package product
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/workflows/brieflint"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -801,10 +797,11 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 2
 	}
 
-	view, workflowState, wsErr := productworkflow.LoadCheckedProductStatus(absRoot)
+	inspection := productworkflow.InspectProductStatus(absRoot)
+	view := inspection.View
 	exitCode := 0
 
-	if wsErr != nil {
+	if inspection.WorkflowStateInvalid {
 		exitCode = 1
 	}
 
@@ -812,8 +809,8 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		exitCode = 1
 	}
 
-	displayNextActions := productworkflow.ProductStatusDisplayNextValidActions(view, wsErr != nil)
-	operatorStatus := productworkflow.BuildProductOperatorStatusView(view, workflowState)
+	displayNextActions := inspection.DisplayNextActions
+	operatorStatus := inspection.OperatorView
 
 	telemetry.LogPhase(rec, "product_status", map[string]any{
 		"audit_status":  view.AuditStatus,
@@ -853,7 +850,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return exitCode
 	}
 
-	if wsErr != nil {
+	if inspection.WorkflowStateInvalid {
 		fmt.Fprintf(stdout, "product status: ERROR %s\n", filepath.Base(absRoot))
 		fmt.Fprintln(stdout, "  status: ERROR")
 
@@ -964,15 +961,18 @@ func runProductCreate(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 2
 	}
 
-	result, err := productworkflow.InitializeEffort(productworkflow.CreateEffortOptions{
+	result, createErr := productworkflow.InitializeEffort(productworkflow.CreateEffortOptions{
 		EffortRoot: effortRoot,
 		EffortID:   effortID,
 		Title:      title,
 	})
-	if err != nil {
+	if createErr != nil {
 		result.Status = productworkflow.ProductWorkflowStatusError
 		result.NextValidAction = "fix product effort creation blockers before continuing"
-		result.Blockers = append(result.Blockers, err.Error())
+		result.Blockers = []string{createErr.Error()}
+		if strings.TrimSpace(result.EffortRoot) == "" {
+			result.EffortRoot = effortRoot
+		}
 	}
 
 	telemetry.LogPhase(rec, "product_create", map[string]any{
@@ -1014,7 +1014,7 @@ func printProductCreate(stdout io.Writer, result productworkflow.CreateResult) {
 		fmt.Fprintf(stdout, "  effort_id: %s\n", result.EffortID)
 	}
 
-	if strings.TrimSpace(result.CurrentPhase) != "" {
+	if strings.TrimSpace(string(result.CurrentPhase)) != "" {
 		fmt.Fprintf(stdout, "  phase: %s\n", result.CurrentPhase)
 	}
 
@@ -1193,23 +1193,23 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 		return 2
 	}
 
+	if mergeEvidence {
+		return runProductResearchMergeEvidence(projectRoot, effortRoot, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
+	}
+
+	if planRuns {
+		return runProductResearchPlanRuns(projectRoot, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
+	}
+
+	if renderPrompts {
+		return runProductResearchRenderPrompts(projectRoot, effortRoot, researchOutputDir, researchPromptDir, researchProfile, jsonOutput, stdout, stderr, rec)
+	}
+
 	result, err := productworkflow.DiscoverProfiles(projectRoot)
 	if err != nil {
 		fmt.Fprintf(stderr, "product research: %v\n", err)
 
 		return 2
-	}
-
-	if mergeEvidence {
-		return runProductResearchMergeEvidence(result, effortRoot, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
-	}
-
-	if planRuns {
-		return runProductResearchPlanRuns(result, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
-	}
-
-	if renderPrompts {
-		return runProductResearchRenderPrompts(result, effortRoot, researchOutputDir, researchPromptDir, researchProfile, jsonOutput, stdout, stderr, rec)
 	}
 
 	if jsonOutput {
@@ -1313,135 +1313,22 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		return 2
 	}
 
-	evidencePath := filepath.Join(absRoot, "evidence", "evidence.jsonl")
-	evidenceData, err := os.ReadFile(evidencePath)
-
-	var (
-		evidenceCards []productworkflow.EvidenceCard
-		tddLedger     productworkflow.TDDLedger
-		findings      []productworkflow.ProfileFinding
-	)
-
+	out, err := productworkflow.RenderPRDDraftPromptFromEffort(productworkflow.PRDDraftPromptRenderRequest{
+		EffortRoot:    absRoot,
+		PromptPath:    prdPromptPath,
+		PRDOutputPath: prdOutputPath,
+	})
 	if err != nil {
-		if os.IsNotExist(err) {
-			findings = append(findings, productworkflow.ProfileFinding{
-				Kind:     "missing_evidence_ledger",
-				Message:  "required evidence/evidence.jsonl not found",
-				File:     "evidence/evidence.jsonl",
-				Severity: productworkflow.ProductWorkflowSeverityError,
-			})
-		} else {
-			findings = append(findings, productworkflow.ProfileFinding{
-				Kind:     "read_error",
-				Message:  fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", err),
-				File:     "evidence/evidence.jsonl",
-				Severity: productworkflow.ProductWorkflowSeverityError,
-			})
-		}
-	} else {
-		evidenceCards, err = productworkflow.ParseEvidenceCardsJSONL(evidenceData)
-		if err != nil {
-			findings = append(findings, productworkflow.ProfileFinding{
-				Kind:     "validation_error",
-				Message:  fmt.Sprintf("existing evidence ledger failed validation: %v", err),
-				File:     "evidence/evidence.jsonl",
-				Severity: productworkflow.ProductWorkflowSeverityError,
-			})
-		}
-	}
+		fmt.Fprintf(stderr, "product prd: %v\n", err)
 
-	tddPath := filepath.Join(absRoot, "tdd.json")
-
-	tddData, err := os.ReadFile(tddPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			findings = append(findings, productworkflow.ProfileFinding{
-				Kind:     "missing_tdd_ledger",
-				Message:  "required tdd.json not found",
-				File:     "tdd.json",
-				Severity: productworkflow.ProductWorkflowSeverityError,
-			})
-		} else {
-			findings = append(findings, productworkflow.ProfileFinding{
-				Kind:     "read_error",
-				Message:  fmt.Sprintf("failed to read tdd.json: %v", err),
-				File:     "tdd.json",
-				Severity: productworkflow.ProductWorkflowSeverityError,
-			})
-		}
-	} else {
-		tddLedger, err = productworkflow.ParseTDDLedgerJSON(tddData)
-		if err != nil {
-			findings = append(findings, productworkflow.ProfileFinding{
-				Kind:     "validation_error",
-				Message:  fmt.Sprintf("existing tdd.json failed validation: %v", err),
-				File:     "tdd.json",
-				Severity: productworkflow.ProductWorkflowSeverityError,
-			})
-		}
-	}
-
-	plan := productworkflow.PlanPRDDraftPrompt(absRoot, prdPromptPath, prdOutputPath, evidenceCards, tddLedger)
-
-	plan.Findings = append(findings, plan.Findings...)
-	productworkflow.SortProfileFindings(plan.Findings)
-
-	writeBlocked := hasResearchErrorFinding(plan.Findings)
-	promptWriteCount := 0
-
-	if !writeBlocked {
-		promptAbs := filepath.Join(absRoot, plan.PromptPath)
-		if err := os.MkdirAll(filepath.Dir(promptAbs), 0o755); err != nil {
-			fmt.Fprintf(stderr, "product prd: create prompt directory: %v\n", err)
-
-			return 2
-		}
-
-		if err := os.WriteFile(promptAbs, []byte(productworkflow.RenderPRDDraftPromptText(plan)), 0o644); err != nil {
-			fmt.Fprintf(stderr, "product prd: write prompt file: %v\n", err)
-
-			return 2
-		}
-
-		promptWriteCount = 1
+		return 2
 	}
 
 	telemetry.LogPhase(rec, "product_prd_render_prompt", map[string]any{
-		"finding_count":       len(plan.Findings),
-		"evidence_card_count": plan.EvidenceCardCount,
-		"prompt_write_count":  promptWriteCount,
+		"finding_count":       len(out.Plan.Findings),
+		"evidence_card_count": out.Plan.EvidenceCardCount,
+		"prompt_write_count":  out.PromptWriteCount,
 	})
-
-	status := productworkflow.ProductWorkflowStatusPass
-	if writeBlocked {
-		status = productworkflow.ProductWorkflowStatusBlocked
-	}
-
-	type prdOutput struct {
-		Status           productworkflow.ProductWorkflowStatus `json:"status"`
-		EffortRoot       string                                `json:"effort_root"`
-		PromptWriteCount int                                   `json:"prompt_write_count"`
-		Plan             productworkflow.PRDDraftPromptPlan    `json:"plan"`
-	}
-
-	out := prdOutput{
-		Status:           status,
-		EffortRoot:       absRoot,
-		PromptWriteCount: promptWriteCount,
-		Plan:             plan,
-	}
-
-	if out.Plan.EvidenceCardIDs == nil {
-		out.Plan.EvidenceCardIDs = []string{}
-	}
-
-	if out.Plan.EvidenceSummaries == nil {
-		out.Plan.EvidenceSummaries = []productworkflow.PRDEvidenceCardSummary{}
-	}
-
-	if out.Plan.Findings == nil {
-		out.Plan.Findings = []productworkflow.ProfileFinding{}
-	}
 
 	if jsonOutput {
 		enc := json.NewEncoder(stdout)
@@ -1453,10 +1340,10 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			return 1
 		}
 	} else {
-		fmt.Fprintf(stdout, "product prd render-prompt: %s (%d findings)\n", status, len(plan.Findings))
+		fmt.Fprintf(stdout, "product prd render-prompt: %s (%d findings)\n", out.Status, len(out.Plan.Findings))
 	}
 
-	if writeBlocked {
+	if out.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -1508,114 +1395,23 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		return 2
 	}
 
-	var (
-		evidenceCards []productworkflow.EvidenceCard
-		prdDoc        productworkflow.PRDDocument
-		findings      []productworkflow.ProfileFinding
-	)
-
-	evidencePath := filepath.Join(absRoot, "evidence", "evidence.jsonl")
-
-	evidenceData, err := os.ReadFile(evidencePath)
+	out, err := productworkflow.RenderADRDraftPromptFromEffort(productworkflow.ADRDraftPromptRenderRequest{
+		EffortRoot:    absRoot,
+		PromptPath:    adrPromptPath,
+		ADROutputPath: adrOutputPath,
+	})
 	if err != nil {
-		if os.IsNotExist(err) {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "missing_evidence_ledger", Message: "required evidence/evidence.jsonl not found", File: "evidence/evidence.jsonl", Severity: productworkflow.ProductWorkflowSeverityError})
-		} else {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "read_error", Message: fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", err), File: "evidence/evidence.jsonl", Severity: productworkflow.ProductWorkflowSeverityError})
-		}
-	} else {
-		evidenceCards, err = productworkflow.ParseEvidenceCardsJSONL(evidenceData)
-		if err != nil {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "validation_error", Message: fmt.Sprintf("existing evidence ledger failed validation: %v", err), File: "evidence/evidence.jsonl", Severity: productworkflow.ProductWorkflowSeverityError})
-		}
-	}
+		fmt.Fprintf(stderr, "product adr: %v\n", err)
 
-	prdPath := filepath.Join(absRoot, "prd.md")
-
-	prdData, err := os.ReadFile(prdPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "missing_prd", Message: "required prd.md not found", File: "prd.md", Severity: productworkflow.ProductWorkflowSeverityError})
-		} else {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "read_error", Message: fmt.Sprintf("failed to read prd.md: %v", err), File: "prd.md", Severity: productworkflow.ProductWorkflowSeverityError})
-		}
-	} else {
-		prdDoc, err = productworkflow.ParsePRDMarkdown(prdData)
-		if err != nil {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "validation_error", Message: fmt.Sprintf("existing prd.md failed validation: %v", err), File: "prd.md", Severity: productworkflow.ProductWorkflowSeverityError})
-		}
-	}
-
-	plan := productworkflow.PlanADRDraftPrompt(absRoot, adrPromptPath, adrOutputPath, evidenceCards, prdDoc)
-
-	plan.Findings = append(findings, plan.Findings...)
-	productworkflow.SortProfileFindings(plan.Findings)
-
-	writeBlocked := hasResearchErrorFinding(plan.Findings)
-	promptWriteCount := 0
-
-	if !writeBlocked {
-		promptAbs := filepath.Join(absRoot, plan.PromptPath)
-		if err := os.MkdirAll(filepath.Dir(promptAbs), 0o755); err != nil {
-			fmt.Fprintf(stderr, "product adr: create prompt directory: %v\n", err)
-
-			return 2
-		}
-
-		if err := os.WriteFile(promptAbs, []byte(productworkflow.RenderADRDraftPromptText(plan)), 0o644); err != nil {
-			fmt.Fprintf(stderr, "product adr: write prompt file: %v\n", err)
-
-			return 2
-		}
-
-		promptWriteCount = 1
+		return 2
 	}
 
 	telemetry.LogPhase(rec, "product_adr_render_prompt", map[string]any{
-		"finding_count":         len(plan.Findings),
-		"evidence_card_count":   plan.EvidenceCardCount,
-		"prd_requirement_count": plan.PRDRequirementCount,
-		"prompt_write_count":    promptWriteCount,
+		"finding_count":         len(out.Plan.Findings),
+		"evidence_card_count":   out.Plan.EvidenceCardCount,
+		"prd_requirement_count": out.Plan.PRDRequirementCount,
+		"prompt_write_count":    out.PromptWriteCount,
 	})
-
-	status := productworkflow.ProductWorkflowStatusPass
-	if writeBlocked {
-		status = productworkflow.ProductWorkflowStatusBlocked
-	}
-
-	type adrOutput struct {
-		Status           productworkflow.ProductWorkflowStatus `json:"status"`
-		EffortRoot       string                                `json:"effort_root"`
-		PromptWriteCount int                                   `json:"prompt_write_count"`
-		Plan             productworkflow.ADRDraftPromptPlan    `json:"plan"`
-	}
-
-	out := adrOutput{
-		Status:           status,
-		EffortRoot:       absRoot,
-		PromptWriteCount: promptWriteCount,
-		Plan:             plan,
-	}
-
-	if out.Plan.EvidenceCardIDs == nil {
-		out.Plan.EvidenceCardIDs = []string{}
-	}
-
-	if out.Plan.PRDRequirementIDs == nil {
-		out.Plan.PRDRequirementIDs = []string{}
-	}
-
-	if out.Plan.EvidenceSummaries == nil {
-		out.Plan.EvidenceSummaries = []productworkflow.ADREvidenceCardSummary{}
-	}
-
-	if out.Plan.PRDRequirementSummary == nil {
-		out.Plan.PRDRequirementSummary = []productworkflow.ADRPRDRequirementSummary{}
-	}
-
-	if out.Plan.Findings == nil {
-		out.Plan.Findings = []productworkflow.ProfileFinding{}
-	}
 
 	if jsonOutput {
 		enc := json.NewEncoder(stdout)
@@ -1627,10 +1423,10 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			return 1
 		}
 	} else {
-		fmt.Fprintf(stdout, "product adr render-prompt: %s (%d findings)\n", status, len(plan.Findings))
+		fmt.Fprintf(stdout, "product adr render-prompt: %s (%d findings)\n", out.Status, len(out.Plan.Findings))
 	}
 
-	if writeBlocked {
+	if out.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -1790,150 +1586,26 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		return 0
 	}
 
-	var findings []productworkflow.TDDObligationPlanFinding
-
-	addFinding := func(kind, message, file string) {
-		findings = append(findings, productworkflow.TDDObligationPlanFinding{
-			Kind:     kind,
-			Message:  message,
-			File:     file,
-			Severity: productworkflow.ProductWorkflowSeverityError,
-		})
-	}
-	readFile := func(relPath string) ([]byte, bool) {
-		data, readErr := os.ReadFile(filepath.Join(absRoot, relPath))
-		if readErr != nil {
-			if os.IsNotExist(readErr) {
-				addFinding("missing_file", "required file not found", relPath)
-			} else {
-				addFinding("read_error", readErr.Error(), relPath)
-			}
-
-			return nil, false
-		}
-
-		return data, true
-	}
-
-	var prdDoc productworkflow.PRDDocument
-
-	if data, ok := readFile("prd.md"); ok {
-		doc, parseErr := productworkflow.ParsePRDMarkdown(data)
-		if parseErr != nil {
-			addFinding("parse_error", parseErr.Error(), "prd.md")
-		} else {
-			prdDoc = doc
-		}
-	}
-
-	var adrIndex productworkflow.ADRIndex
-
-	adrPathByID := map[string]string{}
-
-	if data, ok := readFile(filepath.Join("adrs", "index.json")); ok {
-		idx, parseErr := productworkflow.ParseADRIndexJSON(data)
-		if parseErr != nil {
-			addFinding("parse_error", parseErr.Error(), filepath.Join("adrs", "index.json"))
-		} else {
-			adrIndex = idx
-			for _, entry := range idx.ADRs {
-				adrPathByID[entry.ADRID] = filepath.Join("adrs", entry.Path)
-			}
-		}
-	}
-
-	parsedADRs := make([]productworkflow.ParsedADR, 0, len(adrIndex.ADRs))
-	for _, entry := range adrIndex.ADRs {
-		relPath := filepath.Join("adrs", entry.Path)
-		data, ok := readFile(relPath)
-
-		if !ok {
-			continue
-		}
-
-		doc, parseErr := productworkflow.ParseADRMarkdown(data)
-		if parseErr != nil {
-			addFinding("parse_error", parseErr.Error(), relPath)
-
-			continue
-		}
-
-		parsedADRs = append(parsedADRs, productworkflow.ParsedADR{Doc: doc, RelPath: relPath, RawMarkdown: string(data)})
-	}
-
-	var ledger productworkflow.TDDLedger
-
-	if data, ok := readFile("tdd.json"); ok {
-		parsed, parseErr := productworkflow.ParseTDDLedgerJSON(data)
-		if parseErr != nil {
-			addFinding("parse_error", parseErr.Error(), "tdd.json")
-		} else {
-			ledger = parsed
-		}
-	}
-
 	if strings.TrimSpace(promoteCoverage) != "" {
-		cleanPromotionPath, ok := cleanProductRelativePath(promoteCoverage)
-		if !ok {
-			addFinding("invalid_promote_coverage_path", "--promote-coverage must be effort-relative and must not contain path traversal", "--promote-coverage")
-		}
-
-		var contract productworkflow.BehavioralCoverageContract
-		if ok {
-			data, readOK := readFile(cleanPromotionPath)
-			if readOK {
-				if err := json.Unmarshal(data, &contract); err != nil {
-					addFinding("parse_error", err.Error(), filepath.ToSlash(cleanPromotionPath))
-				}
-			}
-		}
-
-		status := productworkflow.ProductWorkflowStatusBlocked
-		promoted := ledger
-		promotion := productworkflow.BehavioralCoveragePromotionResult{State: productworkflow.BehavioralCoveragePromotionStateProposed}
-		if len(findings) == 0 {
-			var promotionErr error
-			if writePromotion {
-				promotion, promotionErr = productworkflow.CommitBehavioralCoveragePromotion(absRoot, ledger, contract)
-			} else {
-				promotion, promotionErr = productworkflow.ReviewBehavioralCoverageContractWithResult(ledger, contract)
-			}
-			if promotionErr != nil {
-				var commitErr productworkflow.BehavioralCoveragePromotionCommitError
-				if errors.As(promotionErr, &commitErr) {
-					file := strings.TrimSpace(commitErr.File)
-					if file == "" {
-						file = "tdd.json"
-					}
-					addFinding("write_error", promotionErr.Error(), filepath.ToSlash(file))
-				} else {
-					promotion.State = productworkflow.BehavioralCoveragePromotionStateRejected
-					promotion.CommitStatus = productworkflow.BehavioralCoveragePromotionCommitStatusBlocked
-					addFinding("coverage_contract_invalid", promotionErr.Error(), filepath.ToSlash(cleanPromotionPath))
-				}
-			} else {
-				promoted = promotion.Ledger
-				status = productworkflow.ProductWorkflowStatusPass
-			}
-			if len(findings) > 0 {
-				status = productworkflow.ProductWorkflowStatusBlocked
-				if promotion.LedgerCommitted {
-					promoted = promotion.Ledger
-				} else {
-					promoted = ledger
-				}
-			}
-		}
+		review := productworkflow.PromoteBehavioralCoverageFromEffort(productworkflow.BehavioralCoveragePromotionRequest{
+			EffortRoot:   absRoot,
+			ContractPath: promoteCoverage,
+			Write:        writePromotion,
+		})
+		promotion := review.Promotion
 
 		telemetry.LogPhase(rec, "product_tdd_behavioral_coverage_promoted", map[string]any{
-			"status":           status,
+			"status":           review.Status,
 			"state":            promotion.State,
 			"commit_status":    promotion.CommitStatus,
 			"ledger_committed": promotion.LedgerCommitted,
+			"commit_warning":   promotion.CommitWarning,
+			"audit_status":     promotion.AuditStatus,
+			"audit_error":      promotion.AuditError,
 			"event_id":         promotion.EventID,
 			"digest":           promotion.Digest,
 			"superseded":       promotion.SupersededDigest,
-			"finding_count":    len(findings),
+			"finding_count":    len(review.Findings),
 			"write":            writePromotion,
 		})
 
@@ -1944,6 +1616,9 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			State            string                                     `json:"state"`
 			CommitStatus     string                                     `json:"commit_status,omitempty"`
 			LedgerCommitted  bool                                       `json:"ledger_committed"`
+			CommitWarning    string                                     `json:"commit_warning,omitempty"`
+			AuditStatus      string                                     `json:"audit_status"`
+			AuditError       string                                     `json:"audit_error,omitempty"`
 			EventID          string                                     `json:"event_id,omitempty"`
 			SupersededDigest string                                     `json:"superseded_digest,omitempty"`
 			Write            bool                                       `json:"write"`
@@ -1953,21 +1628,24 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		}
 
 		out := promotionOutput{
-			Status:           status,
+			Status:           review.Status,
 			EffortRoot:       absRoot,
-			PromoteCoverage:  filepath.ToSlash(cleanPromotionPath),
+			PromoteCoverage:  review.ContractPath,
 			State:            promotion.State,
 			CommitStatus:     promotion.CommitStatus,
 			LedgerCommitted:  promotion.LedgerCommitted,
+			CommitWarning:    promotion.CommitWarning,
+			AuditStatus:      promotion.AuditStatus,
+			AuditError:       promotion.AuditError,
 			EventID:          promotion.EventID,
 			SupersededDigest: promotion.SupersededDigest,
 			Write:            writePromotion,
 			Digest:           promotion.Digest,
-			Ledger:           promoted,
-			Findings:         findings,
+			Ledger:           review.Ledger,
+			Findings:         review.Findings,
 		}
-		if out.Digest == "" && promoted.BehavioralCoverage != nil {
-			out.Digest = productworkflow.BehavioralCoverageContractDigest(*promoted.BehavioralCoverage)
+		if out.Digest == "" && review.Ledger.BehavioralCoverage != nil {
+			out.Digest = productworkflow.BehavioralCoverageContractDigest(*review.Ledger.BehavioralCoverage)
 		}
 		if out.Findings == nil {
 			out.Findings = []productworkflow.TDDObligationPlanFinding{}
@@ -1986,7 +1664,21 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				return 1
 			}
 		} else {
-			fmt.Fprintf(stdout, "product tdd promote-coverage: %s (%d findings, write=%v)\n", out.Status, len(out.Findings), out.Write)
+			fmt.Fprintf(
+				stdout,
+				"product tdd promote-coverage: %s (%d findings, write=%v, commit=%s, audit=%s)\n",
+				out.Status,
+				len(out.Findings),
+				out.Write,
+				out.CommitStatus,
+				out.AuditStatus,
+			)
+			if out.CommitWarning != "" {
+				fmt.Fprintf(stdout, "commit warning: %s\n", out.CommitWarning)
+			}
+			if out.AuditError != "" {
+				fmt.Fprintf(stdout, "audit degradation: %s\n", out.AuditError)
+			}
 		}
 
 		if out.Status != productworkflow.ProductWorkflowStatusPass {
@@ -1996,23 +1688,11 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		return 0
 	}
 
-	plan := productworkflow.TDDObligationSynthesisPlan{
-		Obligations: []productworkflow.TDDObligationPlanItem{},
-		Findings:    []productworkflow.TDDObligationPlanFinding{},
-	}
-	status := productworkflow.ProductWorkflowStatusBlocked
-
-	if len(findings) == 0 {
-		plan = productworkflow.PlanTDDObligations(prdDoc, parsedADRs, ledger, adrPathByID)
-		if !productworkflow.TDDObligationPlanHasBlockers(plan) {
-			status = productworkflow.ProductWorkflowStatusPass
-		}
-	} else {
-		plan.Findings = append(plan.Findings, findings...)
-	}
+	planned := productworkflow.PlanTDDObligationsFromEffort(absRoot)
+	plan := planned.Plan
 
 	telemetry.LogPhase(rec, "product_tdd_plan_obligations", map[string]any{
-		"status":           status,
+		"status":           planned.Status,
 		"finding_count":    len(plan.Findings),
 		"obligation_count": len(plan.Obligations),
 	})
@@ -2023,7 +1703,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		Plan       productworkflow.TDDObligationSynthesisPlan `json:"plan"`
 	}
 
-	out := tddOutput{Status: status, EffortRoot: absRoot, Plan: plan}
+	out := tddOutput{Status: planned.Status, EffortRoot: absRoot, Plan: plan}
 
 	if out.Plan.Obligations == nil {
 		out.Plan.Obligations = []productworkflow.TDDObligationPlanItem{}
@@ -2081,24 +1761,6 @@ type productFeedbackRankerLearningOutput struct {
 	SummaryReferencePath   string                                       `json:"summary_reference_path"`
 	RankerLearningEvidence productworkflow.RankerLearningEvidenceResult `json:"ranker_learning_evidence"`
 	NextValidAction        string                                       `json:"next_valid_action"`
-}
-
-var productFeedbackPrivacyMarkers = []string{
-	"raw prompt",
-	"raw prompts",
-	"raw transcript",
-	"raw transcripts",
-	"file body",
-	"file bodies",
-	"secret",
-	"secrets",
-	"secret=",
-	"secret:",
-	"secrets=",
-	"secrets:",
-	"customer-identifying",
-	"customer identifying",
-	"customer data",
 }
 
 func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -2237,103 +1899,17 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		return 2
 	}
 
-	readJSONFile := func(kind, relPath string, target any, scanPrivacy bool) error {
-		absPath, _, resolveErr := resolveProductFeedbackReferencePath(absRoot, relPath)
-		if resolveErr != nil {
-			return resolveErr
-		}
-
-		data, readErr := os.ReadFile(absPath)
-		if readErr != nil {
-			return readErr
-		}
-
-		if scanPrivacy {
-			if marker := findProductFeedbackPrivacyMarker(string(data)); marker != "" {
-				return fmt.Errorf("%s contains forbidden privacy marker %q", kind, marker)
-			}
-		}
-
-		if err := json.Unmarshal(data, target); err != nil {
-			return err
-		}
-
-		return nil
-	}
-
-	var workflowState productworkflow.WorkflowState
-
-	if err := readJSONFile("workflow_state", "workflow_state.json", &workflowState, false); err != nil {
-		fmt.Fprintf(stderr, "product feedback: workflow_state.json invalid: %v\n", err)
-
-		return 1
-	}
-
-	if _, err := productworkflow.ParseWorkflowStateJSON(mustJSONMarshal(workflowState)); err != nil {
-		fmt.Fprintf(stderr, "product feedback: workflow_state.json parse failed: %v\n", err)
-
-		return 1
-	}
-
 	if rankerLearningMode {
-		summaryAbs, summaryRel, err := resolveProductFeedbackReferencePath(absRoot, rankerLearningEvidenceSummary)
-		if err != nil {
-			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary invalid: %v\n", err)
-
-			return 1
-		}
-
-		summaryRaw, err := os.ReadFile(summaryAbs)
-		if err != nil {
-			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary invalid: %v\n", err)
-
-			return 1
-		}
-
-		if marker := findProductFeedbackPrivacyMarker(string(summaryRaw)); marker != "" {
-			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary contains forbidden privacy marker %q\n", marker)
-
-			return 1
-		}
-
-		summary, wrappedStatus, err := parseProductFeedbackSummaryDocument(summaryRaw)
+		built, err := productworkflow.BuildRankerLearningEvidenceFromFeedback(productworkflow.RankerLearningFeedbackRequest{
+			EffortRoot:  absRoot,
+			SummaryPath: rankerLearningEvidenceSummary,
+		})
 		if err != nil {
 			fmt.Fprintf(stderr, "product feedback: %v\n", err)
 
 			return 1
 		}
-
-		if wrappedStatus != "" && !executionFeedbackStatusPass(wrappedStatus) {
-			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary status must be pass, got %q\n", wrappedStatus)
-
-			return 1
-		}
-
-		var tddLedger productworkflow.TDDLedger
-
-		if err := readJSONFile("tdd", "tdd.json", &tddLedger, false); err != nil {
-			fmt.Fprintf(stderr, "product feedback: tdd.json invalid: %v\n", err)
-
-			return 1
-		}
-
-		if _, err := productworkflow.ParseTDDLedgerJSON(mustJSONMarshal(tddLedger)); err != nil {
-			fmt.Fprintf(stderr, "product feedback: tdd.json parse failed: %v\n", err)
-
-			return 1
-		}
-
-		knownObligations := make([]string, 0, len(tddLedger.Obligations))
-		for _, obligation := range tddLedger.Obligations {
-			knownObligations = append(knownObligations, obligation.ID)
-		}
-
-		adapted := productworkflow.AdaptExecutionFeedbackToRankerLearning(productworkflow.RankerLearningEvidenceInput{
-			WorkflowState:        workflowState,
-			KnownTDDObligations:  knownObligations,
-			Summary:              summary,
-			SummaryReferencePath: filepath.ToSlash(summaryRel),
-		})
+		adapted := built.Evidence
 		telemetry.LogPhase(rec, "product_feedback_ranker_learning_evidence", map[string]any{
 			"status":          adapted.Status,
 			"finding_count":   len(adapted.Findings),
@@ -2344,7 +1920,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		out := productFeedbackRankerLearningOutput{
 			Status:                 adapted.Status,
 			EffortRoot:             absRoot,
-			SummaryReferencePath:   filepath.ToSlash(summaryRel),
+			SummaryReferencePath:   built.SummaryReferencePath,
 			RankerLearningEvidence: adapted,
 			NextValidAction:        adapted.NextValidAction,
 		}
@@ -2407,93 +1983,22 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	}
 
 	if reconcileMode {
-		summaryAbs, summaryRel, err := resolveProductFeedbackReferencePath(absRoot, reconcileSummary)
-		if err != nil {
-			fmt.Fprintf(stderr, "product feedback: reconcile summary invalid: %v\n", err)
-
-			return 1
-		}
-
-		summaryRaw, err := os.ReadFile(summaryAbs)
-		if err != nil {
-			fmt.Fprintf(stderr, "product feedback: reconcile summary invalid: %v\n", err)
-
-			return 1
-		}
-
-		if marker := findProductFeedbackPrivacyMarker(string(summaryRaw)); marker != "" {
-			fmt.Fprintf(stderr, "product feedback: reconcile summary contains forbidden privacy marker %q\n", marker)
-
-			return 1
-		}
-
-		summary, wrappedStatus, err := parseProductFeedbackSummaryDocument(summaryRaw)
+		built, err := productworkflow.ReconcileExecutionFeedbackFromArtifacts(productworkflow.ExecutionFeedbackReconciliationRequest{
+			EffortRoot:  absRoot,
+			SummaryPath: reconcileSummary,
+			OutputPath:  reconciledStateOutput,
+		})
 		if err != nil {
 			fmt.Fprintf(stderr, "product feedback: %v\n", err)
 
 			return 1
 		}
-
-		if wrappedStatus != "" && !executionFeedbackStatusPass(wrappedStatus) {
-			fmt.Fprintf(stderr, "product feedback: reconcile summary status must be pass, got %q\n", wrappedStatus)
-
-			return 1
-		}
-
-		var tddLedger productworkflow.TDDLedger
-
-		if err := readJSONFile("tdd", "tdd.json", &tddLedger, false); err != nil {
-			fmt.Fprintf(stderr, "product feedback: tdd.json invalid: %v\n", err)
-
-			return 1
-		}
-
-		if _, err := productworkflow.ParseTDDLedgerJSON(mustJSONMarshal(tddLedger)); err != nil {
-			fmt.Fprintf(stderr, "product feedback: tdd.json parse failed: %v\n", err)
-
-			return 1
-		}
-
-		knownObligations := make([]string, 0, len(tddLedger.Obligations))
-		for _, obligation := range tddLedger.Obligations {
-			knownObligations = append(knownObligations, obligation.ID)
-		}
-
-		_, outputRel, err := resolveProductFeedbackReferencePath(absRoot, reconciledStateOutput)
-		if err != nil {
-			fmt.Fprintf(stderr, "product feedback: reconciled-state-output path invalid: %v\n", err)
-
-			return 1
-		}
-
-		if filepath.ToSlash(outputRel) == "workflow_state.json" {
-			fmt.Fprintln(stderr, "product feedback: reconciled-state-output must not overwrite workflow_state.json")
-
-			return 1
-		}
-
-		reconciledAt := ""
-		if len(summary.LaneHistory) > 0 {
-			reconciledAt = strings.TrimSpace(summary.LaneHistory[len(summary.LaneHistory)-1].Timestamp)
-		}
-
-		if reconciledAt == "" {
-			reconciledAt = strings.TrimSpace(workflowState.UpdatedAt)
-		}
-
-		reconciled := productworkflow.ReconcileExecutionFeedback(productworkflow.ExecutionFeedbackReconciliationInput{
-			WorkflowState:        workflowState,
-			Summary:              summary,
-			ReconciledAt:         reconciledAt,
-			SummaryReferencePath: filepath.ToSlash(summaryRel),
-			ReconciledOutputPath: filepath.ToSlash(outputRel),
-			KnownTDDObligations:  knownObligations,
-		})
+		reconciled := built.Reconciliation
 		out := productFeedbackReconcileOutput{
 			Status:                reconciled.Status,
 			EffortRoot:            absRoot,
-			SummaryReferencePath:  filepath.ToSlash(summaryRel),
-			ReconciledStateOutput: filepath.ToSlash(outputRel),
+			SummaryReferencePath:  built.SummaryReferencePath,
+			ReconciledStateOutput: built.OutputPath,
 			Reconciliation:        reconciled,
 			NextValidAction:       reconciled.NextValidAction,
 		}
@@ -2503,21 +2008,6 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			"finding_count":   len(out.Reconciliation.Findings),
 			"next_valid_step": out.NextValidAction,
 		})
-
-		if out.Status == productworkflow.ProductWorkflowStatusPass {
-			stateBytes, err := json.MarshalIndent(reconciled.WorkflowState, "", "  ")
-			if err != nil {
-				fmt.Fprintf(stderr, "product feedback: marshal reconciled workflow state: %v\n", err)
-
-				return 1
-			}
-
-			if err := writeProductFeedbackReconciledState(absRoot, outputRel, append(stateBytes, '\n')); err != nil {
-				fmt.Fprintf(stderr, "product feedback: write reconciled state output: %v\n", err)
-
-				return 1
-			}
-		}
 
 		if jsonOutput {
 			enc := json.NewEncoder(stdout)
@@ -2553,79 +2043,28 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		return 0
 	}
 
-	var laneHistory []productworkflow.ExecutionLaneEventRef
-
-	if err := readJSONFile("lane history reference", laneHistoryFile, &laneHistory, true); err != nil {
-		fmt.Fprintf(stderr, "product feedback: lane history reference invalid: %v\n", err)
-
-		return 1
-	}
-
-	var planProgress productworkflow.PlanExecuteProgressRef
-
-	if err := readJSONFile("plan progress reference", planProgressFile, &planProgress, true); err != nil {
-		fmt.Fprintf(stderr, "product feedback: plan progress reference invalid: %v\n", err)
-
-		return 1
-	}
-
-	var verification productworkflow.VerificationRef
-
-	if err := readJSONFile("verification reference", verificationFile, &verification, true); err != nil {
-		fmt.Fprintf(stderr, "product feedback: verification reference invalid: %v\n", err)
-
-		return 1
-	}
-
-	if marker := findProductFeedbackPrivacyMarker(strings.Join(changedPaths.values, "\n")); marker != "" {
-		fmt.Fprintf(stderr, "product feedback: changed-path contains forbidden privacy marker %q\n", marker)
-
-		return 1
-	}
-
-	if marker := findProductFeedbackPrivacyMarker(strings.Join(tddRefs.values, "\n")); marker != "" {
-		fmt.Fprintf(stderr, "product feedback: tdd-obligation-ref contains forbidden privacy marker %q\n", marker)
-
-		return 1
-	}
-
-	if marker := findProductFeedbackPrivacyMarker(strings.Join([]string{
-		productEvidenceID, productEvidencePath, releaseEvidenceID, releaseEvidencePath, briefPath, verification.Status,
-		strings.Join(verification.Commands, "\n"),
-	}, "\n")); marker != "" {
-		fmt.Fprintf(stderr, "product feedback: references contain forbidden privacy marker %q\n", marker)
-
-		return 1
-	}
-
-	var tddLedger productworkflow.TDDLedger
-
-	if err := readJSONFile("tdd", "tdd.json", &tddLedger, false); err != nil {
-		fmt.Fprintf(stderr, "product feedback: tdd.json invalid: %v\n", err)
-
-		return 1
-	}
-
-	if _, err := productworkflow.ParseTDDLedgerJSON(mustJSONMarshal(tddLedger)); err != nil {
-		fmt.Fprintf(stderr, "product feedback: tdd.json parse failed: %v\n", err)
-
-		return 1
-	}
-
-	summary := productworkflow.SummarizeExecutionFeedback(productworkflow.ExecutionFeedbackInput{
-		EffortRoot:        absRoot,
-		WorkflowState:     workflowState,
-		TDDLedger:         tddLedger,
-		LaneHistory:       laneHistory,
-		PlanProgress:      planProgress,
-		ProductEvidence:   productworkflow.EvidenceBundleRef{ID: strings.TrimSpace(productEvidenceID), Path: strings.TrimSpace(productEvidencePath)},
-		ReleaseEvidence:   productworkflow.EvidenceBundleRef{ID: strings.TrimSpace(releaseEvidenceID), Path: strings.TrimSpace(releaseEvidencePath)},
+	summary, err := productworkflow.BuildExecutionFeedbackFromArtifacts(productworkflow.ExecutionFeedbackArtifactsRequest{
+		EffortRoot:       absRoot,
+		LaneHistoryPath:  laneHistoryFile,
+		PlanProgressPath: planProgressFile,
+		VerificationPath: verificationFile,
+		ProductEvidence: productworkflow.EvidenceBundleRef{
+			ID:   productEvidenceID,
+			Path: productEvidencePath,
+		},
+		ReleaseEvidence: productworkflow.EvidenceBundleRef{
+			ID:   releaseEvidenceID,
+			Path: releaseEvidencePath,
+		},
 		ChangedPaths:      changedPaths.values,
-		Verification:      verification,
-		BriefPath:         strings.TrimSpace(briefPath),
+		BriefPath:         briefPath,
 		TDDObligationRefs: tddRefs.values,
 	})
+	if err != nil {
+		fmt.Fprintf(stderr, "product feedback: %v\n", err)
 
+		return 1
+	}
 	telemetry.LogPhase(rec, "product_feedback", map[string]any{
 		"status":          summary.Status,
 		"finding_count":   len(summary.Findings),
@@ -2673,118 +2112,6 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	return 0
 }
 
-func mustJSONMarshal(v any) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return []byte("{}")
-	}
-
-	return data
-}
-
-func parseProductFeedbackSummaryDocument(data []byte) (productworkflow.ExecutionFeedbackSummary, string, error) {
-	var wrapped productFeedbackOutput
-
-	if err := json.Unmarshal(data, &wrapped); err == nil && strings.TrimSpace(string(wrapped.Summary.Status)) != "" {
-		return wrapped.Summary, strings.TrimSpace(string(wrapped.Status)), nil
-	}
-
-	var summary productworkflow.ExecutionFeedbackSummary
-
-	if err := json.Unmarshal(data, &summary); err == nil && strings.TrimSpace(string(summary.Status)) != "" {
-		return summary, "", nil
-	}
-
-	return productworkflow.ExecutionFeedbackSummary{}, "", fmt.Errorf("feedback summary must be a feedback summary or full `product feedback --json` output")
-}
-
-func resolveProductFeedbackReferencePath(effortRoot, relPath string) (string, string, error) {
-	clean, ok := cleanProductRelativePath(relPath)
-	if !ok {
-		return "", "", fmt.Errorf("path %q must be effort-relative and must not contain path traversal", relPath)
-	}
-
-	absPath := filepath.Join(effortRoot, clean)
-	if err := rejectProductFeedbackSymlinkAncestors(effortRoot, clean); err != nil {
-		return "", "", err
-	}
-
-	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", "", fmt.Errorf("path %q must not be a symlink", clean)
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", "", fmt.Errorf("inspect path %q: %w", clean, err)
-	}
-
-	rootEval, err := filepath.EvalSymlinks(effortRoot)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve effort root: %w", err)
-	}
-
-	existing := absPath
-	for {
-		eval, evalErr := filepath.EvalSymlinks(existing)
-		if evalErr == nil {
-			rel, relErr := filepath.Rel(filepath.Clean(rootEval), filepath.Clean(eval))
-			if relErr != nil || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
-				return "", "", fmt.Errorf("path %q resolves outside effort root", clean)
-			}
-
-			return absPath, clean, nil
-		}
-
-		if !os.IsNotExist(evalErr) {
-			return "", "", fmt.Errorf("resolve path %q: %w", clean, evalErr)
-		}
-
-		parent := filepath.Dir(existing)
-		if parent == existing {
-			return "", "", fmt.Errorf("resolve path %q: no existing ancestor", clean)
-		}
-
-		existing = parent
-	}
-}
-
-func rejectProductFeedbackSymlinkAncestors(effortRoot, cleanRel string) error {
-	parts := strings.Split(filepath.ToSlash(cleanRel), "/")
-	current := filepath.Clean(effortRoot)
-
-	for i := 0; i < len(parts)-1; i++ {
-		current = filepath.Join(current, parts[i])
-
-		info, err := os.Lstat(current)
-
-		if os.IsNotExist(err) {
-			return nil
-		}
-
-		if err != nil {
-			return fmt.Errorf("inspect path ancestor %q: %w", filepath.ToSlash(filepath.Join(parts[:i+1]...)), err)
-		}
-
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("path ancestor %q must not be a symlink", filepath.ToSlash(filepath.Join(parts[:i+1]...)))
-		}
-	}
-
-	return nil
-}
-
-func findProductFeedbackPrivacyMarker(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "" {
-		return ""
-	}
-
-	for _, marker := range productFeedbackPrivacyMarkers {
-		if strings.Contains(normalized, marker) {
-			return marker
-		}
-	}
-
-	return ""
-}
-
 // multiValueFlag is intentionally separate from cliflag.MultiFlag:
 // it trims whitespace and rejects empty values, which cliflag.MultiFlag does not.
 type multiValueFlag struct {
@@ -2804,17 +2131,6 @@ func (m *multiValueFlag) Set(value string) error {
 	m.values = append(m.values, trimmed)
 
 	return nil
-}
-
-type productBriefOutput struct {
-	Status             productworkflow.ProductWorkflowStatus   `json:"status"`
-	EffortRoot         string                                  `json:"effort_root"`
-	BriefOutputPath    string                                  `json:"brief_output_path,omitempty"`
-	Generated          productworkflow.BriefGenerationResult   `json:"generated"`
-	CoverageEvaluation *productworkflow.CoverageGateEvaluation `json:"coverage_evaluation,omitempty"`
-	Lint               *brieflint.Report                       `json:"lint,omitempty"`
-	Blocker            string                                  `json:"blocker,omitempty"`
-	NextValidAction    string                                  `json:"next_valid_action,omitempty"`
 }
 
 func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -2860,107 +2176,31 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		return 2
 	}
 
-	input, blockers := productworkflow.LoadBriefGenerationInput(absRoot)
-	gen := productworkflow.GenerateImplementationBrief(input)
-
-	allBlockers := append([]string{}, blockers...)
-
-	allBlockers = append(allBlockers, gen.Blockers...)
-
-	out := productBriefOutput{
-		Status:     productworkflow.ProductWorkflowStatusBlocked,
+	out := productworkflow.RenderImplementationBriefFromEffort(productworkflow.BriefRenderRequest{
 		EffortRoot: absRoot,
-		Generated:  gen,
-	}
-	if strings.TrimSpace(string(input.CoverageEvaluation.Status)) != "" {
-		coverageEvaluation := input.CoverageEvaluation
-
-		out.CoverageEvaluation = &coverageEvaluation
-
-		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(coverageEvaluation, input.TDD)
-		telemetry.LogPhase(rec, coverageGateEvent.Event, map[string]any{
-			"event":           coverageGateEvent.Event,
-			"effort_id":       coverageGateEvent.EffortID,
-			"task_id":         coverageGateEvent.TaskID,
-			"coverage":        coverageGateEvent.Coverage,
-			"gate_result":     coverageGateEvent.GateResult,
-			"blocked_reasons": coverageGateEvent.BlockedReasons,
-			"waivers":         coverageGateEvent.Waivers,
+		OutputPath: briefOutput,
+	})
+	if out.CoverageEvent != nil {
+		event := *out.CoverageEvent
+		telemetry.LogPhase(rec, event.Event, map[string]any{
+			"event":           event.Event,
+			"effort_id":       event.EffortID,
+			"task_id":         event.TaskID,
+			"coverage":        event.Coverage,
+			"gate_result":     event.GateResult,
+			"blocked_reasons": event.BlockedReasons,
+			"waivers":         event.Waivers,
 			"source":          "product_brief_render",
 		})
 	}
-
-	var (
-		cleanup          func()
-		briefPathForLint string
-	)
-
-	tmp, tmpErr := os.CreateTemp("", "idiom-product-brief-*.md")
-	if tmpErr != nil {
-		allBlockers = append(allBlockers, fmt.Sprintf("failed to create temp brief for lint: %v", tmpErr))
-	} else {
-		briefPathForLint = tmp.Name()
-		_ = tmp.Close()
-		cleanup = func() { _ = os.Remove(briefPathForLint) }
+	if out.Lint != nil {
+		telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": out.Lint.Exit, "json": true, "findings": len(out.Lint.Findings)})
 	}
-
-	if strings.TrimSpace(briefOutput) != "" {
-		_, rel, block := resolveProductBriefOutputPath(absRoot, briefOutput)
-		if block != "" {
-			allBlockers = append(allBlockers, block)
-		} else {
-			out.BriefOutputPath = filepath.ToSlash(rel)
-		}
-	}
-
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	if briefPathForLint != "" {
-		if err := os.WriteFile(briefPathForLint, []byte(gen.RenderedBrief), 0o644); err != nil {
-			allBlockers = append(allBlockers, fmt.Sprintf("failed to stage brief for lint: %v", err))
-		} else {
-			lintReport, lintErr := brieflint.BuildReport(context.Background(), briefPathForLint, "", 0)
-			if lintErr != nil {
-				allBlockers = append(allBlockers, fmt.Sprintf("brief lint failed: %v", lintErr))
-			} else {
-				out.Lint = &lintReport
-				telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": lintReport.Exit, "json": true, "findings": len(lintReport.Findings)})
-
-				if lintReport.Exit != 0 {
-					allBlockers = append(allBlockers, fmt.Sprintf("brief lint failed (exit %d)", lintReport.Exit))
-				}
-			}
-		}
-	}
-
-	if len(allBlockers) == 0 && strings.TrimSpace(briefOutput) != "" {
-		absOut := filepath.Join(absRoot, filepath.FromSlash(out.BriefOutputPath))
-		if err := os.MkdirAll(filepath.Dir(absOut), 0o755); err != nil {
-			allBlockers = append(allBlockers, fmt.Sprintf("create brief output directory: %v", err))
-		} else if err := os.WriteFile(absOut, []byte(gen.RenderedBrief), 0o644); err != nil {
-			allBlockers = append(allBlockers, fmt.Sprintf("write brief output: %v", err))
-		}
-	}
-
-	if len(allBlockers) == 0 {
-		out.Status = productworkflow.ProductWorkflowStatusPass
-		gen.Status = productworkflow.ProductWorkflowStatusPass
-	} else {
-		out.Blocker = strings.Join(allBlockers, "; ")
-		gen.Status = productworkflow.ProductWorkflowStatusBlocked
-
-		gen.Blockers = append([]string{}, allBlockers...)
-	}
-
-	out.NextValidAction = productBriefNextValidAction(out.Status, out.BriefOutputPath)
-	out.Generated = gen
 
 	telemetry.LogPhase(rec, "product_brief_render", map[string]any{
 		"status":        out.Status,
 		"has_output":    out.BriefOutputPath != "",
-		"blocker_count": len(allBlockers),
+		"blocker_count": len(out.Generated.Blockers),
 	})
 
 	if jsonOutput {
@@ -2993,456 +2233,122 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	return 0
 }
 
-func resolveProductBriefOutputPath(effortRoot, relPath string) (string, string, string) {
-	clean, ok := cleanProductRelativePath(relPath)
-	if !ok {
-		return "", "", fmt.Sprintf("brief output path %q must be effort-relative and must not contain path traversal", relPath)
-	}
-
-	if !strings.HasPrefix(filepath.ToSlash(clean), "briefs/") {
-		return "", "", fmt.Sprintf("brief output path %q must be under briefs/", relPath)
-	}
-
-	absPath := filepath.Join(effortRoot, clean)
-	if finding, outside := productworkflow.ValidateResearchPromptPathBoundary(effortRoot, absPath, clean); outside {
-		return "", "", finding.Message
-	}
-
-	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", "", fmt.Sprintf("brief output path %q must not be a symlink", clean)
-	}
-
-	return absPath, clean, ""
-}
-
-func productBriefNextValidAction(status productworkflow.ProductWorkflowStatus, briefOutputPath string) string {
-	if status != productworkflow.ProductWorkflowStatusPass {
-		return "resolve blockers before running `idiom brief lint <brief.md>` or dispatching this brief"
-	}
-
-	if strings.TrimSpace(briefOutputPath) == "" {
-		return "rerun with `--brief-output briefs/<task>.md` to persist the lint-passing brief"
-	}
-
-	return "run `idiom brief lint <brief.md>` or dispatch from this brief output"
-}
-
-func writeProductFeedbackReconciledState(effortRoot, relPath string, data []byte) error {
-	clean := filepath.ToSlash(relPath)
-	if _, _, err := resolveProductFeedbackReferencePath(effortRoot, clean); err != nil {
-		return err
-	}
-
-	root, err := os.OpenRoot(effortRoot)
+func runProductResearchPlanRuns(projectRoot, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	result, err := productworkflow.PlanResearchRunsFromProject(productworkflow.ResearchRunPlanningRequest{
+		ProjectRoot:       projectRoot,
+		ResearchOutputDir: researchOutputDir,
+		Profile:           researchProfile,
+	})
 	if err != nil {
-		return err
+		fmt.Fprintf(stderr, "product research: %v\n", err)
+
+		return 2
 	}
-	defer root.Close()
-
-	dir := filepath.Dir(clean)
-	if dir != "." {
-		if err := root.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-
-	if _, _, err := resolveProductFeedbackReferencePath(effortRoot, clean); err != nil {
-		return err
-	}
-
-	return root.WriteFile(clean, data, 0o644)
-}
-
-func executionFeedbackStatusPass(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case string(productworkflow.ProductWorkflowStatusPass), "passed", "complete", "completed", "success", "source-satisfied":
-		return true
-	default:
-		return false
-	}
-}
-
-func cleanProductRelativePath(relPath string) (string, bool) {
-	if strings.TrimSpace(relPath) == "" || filepath.IsAbs(relPath) {
-		return "", false
-	}
-
-	clean := filepath.Clean(relPath)
-	slash := filepath.ToSlash(clean)
-
-	if slash == "." || slash == ".." || strings.HasPrefix(slash, "../") {
-		return "", false
-	}
-
-	return clean, true
-}
-
-func runProductResearchPlanRuns(profiles *productworkflow.ProfileStoreResult, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	plan := productworkflow.PlanResearchRuns(profiles.Profiles, researchProfile, researchOutputDir)
-
-	plan.Findings = append(append([]productworkflow.ProfileFinding{}, profiles.Findings...), plan.Findings...)
 	telemetry.LogPhase(rec, "product_research_plan_runs", map[string]any{
-		"profile_count": len(profiles.Profiles),
-		"run_count":     plan.RunCount,
-		"finding_count": len(plan.Findings),
+		"profile_count": result.Plan.ProfileCount,
+		"run_count":     result.Plan.RunCount,
+		"finding_count": len(result.Plan.Findings),
 	})
 
 	if jsonOutput {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 
-		if err := enc.Encode(plan); err != nil {
+		if err := enc.Encode(result.Plan); err != nil {
 			fmt.Fprintf(stderr, "product research: encode JSON: %v\n", err)
 
 			return 1
 		}
 	} else {
-		fmt.Fprintf(stdout, "product research plan: %d runs (%d findings)\n", plan.RunCount, len(plan.Findings))
+		fmt.Fprintf(stdout, "product research plan: %d runs (%d findings)\n", result.Plan.RunCount, len(result.Plan.Findings))
 	}
 
-	if hasResearchErrorFinding(plan.Findings) {
+	if result.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
 	return 0
 }
 
-func runProductResearchRenderPrompts(profiles *productworkflow.ProfileStoreResult, effortRoot, researchOutputDir, researchPromptDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	if strings.TrimSpace(effortRoot) == "" {
-		fmt.Fprintln(stderr, "product research: --effort-root is required with --render-prompts")
-
-		return 2
-	}
-
-	absRoot, err := filepath.Abs(effortRoot)
+func runProductResearchRenderPrompts(projectRoot, effortRoot, researchOutputDir, researchPromptDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	result, err := productworkflow.RenderResearchPromptsFromProject(productworkflow.ResearchPromptRenderRequest{
+		ProjectRoot:       projectRoot,
+		EffortRoot:        effortRoot,
+		ResearchOutputDir: researchOutputDir,
+		ResearchPromptDir: researchPromptDir,
+		Profile:           researchProfile,
+	})
 	if err != nil {
-		fmt.Fprintf(stderr, "product research: resolve effort root: %v\n", err)
+		fmt.Fprintf(stderr, "product research: %v\n", err)
 
 		return 2
-	}
-
-	findings := append([]productworkflow.ProfileFinding{}, profiles.Findings...)
-	if len(profiles.Profiles) == 0 {
-		findings = append(findings, productworkflow.ProfileFinding{
-			Kind:     "missing_research_profile",
-			Message:  "no valid research profile is available for prompt rendering",
-			File:     ".idiom/research/profiles",
-			Severity: productworkflow.ProductWorkflowSeverityError,
-		})
-	}
-
-	runPlan := productworkflow.PlanResearchRuns(profiles.Profiles, researchProfile, researchOutputDir)
-
-	runPlan.Findings = append(findings, runPlan.Findings...)
-
-	promptPlan := productworkflow.PlanResearchArtifactPrompts(runPlan, researchPromptDir)
-
-	promptDir := filepath.Join(absRoot, promptPlan.ResearchPromptDir)
-	if finding, outside := productworkflow.ValidateResearchPromptDirBoundary(absRoot, promptDir, promptPlan.ResearchPromptDir); outside {
-		promptPlan.Findings = append(promptPlan.Findings, finding)
-	}
-
-	productworkflow.SortProfileFindings(promptPlan.Findings)
-
-	writeBlocked := hasResearchErrorFinding(promptPlan.Findings)
-	wrotePromptCount := 0
-
-	if !writeBlocked {
-		for _, run := range promptPlan.Runs {
-			promptPath := filepath.Join(absRoot, run.PromptPath)
-			if finding, outside := productworkflow.ValidateResearchPromptPathBoundary(absRoot, promptPath, run.PromptPath); outside {
-				promptPlan.Findings = append(promptPlan.Findings, finding)
-			}
-		}
-
-		productworkflow.SortProfileFindings(promptPlan.Findings)
-
-		writeBlocked = hasResearchErrorFinding(promptPlan.Findings)
-	}
-
-	if !writeBlocked {
-		if err := os.MkdirAll(promptDir, 0o755); err != nil {
-			fmt.Fprintf(stderr, "product research: create prompt directory: %v\n", err)
-
-			return 2
-		}
-
-		for _, run := range promptPlan.Runs {
-			promptPath := filepath.Join(absRoot, run.PromptPath)
-			if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
-				fmt.Fprintf(stderr, "product research: create prompt directory: %v\n", err)
-
-				return 2
-			}
-
-			if err := os.WriteFile(promptPath, []byte(productworkflow.RenderResearchArtifactPromptText(run)), 0o644); err != nil {
-				fmt.Fprintf(stderr, "product research: write prompt file: %v\n", err)
-
-				return 2
-			}
-
-			wrotePromptCount++
-		}
 	}
 
 	telemetry.LogPhase(rec, "product_research_render_prompts", map[string]any{
-		"profile_count":      len(profiles.Profiles),
-		"run_count":          promptPlan.RunCount,
-		"finding_count":      len(promptPlan.Findings),
-		"wrote_prompt_count": wrotePromptCount,
+		"profile_count":      result.ProfileCount,
+		"run_count":          result.Plan.RunCount,
+		"finding_count":      len(result.Plan.Findings),
+		"wrote_prompt_count": result.PromptWriteCount,
 	})
-
-	type renderOutput struct {
-		Status           productworkflow.ProductWorkflowStatus      `json:"status"`
-		EffortRoot       string                                     `json:"effort_root"`
-		PromptWriteCount int                                        `json:"prompt_write_count"`
-		Plan             productworkflow.ResearchArtifactPromptPlan `json:"plan"`
-	}
-
-	status := productworkflow.ProductWorkflowStatusPass
-
-	if writeBlocked {
-		status = productworkflow.ProductWorkflowStatusBlocked
-	}
-
-	out := renderOutput{
-		Status:           status,
-		EffortRoot:       absRoot,
-		PromptWriteCount: wrotePromptCount,
-		Plan:             promptPlan,
-	}
-	if out.Plan.Runs == nil {
-		out.Plan.Runs = []productworkflow.ResearchArtifactPromptRunSpec{}
-	}
-
-	if out.Plan.Findings == nil {
-		out.Plan.Findings = []productworkflow.ProfileFinding{}
-	}
 
 	if jsonOutput {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 
-		if err := enc.Encode(out); err != nil {
+		if err := enc.Encode(result); err != nil {
 			fmt.Fprintf(stderr, "product research: encode JSON: %v\n", err)
 
 			return 1
 		}
 	} else {
-		fmt.Fprintf(stdout, "product research render-prompts: %s (%d prompts, %d findings)\n", status, wrotePromptCount, len(promptPlan.Findings))
+		fmt.Fprintf(stdout, "product research render-prompts: %s (%d prompts, %d findings)\n", result.Status, result.PromptWriteCount, len(result.Plan.Findings))
 	}
 
-	if writeBlocked {
+	if result.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
 	return 0
 }
 
-func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResult, effortRoot, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	if strings.TrimSpace(effortRoot) == "" {
-		fmt.Fprintln(stderr, "product research: --effort-root is required with --merge-evidence")
-
-		return 2
-	}
-
-	absRoot, err := filepath.Abs(effortRoot)
+func runProductResearchMergeEvidence(projectRoot, effortRoot, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	result, err := productworkflow.MergeResearchEvidenceFromProject(productworkflow.ResearchEvidenceMergeRequest{
+		ProjectRoot:       projectRoot,
+		EffortRoot:        effortRoot,
+		ResearchOutputDir: researchOutputDir,
+		Profile:           researchProfile,
+	})
 	if err != nil {
-		fmt.Fprintf(stderr, "product research: resolve effort root: %v\n", err)
+		fmt.Fprintf(stderr, "product research: %v\n", err)
 
 		return 2
-	}
-
-	findings := append([]productworkflow.ProfileFinding{}, profiles.Findings...)
-	if len(profiles.Profiles) == 0 {
-		findings = append(findings, productworkflow.ProfileFinding{
-			Kind:     "missing_research_profile",
-			Message:  "no valid research profile is available for evidence merge",
-			File:     ".idiom/research/profiles",
-			Severity: productworkflow.ProductWorkflowSeverityError,
-		})
-	}
-
-	selectedProfile, profileFindings := productworkflow.SelectResearchProfile(profiles.Profiles, researchProfile)
-
-	findings = append(findings, profileFindings...)
-
-	var existing []productworkflow.EvidenceCard
-
-	evidencePath := filepath.Join(absRoot, "evidence", "evidence.jsonl")
-
-	if data, readErr := os.ReadFile(evidencePath); readErr == nil {
-		parsed, parseErr := productworkflow.ParseEvidenceCardsJSONL(data)
-		if parseErr != nil {
-			findings = append(findings, productworkflow.ProfileFinding{
-				Kind:     "validation_error",
-				Message:  fmt.Sprintf("existing evidence ledger failed validation: %v", parseErr),
-				File:     "evidence/evidence.jsonl",
-				Severity: productworkflow.ProductWorkflowSeverityError,
-			})
-		} else {
-			existing = parsed
-		}
-	} else if os.IsNotExist(readErr) {
-		findings = append(findings, productworkflow.ProfileFinding{
-			Kind:     "missing_evidence_ledger",
-			Message:  "required evidence/evidence.jsonl not found",
-			File:     "evidence/evidence.jsonl",
-			Severity: productworkflow.ProductWorkflowSeverityError,
-		})
-	} else {
-		findings = append(findings, productworkflow.ProfileFinding{
-			Kind:     "read_error",
-			Message:  fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", readErr),
-			File:     "evidence/evidence.jsonl",
-			Severity: productworkflow.ProductWorkflowSeverityError,
-		})
-	}
-
-	docs, docFindings, discoverErr := productworkflow.DiscoverResearchCardDocuments(absRoot, researchOutputDir)
-	if discoverErr != nil {
-		fmt.Fprintf(stderr, "product research: %v\n", discoverErr)
-
-		return 2
-	}
-
-	findings = append(findings, docFindings...)
-
-	var policy productworkflow.MergePolicy
-
-	if selectedProfile != nil {
-		policy = selectedProfile.MergePolicy
-	}
-
-	merge := productworkflow.MergeResearchCardDocuments(existing, docs, policy)
-
-	merge.Findings = append(findings, merge.Findings...)
-
-	writeBlocked := hasResearchErrorFinding(merge.Findings) || len(merge.Conflicts) > 0
-	wrote := false
-
-	if !writeBlocked {
-		if err := writeEvidenceCardsJSONL(evidencePath, merge.Cards); err != nil {
-			fmt.Fprintf(stderr, "product research: write evidence ledger: %v\n", err)
-
-			return 2
-		}
-
-		wrote = true
 	}
 
 	telemetry.LogPhase(rec, "product_research_merge", map[string]any{
-		"profile_count":      len(profiles.Profiles),
-		"research_run_count": len(docs),
-		"merged_card_count":  len(merge.Cards),
-		"conflict_count":     len(merge.Conflicts),
-		"finding_count":      len(merge.Findings),
-		"wrote_ledger":       wrote,
+		"profile_count":      result.ProfileCount,
+		"research_run_count": result.ResearchRunCount,
+		"merged_card_count":  result.MergedCardCount,
+		"conflict_count":     len(result.Conflicts),
+		"finding_count":      len(result.Findings),
+		"wrote_ledger":       result.WroteEvidenceLedger,
 	})
-
-	type mergeOutput struct {
-		Status              productworkflow.ProductWorkflowStatus      `json:"status"`
-		EffortRoot          string                                     `json:"effort_root"`
-		ResearchOutputDir   string                                     `json:"research_output_dir"`
-		Profile             string                                     `json:"profile"`
-		ProfileCount        int                                        `json:"profile_count"`
-		ResearchRunCount    int                                        `json:"research_run_count"`
-		MergedCardCount     int                                        `json:"merged_card_count"`
-		MergedCardIDs       []string                                   `json:"merged_card_ids"`
-		Conflicts           []productworkflow.ResearchEvidenceConflict `json:"conflicts"`
-		Findings            []productworkflow.ProfileFinding           `json:"findings"`
-		WroteEvidenceLedger bool                                       `json:"wrote_evidence_ledger"`
-	}
-
-	status := productworkflow.ProductWorkflowStatusPass
-
-	if writeBlocked {
-		status = productworkflow.ProductWorkflowStatusBlocked
-	}
-
-	out := mergeOutput{
-		Status:              status,
-		EffortRoot:          absRoot,
-		ResearchOutputDir:   researchOutputDir,
-		Profile:             researchProfileOutput(selectedProfile),
-		ProfileCount:        len(profiles.Profiles),
-		ResearchRunCount:    len(docs),
-		MergedCardCount:     len(merge.Cards),
-		MergedCardIDs:       merge.MergedCardIDs,
-		Conflicts:           merge.Conflicts,
-		Findings:            merge.Findings,
-		WroteEvidenceLedger: wrote,
-	}
-	if out.Conflicts == nil {
-		out.Conflicts = []productworkflow.ResearchEvidenceConflict{}
-	}
-
-	if out.Findings == nil {
-		out.Findings = []productworkflow.ProfileFinding{}
-	}
-
-	if out.MergedCardIDs == nil {
-		out.MergedCardIDs = []string{}
-	}
 
 	if jsonOutput {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 
-		if err := enc.Encode(out); err != nil {
+		if err := enc.Encode(result); err != nil {
 			fmt.Fprintf(stderr, "product research: encode JSON: %v\n", err)
 
 			return 1
 		}
 	} else {
-		fmt.Fprintf(stdout, "product research merge: %s (%d cards, %d conflicts, %d findings)\n", status, out.MergedCardCount, len(out.Conflicts), len(out.Findings))
+		fmt.Fprintf(stdout, "product research merge: %s (%d cards, %d conflicts, %d findings)\n", result.Status, result.MergedCardCount, len(result.Conflicts), len(result.Findings))
 	}
 
-	if writeBlocked {
+	if result.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
 	return 0
-}
-
-func researchProfileOutput(profile *productworkflow.ResearchProfile) string {
-	if profile == nil {
-		return ""
-	}
-
-	if strings.TrimSpace(profile.ProfileID) != "" {
-		return profile.ProfileID
-	}
-
-	return profile.Name
-}
-
-func hasResearchErrorFinding(findings []productworkflow.ProfileFinding) bool {
-	for _, finding := range findings {
-		if finding.Severity == "error" {
-			return true
-		}
-	}
-
-	return false
-}
-
-func writeEvidenceCardsJSONL(path string, cards []productworkflow.EvidenceCard) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	var b strings.Builder
-
-	for _, card := range cards {
-		data, err := json.Marshal(card)
-		if err != nil {
-			return err
-		}
-
-		b.Write(data)
-		b.WriteByte('\n')
-	}
-
-	return os.WriteFile(path, []byte(b.String()), 0o644)
 }

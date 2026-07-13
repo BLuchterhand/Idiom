@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"context"
+	"errors"
 	"strings"
 
 	"idiom/internal/platform/failures"
@@ -68,15 +70,19 @@ func toolWriteDisabledResult(tool string, summary string, errorText string) Tool
 	return toolFailureResult(tool, summary, errorText, failures.PermissionDenied, reasonToolWriteDisabled)
 }
 
-func toolWriteFailureResult(tool string, summary string, err error) ToolResult {
-	return toolFailureFromErrorResult(tool, summary, err, failures.Internal, reasonToolWriteFailed)
-}
-
 func toolInternalFailureResult(tool string, summary string, err error) ToolResult {
 	return toolFailureFromErrorResult(tool, summary, err, failures.Internal, reasonToolInternalFailure)
 }
 
 func toolFailureFromErrorResult(tool string, summary string, err error, code failures.Code, reason failures.Reason) ToolResult {
+	if errors.Is(err, context.Canceled) {
+		code = failures.Canceled
+		reason = failures.NoReason
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		code = failures.DeadlineExceeded
+		reason = failures.NoReason
+	}
+
 	errorText := ""
 	if err != nil {
 		errorText = err.Error()

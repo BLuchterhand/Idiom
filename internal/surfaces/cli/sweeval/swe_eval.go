@@ -434,7 +434,7 @@ func printCoverage(coverage eval.SWECoverageReport) {
 	}
 
 	fmt.Fprintf(output,
-		"Coverage: %s families=%d tags=%d fixtures=%d task_shapes=%d initial_lanes=%d followup_lanes=%d route_reasons=%d contracts=%d thoroughness=%d verification=%d scenario_assertions=%d oracle_assertions=%d readiness_actions=%d deepening_actions=%d final_critic_actions=%d effort_levels=%d long_horizon_actions=%d long_horizon_kinds=%d negative_evidence=%d tools=%d forbidden_tools=%d file_surfaces=%d evidence_surfaces=%d tasks=%d\n",
+		"Coverage: %s families=%d tags=%d fixtures=%d task_shapes=%d initial_lanes=%d followup_lanes=%d route_reasons=%d contracts=%d thoroughness=%d verification=%d scenario_assertions=%d oracle_assertions=%d readiness_actions=%d deepening_actions=%d final_critic_actions=%d effort_levels=%d long_horizon_actions=%d long_horizon_kinds=%d negative_evidence=%d tools=%d forbidden_tools=%d file_surfaces=%d evidence_surfaces=%d cross_products=%d tasks=%d\n",
 		status,
 		len(coverage.Families),
 		len(coverage.Tags),
@@ -459,6 +459,7 @@ func printCoverage(coverage eval.SWECoverageReport) {
 		len(coverage.ForbiddenTools),
 		len(coverage.FileSurfaces),
 		len(coverage.EvidenceSurfaces),
+		len(coverage.CrossProducts),
 		coverage.TotalTasks,
 	)
 

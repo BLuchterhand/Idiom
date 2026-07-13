@@ -2,20 +2,20 @@ package root
 
 import (
 	"bytes"
-	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestRunMainMCPServeCommandExists(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+var _ = ginkgo.Describe("MCP command routing", func() {
+	ginkgo.It("exposes mcp serve and requires the stdio transport", func() {
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"mcp", "serve", "--profile", "discovery"}, &stdout, &stderr)
 
-	code := runMain([]string{"mcp", "serve", "--profile", "discovery"}, &stdout, &stderr)
-
-	if code != 2 {
-		t.Fatalf("expected usage exit 2 without --stdio, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	if !strings.Contains(stderr.String(), "requires --stdio") && !strings.Contains(stderr.String(), "--stdio") {
-		t.Fatalf("expected mcp serve usage diagnostic, got %q", stderr.String())
-	}
-}
+		gomega.Expect(code).To(gomega.Equal(2), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+		gomega.Expect(stderr.String()).To(gomega.Or(
+			gomega.ContainSubstring("requires --stdio"),
+			gomega.ContainSubstring("--stdio"),
+		))
+	})
+})

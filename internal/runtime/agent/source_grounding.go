@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -32,31 +30,50 @@ const (
 	sourceGroundingUnsupportedDetailMarker = "not backed by a source-body read"
 )
 
-const sourceGroundingAssessmentPayloadType = "agent.source_grounding_assessment.v1"
+type sourceGroundingRecoveryResolutionKind string
+
+const (
+	sourceGroundingRecoveryReadBody          sourceGroundingRecoveryResolutionKind = "read_body"
+	sourceGroundingRecoveryCiteBodyBacked    sourceGroundingRecoveryResolutionKind = "cite_body_backed"
+	sourceGroundingRecoveryQualifyUnverified sourceGroundingRecoveryResolutionKind = "qualify_unverified"
+	sourceGroundingRecoveryProbeAlternative  sourceGroundingRecoveryResolutionKind = "probe_alternative_source"
+	sourceGroundingRecoveryStateBlocker      sourceGroundingRecoveryResolutionKind = "state_exact_blocker"
+	sourceGroundingRecoveryAnswerSupported   sourceGroundingRecoveryResolutionKind = "answer_from_supported_evidence"
+)
+
+type sourceGroundingRecoveryResolution struct {
+	Kind       sourceGroundingRecoveryResolutionKind `json:"kind"`
+	References []sourceReference                     `json:"references,omitempty"`
+}
 
 type sourceGroundingAssessment struct {
-	Kind  sourceGroundingRejectionKind
-	Paths []string
-	Text  string
+	Kind        sourceGroundingRejectionKind
+	References  []sourceReference
+	Resolutions []sourceGroundingRecoveryResolution
+	Text        string
 }
 
 type sourceGroundingAssessmentPayload struct {
-	Kind  sourceGroundingRejectionKind `json:"kind,omitempty"`
-	Paths []string                     `json:"paths,omitempty"`
-	Text  string                       `json:"text,omitempty"`
+	Kind        sourceGroundingRejectionKind        `json:"kind,omitempty"`
+	References  []sourceReference                   `json:"references,omitempty"`
+	Resolutions []sourceGroundingRecoveryResolution `json:"resolutions,omitempty"`
+	Text        string                              `json:"text,omitempty"`
 }
 
 func (a sourceGroundingAssessment) hasTypedSignal() bool {
 	return a.Kind != sourceGroundingRejectionUnknown ||
-		len(a.Paths) > 0 ||
+		len(a.References) > 0 ||
+		len(a.Resolutions) > 0 ||
 		strings.TrimSpace(a.Text) != ""
 }
 
 func (a sourceGroundingAssessment) payload() sourceGroundingAssessmentPayload {
+	a = normalizeSourceGroundingAssessment(a)
 	return sourceGroundingAssessmentPayload{
-		Kind:  a.Kind,
-		Paths: uniqueSortedRunnerPaths(a.Paths),
-		Text:  strings.TrimSpace(a.Text),
+		Kind:        a.Kind,
+		References:  a.References,
+		Resolutions: a.Resolutions,
+		Text:        strings.TrimSpace(a.Text),
 	}
 }
 
@@ -65,34 +82,34 @@ func annotateSourceGroundingAssessment(result workspace.ToolResult, assessment s
 		return result
 	}
 
-	payload, err := json.Marshal(assessment.payload())
-	if err != nil {
-		return result
+	payload := assessment.payload()
+	envelope := newCompletionGateRecoveryEnvelope(
+		completionGateInvariantFinalAnswerAcceptance,
+		string(turnViolationSourceGroundingUnmet),
+		completionGateViolationSourceGrounding,
+		assessment.ReadableRecoveryPaths(),
+	)
+	if assessment.Kind == sourceGroundingRejectionMissingEvidence {
+		envelope.PendingObligationIDs = []string{completionGateObligationReadOnlyAnswerability}
 	}
-
-	result.PayloadType = sourceGroundingAssessmentPayloadType
-	result.Payload = payload
-	return result
+	envelope.SourceGrounding = &payload
+	return annotateCompletionGateRecoveryEnvelope(result, envelope)
 }
 
 func sourceGroundingAssessmentFromResult(result workspace.ToolResult) (sourceGroundingAssessment, bool) {
-	if strings.TrimSpace(result.Tool) != "completion_gate" ||
-		strings.TrimSpace(result.PayloadType) != sourceGroundingAssessmentPayloadType ||
-		len(result.Payload) == 0 {
-
+	envelope, ok := completionGateRecoveryEnvelopeFromResult(result)
+	if !ok || envelope.SourceGrounding == nil {
 		return sourceGroundingAssessment{}, false
 	}
-
-	var payload sourceGroundingAssessmentPayload
-	if err := json.Unmarshal(result.Payload, &payload); err != nil {
-		return sourceGroundingAssessment{}, false
-	}
+	payload := *envelope.SourceGrounding
 
 	assessment := sourceGroundingAssessment{
-		Kind:  payload.Kind,
-		Paths: uniqueSortedRunnerPaths(payload.Paths),
-		Text:  strings.TrimSpace(payload.Text),
+		Kind:        payload.Kind,
+		References:  payload.References,
+		Resolutions: payload.Resolutions,
+		Text:        strings.TrimSpace(payload.Text),
 	}
+	assessment = normalizeSourceGroundingAssessment(assessment)
 	if !assessment.hasTypedSignal() {
 		return sourceGroundingAssessment{}, false
 	}
@@ -101,31 +118,124 @@ func sourceGroundingAssessmentFromResult(result workspace.ToolResult) (sourceGro
 }
 
 func sourceGroundingCandidateOnlyAssessment(paths []string) sourceGroundingAssessment {
-	return sourceGroundingAssessment{
-		Kind:  sourceGroundingRejectionCandidateOnly,
-		Paths: uniqueSortedRunnerPaths(nonEmptyRunnerStrings(paths, 8)),
-	}
+	return newSourceGroundingAssessment(sourceGroundingRejectionCandidateOnly, sourceReferencesForPaths(nonEmptyRunnerStrings(paths, 8)), "")
 }
 
-func sourceGroundingMissingCandidateAssessment(paths []string) sourceGroundingAssessment {
-	return sourceGroundingAssessment{
-		Kind:  sourceGroundingRejectionMissingCandidate,
-		Paths: uniqueSortedRunnerPaths(paths),
-	}
+func sourceGroundingMissingCandidateReferenceAssessment(references []sourceReference) sourceGroundingAssessment {
+	return newSourceGroundingAssessment(sourceGroundingRejectionMissingCandidate, references, "")
 }
 
-func sourceGroundingUnsupportedDetailAssessment(paths []string) sourceGroundingAssessment {
-	return sourceGroundingAssessment{
-		Kind:  sourceGroundingRejectionUnsupportedDetail,
-		Paths: uniqueSortedRunnerPaths(paths),
-	}
+func sourceGroundingUnsupportedDetailReferenceAssessment(references []sourceReference) sourceGroundingAssessment {
+	return newSourceGroundingAssessment(sourceGroundingRejectionUnsupportedDetail, references, "")
+}
+
+func sourceGroundingMissingEvidenceAssessment(text string) sourceGroundingAssessment {
+	return newSourceGroundingAssessment(sourceGroundingRejectionMissingEvidence, nil, text)
 }
 
 func sourceGroundingScaffoldAssessment(text string) sourceGroundingAssessment {
-	return sourceGroundingAssessment{
-		Kind: sourceGroundingRejectionScaffold,
-		Text: strings.TrimSpace(text),
+	return newSourceGroundingAssessment(sourceGroundingRejectionScaffold, nil, text)
+}
+
+func newSourceGroundingAssessment(kind sourceGroundingRejectionKind, references []sourceReference, text string) sourceGroundingAssessment {
+	assessment := sourceGroundingAssessment{
+		Kind:       kind,
+		References: references,
+		Text:       strings.TrimSpace(text),
 	}
+	assessment.Resolutions = sourceGroundingRecoveryResolutions(kind, references)
+	return normalizeSourceGroundingAssessment(assessment)
+}
+
+func sourceGroundingRecoveryResolutions(kind sourceGroundingRejectionKind, references []sourceReference) []sourceGroundingRecoveryResolution {
+	readable := filterSourceReferences(references, func(reference sourceReference) bool {
+		return reference.BodyReadable()
+	})
+	var resolutions []sourceGroundingRecoveryResolution
+	if len(readable) > 0 {
+		resolutions = append(resolutions, sourceGroundingRecoveryResolution{
+			Kind:       sourceGroundingRecoveryReadBody,
+			References: readable,
+		})
+	}
+
+	switch kind {
+	case sourceGroundingRejectionCandidateOnly:
+		resolutions = append(resolutions,
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryProbeAlternative},
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryStateBlocker},
+		)
+	case sourceGroundingRejectionMissingCandidate, sourceGroundingRejectionUnsupportedDetail:
+		resolutions = append(resolutions,
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryCiteBodyBacked},
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryQualifyUnverified},
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryProbeAlternative},
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryStateBlocker},
+		)
+	case sourceGroundingRejectionMissingEvidence:
+		resolutions = append(resolutions,
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryProbeAlternative},
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryStateBlocker},
+		)
+	case sourceGroundingRejectionScaffold:
+		resolutions = append(resolutions,
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryAnswerSupported},
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryProbeAlternative},
+			sourceGroundingRecoveryResolution{Kind: sourceGroundingRecoveryStateBlocker},
+		)
+	}
+
+	return resolutions
+}
+
+func normalizeSourceGroundingAssessment(assessment sourceGroundingAssessment) sourceGroundingAssessment {
+	assessment.References = normalizeSourceReferences(assessment.References)
+	assessment.Text = strings.TrimSpace(assessment.Text)
+
+	seen := make(map[sourceGroundingRecoveryResolutionKind]struct{}, len(assessment.Resolutions))
+	resolutions := make([]sourceGroundingRecoveryResolution, 0, len(assessment.Resolutions))
+	for _, resolution := range assessment.Resolutions {
+		if resolution.Kind == "" {
+			continue
+		}
+		if _, ok := seen[resolution.Kind]; ok {
+			continue
+		}
+		resolution.References = normalizeSourceReferences(resolution.References)
+		if resolution.Kind == sourceGroundingRecoveryReadBody {
+			resolution.References = filterSourceReferences(resolution.References, func(reference sourceReference) bool {
+				return reference.BodyReadable()
+			})
+			if len(resolution.References) == 0 {
+				continue
+			}
+		}
+		seen[resolution.Kind] = struct{}{}
+		resolutions = append(resolutions, resolution)
+	}
+	assessment.Resolutions = resolutions
+	return assessment
+}
+
+func sourceReferencesForPaths(paths []string) []sourceReference {
+	references := make([]sourceReference, 0, len(paths))
+	for _, path := range paths {
+		references = append(references, sourceReferenceForPath(path))
+	}
+	return normalizeSourceReferences(references)
+}
+
+func (a sourceGroundingAssessment) ReferencePaths() []string {
+	return sourceReferencePaths(a.References)
+}
+
+func (a sourceGroundingAssessment) ReadableRecoveryPaths() []string {
+	for _, resolution := range a.Resolutions {
+		if resolution.Kind == sourceGroundingRecoveryReadBody {
+			return sourceReferencePaths(resolution.References)
+		}
+	}
+	return nil
 }
 
 func (a sourceGroundingAssessment) BlocksFinalAnswer() bool {
@@ -133,20 +243,31 @@ func (a sourceGroundingAssessment) BlocksFinalAnswer() bool {
 }
 
 func (a sourceGroundingAssessment) Message() string {
+	message := a.rejectionSummary()
+	if message == "" {
+		return ""
+	}
+	if options := a.recoveryOptionText(); len(options) > 0 {
+		message += " Valid recovery: " + strings.Join(options, "; ") + "."
+	}
+	return message
+}
+
+func (a sourceGroundingAssessment) rejectionSummary() string {
+	paths := a.ReferencePaths()
 	switch a.Kind {
 	case sourceGroundingRejectionMissingEvidence:
 		return strings.TrimSpace(a.Text)
 	case sourceGroundingRejectionCandidateOnly:
-		paths := nonEmptyRunnerStrings(a.Paths, 8)
 		pathSummary := strings.Join(paths, ", ")
 		if pathSummary == "" {
 			pathSummary = "(candidate path unavailable)"
 		}
-		return "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. " + sourceGroundingCandidateOnlyMarker + ". " + sourceGroundingCandidateOnlyPathMarker + " " + pathSummary + ". Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source."
+		return "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. " + sourceGroundingCandidateOnlyMarker + ". " + sourceGroundingCandidateOnlyPathMarker + " " + pathSummary + "."
 	case sourceGroundingRejectionMissingCandidate:
-		return "the answer cites path(s) that were discovered as index candidates but " + sourceGroundingMissingCandidateMarker + ": " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Read the first unread path with one bounded `read_file` or `code_navigate` call and cite the actual evidence from the file body. If the path was from search or graph results and does not need a full read, qualify the claim as `unverified` next to the citation."
+		return "the answer cites body-readable file/document reference(s) that were discovered as index candidates but " + sourceGroundingMissingCandidateMarker + ": " + quotedRunnerStrings(paths) + "."
 	case sourceGroundingRejectionUnsupportedDetail:
-		return "the answer cites source path/line/symbol detail " + sourceGroundingUnsupportedDetailMarker + ": " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+		return "the answer cites source path/line/symbol detail " + sourceGroundingUnsupportedDetailMarker + ": " + quotedRunnerStrings(paths) + "."
 	case sourceGroundingRejectionScaffold:
 		return strings.TrimSpace(a.Text)
 	default:
@@ -159,11 +280,11 @@ func (a sourceGroundingAssessment) RecoveryPrompt(ledgerGuidance string) string 
 		return ""
 	}
 
-	lines := []string{
-		"The completion gate rejected the answer because source paths were cited without body evidence: " + formatInlinePathList(a.Paths, 4) + ".",
-		"Valid next strategies: read one unsupported path with a bounded `read_file` or `code_navigate` body request; rewrite the answer so it cites only body-backed evidence; qualify candidate-only paths as `unverified`; or answer `<<QUESTION>>:` with the exact blocker if the evidence source is unavailable.",
-		"Do not answer with only an evidence-path inventory, readiness summary, or gate-satisfaction statement; answer the user's actual question using only supported evidence.",
+	lines := []string{"The completion gate rejected the answer: " + a.rejectionSummary()}
+	if options := a.recoveryOptionText(); len(options) > 0 {
+		lines = append(lines, "Valid next strategies:\n- "+strings.Join(options, "\n- "))
 	}
+	lines = append(lines, "Do not answer with only an evidence-path inventory, readiness summary, or gate-satisfaction statement; answer the user's actual question using only supported evidence.")
 	if strings.TrimSpace(ledgerGuidance) != "" {
 		lines = append(lines, strings.TrimSpace(ledgerGuidance))
 	}
@@ -172,36 +293,41 @@ func (a sourceGroundingAssessment) RecoveryPrompt(ledgerGuidance string) string 
 	return strings.Join(lines, "\n\n")
 }
 
-func (a sourceGroundingAssessment) PresentableDetail() string {
-	switch a.Kind {
-	case sourceGroundingRejectionMissingEvidence:
-		return "the run did not retain bounded evidence for the answer"
-	case sourceGroundingRejectionCandidateOnly, sourceGroundingRejectionMissingCandidate:
-		return "the run did not retain a supported answer from inspected evidence"
-	case sourceGroundingRejectionUnsupportedDetail:
-		return "the run did not retain a supported answer from inspected evidence"
-	default:
-		return ""
+func (a sourceGroundingAssessment) recoveryOptionText() []string {
+	var options []string
+	for _, resolution := range normalizeSourceGroundingAssessment(a).Resolutions {
+		switch resolution.Kind {
+		case sourceGroundingRecoveryReadBody:
+			options = append(options, "read one body-readable file/document with a bounded `read_file` or `code_navigate` request: "+formatInlinePathList(sourceReferencePaths(resolution.References), 4))
+		case sourceGroundingRecoveryCiteBodyBacked:
+			options = append(options, "rewrite the answer so factual source citations name only body-backed files/documents")
+		case sourceGroundingRecoveryQualifyUnverified:
+			options = append(options, "qualify an unsupported file/document reference as `unverified` next to the claim")
+		case sourceGroundingRecoveryProbeAlternative:
+			options = append(options, "make one materially different source-owner probe for the exact missing claim")
+		case sourceGroundingRecoveryStateBlocker:
+			options = append(options, "answer `<<QUESTION>>:` with the exact unavailable evidence source")
+		case sourceGroundingRecoveryAnswerSupported:
+			options = append(options, "answer the user's actual question from the supported evidence instead of describing the evidence scaffold")
+		}
 	}
+	return options
 }
 
-func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolResult) sourceGroundingAssessment {
+func (r *runExecution) assessSourceGrounding(answer string, results []workspace.ToolResult) sourceGroundingAssessment {
 	if r == nil {
 		return sourceGroundingAssessment{}
 	}
 
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
-		return sourceGroundingAssessment{}
-	}
-
-	citationGateApplies := sourceGroundingGateApplies(brief)
-	evidenceFloorApplies := citationGateApplies ||
+	brief := workerruntime.NormalizeRuntimeBrief(r.state.runtimeBrief)
+	readOnlyWorkspace := workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile)
+	citationGateApplies := sourceGroundingGateApplies(brief) || runnerBriefRequiresMutation(brief)
+	evidenceFloorApplies := readOnlyWorkspace && (sourceGroundingGateApplies(brief) ||
 		readOnlyExplanationGateApplies(brief) ||
 		(brief.Readiness != nil &&
 			!brief.Readiness.ReadyToAnswer &&
-			len(genericReadOnlyEvidenceTools(brief.AllowedTools)) > 0)
-	if !evidenceFloorApplies {
+			len(genericReadOnlyEvidenceTools(brief.AllowedTools)) > 0))
+	if !citationGateApplies && !evidenceFloorApplies {
 		return sourceGroundingAssessment{}
 	}
 
@@ -209,14 +335,19 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 		return sourceGroundingAssessment{}
 	}
 
-	if readOnlyScaffoldFinalAnswer(answer) {
-		return sourceGroundingScaffoldAssessment("the answer is only a retained-context or evidence-scaffold summary. Final answers must state the concrete behavior supported by relevant source-body or diagnostic evidence, not only list evidence surfaces.")
+	projection := newToolResultEvidenceProjection(results)
+	if conflicts := projection.ConflictingDiagnosticLogReferences(answer); len(conflicts) > 0 {
+		return sourceGroundingUnsupportedDetailReferenceAssessment(conflicts)
 	}
 
-	projection := newToolResultEvidenceProjection(results)
+	if evidenceFloorApplies {
+		if readOnlyScaffoldFinalAnswer(answer) {
+			return sourceGroundingScaffoldAssessment("the answer is only a retained-context or evidence-scaffold summary. Final answers must state the concrete behavior supported by relevant source-body or diagnostic evidence, not only list evidence surfaces.")
+		}
 
-	if assessment := r.readOnlyEvidenceSourceGroundingAssessment(brief, answer, projection); assessment.BlocksFinalAnswer() {
-		return assessment
+		if assessment := r.readOnlyEvidenceSourceGroundingAssessment(brief, answer, projection); assessment.BlocksFinalAnswer() {
+			return assessment
+		}
 	}
 
 	if !citationGateApplies {
@@ -226,28 +357,38 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 	validationLedgerEvidence := r.validationStatusAnswerCanUseLedgerEvidence(answer, results)
 
 	citations := analyzeSourceCitations(answer)
-	if escaping := sourceGroundingUnsupportedEscapingPaths(answer, citations.EscapingPaths, projection); len(escaping) > 0 {
-		return sourceGroundingUnsupportedDetailAssessment(escaping)
+	if escaping := sourceGroundingUnsupportedEscapingReferences(answer, citations.EscapingReferences(), projection); len(escaping) > 0 {
+		return sourceGroundingUnsupportedDetailReferenceAssessment(escaping)
 	}
 
-	paths := citations.MentionedPaths
-	if len(paths) == 0 {
+	references := normalizeSourceReferences(append(citations.BodyReadableReferences(), projection.DiagnosticLogReferences(answer)...))
+	if len(references) == 0 {
 		return sourceGroundingAssessment{}
 	}
+	mutationClaimPaths := r.receiptBackedChangedPathClaims(answer)
 
 	var (
-		missing     []string
-		unsupported []string
+		missing     []sourceReference
+		unsupported []sourceReference
 	)
 
-	for _, rawPath := range paths {
-		path := NormalizeRunnerPath(rawPath)
+	for _, reference := range references {
+		path := NormalizeRunnerPath(reference.Path)
 		if path == "" {
+			continue
+		}
+		if projection.DiagnosticLogReadCoversPath(path, 0, 0) {
+			if reference.LineRange == nil ||
+				(reference.LineRange.Valid() && projection.DiagnosticLogReadCoversPath(path, reference.LineRange.Start, reference.LineRange.End)) {
+
+				continue
+			}
+			missing = append(missing, reference)
 			continue
 		}
 
 		if sourceCitationAmbiguousBodyEvidence(r, path, projection) {
-			missing = append(missing, path)
+			missing = append(missing, reference)
 			continue
 		}
 
@@ -255,20 +396,33 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 		if resolved, ok := sourceCitationCanonicalPath(r, path, projection); ok {
 			citationPath = resolved
 		}
+		if reference.LineRange == nil &&
+			!sourceCitationClaimsSourceDetail(answer, path) &&
+			(mutationClaimPaths[path] || mutationClaimPaths[citationPath]) {
+
+			continue
+		}
+		hasWorkspaceWindow := projection.HasSourceWindow(citationPath)
+		if (hasWorkspaceWindow || reference.LineRange != nil) &&
+			!sourceCitationBackedByCurrentWindow(r, citationPath, reference.LineRange, projection) {
+			missing = append(missing, reference)
+			continue
+		}
+		if len(projection.ExternalDocumentBodyMatches(path)) > 0 || filepath.IsAbs(citationPath) {
+			reference.Kind = sourceReferenceExternalDocument
+		}
 
 		if validationLedgerEvidence {
-			if validationStatusPathBackedByLedger(path, citationPath, results) &&
+			if r.validationStatusPathBackedByLedger(path, citationPath, results) &&
 				!sourceCitationClaimsSourceDetail(answer, path) {
 
 				continue
 			}
 		}
 
-		if projection.HasSourceBody(citationPath) ||
+		if projection.HasSourceWindow(citationPath) ||
 			len(projection.ExternalDocumentBodyMatches(citationPath)) > 0 ||
-			slices.Contains(projection.ReadOnlySourceBodyEvidencePaths(), citationPath) ||
-			projection.DiagnosticArtifactReadForPath(path) ||
-			projection.DiagnosticArtifactReadForPath(citationPath) {
+			slices.Contains(projection.ReadOnlySourceWindowEvidencePaths(), citationPath) {
 			continue
 		}
 
@@ -283,9 +437,10 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 
 			authority := featurePlannerPlanPathCitationAuthority(r, answer, path, results)
 			if !sourceCitationExplicitlyNonCurrent(answer, path) &&
+				!sourceCitationExplicitlyUnverified(answer, path) &&
 				authority.Kind != featurePlannerPlanCitationArtifactProposed &&
 				authority.Kind != featurePlannerPlanCitationFutureRecommendation {
-				missing = append(missing, path)
+				missing = append(missing, reference)
 			}
 
 			continue
@@ -306,21 +461,60 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 			continue
 		}
 
-		unsupported = append(unsupported, citationPath)
+		reference.Path = citationPath
+		unsupported = append(unsupported, reference)
 	}
 
 	if len(missing) > 0 {
-		return sourceGroundingMissingCandidateAssessment(missing)
+		return sourceGroundingMissingCandidateReferenceAssessment(missing)
 	}
 
 	if len(unsupported) > 0 {
-		return sourceGroundingUnsupportedDetailAssessment(unsupported)
+		return sourceGroundingUnsupportedDetailReferenceAssessment(unsupported)
 	}
 
 	return sourceGroundingAssessment{}
 }
 
-func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.WorkerRuntimeBrief, answer string, projection toolResultEvidenceProjection) sourceGroundingAssessment {
+// receiptBackedChangedPathClaims returns only paths whose appearance in the
+// final answer's Changed paths section is backed by the run's authoritative
+// mutation receipts. This authority covers the fact that a path changed; it
+// does not authorize line, symbol, or implementation-detail claims.
+func (r *runExecution) receiptBackedChangedPathClaims(answer string) map[string]bool {
+	backed := make(map[string]bool)
+	if r == nil {
+		return backed
+	}
+
+	committed := make(map[string]struct{})
+	for _, id := range r.state.committedMutationEffectIDs() {
+		committed[id] = struct{}{}
+	}
+	for _, claim := range claimedChangedPathsFromAnswer(answer) {
+		claim = cleanRelativeRunnerPath(claim)
+		if claim == "" {
+			continue
+		}
+
+		canonicalID := claim
+		if r.state.mutation.bound {
+			projection := r.state.projectMutationClaims([]string{claim})
+			if len(projection.UnsupportedPaths) > 0 || len(projection.CanonicalIDs) != 1 {
+				continue
+			}
+			canonicalID = projection.CanonicalIDs[0]
+		}
+		if _, ok := committed[canonicalID]; !ok {
+			continue
+		}
+		backed[claim] = true
+		backed[canonicalID] = true
+	}
+
+	return backed
+}
+
+func (r *runExecution) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.WorkerRuntimeBrief, answer string, projection toolResultEvidenceProjection) sourceGroundingAssessment {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
 		return sourceGroundingAssessment{}
@@ -359,10 +553,6 @@ func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.W
 	}
 
 	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, answer, projection)
-	if conversationBroadDiscoveryRejectionRecorded(closeout.Results) {
-		return sourceGroundingAssessment{}
-	}
-
 	if readOnlyDirectAnswerLane(brief) && directAnswerCloseout.Answerable() {
 		return sourceGroundingAssessment{}
 	}
@@ -397,16 +587,10 @@ func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.W
 	}
 
 	if readPaths := sortedRunnerPathKeys(projection.ReadPaths()); len(readPaths) > 0 {
-		return sourceGroundingAssessment{
-			Kind: sourceGroundingRejectionMissingEvidence,
-			Text: "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Already inspected path(s) should not be reread: " + strings.Join(readPaths, ", ") + ". Use one targeted source search/read/navigation request for a different concrete code path tied to the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
-		}
+		return sourceGroundingMissingEvidenceAssessment("read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Already inspected path(s) should not be reread: " + strings.Join(readPaths, ", ") + ".")
 	}
 
-	return sourceGroundingAssessment{
-		Kind: sourceGroundingRejectionMissingEvidence,
-		Text: "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Use one targeted read/search/discovery tool for the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
-	}
+	return sourceGroundingMissingEvidenceAssessment("read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer.")
 }
 
 func sourceGroundingStripGateRecoveryPrefix(text string) string {
@@ -424,13 +608,24 @@ func sourceGroundingStripGateRecoveryPrefix(text string) string {
 	return text
 }
 
-func sourceCitationCanonicalPath(r *Runner, path string, projection toolResultEvidenceProjection) (string, bool) {
+func sourceCitationCanonicalPath(r *runExecution, path string, projection toolResultEvidenceProjection) (string, bool) {
 	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return "", false
 	}
+	if r != nil && r.state.mutation.bound {
+		claims := r.state.mutation.canonicalScopeProjection.ProjectClaims([]string{path})
+		if len(claims.UnsupportedPaths) > 0 || len(claims.CanonicalIDs) != 1 {
+			return path, false
+		}
+		canonical := NormalizeRunnerPath(claims.CanonicalIDs[0])
+		if canonical == "" || !sourceCitationHasExactWorkspaceBodyEvidence(r, canonical, projection) {
+			return canonical, false
+		}
+		return canonical, true
+	}
 
-	if sourceCitationExists(r, path) {
+	if sourceCitationHasExactWorkspaceBodyEvidence(r, path, projection) {
 		return path, true
 	}
 
@@ -453,7 +648,31 @@ func sourceCitationCanonicalPath(r *Runner, path string, projection toolResultEv
 	return path, false
 }
 
-func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, projection toolResultEvidenceProjection) bool {
+func sourceCitationBackedByCurrentWindow(r *runExecution, path string, lineRange *sourceCitationRange, projection toolResultEvidenceProjection) bool {
+	path = NormalizeRunnerPath(path)
+	if path == "" || (lineRange != nil && !lineRange.Valid()) || r == nil || r.runner == nil || r.runner.Workspace == nil {
+		return false
+	}
+
+	for _, record := range projection.records {
+		if record.failed {
+			continue
+		}
+		for _, evidence := range record.SourceWindowFacts(path) {
+			if lineRange != nil && (evidence.StartLine > lineRange.Start || evidence.EndLine < lineRange.End) {
+				continue
+			}
+			current, err := r.runner.Workspace.SourceWindowCurrent(r.state.ctx, evidence)
+			if err == nil && current {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func sourceCitationAmbiguousBodyEvidence(r *runExecution, path string, projection toolResultEvidenceProjection) bool {
 	externalMatches := projection.ExternalDocumentBodyMatches(path)
 	if len(externalMatches) == 0 {
 		return false
@@ -470,15 +689,15 @@ func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, projection tool
 	return len(sourceCitationWorkspaceBodyMatches(r, path, projection))+len(externalMatches) > 1
 }
 
-func sourceCitationHasExactWorkspaceBodyEvidence(r *Runner, path string, projection toolResultEvidenceProjection) bool {
-	return projection.HasSourceBody(path) ||
-		slices.Contains(projection.ReadOnlySourceBodyEvidencePaths(), path)
+func sourceCitationHasExactWorkspaceBodyEvidence(r *runExecution, path string, projection toolResultEvidenceProjection) bool {
+	return projection.HasSourceWindow(path) ||
+		slices.Contains(projection.ReadOnlySourceWindowEvidencePaths(), path)
 }
 
-func sourceCitationWorkspaceBodyMatches(r *Runner, path string, projection toolResultEvidenceProjection) []string {
+func sourceCitationWorkspaceBodyMatches(r *runExecution, path string, projection toolResultEvidenceProjection) []string {
 	base := strings.ToLower(filepath.Base(path))
 	var matches []string
-	for _, candidate := range projection.ReadOnlySourceBodyEvidencePaths() {
+	for _, candidate := range projection.ReadOnlySourceWindowEvidencePaths() {
 		candidate = NormalizeRunnerPath(candidate)
 		if candidate == "" || strings.EqualFold(candidate, path) {
 			continue
@@ -488,24 +707,23 @@ func sourceCitationWorkspaceBodyMatches(r *Runner, path string, projection toolR
 			continue
 		}
 
-		if !sourceCitationExists(r, candidate) {
-			continue
-		}
-
 		matches = append(matches, candidate)
 	}
 
 	return uniqueSortedRunnerPaths(matches)
 }
 
-func sourceGroundingUnsupportedEscapingPaths(answer string, paths []string, projection toolResultEvidenceProjection) []string {
-	if len(paths) == 0 {
+func sourceGroundingUnsupportedEscapingReferences(answer string, references []sourceReference, projection toolResultEvidenceProjection) []sourceReference {
+	if len(references) == 0 {
 		return nil
 	}
 
-	var unsupported []string
-	for _, path := range paths {
-		if projection.DiagnosticArtifactReadForPath(path) {
+	var unsupported []sourceReference
+	for _, reference := range references {
+		path := reference.Path
+		if reference.LineRange == nil && projection.DiagnosticLogReadCoversPath(path, 0, 0) ||
+			reference.LineRange != nil && reference.LineRange.Valid() &&
+				projection.DiagnosticLogReadCoversPath(path, reference.LineRange.Start, reference.LineRange.End) {
 			continue
 		}
 		if len(projection.ExternalDocumentBodyMatches(path)) > 0 {
@@ -514,10 +732,10 @@ func sourceGroundingUnsupportedEscapingPaths(answer string, paths []string, proj
 		if sourceCitationExplicitlyUnverified(answer, path) || sourceCitationExplicitlyNonCurrent(answer, path) {
 			continue
 		}
-		unsupported = append(unsupported, path)
+		unsupported = append(unsupported, reference)
 	}
 
-	return unsupported
+	return normalizeSourceReferences(unsupported)
 }
 
 func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -540,20 +758,12 @@ func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
 	return false
 }
 
-func sourceCitationExists(r *Runner, path string) bool {
+func sourceCitationExists(r *runExecution, path string) bool {
 	path = NormalizeRunnerPath(path)
 	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
 		return false
 	}
-
-	root := "."
-	if r != nil && r.Workspace != nil && strings.TrimSpace(r.Workspace.Root()) != "" {
-		root = r.Workspace.Root()
-	}
-
-	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
-
-	return err == nil && !info.IsDir()
+	return false
 }
 
 func sourceGroundingPathRequiresBody(path string) bool {
@@ -658,7 +868,7 @@ func featurePlannerPlanArtifactCitationContextForAnswer(answer string, objective
 	}
 }
 
-func featurePlannerPlanPathCitationAuthority(r *Runner, answer string, path string, results []workspace.ToolResult) featurePlannerPlanCitationAuthority {
+func featurePlannerPlanPathCitationAuthority(r *runExecution, answer string, path string, results []workspace.ToolResult) featurePlannerPlanCitationAuthority {
 	if r == nil {
 		return featurePlannerPlanCitationAuthority{}
 	}
@@ -673,7 +883,7 @@ func featurePlannerPlanPathCitationAuthority(r *Runner, answer string, path stri
 			continue
 		}
 
-		brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+		brief := workerruntime.NormalizeRuntimeBrief(r.state.runtimeBrief)
 		ctx := featurePlannerPlanArtifactCitationContextForAnswer(answer, brief.Objective, featurePlannerPlanArtifactProposedPaths(result), true)
 		authority := featurePlannerPlanArtifactPathCitationAuthority(answer, path, ctx)
 		if authority.Kind != featurePlannerPlanCitationArtifactProposed {
@@ -701,7 +911,7 @@ func featurePlannerPlanPathCitationAuthority(r *Runner, answer string, path stri
 		return featurePlannerPlanCitationAuthority{}
 	}
 
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	brief := workerruntime.NormalizeRuntimeBrief(r.state.runtimeBrief)
 	objectiveText := strings.ToLower(strings.Join(strings.Fields(brief.Objective), " "))
 	if !objectiveAsksAboutActivePlan(objectiveText) || !objectiveAsksAboutPlanExpansion(objectiveText) {
 		return featurePlannerPlanCitationAuthority{}
@@ -1005,13 +1215,13 @@ func sourceGroundingTokenLooksLikeSymbol(token string) bool {
 }
 
 func sourceGroundingAnswerCitesReadDiagnosticArtifact(answer string, projection toolResultEvidenceProjection) bool {
-	cited := sourceGroundingDiagnosticArtifactPathsFromText(answer)
-	if len(cited) == 0 {
-		return false
-	}
+	for _, reference := range projection.DiagnosticLogReferences(answer) {
+		if reference.LineRange == nil && projection.DiagnosticLogReadCoversPath(reference.Path, 0, 0) {
+			return true
+		}
+		if reference.LineRange != nil && reference.LineRange.Valid() &&
+			projection.DiagnosticLogReadCoversPath(reference.Path, reference.LineRange.Start, reference.LineRange.End) {
 
-	for _, path := range cited {
-		if projection.DiagnosticArtifactReadForPath(path) {
 			return true
 		}
 	}
@@ -1045,30 +1255,4 @@ func sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief workerrunt
 		" rca ", " failure ", " failed ", " issue ", " regression ", " rejected ",
 		" blocker ", " latest ", " recent ", " most recent ", " previous ",
 	)
-}
-
-func sourceGroundingDiagnosticArtifactPathsFromText(text string) []string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-
-	paths := pathparse.MentionedWorkspacePaths(text)
-
-	logRE := regexp.MustCompile(`(?i)(?:^|[\s` + "`" + `'"(])((?:/[^` + "`" + `'"()\s]+)?(?:\.idiom/logs|logs)/(?:conversations|telemetry)/[^` + "`" + `'"()\s,;]+\.jsonl)`)
-	for _, match := range logRE.FindAllStringSubmatch(filepath.ToSlash(text), -1) {
-		if len(match) > 1 {
-			paths = append(paths, match[1])
-		}
-	}
-
-	var out []string
-	for _, path := range paths {
-		path = normalizeDiagnosticArtifactEvidencePath(path)
-		if path != "" && IsDiagnosticLogArtifactPath(path) {
-			out = append(out, path)
-		}
-	}
-
-	return uniqueSortedRunnerPaths(out)
 }

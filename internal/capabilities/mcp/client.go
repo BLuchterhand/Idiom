@@ -74,8 +74,9 @@ type TransportMessage struct {
 	RequestError error
 }
 
-// Transport is the narrow interface the client needs from a stdio pair, so
-// tests can inject an in-memory pipe without starting a real process.
+// Transport is the narrow protocol boundary used by Client. Send must permit
+// concurrent calls and preserve one complete payload as one transport frame;
+// each transport owns the synchronization required by its framing mechanism.
 type Transport interface {
 	Send(ctx context.Context, payload []byte) error
 	Receive(ctx context.Context) (TransportMessage, error)
@@ -87,8 +88,6 @@ type Transport interface {
 type Client struct {
 	transport Transport
 	nextID    atomic.Int64
-
-	writeMu sync.Mutex
 
 	pendingMu sync.Mutex
 	pending   map[int64]chan pendingCallResult
@@ -231,10 +230,7 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	if err := c.registerPending(id, ch); err != nil {
 		return nil, fmt.Errorf("%s: %w", method, err)
 	}
-	c.writeMu.Lock()
-
 	sendErr := c.transport.Send(ctx, payload)
-	c.writeMu.Unlock()
 
 	if sendErr != nil {
 		c.removePending(id, ch)
@@ -282,10 +278,7 @@ func (c *Client) Initialize(ctx context.Context, clientName string) error {
 		return err
 	}
 
-	c.writeMu.Lock()
-
 	sendErr := c.transport.Send(ctx, note)
-	c.writeMu.Unlock()
 
 	return sendErr
 }
@@ -393,6 +386,7 @@ type StdioTransport struct {
 	process *commandexec.Process
 	stdin   io.WriteCloser
 	stdout  *bufio.Reader
+	writeMu sync.Mutex
 }
 
 // StartStdio launches command with args and returns a Transport connected
@@ -418,6 +412,8 @@ func StartStdio(ctx context.Context, command string, args []string, env []string
 // Send writes a JSON-RPC frame followed by a newline.
 func (t *StdioTransport) Send(ctx context.Context, payload []byte) error {
 	_ = ctx
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
 
 	if _, err := t.stdin.Write(payload); err != nil {
 		return err

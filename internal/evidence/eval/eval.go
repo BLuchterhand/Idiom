@@ -211,9 +211,117 @@ type ContractReplayExpectation struct {
 	ForbidViolationIDs      []string `json:"forbid_violation_ids,omitempty"`
 }
 
+// OrderedEventExpectation describes one record in a required lifecycle
+// subsequence. Outcome matches typed outcome-like fields when present and the
+// evaluator's canonical tool outcomes: requested, success, rejected, or failed.
+type OrderedEventExpectation struct {
+	RecordType string   `json:"type,omitempty"`
+	Role       string   `json:"role,omitempty"`
+	Tool       string   `json:"tool,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	Outcome    string   `json:"outcome,omitempty"`
+	Contains   []string `json:"contains,omitempty"`
+}
+
+// ModelRequestExpectation asserts the privacy-safe effective runtime-call
+// surface recorded for one zero-based scripted-model request. It never inspects
+// prompts, messages, or tool arguments.
+type ModelRequestExpectation struct {
+	Index        int      `json:"index"`
+	Kind         string   `json:"kind,omitempty"`
+	Transport    string   `json:"transport,omitempty"`
+	RequireTools []string `json:"require_tools,omitempty"`
+	ForbidTools  []string `json:"forbid_tools,omitempty"`
+}
+
+// TypedFactsExpectation asserts privacy-safe producer facts without inspecting
+// human-readable summaries, errors, prompts, or tool output.
+type TypedFactsExpectation struct {
+	ToolRejections       []ToolRejectionFactsExpectation      `json:"tool_rejections,omitempty"`
+	SourceWindows        []SourceWindowFactsExpectation       `json:"source_windows,omitempty"`
+	DiagnosticLogReads   []DiagnosticLogReadFactsExpectation  `json:"diagnostic_log_reads,omitempty"`
+	MutationCommits      []MutationCommitFactsExpectation     `json:"mutation_commits,omitempty"`
+	CompletionRecoveries []CompletionRecoveryFactsExpectation `json:"completion_recoveries,omitempty"`
+	ToolExecutions       []ToolExecutionCountExpectation      `json:"tool_executions,omitempty"`
+}
+
+type ToolRejectionFactsExpectation struct {
+	Tool                string   `json:"tool"`
+	Disposition         string   `json:"disposition"`
+	PendingWritePaths   []string `json:"pending_write_paths,omitempty"`
+	PendingSourcePaths  []string `json:"pending_source_paths,omitempty"`
+	PendingHistoryPaths []string `json:"pending_history_paths,omitempty"`
+	ExactCount          *int     `json:"exact_count,omitempty"`
+}
+
+type SourceWindowFactsExpectation struct {
+	Tool                     string  `json:"tool,omitempty"`
+	CanonicalID              string  `json:"canonical_id"`
+	StartLine                int     `json:"start_line"`
+	EndLine                  int     `json:"end_line"`
+	MutationEpoch            *uint64 `json:"mutation_epoch,omitempty"`
+	MinMutationEpoch         *uint64 `json:"min_mutation_epoch,omitempty"`
+	RevisionSHA256           string  `json:"revision_sha256,omitempty"`
+	WindowSHA256             string  `json:"window_sha256,omitempty"`
+	RequireDigests           bool    `json:"require_digests,omitempty"`
+	RequireDurableBodyAbsent bool    `json:"require_durable_body_absent,omitempty"`
+	ExactCount               *int    `json:"exact_count,omitempty"`
+}
+
+// DiagnosticLogReadFactsExpectation asserts metadata-only evidence for one
+// producer-classified diagnostic-log read. Diagnostic logs deliberately do not
+// carry source-window or body authority.
+type DiagnosticLogReadFactsExpectation struct {
+	Tool                       string `json:"tool"`
+	CanonicalID                string `json:"canonical_id"`
+	PolicySubject              string `json:"policy_subject"`
+	PolicyDecision             string `json:"policy_decision"`
+	StartLine                  int    `json:"start_line"`
+	EndLine                    int    `json:"end_line"`
+	TotalLines                 int    `json:"total_lines"`
+	Truncated                  *bool  `json:"truncated"`
+	RequirePrivateFieldsAbsent bool   `json:"require_private_fields_absent,omitempty"`
+	RequireSourceWindowAbsent  bool   `json:"require_source_window_absent,omitempty"`
+	ExactCount                 *int   `json:"exact_count,omitempty"`
+}
+
+type MutationCommitFactsExpectation struct {
+	Role               string                            `json:"role,omitempty"`
+	Effects            []MutationCommitEffectExpectation `json:"effects,omitempty"`
+	FailedTargets      []MutationTargetFactsExpectation  `json:"failed_targets,omitempty"`
+	UnattemptedTargets []MutationTargetFactsExpectation  `json:"unattempted_targets,omitempty"`
+	ExactCount         *int                              `json:"exact_count,omitempty"`
+}
+
+type MutationCommitEffectExpectation struct {
+	CanonicalID string `json:"canonical_id"`
+	Kind        string `json:"kind"`
+	Role        string `json:"role"`
+}
+
+type MutationTargetFactsExpectation struct {
+	CanonicalID   string `json:"canonical_id"`
+	Role          string `json:"role"`
+	PreimageClass string `json:"preimage_class"`
+}
+
+type CompletionRecoveryFactsExpectation struct {
+	Role                  string `json:"role,omitempty"`
+	Class                 string `json:"class"`
+	AttemptsSinceProgress *int   `json:"attempts_since_progress"`
+	ExactCount            *int   `json:"exact_count,omitempty"`
+}
+
+type ToolExecutionCountExpectation struct {
+	Tool       string `json:"tool"`
+	Outcome    string `json:"outcome,omitempty"`
+	ExactCount *int   `json:"exact_count"`
+}
+
 type Scenario struct {
 	Name                         string                            `json:"name"`
 	PromptContains               []string                          `json:"prompt_contains,omitempty"`
+	PromptSHA256                 string                            `json:"prompt_sha256,omitempty"`
 	PromptHistoryContains        []string                          `json:"prompt_history_contains,omitempty"`
 	FinalAssistantContains       []string                          `json:"final_assistant_contains,omitempty"`
 	ForbidFinalAssistantContains []string                          `json:"forbid_final_assistant_contains,omitempty"`
@@ -252,6 +360,9 @@ type Scenario struct {
 	RequireLanguageCapabilities  []LanguageCapabilityExpectation   `json:"require_language_capabilities,omitempty"`
 	RequireApproval              *bool                             `json:"require_approval,omitempty"`
 	RequirePlanExecution         *PlanExecutionExpectation         `json:"require_plan_execution,omitempty"`
+	RequireOrderedEvents         []OrderedEventExpectation         `json:"require_ordered_events,omitempty"`
+	RequireModelRequests         []ModelRequestExpectation         `json:"require_model_requests,omitempty"`
+	RequireTypedFacts            *TypedFactsExpectation            `json:"require_typed_facts,omitempty"`
 	// RequireRunEvents asserts each named event appears at least once,
 	// matched against either a type:"message" role (runner-emitted
 	// RunEvents like plan_then_execute_write_guard) or a top-level
@@ -561,7 +672,9 @@ type ContractReplayViolation struct {
 
 type Metrics struct {
 	LastUser                  string                          `json:"last_user"`
+	LastUserSHA256            string                          `json:"last_user_sha256,omitempty"`
 	UserPrompts               []string                        `json:"user_prompts,omitempty"`
+	UserPromptSHA256s         []string                        `json:"user_prompt_sha256s,omitempty"`
 	FinalAssistant            string                          `json:"final_assistant"`
 	WorkspaceRoot             string                          `json:"workspace_root,omitempty"`
 	UserTurns                 int                             `json:"user_turns"`

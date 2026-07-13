@@ -1,6 +1,9 @@
 package indexsupport
 
-import "testing"
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
 
 type testFile struct {
 	path  string
@@ -11,192 +14,75 @@ func testPath(file testFile) string {
 	return file.path
 }
 
-func TestRankFilesSortsByScore(t *testing.T) {
-	files := []testFile{
-		{path: "a.go", funcs: 1},
-		{path: "b.go", funcs: 10},
-		{path: "c.go", funcs: 5},
-	}
+var _ = Describe("Semantic index result ordering", func() {
+	Describe("RankFiles", func() {
+		It("sorts positive scores from highest to lowest", func() {
+			files := []testFile{{path: "a.go", funcs: 1}, {path: "b.go", funcs: 10}, {path: "c.go", funcs: 5}}
+			result := RankFiles(files, testPath, func(file testFile) int { return file.funcs }, 0)
+			Expect(result).To(Equal([]testFile{{path: "b.go", funcs: 10}, {path: "c.go", funcs: 5}, {path: "a.go", funcs: 1}}))
+		})
 
-	result := RankFiles(files, testPath, func(file testFile) int {
-		return file.funcs
-	}, 0)
+		It("omits zero and negative scores", func() {
+			files := []testFile{{path: "a.go", funcs: 5}, {path: "b.go"}, {path: "c.go", funcs: -1}}
+			result := RankFiles(files, testPath, func(file testFile) int { return file.funcs }, 0)
+			Expect(result).To(Equal([]testFile{{path: "a.go", funcs: 5}}))
+		})
 
-	if len(result) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(result))
-	}
-	if result[0].path != "b.go" || result[1].path != "c.go" || result[2].path != "a.go" {
-		t.Fatalf("unexpected ranking order: %#v", result)
-	}
-}
+		It("honors the result limit", func() {
+			files := []testFile{{path: "a.go", funcs: 1}, {path: "b.go", funcs: 2}, {path: "c.go", funcs: 3}}
+			result := RankFiles(files, testPath, func(file testFile) int { return file.funcs }, 2)
+			Expect(result).To(Equal([]testFile{{path: "c.go", funcs: 3}, {path: "b.go", funcs: 2}}))
+		})
 
-func TestRankFilesSkipsZeroAndNegative(t *testing.T) {
-	files := []testFile{
-		{path: "a.go", funcs: 5},
-		{path: "b.go", funcs: 0},
-		{path: "c.go", funcs: -1},
-	}
+		It("breaks score ties by path", func() {
+			files := []testFile{{path: "z.go", funcs: 5}, {path: "a.go", funcs: 5}}
+			result := RankFiles(files, testPath, func(file testFile) int { return file.funcs }, 0)
+			Expect(result).To(Equal([]testFile{{path: "a.go", funcs: 5}, {path: "z.go", funcs: 5}}))
+		})
+	})
 
-	result := RankFiles(files, testPath, func(file testFile) int {
-		return file.funcs
-	}, 0)
+	Describe("UniqueRankedPaths", func() {
+		It("deduplicates paths while preserving rank order", func() {
+			files := []testFile{{path: "a.go"}, {path: "a.go"}, {path: "b.go"}}
+			Expect(UniqueRankedPaths(files, testPath, 0)).To(Equal([]string{"a.go", "b.go"}))
+		})
 
-	if len(result) != 1 || result[0].path != "a.go" {
-		t.Fatalf("expected only a.go, got %#v", result)
-	}
-}
+		It("honors the result limit", func() {
+			files := []testFile{{path: "a.go"}, {path: "b.go"}, {path: "c.go"}}
+			Expect(UniqueRankedPaths(files, testPath, 2)).To(Equal([]string{"a.go", "b.go"}))
+		})
+	})
 
-func TestRankFilesRespectsLimit(t *testing.T) {
-	files := []testFile{
-		{path: "a.go", funcs: 1},
-		{path: "b.go", funcs: 2},
-		{path: "c.go", funcs: 3},
-	}
+	Describe("FindFilesExactPartial", func() {
+		DescribeTable("finds exact and partial paths",
+			func(files []testFile, pattern string, expected []string) {
+				Expect(FindFilesExactPartial(files, testPath, pattern)).To(Equal(expected))
+			},
+			Entry("exact basename", []testFile{{path: "src/main.cpp"}, {path: "src/utils.h"}}, "main.cpp", []string{"src/main.cpp"}),
+			Entry("partial basename", []testFile{{path: "src/main_window.cpp"}, {path: "src/utils.h"}}, "main", []string{"src/main_window.cpp"}),
+			Entry("exact full path", []testFile{{path: "src/main.cpp"}, {path: "other/main.cpp"}}, "src/main.cpp", []string{"src/main.cpp"}),
+			Entry("normalized path separators", []testFile{{path: "src/main.cpp"}, {path: `lib\worker.cpp`}}, `src\main.cpp`, []string{"src/main.cpp"}),
+			Entry("normalized current-directory prefix", []testFile{{path: "src/main.cpp"}}, `.\src\main.cpp`, []string{"src/main.cpp"}),
+		)
 
-	result := RankFiles(files, testPath, func(file testFile) int {
-		return file.funcs
-	}, 2)
+		It("returns nil for an empty pattern", func() {
+			Expect(FindFilesExactPartial([]testFile{{path: "a.go"}}, testPath, "")).To(BeNil())
+		})
 
-	if len(result) != 2 || result[0].path != "c.go" {
-		t.Fatalf("expected top two files starting with c.go, got %#v", result)
-	}
-}
+		It("returns no results when nothing matches", func() {
+			Expect(FindFilesExactPartial([]testFile{{path: "a.go"}}, testPath, "xyz")).To(BeEmpty())
+		})
 
-func TestRankFilesBreaksTiesByPath(t *testing.T) {
-	files := []testFile{
-		{path: "z.go", funcs: 5},
-		{path: "a.go", funcs: 5},
-	}
+		It("matches a basename stored with backslash separators", func() {
+			files := []testFile{{path: "src/main.cpp"}, {path: `lib\worker.cpp`}}
+			Expect(FindFilesExactPartial(files, testPath, "worker.cpp")).To(Equal([]string{`lib\worker.cpp`}))
+		})
 
-	result := RankFiles(files, testPath, func(file testFile) int {
-		return file.funcs
-	}, 0)
-
-	if len(result) != 2 || result[0].path != "a.go" {
-		t.Fatalf("tie should be broken by path, got %#v", result)
-	}
-}
-
-func TestUniqueRankedPathsDeduplicates(t *testing.T) {
-	files := []testFile{
-		{path: "a.go"},
-		{path: "a.go"},
-		{path: "b.go"},
-	}
-
-	result := UniqueRankedPaths(files, testPath, 0)
-
-	if len(result) != 2 || result[0] != "a.go" || result[1] != "b.go" {
-		t.Fatalf("expected [a.go b.go], got %#v", result)
-	}
-}
-
-func TestUniqueRankedPathsRespectsLimit(t *testing.T) {
-	files := []testFile{
-		{path: "a.go"},
-		{path: "b.go"},
-		{path: "c.go"},
-	}
-
-	result := UniqueRankedPaths(files, testPath, 2)
-
-	if len(result) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(result))
-	}
-}
-
-func TestFindFilesExactPartialExactMatch(t *testing.T) {
-	files := []testFile{
-		{path: "src/main.cpp"},
-		{path: "src/utils.h"},
-	}
-
-	result := FindFilesExactPartial(files, testPath, "main.cpp")
-
-	if len(result) != 1 || result[0] != "src/main.cpp" {
-		t.Fatalf("expected [src/main.cpp], got %#v", result)
-	}
-}
-
-func TestFindFilesExactPartialPartialMatch(t *testing.T) {
-	files := []testFile{
-		{path: "src/main_window.cpp"},
-		{path: "src/utils.h"},
-	}
-
-	result := FindFilesExactPartial(files, testPath, "main")
-
-	if len(result) != 1 || result[0] != "src/main_window.cpp" {
-		t.Fatalf("expected [src/main_window.cpp], got %#v", result)
-	}
-}
-
-func TestFindFilesExactPartialEmptyPattern(t *testing.T) {
-	files := []testFile{{path: "a.go"}}
-
-	if result := FindFilesExactPartial(files, testPath, ""); result != nil {
-		t.Fatalf("expected nil for empty pattern, got %#v", result)
-	}
-}
-
-func TestFindFilesExactPartialNoMatch(t *testing.T) {
-	files := []testFile{{path: "a.go"}}
-
-	if result := FindFilesExactPartial(files, testPath, "xyz"); len(result) != 0 {
-		t.Fatalf("expected empty result, got %#v", result)
-	}
-}
-
-func TestFindFilesExactPartialFullPathExact(t *testing.T) {
-	files := []testFile{
-		{path: "src/main.cpp"},
-		{path: "other/main.cpp"},
-	}
-
-	result := FindFilesExactPartial(files, testPath, "src/main.cpp")
-
-	if len(result) != 1 || result[0] != "src/main.cpp" {
-		t.Fatalf("expected [src/main.cpp], got %#v", result)
-	}
-}
-
-func TestFindFilesExactPartialNormalizesPathSeparators(t *testing.T) {
-	files := []testFile{
-		{path: "src/main.cpp"},
-		{path: `lib\worker.cpp`},
-	}
-
-	result := FindFilesExactPartial(files, testPath, `src\main.cpp`)
-	if len(result) != 1 || result[0] != "src/main.cpp" {
-		t.Fatalf("expected [src/main.cpp], got %#v", result)
-	}
-
-	result = FindFilesExactPartial(files, testPath, "worker.cpp")
-	if len(result) != 1 || result[0] != `lib\worker.cpp` {
-		t.Fatalf("expected [lib\\worker.cpp], got %#v", result)
-	}
-}
-
-func TestFindFilesExactPartialNormalizesCurrentDirPrefix(t *testing.T) {
-	files := []testFile{{path: "src/main.cpp"}}
-
-	result := FindFilesExactPartial(files, testPath, `.\src\main.cpp`)
-	if len(result) != 1 || result[0] != "src/main.cpp" {
-		t.Fatalf("expected [src/main.cpp], got %#v", result)
-	}
-}
-
-func TestFindFilesExactPartialSupportsStringPaths(t *testing.T) {
-	files := []string{
-		"src/main/java/com/example/App.java",
-		`legacy\Worker.java`,
-	}
-	pathOf := func(path string) string { return path }
-
-	if got := FindFilesExactPartial(files, pathOf, `src\`); len(got) != 1 {
-		t.Fatalf("expected backslash path prefix to match one slash-normalized path, got %#v", got)
-	}
-	if got := FindFilesExactPartial(files, pathOf, "worker"); len(got) != 1 {
-		t.Fatalf("expected basename match for backslash-indexed path, got %#v", got)
-	}
-}
+		It("supports indexes whose values are path strings", func() {
+			files := []string{"src/main/java/com/example/App.java", `legacy\Worker.java`}
+			pathOf := func(path string) string { return path }
+			Expect(FindFilesExactPartial(files, pathOf, `src\`)).To(HaveLen(1))
+			Expect(FindFilesExactPartial(files, pathOf, "worker")).To(HaveLen(1))
+		})
+	})
+})

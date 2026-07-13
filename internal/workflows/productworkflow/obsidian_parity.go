@@ -1,6 +1,7 @@
 package productworkflow
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,8 +20,9 @@ type ObsidianParityFinding struct {
 }
 
 type ObsidianParityResult struct {
-	CheckedFiles []string
-	Findings     []ObsidianParityFinding
+	CheckedFiles     []string
+	Findings         []ObsidianParityFinding
+	completionInputs []workflowCompletionExternalInput
 }
 
 func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []ImplementationLedgerRecord, investigations []InvestigationReport) ObsidianParityResult {
@@ -31,13 +33,23 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 	if ws == nil || ws.EffortID != "prd-adr-brief-workflow" {
 		return result
 	}
-	if _, err := os.Stat(filepath.Join(root, "docs", "obsidian")); os.IsNotExist(err) {
+	const obsidianDir = "docs/obsidian"
+	directoryValue := obsidianDirectoryCompletionValue(root)
+	result.completionInputs = append(result.completionInputs, workflowCompletionExternalInput{
+		key:   "obsidian-directory:" + filepath.Clean(root) + "\x00" + obsidianDir,
+		value: directoryValue,
+		inspect: func() string {
+			return obsidianDirectoryCompletionValue(root)
+		},
+	})
+	if directoryValue == "missing" {
 		return result
 	}
 
 	result.CheckedFiles = []string{ObsidianProductWorkflowPath, ObsidianRecoveryPath}
 
 	productWorkflowDoc, productWorkflowErr := readObsidian(root, ObsidianProductWorkflowPath)
+	result.completionInputs = append(result.completionInputs, obsidianFileCompletionInput(root, ObsidianProductWorkflowPath, productWorkflowDoc, productWorkflowErr))
 	if productWorkflowErr != nil {
 		result.Findings = append(result.Findings, ObsidianParityFinding{
 			Code:    "obsidian_read_error",
@@ -46,7 +58,8 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 		})
 	}
 
-	_, recoveryErr := readObsidian(root, ObsidianRecoveryPath)
+	recoveryDoc, recoveryErr := readObsidian(root, ObsidianRecoveryPath)
+	result.completionInputs = append(result.completionInputs, obsidianFileCompletionInput(root, ObsidianRecoveryPath, recoveryDoc, recoveryErr))
 	if recoveryErr != nil {
 		result.Findings = append(result.Findings, ObsidianParityFinding{
 			Code:    "obsidian_read_error",
@@ -112,6 +125,36 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 	return result
 }
 
+func obsidianDirectoryCompletionValue(rootPath string) string {
+	root, relPath, err := openEffortArtifactRoot(rootPath, "docs/obsidian")
+	if err == nil {
+		defer root.Close()
+		_, err = readEffortArtifactDirectoryRoot(root, relPath)
+	}
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "missing"
+	case err != nil:
+		return "error"
+	default:
+		return "directory"
+	}
+}
+
+func obsidianFileCompletionInput(root, relPath string, body []byte, readErr error) workflowCompletionExternalInput {
+	root = filepath.Clean(root)
+	relPath = filepath.ToSlash(filepath.Clean(filepath.FromSlash(relPath)))
+
+	return workflowCompletionExternalInput{
+		key:   "obsidian-file:" + root + "\x00" + relPath,
+		value: workflowCompletionFileValue(body, readErr),
+		inspect: func() string {
+			current, err := readObsidian(root, relPath)
+			return workflowCompletionFileValue(current, err)
+		},
+	}
+}
+
 func hasUncheckedPhase(doc, phase string) bool {
 	return strings.Contains(doc, "- [ ] **"+phase+"**")
 }
@@ -145,7 +188,7 @@ func obsidianParityAtomCompleted(ledger []ImplementationLedgerRecord) bool {
 }
 
 func fileReadFindingMessage(err error) string {
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return "required file not found"
 	}
 
@@ -153,12 +196,11 @@ func fileReadFindingMessage(err error) string {
 }
 
 func readObsidian(root string, relPath string) ([]byte, error) {
-	fullPath := filepath.Join(root, filepath.FromSlash(relPath))
-	if info, err := os.Lstat(fullPath); err != nil {
+	repoRoot, cleanRel, err := openEffortArtifactRoot(root, filepath.FromSlash(relPath))
+	if err != nil {
 		return nil, err
-	} else if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("required file must not be a symlink")
 	}
+	defer repoRoot.Close()
 
-	return os.ReadFile(fullPath)
+	return readEffortArtifactRoot(repoRoot, cleanRel)
 }

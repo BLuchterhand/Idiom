@@ -246,6 +246,9 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 	}
 	if record, ok := planExecuteTerminalCompletionRecordFromFields(fields); ok {
 		summary.terminalRecord = &record
+		if strings.TrimSpace(summary.CompletionSource) == "" {
+			summary.CompletionSource = string(featureplannercontract.PlanExecuteCompletionSourceDurableTerminal)
+		}
 	}
 
 	return summary.normalized()

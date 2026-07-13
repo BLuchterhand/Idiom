@@ -22,7 +22,7 @@ type ToolManifestToolOptions struct {
 	IncludeWriteTools bool
 	// IncludePlanThenExecute exposes the submit_plan tool and hides
 	// the per-edit write tools (edit_file, write_file, append_file,
-	// apply_patch, delegate_edit). Used by the plan-then-execute
+	// apply_patch). Used by the plan-then-execute
 	// orchestrator's planner phase.
 	IncludePlanThenExecute bool
 	// PlanThenExecutePlannerSurface narrows the built-in manifest to the
@@ -54,7 +54,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	})...)
 	if opts.IncludeWriteTools && !opts.IncludePlanThenExecute {
 		tools = append(tools, builtInToolSurfaceCatalog().toolsWhere(func(spec toolSurfaceSpec) bool {
-			return ToolCategory(spec.Category) == CategoryWrite && strings.TrimSpace(spec.Language) == ""
+			return spec.Category == CategoryWrite && strings.TrimSpace(spec.Language) == ""
 		})...)
 	}
 
@@ -234,7 +234,6 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: ToolNameWriteFile, Request: `{"tool":"write_file","path":"relative/file","content":"full file contents","description":"write the complete requested file content"}`, Purpose: "full-body write for missing/new files or non-source deliverables; prefer edit_file/apply_patch for existing source/test files; description is required"},
 		{Tool: ToolNameAppendFile, Request: `{"tool":"append_file","path":"relative/file","content":"text to append","description":"append the requested content at the existing file boundary"}`, Purpose: "append text only when end-of-file append is explicitly intended; prefer edit_file/apply_patch for anchored source/test edits; description is required"},
 		{Tool: ToolNameApplyPatch, Request: `{"tool":"apply_patch","content":"*** Begin Patch\n*** Update File: relative/file\n@@\n-old\n+new\n*** End Patch","description":"apply the requested patch across the affected file set"}`, Purpose: "multi-file patch envelope. Use ONLY these *** directives: Begin Patch, End Patch, Add File, Update File, Delete File, Move to. Hunks (`@@`) inside Update File. Do not invent extras like *** Sanity Check / *** Note / *** Verification. Description is required."},
-		{Tool: ToolNameDelegateEdit, Request: `{"tool":"delegate_edit","path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}`, Purpose: "hand a single edit spec to the configured executor-role model and return its dispatch result. Use this when you have already decided the exact change and want to keep your own context focused on planning the next edit instead of re-reading what you just wrote. Falls back to direct dispatch when no executor is configured."},
 		{Tool: ToolNameSubmitPlan, Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact current substring","new_text":"complete replacement text","purpose":"why this edit"}]}`, Purpose: "submit a structured executable edit plan (plan-then-execute mode only). `edits` is a JSON array, not a quoted string. Edit bodies must be complete final content, not placeholders or prose. Use only for supported planner edits or review-repair corrective edits; clean review-repair closes with Decision: pass. Large bodies are spilled to artifact refs after submission."},
 		{Tool: ToolNameGitStatus, Request: `{"tool":"git_status","workdir":"."}`, Purpose: "inspect git state"},
 		{Tool: ToolNameGitDiff, Request: `{"tool":"git_diff","workdir":".","path":"optional/path"}`, Purpose: "inspect git diff"},

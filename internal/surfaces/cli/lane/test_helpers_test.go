@@ -3,10 +3,10 @@ package lane
 import (
 	"encoding/json"
 	"fmt"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 )
 
 func cliAssetPath(elem ...string) string {
@@ -14,13 +14,10 @@ func cliAssetPath(elem ...string) string {
 	return filepath.Join(parts...)
 }
 
-func laneTestRepoRoot(t *testing.T) string {
-	t.Helper()
+func laneTestRepoRoot() string {
 
 	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get cwd: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("get cwd: %v", err))
 
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
@@ -28,21 +25,16 @@ func laneTestRepoRoot(t *testing.T) string {
 		}
 
 		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repo root not found from cwd")
-		}
+		gomega.Expect(parent).NotTo(gomega.Equal(dir), fmt.Sprintf("repo root not found from cwd"))
 
 		dir = parent
 	}
 }
 
-func stageDoctorBackends(t *testing.T, root string) {
-	t.Helper()
+func stageDoctorBackends(root string) {
 
 	path := filepath.Join(root, ".idiom", "backends.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir backends dir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(gomega.Succeed())
 
 	body := `{
   "default_profile": "local",
@@ -60,28 +52,21 @@ func stageDoctorBackends(t *testing.T, root string) {
     }
   }
 }`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("stage backends: %v", err)
-	}
+	gomega.Expect(os.WriteFile(path, []byte(body), 0o644)).To(gomega.Succeed())
+
 }
 
-func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {
-	t.Helper()
+func readMainTelemetryRecords(path string) []map[string]any {
 
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read telemetry log: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read telemetry log: %v", err))
 
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	records := make([]map[string]any, 0, len(lines))
 
 	for _, line := range lines {
 		var record map[string]any
-
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("parse telemetry line %q: %v", line, err)
-		}
+		gomega.Expect(json.Unmarshal([]byte(line), &record)).To(gomega.Succeed())
 
 		records = append(records, record)
 	}

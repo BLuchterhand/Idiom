@@ -1,77 +1,43 @@
 package modepolicy
 
 import (
-	"testing"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"idiom/internal/contracts/toolpolicy"
 )
 
-func TestModeByNameRoundTrip(t *testing.T) {
-	for _, wantMode := range DefaultModes() {
-		mode, ok := ModeByName(wantMode.Name)
-		if !ok {
-			t.Errorf("ModeByName(%q) = !ok, want ok", wantMode.Name)
-
-			continue
+var _ = ginkgo.Describe("Agent mode policy", func() {
+	ginkgo.It("round-trips every declared mode by name", func() {
+		for _, wantMode := range DefaultModes() {
+			mode, found := ModeByName(string(wantMode.Name))
+			gomega.Expect(found).To(gomega.BeTrue())
+			gomega.Expect(mode.Name).To(gomega.Equal(wantMode.Name))
 		}
+		_, found := ModeByName("not-a-mode")
+		gomega.Expect(found).To(gomega.BeFalse())
+	})
 
-		if mode.Name != wantMode.Name {
-			t.Errorf("ModeByName(%q).Name = %q", wantMode.Name, mode.Name)
-		}
-	}
+	ginkgo.DescribeTable("selects the requested mode or the build default",
+		func(requested, want string) {
+			gomega.Expect(string(ModeOrDefault(requested).Name)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("empty", "", "build"),
+		ginkgo.Entry("plan", "plan", "plan"),
+		ginkgo.Entry("unknown", "nonsense", "build"),
+	)
 
-	if _, ok := ModeByName("not-a-mode"); ok {
-		t.Error("ModeByName(unknown) should be !ok")
-	}
-}
-
-func TestModeOrDefaultFallsBackToBuild(t *testing.T) {
-	if got := ModeOrDefault(""); got.Name != "build" {
-		t.Errorf("ModeOrDefault empty = %q, want build", got.Name)
-	}
-
-	if got := ModeOrDefault("plan"); got.Name != "plan" {
-		t.Errorf("ModeOrDefault plan = %q, want plan", got.Name)
-	}
-
-	if got := ModeOrDefault("nonsense"); got.Name != "build" {
-		t.Errorf("ModeOrDefault nonsense = %q, want build fallback", got.Name)
-	}
-}
-
-// TestModeMCPDefaults pins each mode's default decision for `mcp:*`
-// against decision 3 in docs/web-search-tool-design.md §6 W5: plan
-// allows external reads, build/general ask. Regressions here would
-// either silently expose the model to free egress (plan miswired) or
-// burden every general-mode interaction with a confirmation prompt for
-// every MCP tool call.
-func TestModeMCPDefaults(t *testing.T) {
-	cases := []struct {
-		mode string
-		want toolpolicy.Decision
-	}{
-		{"build", toolpolicy.Ask},
-		{"plan", toolpolicy.Allow},
-		{"general", toolpolicy.Ask},
-	}
-	for _, tc := range cases {
-		t.Run(tc.mode, func(t *testing.T) {
-			mode, ok := ModeByName(tc.mode)
-			if !ok {
-				t.Fatalf("ModeByName(%q) failed", tc.mode)
-			}
-
-			rules, ok := mode.PermissionRules["mcp:*"]
-			if !ok {
-				t.Fatalf("mode %q is missing mcp:* permission rule", tc.mode)
-			}
-
-			if len(rules) != 1 {
-				t.Fatalf("mode %q: mcp:* rules = %#v, want one rule", tc.mode, rules)
-			}
-			if got := rules[0].Decision; got != tc.want {
-				t.Fatalf("mode %q: mcp:* decision = %q, want %q", tc.mode, got, tc.want)
-			}
-		})
-	}
-}
+	ginkgo.DescribeTable("applies mode-specific MCP defaults",
+		func(modeName string, want toolpolicy.Decision) {
+			mode, found := ModeByName(modeName)
+			gomega.Expect(found).To(gomega.BeTrue())
+			rules, found := mode.PermissionRules["mcp:*"]
+			gomega.Expect(found).To(gomega.BeTrue())
+			gomega.Expect(rules).To(gomega.HaveLen(1))
+			gomega.Expect(rules[0].Decision).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("build asks", "build", toolpolicy.Ask),
+		ginkgo.Entry("plan allows", "plan", toolpolicy.Allow),
+		ginkgo.Entry("general asks", "general", toolpolicy.Ask),
+	)
+})

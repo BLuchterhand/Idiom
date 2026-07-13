@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/runprofile"
+	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/instructions"
@@ -28,7 +30,7 @@ func Main() {
 		cfgPath  = flag.String("config", "config.json", "path to config.json")
 		prompt   = flag.String("prompt", "Can you identify an opportunity to make a small refactor in this codebase? Be specific about files and lines.", "user prompt (single-turn)")
 		prompts  multiPrompt
-		modeName = flag.String("mode", "build", "agent mode: build|plan|general")
+		modeName = flag.String("mode", string(runprofile.AgentModeBuild), "agent mode: build|plan|general")
 		logPath  = flag.String("log", "", "path to write session JSONL (default: logs/e2e/<timestamp>.jsonl)")
 		timeout  = flag.Duration("timeout", 5*time.Minute, "overall run timeout")
 	)
@@ -66,6 +68,7 @@ func Main() {
 	}
 
 	client := llama.NewClient(cfg.LlamaServer.EndpointBaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
+	client.WithRequestSurfaceFacts(strings.TrimSpace(os.Getenv("IDIOM_SCRIPTED_REQUEST_SURFACE_FACTS")) == "1")
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 
 	defer cancel()
@@ -187,13 +190,17 @@ func Main() {
 			func(event agent.ToolResultEvent) {
 				toolResults++
 
-				emit("tool_result", map[string]any{
+				payload := map[string]any{
 					"turn":    i,
 					"step":    event.Step,
 					"tool":    event.Result.Tool,
 					"summary": event.Result.Summary,
 					"error":   event.Result.Error,
-				})
+				}
+				for key, value := range transcript.PrivacySafeToolResultFactFields(event.Result.Facts) {
+					payload[key] = value
+				}
+				emit("tool_result", payload)
 			},
 		)
 		if rerr != nil {

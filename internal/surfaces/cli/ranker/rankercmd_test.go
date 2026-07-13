@@ -5,43 +5,40 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestRunRollbackRequiresEvent(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+var _ = ginkgo.Describe("Ranker command dispatch", func() {
+	ginkgo.It("requires an event when dispatching rollback", func() {
+		var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"rollback"}, &stdout, &stderr, nil, Deps{})
+		gomega.Expect(Run([]string{"rollback"}, &stdout, &stderr, nil, Deps{})).To(gomega.Equal(2))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("--event is required"))
+	})
 
-	if code != 2 {
-		t.Fatalf("expected usage exit for missing event, got %d", code)
-	}
+	ginkgo.It("emits ranker state as JSON", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		configPath := filepath.Join(root, "config.json")
+		gomega.Expect(os.WriteFile(
+			configPath,
+			[]byte(fmt.Sprintf(`{"workspace":{"root":%q}}`, root)),
+			0o644,
+		)).To(gomega.Succeed())
+		var stdout, stderr bytes.Buffer
 
-	if !strings.Contains(stderr.String(), "--event is required") {
-		t.Fatalf("missing event error not surfaced: %s", stderr.String())
-	}
-}
-
-func TestRunShowEmitsJSON(t *testing.T) {
-	root := t.TempDir()
-	configPath := filepath.Join(root, "config.json")
-
-	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`{"workspace":{"root":%q}}`, root)), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := Run([]string{"show", "--config", configPath, "--json"}, &stdout, &stderr, nil, Deps{})
-
-	if code != 0 {
-		t.Fatalf("show failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-
-	for _, marker := range []string{`"workspace_root"`, `"weights"`, `"log_summary"`} {
-		if !strings.Contains(stdout.String(), marker) {
-			t.Fatalf("show JSON missing %s: %s", marker, stdout.String())
-		}
-	}
-}
+		gomega.Expect(Run(
+			[]string{"show", "--config", configPath, "--json"},
+			&stdout,
+			&stderr,
+			nil,
+			Deps{},
+		)).To(gomega.Equal(0), "stderr=%s stdout=%s", stderr.String(), stdout.String())
+		gomega.Expect(stdout.String()).To(gomega.SatisfyAll(
+			gomega.ContainSubstring(`"workspace_root"`),
+			gomega.ContainSubstring(`"weights"`),
+			gomega.ContainSubstring(`"log_summary"`),
+		))
+	})
+})

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
-	"testing"
-	"time"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
@@ -14,512 +16,374 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-type fakeDecider struct {
-	decision readapproval.Decision
-	err      error
-	calls    int
-	lastReq  readapproval.Request
-}
+var _ = ginkgo.Describe("ReadApprovalGate", func() {
+	const sessionID = "session-1"
 
-func (f *fakeDecider) DecideRead(ctx context.Context, req readapproval.Request) (readapproval.Decision, error) {
-	f.calls++
-	f.lastReq = req
-	if f.err != nil {
-		return readapproval.Decision{}, f.err
+	var (
+		decider *MockReadApprovalDecider
+		cache   *MockReadApprovalCache
+	)
+
+	ginkgo.BeforeEach(func() {
+		controller := gomock.NewController(ginkgo.GinkgoT())
+		decider = NewMockReadApprovalDecider(controller)
+		cache = NewMockReadApprovalCache(controller)
+	})
+
+	invoke := func(gate *ReadApprovalGate, path string, code plancontract.PlanExecuteRejectionCode) (bool, string) {
+		ginkgo.GinkgoHelper()
+		return gate.MaybeOverrideRejection(
+			context.Background(),
+			sessionID,
+			workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: path},
+			workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
+			code,
+			path+" is not an explicit allowed candidate path.",
+		)
 	}
-	d := f.decision
-	if d.Path == "" {
-		d.Path = req.Path
-	}
-	if d.At.IsZero() {
-		d.At = time.Now()
-	}
-	return d, nil
-}
 
-type fakeCache struct {
-	decisions map[string]readapproval.Decision
-	recorded  []readapproval.Decision
-	err       error
-	recordErr error
-}
-
-func newFakeCache() *fakeCache {
-	return &fakeCache{decisions: map[string]readapproval.Decision{}}
-}
-
-func (c *fakeCache) Lookup(sessionID, path string) (readapproval.Decision, bool, error) {
-	if c.err != nil {
-		return readapproval.Decision{}, false, c.err
-	}
-	d, ok := c.decisions[path]
-	return d, ok, nil
-}
-
-func (c *fakeCache) Record(sessionID string, decision readapproval.Decision) error {
-	if c.recordErr != nil {
-		return c.recordErr
-	}
-	c.recorded = append(c.recorded, decision)
-	c.decisions[decision.Path] = decision
-	return nil
-}
-
-func (c *fakeCache) ApprovedPaths(sessionID string) []string {
-	var out []string
-	for p, d := range c.decisions {
-		if d.Outcome == readapproval.OutcomeApproved {
-			out = append(out, p)
+	expectedRequest := func(path string) readapproval.Request {
+		return readapproval.Request{
+			SessionID: sessionID,
+			Path:      path,
+			Tool:      workspace.ToolNameReadFile,
+			Lane:      "plan-then-execute-planner",
 		}
 	}
-	return out
-}
 
-func (c *fakeCache) DeniedPaths(sessionID string) []string {
-	var out []string
-	for p, d := range c.decisions {
-		if d.Outcome == readapproval.OutcomeDenied {
-			out = append(out, p)
+	decisionMatcher := func(outcome readapproval.Outcome, reason string, source string, path string) gomock.Matcher {
+		return gomock.Cond(func(decision readapproval.Decision) bool {
+			return decision.Outcome == outcome &&
+				decision.Reason == reason &&
+				decision.Source == source &&
+				decision.Path == path &&
+				!decision.At.IsZero()
+		})
+	}
+
+	ginkgo.It("is inactive without a decider", func() {
+		override, denialContext := invoke(
+			&ReadApprovalGate{},
+			"docs/foo.md",
+			plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		)
+
+		gomega.Expect(override).To(gomega.BeFalse())
+		gomega.Expect(denialContext).To(gomega.BeEmpty())
+	})
+
+	ginkgo.It("does not consult the decider for a non-scope rejection", func() {
+		override, denialContext := invoke(
+			&ReadApprovalGate{Decider: decider},
+			"docs/foo.md",
+			plancontract.PlanExecuteRejectionAnchorRefreshCapabilityRequired,
+		)
+
+		gomega.Expect(override).To(gomega.BeFalse())
+		gomega.Expect(denialContext).To(gomega.BeEmpty())
+	})
+
+	ginkgo.It("records and emits an operator-approved read", func() {
+		path := "docs/design-intent-loop-mutation-cycle.md"
+		approved := readapproval.Decision{
+			Outcome: readapproval.OutcomeApproved,
+			Reason:  readapproval.ReasonOperatorApprovedLive,
+			Source:  readapproval.SourceOperator,
 		}
-	}
-	return out
-}
+		cache.EXPECT().Lookup(sessionID, path).Return(readapproval.Decision{}, false, nil)
+		decider.EXPECT().DecideRead(gomock.Any(), expectedRequest(path)).Return(approved, nil)
+		cache.EXPECT().Record(sessionID, decisionMatcher(
+			readapproval.OutcomeApproved,
+			readapproval.ReasonOperatorApprovedLive,
+			readapproval.SourceOperator,
+			path,
+		)).Return(nil)
 
-func TestReadApprovalGateInactiveWhenDeciderMissing(t *testing.T) {
-	gate := &ReadApprovalGate{}
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"original error",
-	)
-	if override {
-		t.Fatal("gate with no decider must never override rejection")
-	}
-	if denialContext != "" {
-		t.Fatalf("gate with no decider must not append denial context, got %q", denialContext)
-	}
-}
+		var origins []string
+		gate := &ReadApprovalGate{
+			Decider: decider,
+			Cache:   cache,
+			OnEvent: func(_ readapproval.Request, _ readapproval.Decision, origin string) {
+				origins = append(origins, origin)
+			},
+		}
 
-func TestReadApprovalGateIgnoresNonScopeRejection(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{Outcome: readapproval.OutcomeApproved}}
-	gate := &ReadApprovalGate{Decider: decider}
+		override, denialContext := invoke(gate, path, plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope)
 
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionAnchorRefreshCapabilityRequired,
-		"some anchor refresh text",
-	)
-	if override {
-		t.Fatal("non-scope rejection must not be overridable")
-	}
-	if denialContext != "" {
-		t.Fatalf("non-scope rejection must not append denial context, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called for non-scope rejection; got %d calls", decider.calls)
-	}
-}
+		gomega.Expect(override).To(gomega.BeTrue())
+		gomega.Expect(denialContext).To(gomega.BeEmpty())
+		gomega.Expect(origins).To(gomega.Equal([]string{readapproval.EventOriginLiveDecision}))
+	})
 
-func TestReadApprovalGateOverridesWhenOperatorApproves(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{
-		Outcome: readapproval.OutcomeApproved,
-		Reason:  readapproval.ReasonOperatorApprovedLive,
-		Source:  readapproval.SourceOperator,
-	}}
-	cache := newFakeCache()
-	var origins []string
-	gate := &ReadApprovalGate{
-		Decider: decider,
-		Cache:   cache,
-		OnEvent: func(_ readapproval.Request, _ readapproval.Decision, origin string) {
-			origins = append(origins, origin)
+	ginkgo.DescribeTable("fails closed without recording a live result returned after cancellation",
+		func(liveDecision readapproval.Decision, liveErr error) {
+			path := "docs/canceled.md"
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			cache.EXPECT().Lookup(sessionID, path).Return(readapproval.Decision{}, false, nil)
+			decider.EXPECT().DecideRead(gomock.Any(), expectedRequest(path)).DoAndReturn(
+				func(callCtx context.Context, _ readapproval.Request) (readapproval.Decision, error) {
+					cancel()
+					<-callCtx.Done()
+					return liveDecision, liveErr
+				},
+			)
+
+			var events []readapproval.Decision
+			gate := &ReadApprovalGate{
+				Decider: decider,
+				Cache:   cache,
+				OnEvent: func(_ readapproval.Request, decision readapproval.Decision, _ string) {
+					events = append(events, decision)
+				},
+			}
+
+			override, denialContext := gate.MaybeOverrideRejection(
+				ctx,
+				sessionID,
+				workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: path},
+				workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
+				plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+				path+" is not an explicit allowed candidate path.",
+			)
+
+			gomega.Expect(override).To(gomega.BeFalse())
+			gomega.Expect(denialContext).To(gomega.ContainSubstring("canceled"))
+			gomega.Expect(events).To(gomega.BeEmpty())
 		},
-	}
-
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/design-intent-loop-mutation-cycle.md"},
-		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"docs/design-intent-loop-mutation-cycle.md is not an explicit allowed candidate path.",
+		ginkgo.Entry("late approval", readapproval.Decision{
+			Outcome: readapproval.OutcomeApproved,
+			Reason:  readapproval.ReasonOperatorApprovedLive,
+			Source:  readapproval.SourceOperator,
+		}, nil),
+		ginkgo.Entry("decider error", readapproval.Decision{}, errors.New("approval UI stopped")),
 	)
-	if !override {
-		t.Fatal("operator-approved read must override rejection")
-	}
-	if denialContext != "" {
-		t.Fatalf("approved override must not append denial context, got %q", denialContext)
-	}
-	if decider.calls != 1 {
-		t.Fatalf("expected exactly one decider call, got %d", decider.calls)
-	}
-	if len(cache.recorded) != 1 || cache.recorded[0].Outcome != readapproval.OutcomeApproved {
-		t.Fatalf("approved decision must be recorded once, got %+v", cache.recorded)
-	}
-	if len(origins) != 1 || origins[0] != readapproval.EventOriginLiveDecision {
-		t.Fatalf("expected live decision origin, got %#v", origins)
-	}
-}
 
-func TestReadApprovalGateAutoApprovesConversationLogReads(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{
-		Outcome: readapproval.OutcomeDenied,
-		Reason:  readapproval.ReasonOperatorDeniedLive,
-		Source:  readapproval.SourceOperator,
-	}}
-	cache := newFakeCache()
-	var gotDecision readapproval.Decision
-	var gotOrigin string
-	gate := &ReadApprovalGate{
-		Decider: decider,
-		Cache:   cache,
-		OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
-			gotDecision = decision
-			gotOrigin = origin
+	ginkgo.It("auto-approves conversation logs without consulting operator state", func() {
+		type emittedEvent struct {
+			decision readapproval.Decision
+			origin   string
+		}
+		var events []emittedEvent
+		gate := &ReadApprovalGate{
+			Decider: decider,
+			Cache:   cache,
+			OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
+				events = append(events, emittedEvent{decision: decision, origin: origin})
+			},
+		}
+
+		override, denialContext := invoke(
+			gate,
+			".idiom/logs/conversations/session.jsonl",
+			plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		)
+		gomega.Expect(override).To(gomega.BeTrue())
+		gomega.Expect(denialContext).To(gomega.BeEmpty())
+
+		home := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Setenv("HOME", home)
+		ginkgo.GinkgoT().Setenv("USERPROFILE", home)
+		codexSession := filepath.Join(home, ".codex", "sessions", "2026", "06", "28", "rollout-2026-06-28T12-00-00-session.jsonl")
+		override, denialContext = invoke(gate, codexSession, plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope)
+
+		gomega.Expect(override).To(gomega.BeTrue())
+		gomega.Expect(denialContext).To(gomega.BeEmpty())
+		gomega.Expect(events).To(gomega.HaveLen(2))
+		for _, event := range events {
+			gomega.Expect(event.decision.Outcome).To(gomega.Equal(readapproval.OutcomeApproved))
+			gomega.Expect(event.decision.Reason).To(gomega.Equal(readapproval.ReasonConversationLogDefault))
+			gomega.Expect(event.decision.Source).To(gomega.Equal(readapproval.SourceHarnessDefault))
+			gomega.Expect(event.decision.At).NotTo(gomega.BeZero())
+			gomega.Expect(event.origin).To(gomega.Equal(readapproval.EventOriginPolicyDefault))
+		}
+	})
+
+	ginkgo.It("fails closed when an approval cannot be recorded", func() {
+		path := "docs/not-durable.md"
+		approved := readapproval.Decision{
+			Outcome: readapproval.OutcomeApproved,
+			Reason:  readapproval.ReasonOperatorApprovedLive,
+			Source:  readapproval.SourceOperator,
+		}
+		cache.EXPECT().Lookup(sessionID, path).Return(readapproval.Decision{}, false, nil)
+		decider.EXPECT().DecideRead(gomock.Any(), expectedRequest(path)).Return(approved, nil)
+		cache.EXPECT().Record(sessionID, gomock.Any()).Return(errors.New("disk full"))
+
+		var gotOrigin string
+		var gotDecision readapproval.Decision
+		gate := &ReadApprovalGate{
+			Decider: decider,
+			Cache:   cache,
+			OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
+				gotDecision = decision
+				gotOrigin = origin
+			},
+		}
+
+		override, denialContext := invoke(gate, path, plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope)
+
+		gomega.Expect(override).To(gomega.BeFalse())
+		gomega.Expect(denialContext).To(gomega.ContainSubstring("could not be recorded"))
+		gomega.Expect(gotOrigin).To(gomega.Equal(readapproval.EventOriginCacheRecord))
+		gomega.Expect(gotDecision.Outcome).To(gomega.Equal(readapproval.OutcomeDenied))
+		gomega.Expect(gotDecision.Reason).To(gomega.Equal(readapproval.ReasonCacheUnavailable))
+	})
+
+	ginkgo.It("records an operator denial and appends retry guidance", func() {
+		path := "docs/foo.md"
+		denied := readapproval.Decision{
+			Outcome: readapproval.OutcomeDenied,
+			Reason:  readapproval.ReasonOperatorDeniedLive,
+			Source:  readapproval.SourceOperator,
+		}
+		cache.EXPECT().Lookup(sessionID, path).Return(readapproval.Decision{}, false, nil)
+		decider.EXPECT().DecideRead(gomock.Any(), expectedRequest(path)).Return(denied, nil)
+		cache.EXPECT().Record(sessionID, decisionMatcher(
+			readapproval.OutcomeDenied,
+			readapproval.ReasonOperatorDeniedLive,
+			readapproval.SourceOperator,
+			path,
+		)).Return(nil)
+
+		override, denialContext := invoke(
+			&ReadApprovalGate{Decider: decider, Cache: cache},
+			path,
+			plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		)
+
+		gomega.Expect(override).To(gomega.BeFalse())
+		gomega.Expect(denialContext).To(gomega.And(
+			gomega.ContainSubstring("Operator denied"),
+			gomega.ContainSubstring("do not retry"),
+		))
+	})
+
+	ginkgo.DescribeTable("uses a cached approval for normalized equivalent paths",
+		func(requestPath string) {
+			cached := readapproval.Decision{
+				Outcome: readapproval.OutcomeApproved,
+				Reason:  readapproval.ReasonOperatorApprovedLive,
+				Source:  readapproval.SourceOperator,
+				Path:    "docs/cached-approved.md",
+			}
+			cache.EXPECT().Lookup(sessionID, "docs/cached-approved.md").Return(cached, true, nil)
+
+			override, denialContext := invoke(
+				&ReadApprovalGate{Decider: decider, Cache: cache},
+				requestPath,
+				plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+			)
+
+			gomega.Expect(override).To(gomega.BeTrue())
+			gomega.Expect(denialContext).To(gomega.BeEmpty())
 		},
-	}
-
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: ".idiom/logs/conversations/session.jsonl"},
-		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		".idiom/logs/conversations/session.jsonl is not an explicit allowed candidate path.",
+		ginkgo.Entry("canonical path", "docs/cached-approved.md"),
+		ginkgo.Entry("dot-relative path", "./docs/cached-approved.md"),
 	)
 
-	if !override {
-		t.Fatal("conversation log read must be approved by default policy")
-	}
-	if denialContext != "" {
-		t.Fatalf("default-approved conversation log must not append denial context, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called for default-readable conversation log; got %d calls", decider.calls)
-	}
-	if len(cache.recorded) != 0 {
-		t.Fatalf("default policy approval should not write operator cache records, got %#v", cache.recorded)
-	}
-	if gotDecision.Outcome != readapproval.OutcomeApproved ||
-		gotDecision.Reason != readapproval.ReasonConversationLogDefault ||
-		gotDecision.Source != readapproval.SourceHarnessDefault ||
-		gotOrigin != readapproval.EventOriginPolicyDefault {
+	ginkgo.DescribeTable("uses a cached denial for normalized equivalent paths",
+		func(requestPath string) {
+			cached := readapproval.Decision{
+				Outcome: readapproval.OutcomeDenied,
+				Reason:  readapproval.ReasonOperatorDeniedLive,
+				Source:  readapproval.SourceOperator,
+				Path:    "docs/cached-denied.md",
+			}
+			cache.EXPECT().Lookup(sessionID, "docs/cached-denied.md").Return(cached, true, nil)
 
-		t.Fatalf("unexpected default approval event: decision=%+v origin=%q", gotDecision, gotOrigin)
-	}
+			override, denialContext := invoke(
+				&ReadApprovalGate{Decider: decider, Cache: cache},
+				requestPath,
+				plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+			)
 
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	codexSession := filepath.Join(home, ".codex", "sessions", "2026", "06", "28", "rollout-2026-06-28T12-00-00-session.jsonl")
-
-	override, denialContext = gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: codexSession},
-		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		codexSession+" is not an explicit allowed candidate path.",
-	)
-	if !override || denialContext != "" {
-		t.Fatalf("codex session log should be default-approved, override=%v denial=%q", override, denialContext)
-	}
-}
-
-func TestReadApprovalGateFailsClosedWhenLiveDecisionCannotBeRecorded(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{
-		Outcome: readapproval.OutcomeApproved,
-		Reason:  readapproval.ReasonOperatorApprovedLive,
-		Source:  readapproval.SourceOperator,
-	}}
-	cache := newFakeCache()
-	cache.recordErr = errors.New("disk full")
-	var gotOrigin string
-	var gotDecision readapproval.Decision
-	gate := &ReadApprovalGate{
-		Decider: decider,
-		Cache:   cache,
-		OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
-			gotDecision = decision
-			gotOrigin = origin
+			gomega.Expect(override).To(gomega.BeFalse())
+			gomega.Expect(denialContext).To(gomega.ContainSubstring("previously denied"))
 		},
-	}
-
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/not-durable.md"},
-		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"docs/not-durable.md is not an explicit allowed candidate path.",
+		ginkgo.Entry("canonical path", "docs/cached-denied.md"),
+		ginkgo.Entry("dot-relative path", "./docs/cached-denied.md"),
 	)
 
-	if override {
-		t.Fatal("read must remain denied when live approval cannot be durably recorded")
-	}
-	if !strings.Contains(denialContext, "could not be recorded") {
-		t.Fatalf("denial context = %q", denialContext)
-	}
-	if gotOrigin != readapproval.EventOriginCacheRecord {
-		t.Fatalf("origin = %q, want %q", gotOrigin, readapproval.EventOriginCacheRecord)
-	}
-	if gotDecision.Outcome != readapproval.OutcomeDenied || gotDecision.Reason != readapproval.ReasonCacheUnavailable {
-		t.Fatalf("decision = %+v, want cache unavailable denial", gotDecision)
-	}
-	if _, ok, err := cache.Lookup("session-1", "docs/not-durable.md"); err != nil || ok {
-		t.Fatalf("failed record must not publish cached approval, ok=%v err=%v", ok, err)
-	}
-}
+	ginkgo.It("fails closed when the cache lookup fails", func() {
+		path := "docs/corrupt.md"
+		cache.EXPECT().Lookup(sessionID, path).Return(readapproval.Decision{}, false, errors.New("corrupt read approval cache"))
 
-func TestReadApprovalGateAppendsOperatorDenialContext(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{
-		Outcome: readapproval.OutcomeDenied,
-		Reason:  readapproval.ReasonOperatorDeniedLive,
-		Source:  readapproval.SourceOperator,
-	}}
-	cache := newFakeCache()
-	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+		var events []readapproval.Decision
+		var origins []string
+		gate := &ReadApprovalGate{
+			Decider: decider,
+			Cache:   cache,
+			OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
+				events = append(events, decision)
+				origins = append(origins, origin)
+			},
+		}
 
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"docs/foo.md is not an explicit allowed candidate path.",
-	)
-	if override {
-		t.Fatal("operator-denied read must not override rejection")
-	}
-	if !strings.Contains(denialContext, "Operator denied") {
-		t.Fatalf("denial context must mention operator denial, got %q", denialContext)
-	}
-	if !strings.Contains(denialContext, "do not retry") {
-		t.Fatalf("denial context must instruct model not to retry, got %q", denialContext)
-	}
-	if len(cache.recorded) != 1 || cache.recorded[0].Outcome != readapproval.OutcomeDenied {
-		t.Fatalf("denied decision must be recorded once, got %+v", cache.recorded)
-	}
-}
+		override, denialContext := invoke(gate, path, plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope)
 
-func TestReadApprovalGateCacheShortCircuitsApproved(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{
-		Outcome: readapproval.OutcomeDenied,
-	}}
-	cache := newFakeCache()
-	cache.decisions["docs/cached-approved.md"] = readapproval.Decision{
-		Outcome: readapproval.OutcomeApproved,
-		Reason:  readapproval.ReasonOperatorApprovedLive,
-		Source:  readapproval.SourceOperator,
-		Path:    "docs/cached-approved.md",
-	}
-	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+		gomega.Expect(override).To(gomega.BeFalse())
+		gomega.Expect(denialContext).To(gomega.ContainSubstring("cache could not be loaded"))
+		gomega.Expect(events).To(gomega.HaveLen(1))
+		gomega.Expect(events[0].Reason).To(gomega.Equal(readapproval.ReasonCacheUnavailable))
+		gomega.Expect(events[0].Source).To(gomega.Equal(readapproval.SourceCache))
+		gomega.Expect(origins).To(gomega.Equal([]string{readapproval.EventOriginCacheLookup}))
+	})
 
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/cached-approved.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"docs/cached-approved.md is not an explicit allowed candidate path.",
-	)
-	if !override {
-		t.Fatal("cached-approved path must override rejection without calling decider")
-	}
-	if denialContext != "" {
-		t.Fatalf("cached-approved override must not append denial context, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called when cache has approved decision; got %d calls", decider.calls)
-	}
-}
+	ginkgo.It("records a fail-closed denial when the decider errors", func() {
+		path := "docs/foo.md"
+		cache.EXPECT().Lookup(sessionID, path).Return(readapproval.Decision{}, false, nil)
+		decider.EXPECT().DecideRead(gomock.Any(), expectedRequest(path)).Return(readapproval.Decision{}, errors.New("transport failed"))
+		cache.EXPECT().Record(sessionID, decisionMatcher(
+			readapproval.OutcomeDenied,
+			readapproval.ReasonNoDeciderWired,
+			readapproval.SourceNoDecider,
+			path,
+		)).Return(nil)
 
-func TestReadApprovalGateCacheShortCircuitsApprovedEquivalentPath(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{Outcome: readapproval.OutcomeDenied}}
-	cache := newFakeCache()
-	cache.decisions["docs/cached-approved.md"] = readapproval.Decision{
-		Outcome: readapproval.OutcomeApproved,
-		Reason:  readapproval.ReasonOperatorApprovedLive,
-		Source:  readapproval.SourceOperator,
-		Path:    "docs/cached-approved.md",
-	}
-	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+		override, denialContext := invoke(
+			&ReadApprovalGate{Decider: decider, Cache: cache},
+			path,
+			plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		)
 
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "./docs/cached-approved.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"./docs/cached-approved.md is not an explicit allowed candidate path.",
-	)
-	if !override {
-		t.Fatal("cached-approved equivalent path must override rejection without calling decider")
-	}
-	if denialContext != "" {
-		t.Fatalf("cached-approved equivalent path must not append denial context, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called when normalized cache has approved decision; got %d calls", decider.calls)
-	}
-}
+		gomega.Expect(override).To(gomega.BeFalse())
+		gomega.Expect(denialContext).To(gomega.ContainSubstring("Operator denied"))
+	})
 
-func TestReadApprovalGateCacheShortCircuitsDenied(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{
-		Outcome: readapproval.OutcomeApproved,
-	}}
-	cache := newFakeCache()
-	cache.decisions["docs/cached-denied.md"] = readapproval.Decision{
-		Outcome: readapproval.OutcomeDenied,
-		Reason:  readapproval.ReasonOperatorDeniedLive,
-		Source:  readapproval.SourceOperator,
-		Path:    "docs/cached-denied.md",
-	}
-	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+	ginkgo.It("does not consult the decider for an empty request path", func() {
+		override, denialContext := (&ReadApprovalGate{Decider: decider}).MaybeOverrideRejection(
+			context.Background(),
+			sessionID,
+			workspace.ToolRequest{Tool: workspace.ToolNameSearchContent, Pattern: "foo"},
+			workerruntime.WorkerRuntimeBrief{},
+			plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+			"some text",
+		)
 
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/cached-denied.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"docs/cached-denied.md is not an explicit allowed candidate path.",
-	)
-	if override {
-		t.Fatal("cached-denied path must not override rejection")
-	}
-	if !strings.Contains(denialContext, "previously denied") {
-		t.Fatalf("cached-denied context must mention previous denial, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called when cache has denied decision; got %d calls", decider.calls)
-	}
-}
+		gomega.Expect(override).To(gomega.BeFalse())
+		gomega.Expect(denialContext).To(gomega.BeEmpty())
+	})
 
-func TestReadApprovalGateCacheShortCircuitsDeniedEquivalentPath(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{Outcome: readapproval.OutcomeApproved}}
-	cache := newFakeCache()
-	cache.decisions["docs/cached-denied.md"] = readapproval.Decision{
-		Outcome: readapproval.OutcomeDenied,
-		Reason:  readapproval.ReasonOperatorDeniedLive,
-		Source:  readapproval.SourceOperator,
-		Path:    "docs/cached-denied.md",
-	}
-	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+	ginkgo.It("normalizes whitespace in the read request before deciding", func() {
+		path := "docs/normalized.md"
+		decider.EXPECT().DecideRead(gomock.Any(), expectedRequest(path)).Return(readapproval.Decision{
+			Outcome: readapproval.OutcomeApproved,
+			Reason:  readapproval.ReasonOperatorApprovedLive,
+			Source:  readapproval.SourceOperator,
+		}, nil)
 
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "./docs/cached-denied.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"./docs/cached-denied.md is not an explicit allowed candidate path.",
-	)
-	if override {
-		t.Fatal("cached-denied equivalent path must not override rejection")
-	}
-	if !strings.Contains(denialContext, "previously denied") {
-		t.Fatalf("cached-denied equivalent context must mention previous denial, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called when normalized cache has denied decision; got %d calls", decider.calls)
-	}
-}
+		override, denialContext := (&ReadApprovalGate{Decider: decider}).MaybeOverrideRejection(
+			context.Background(),
+			sessionID,
+			workspace.ToolRequest{Tool: "  " + workspace.ToolNameReadFile + "  ", Path: " ./" + path + " "},
+			workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
+			plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+			"outside scope",
+		)
 
-func TestReadApprovalGateFailsClosedWhenCacheLookupErrors(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{
-		Outcome: readapproval.OutcomeApproved,
-	}}
-	cache := newFakeCache()
-	cache.err = errors.New("corrupt read approval cache")
-	var events []readapproval.Decision
-	var origins []string
-	gate := &ReadApprovalGate{
-		Decider: decider,
-		Cache:   cache,
-		OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
-			events = append(events, decision)
-			origins = append(origins, origin)
-		},
-	}
-
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/corrupt.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"docs/corrupt.md is not an explicit allowed candidate path.",
-	)
-	if override {
-		t.Fatal("cache error must fail closed")
-	}
-	if !strings.Contains(denialContext, "cache could not be loaded") {
-		t.Fatalf("cache-error context must mention cache load failure, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called when cache lookup errors; got %d calls", decider.calls)
-	}
-	if len(events) != 1 || events[0].Reason != readapproval.ReasonCacheUnavailable || events[0].Source != readapproval.SourceCache {
-		t.Fatalf("cache-error event mismatch: %#v", events)
-	}
-	if len(origins) != 1 || origins[0] != readapproval.EventOriginCacheLookup {
-		t.Fatalf("cache-error origin mismatch: %#v", origins)
-	}
-}
-
-func TestReadApprovalGateHandlesDeciderErrorAsDenied(t *testing.T) {
-	decider := &fakeDecider{err: errors.New("transport failed")}
-	cache := newFakeCache()
-	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
-
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"docs/foo.md is not an explicit allowed candidate path.",
-	)
-	if override {
-		t.Fatal("decider-error must not override rejection")
-	}
-	if denialContext == "" {
-		t.Fatal("decider-error should append default operator-denial context")
-	}
-	if len(cache.recorded) != 1 {
-		t.Fatalf("error-path decision must still be recorded for audit, got %d records", len(cache.recorded))
-	}
-	if cache.recorded[0].Reason != readapproval.ReasonNoDeciderWired {
-		t.Fatalf("error-path decision reason must be %q, got %q", readapproval.ReasonNoDeciderWired, cache.recorded[0].Reason)
-	}
-}
-
-func TestReadApprovalGateIgnoresEmptyPath(t *testing.T) {
-	decider := &fakeDecider{decision: readapproval.Decision{Outcome: readapproval.OutcomeApproved}}
-	gate := &ReadApprovalGate{Decider: decider}
-
-	override, denialContext := gate.MaybeOverrideRejection(
-		context.Background(),
-		"session-1",
-		workspace.ToolRequest{Tool: workspace.ToolNameSearchContent, Pattern: "foo"},
-		workerruntime.WorkerRuntimeBrief{},
-		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
-		"some text",
-	)
-	if override {
-		t.Fatal("empty path must not be overridable")
-	}
-	if denialContext != "" {
-		t.Fatalf("empty path must not append denial context, got %q", denialContext)
-	}
-	if decider.calls != 0 {
-		t.Fatalf("decider must not be called for empty path; got %d calls", decider.calls)
-	}
-}
+		gomega.Expect(override).To(gomega.BeTrue())
+		gomega.Expect(strings.TrimSpace(denialContext)).To(gomega.BeEmpty())
+	})
+})

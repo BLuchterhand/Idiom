@@ -2,6 +2,7 @@ package productevidence
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -915,7 +916,7 @@ func loadP711ValidationRecords(path string) ([]p711ValidationRecord, productEvid
 func loadP711LearningSummary(root string) (*comprehension.LearningLogSummary, productEvidenceSourceReference) {
 	path := filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl")
 	ref := productEvidenceSourceReference{ID: "ranker_learning_log", Kind: "learning", Status: "not_available", PathID: localops.PathEvidence(path)}
-	entries, err := comprehension.ReadLearningLog(root)
+	entries, err := comprehension.ReadLearningLog(context.Background(), root)
 
 	if err != nil || len(entries) == 0 {
 		return nil, ref

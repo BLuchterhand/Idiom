@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"idiom/internal/capabilities/workspace"
@@ -21,22 +23,27 @@ const (
 )
 
 type tuiReadApprovalDecider struct {
-	model *Model
-	cache agent.ReadApprovalCache
+	session   *promptExecutionSession
+	sessionID string
+	cache     agent.ReadApprovalCache
 }
 
-func newTuiReadApprovalDecider(m *Model) *tuiReadApprovalDecider {
+func newTuiReadApprovalDecider(session *promptExecutionSession) *tuiReadApprovalDecider {
 	d := &tuiReadApprovalDecider{
-		model: m,
+		session: session,
 	}
-	if m != nil && m.workspace != nil {
-		d.cache = readapprovalcache.NewFileCache(m.workspace.Root())
+	if session != nil {
+		d.sessionID, _ = workspace.ExecutionSessionIDFromContext(session.promptExecutionContext)
 	}
+	if session != nil && session.workspace != nil {
+		d.cache = readapprovalcache.NewFileCache(session.workspace.Root())
+	}
+
 	return d
 }
 
 func (d *tuiReadApprovalDecider) DecideRead(ctx context.Context, req readapproval.Request) (readapproval.Decision, error) {
-	if d == nil || d.model == nil {
+	if d == nil || d.session == nil {
 		return readapproval.Decision{
 			Outcome: readapproval.OutcomeDenied,
 			Reason:  readapproval.ReasonNoDeciderWired,
@@ -45,19 +52,48 @@ func (d *tuiReadApprovalDecider) DecideRead(ctx context.Context, req readapprova
 			Path:    req.Path,
 		}, readapproval.ErrNoDecider
 	}
+	expectedSessionID := strings.TrimSpace(d.sessionID)
+	contextSessionID, bound := workspace.ExecutionSessionIDFromContext(ctx)
+	if expectedSessionID == "" || !bound || strings.TrimSpace(contextSessionID) != expectedSessionID || strings.TrimSpace(req.SessionID) != expectedSessionID {
+		return readapproval.Decision{
+			Outcome: readapproval.OutcomeDenied,
+			Reason:  readapproval.ReasonNoDeciderWired,
+			Source:  readapproval.SourceNoDecider,
+			At:      time.Now(),
+			Path:    req.Path,
+		}, fmt.Errorf("read approval execution session does not match the prompt session")
+	}
+	if err := ctx.Err(); err != nil {
+		return readapproval.Decision{
+			Outcome: readapproval.OutcomeDenied,
+			Reason:  readapproval.ReasonOperatorDeniedLive,
+			Source:  readapproval.SourceOperator,
+			At:      time.Now(),
+			Path:    req.Path,
+		}, err
+	}
 
 	d.emitRequested(req)
 
-	approved := d.model.requestApproval(workspace.ToolRequest{
+	response := d.session.requestApprovalResponse(ctx, workspace.ToolRequest{
 		Tool: req.Tool,
 		Path: req.Path,
-	}, readApprovalModeName)
+	}, readApprovalModeName, nil)
+	if err := ctx.Err(); err != nil {
+		return readapproval.Decision{
+			Outcome: readapproval.OutcomeDenied,
+			Reason:  readapproval.ReasonOperatorDeniedLive,
+			Source:  readapproval.SourceOperator,
+			At:      time.Now(),
+			Path:    req.Path,
+		}, err
+	}
 
 	decision := readapproval.Decision{
 		At:   time.Now(),
 		Path: req.Path,
 	}
-	if approved {
+	if response.allow {
 		decision.Outcome = readapproval.OutcomeApproved
 		decision.Reason = readapproval.ReasonOperatorApprovedLive
 		decision.Source = readapproval.SourceOperator
@@ -71,10 +107,10 @@ func (d *tuiReadApprovalDecider) DecideRead(ctx context.Context, req readapprova
 }
 
 func (d *tuiReadApprovalDecider) emitRequested(req readapproval.Request) {
-	if d == nil || d.model == nil || d.model.eventStream == nil {
+	if d == nil || d.session == nil || d.session.eventStream == nil {
 		return
 	}
-	d.model.emitJSONEvent(map[string]any{
+	d.session.eventStream.emit(map[string]any{
 		"event":      readapproval.EventReadApprovalRequested,
 		"tool":       req.Tool,
 		"path":       req.Path,
@@ -84,10 +120,11 @@ func (d *tuiReadApprovalDecider) emitRequested(req readapproval.Request) {
 	})
 }
 
-func (m *Model) newReadApprovalGate() *agent.ReadApprovalGate {
+func (m *promptExecutionSession) newReadApprovalGate() *agent.ReadApprovalGate {
 	if m == nil {
 		return nil
 	}
+
 	decider := newTuiReadApprovalDecider(m)
 	return &agent.ReadApprovalGate{
 		Decider: decider,
@@ -96,7 +133,7 @@ func (m *Model) newReadApprovalGate() *agent.ReadApprovalGate {
 			if m.eventStream == nil {
 				return
 			}
-			m.emitJSONEvent(map[string]any{
+			m.eventStream.emit(map[string]any{
 				"event":      readapproval.EventReadApprovalDecision,
 				"tool":       req.Tool,
 				"path":       req.Path,
@@ -112,20 +149,30 @@ func (m *Model) newReadApprovalGate() *agent.ReadApprovalGate {
 }
 
 type tuiSystemSearchAccessApprover struct {
-	model *Model
+	session *promptExecutionSession
 }
 
-func newTuiSystemSearchAccessApprover(m *Model) *tuiSystemSearchAccessApprover {
-	return &tuiSystemSearchAccessApprover{model: m}
+func newTuiSystemSearchAccessApprover(session *promptExecutionSession) *tuiSystemSearchAccessApprover {
+	return &tuiSystemSearchAccessApprover{session: session}
 }
 
-func (a *tuiSystemSearchAccessApprover) ApproveSystemSearchAccess(_ context.Context, req workspace.SystemSearchAccessRequest) (workspace.SystemSearchAccessDecision, error) {
-	if a == nil || a.model == nil {
+func (a *tuiSystemSearchAccessApprover) ApproveSystemSearchAccess(ctx context.Context, req workspace.SystemSearchAccessRequest) (workspace.SystemSearchAccessDecision, error) {
+	if a == nil || a.session == nil {
 		return workspace.SystemSearchAccessDecision{}, nil
 	}
+	if ctx == nil {
+		ctx = a.session.promptExecutionContext
+	}
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return workspace.SystemSearchAccessDecision{}, ctx.Err()
+		default:
+		}
+	}
 
-	if a.model.eventStream != nil {
-		a.model.emitJSONEvent(map[string]any{
+	if a.session.eventStream != nil {
+		a.session.eventStream.emit(map[string]any{
 			"event":       systemSearchAccessRequestedEvent,
 			"path":        req.Path,
 			"session_id":  req.SessionID,
@@ -135,18 +182,18 @@ func (a *tuiSystemSearchAccessApprover) ApproveSystemSearchAccess(_ context.Cont
 		})
 	}
 
-	response := a.model.requestApprovalResponse(workspace.ToolRequest{
+	response := a.session.requestApprovalResponse(ctx, workspace.ToolRequest{
 		Tool:    workspace.ToolNameSystemSearchAccess,
 		Path:    req.Path,
 		Purpose: req.RequestReason,
-	}, systemSearchApprovalModeName)
+	}, systemSearchApprovalModeName, nil)
 
-	if a.model.eventStream != nil {
+	if a.session.eventStream != nil {
 		outcome := systemSearchAccessOutcomeDenied
 		if response.allow {
 			outcome = systemSearchAccessOutcomeApproved
 		}
-		a.model.emitJSONEvent(map[string]any{
+		a.session.eventStream.emit(map[string]any{
 			"event":      systemSearchAccessDecisionEvent,
 			"path":       req.Path,
 			"session_id": req.SessionID,
@@ -161,12 +208,4 @@ func (a *tuiSystemSearchAccessApprover) ApproveSystemSearchAccess(_ context.Cont
 		Approved: response.allow,
 		Scope:    response.scope,
 	}, nil
-}
-
-func (m *Model) wireSystemSearchAccessApprover() {
-	if m == nil || m.workspace == nil {
-		return
-	}
-
-	m.workspace.SetSystemSearchAccessApprover(newTuiSystemSearchAccessApprover(m))
 }

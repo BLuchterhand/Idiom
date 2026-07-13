@@ -1,0 +1,5 @@
+[
+  "{\"family\":\"locate\",\"initial_lane\":\"locate\",\"reason\":\"locate_request\",\"contract\":\"locate_targets\"}",
+  "{\"tool\":\"search_content\",\"pattern\":\"func ShortLabel\",\"path\":\".\",\"named_gap\":\"locate the exact ShortLabel definition\",\"why_not_answering\":\"need an exact path and line before answering\"}",
+  "ShortLabel is defined at internal/labels/labels.go:3. That declaration matches the requested symbol, and the next line returns the current label value."
+]

@@ -1,5 +1,3 @@
 [
-  "```tool\n{\"tool\":\"read_file\",\"path\":\".idiom/deny-read-test.txt\",\"start_line\":1,\"end_line\":100}\n```",
-  "```tool\n{\"tool\":\"read_file\",\"path\":\".idiom/deny-read-test.txt\",\"start_line\":1,\"end_line\":100}\n```",
   "```tool\n{\"tool\":\"read_file\",\"path\":\".idiom/deny-read-test.txt\",\"start_line\":1,\"end_line\":100}\n```"
 ]

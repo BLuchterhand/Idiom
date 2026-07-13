@@ -1,932 +1,702 @@
 package productworkflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestNextActionsForAllStates_TableDriven(t *testing.T) {
-	tests := []struct {
-		state           string
-		statusBucket    string
-		wantActions     []string
-		wantOwners      []string
-		wantBlocker     bool
-		wantBlockerCode string
-	}{
-		{
-			state: "planned", statusBucket: "started",
-			wantActions: []string{"submit_for_human_verification", "start_investigation"},
-			wantOwners:  []string{"planner", "investigator"},
-		},
-		{
-			state: "human_verification", statusBucket: "started",
-			wantActions: []string{"approve_for_implementation", "request_changes", "request_investigation"},
-			wantOwners:  []string{"operator", "operator", "operator"},
-		},
-		{
-			state: "implementing", statusBucket: "started",
-			wantActions: []string{"submit_for_verification", "mark_blocked"},
-			wantOwners:  []string{"implementor", "orchestrator"},
-		},
-		{
-			state: "verifying", statusBucket: "started",
-			wantActions: []string{"submit_for_review", "mark_blocked"},
-			wantOwners:  []string{"reviewer", "orchestrator"},
-		},
-		{
-			state: "reviewing", statusBucket: "started",
-			wantActions: []string{"request_changes", "request_investigation"},
-			wantOwners:  []string{"reviewer", "orchestrator"},
-		},
-		{
-			state: "investigating", statusBucket: "started",
-			wantActions: []string{"complete_investigation", "mark_blocked"},
-			wantOwners:  []string{"investigator", "orchestrator"},
-		},
-		{
-			state: "blocked", statusBucket: "started",
-			wantActions: []string{"resolve_blocker"},
-			wantOwners:  []string{"orchestrator"},
-		},
-		{
-			state: "closed", statusBucket: "closed",
-			wantActions: nil,
-		},
-		{
-			state: "", statusBucket: "unstarted",
-			wantActions: []string{"start"},
-			wantOwners:  []string{"orchestrator"},
-		},
-		{
-			state: "planned", statusBucket: "unstarted",
-			wantActions: []string{"start"},
-			wantOwners:  []string{"orchestrator"},
-		},
-		{
-			state:           "nonsense",
-			statusBucket:    "started",
-			wantBlocker:     true,
-			wantBlockerCode: "invalid_state",
-		},
-		{
-			state:           "planned",
-			statusBucket:    "garbage",
-			wantBlocker:     true,
-			wantBlockerCode: "invalid_status_bucket",
-		},
-	}
+var _ = ginkgo.Describe("transition", func() {
+	ginkgo.It("NextActionsForAllStates TableDriven", func() {
+		tests := []struct {
+			state           string
+			statusBucket    string
+			wantActions     []string
+			wantOwners      []string
+			wantBlocker     bool
+			wantBlockerCode string
+		}{
+			{
+				state: "planned", statusBucket: "started",
+				wantActions: []string{"submit_for_human_verification", "start_investigation"},
+				wantOwners:  []string{"planner", "investigator"},
+			},
+			{
+				state: "human_verification", statusBucket: "started",
+				wantActions: []string{"approve_for_implementation", "request_changes", "request_investigation"},
+				wantOwners:  []string{"operator", "operator", "operator"},
+			},
+			{
+				state: "implementing", statusBucket: "started",
+				wantActions: []string{"submit_for_verification", "mark_blocked"},
+				wantOwners:  []string{"implementor", "orchestrator"},
+			},
+			{
+				state: "verifying", statusBucket: "started",
+				wantActions: []string{"submit_for_review", "mark_blocked"},
+				wantOwners:  []string{"reviewer", "orchestrator"},
+			},
+			{
+				state: "reviewing", statusBucket: "started",
+				wantActions: []string{"request_changes", "request_investigation"},
+				wantOwners:  []string{"reviewer", "orchestrator"},
+			},
+			{
+				state: "investigating", statusBucket: "started",
+				wantActions: []string{"complete_investigation", "mark_blocked"},
+				wantOwners:  []string{"investigator", "orchestrator"},
+			},
+			{
+				state: "blocked", statusBucket: "started",
+				wantActions: []string{"resolve_blocker"},
+				wantOwners:  []string{"orchestrator"},
+			},
+			{
+				state: "closed", statusBucket: "closed",
+				wantActions: nil,
+			},
+			{
+				state: "", statusBucket: "unstarted",
+				wantActions: []string{"start"},
+				wantOwners:  []string{"orchestrator"},
+			},
+			{
+				state: "planned", statusBucket: "unstarted",
+				wantActions: []string{"start"},
+				wantOwners:  []string{"orchestrator"},
+			},
+			{
+				state:           "nonsense",
+				statusBucket:    "started",
+				wantBlocker:     true,
+				wantBlockerCode: "invalid_state",
+			},
+			{
+				state:           "planned",
+				statusBucket:    "garbage",
+				wantBlocker:     true,
+				wantBlockerCode: "invalid_status_bucket",
+			},
+		}
 
-	for _, tc := range tests {
-		t.Run(tc.state+"_"+tc.statusBucket, func(t *testing.T) {
-			actions, blockers := NextActionsForState(tc.statusBucket, tc.state)
-			if tc.wantBlocker {
-				if len(blockers) == 0 {
-					t.Fatalf("expected blocker with code %q, got none", tc.wantBlockerCode)
-				}
+		for _, tc := range tests {
+			ginkgo.By(tc.state+"_"+tc.statusBucket, func() {
+				actions, blockers := NextActionsForState(tc.statusBucket, tc.state)
+				if tc.wantBlocker {
+					gomega.Expect(len(blockers) == 0).To(gomega.BeFalse(), fmt.Sprintf("expected blocker with code %q, got none", tc.wantBlockerCode))
 
-				found := false
+					found := false
 
-				for _, b := range blockers {
-					if b.Code == tc.wantBlockerCode {
-						found = true
-						break
+					for _, b := range blockers {
+						if b.Code == tc.wantBlockerCode {
+							found = true
+							break
+						}
 					}
+					gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected blocker code %q, got %v", tc.wantBlockerCode, blockers))
+
+					return
 				}
+				gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+				gomega.Expect(len(actions) != len(tc.wantActions)).To(gomega.BeFalse(), fmt.Sprintf("expected %d actions, got %d: %v", len(tc.wantActions), len(actions), actions))
 
-				if !found {
-					t.Fatalf("expected blocker code %q, got %v", tc.wantBlockerCode, blockers)
+				for i, want := range tc.wantActions {
+					gomega.Expect(actions[i].Action != want).To(gomega.BeFalse(), fmt.Sprintf("action[%d]: expected %q, got %q (full: %v)", i, want, actions[i].Action, actions))
+					if tc.wantOwners != nil {
+						gomega.Expect(actions[i].Owner).To(gomega.Equal(tc.wantOwners[i]), fmt.Sprintf("action[%d] %q: expected owner %q, got %q", i, want, tc.wantOwners[i], actions[i].Owner))
+					}
+
 				}
-
-				return
-			}
-
-			if len(blockers) > 0 {
-				t.Fatalf("expected no blockers, got %v", blockers)
-			}
-
-			if len(actions) != len(tc.wantActions) {
-				t.Fatalf("expected %d actions, got %d: %v", len(tc.wantActions), len(actions), actions)
-			}
-
-			for i, want := range tc.wantActions {
-				if actions[i].Action != want {
-					t.Fatalf("action[%d]: expected %q, got %q (full: %v)", i, want, actions[i].Action, actions)
-				}
-
-				if tc.wantOwners != nil && actions[i].Owner != tc.wantOwners[i] {
-					t.Fatalf("action[%d] %q: expected owner %q, got %q", i, want, tc.wantOwners[i], actions[i].Owner)
-				}
-			}
-		})
-	}
-}
-
-func TestInvalidStateReturnsTypedBlocker(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "nonexistent",
-		RequestedAction: "start_implementation",
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blockers for invalid state")
-	}
-
-	if result.Blockers[0].Code != "invalid_state" {
-		t.Fatalf("expected blocker code invalid_state, got %q", result.Blockers[0].Code)
-	}
-
-	if !strings.Contains(result.Blockers[0].Message, "nonexistent") {
-		t.Fatalf("expected blocker message to mention state, got %q", result.Blockers[0].Message)
-	}
-}
-
-func TestInvalidStatusBucketReturnsTypedBlocker(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "bogus",
-		CurrentState:    "planned",
-		RequestedAction: "start_implementation",
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blockers for invalid status bucket")
-	}
-
-	if result.Blockers[0].Code != "invalid_status_bucket" {
-		t.Fatalf("expected blocker code invalid_status_bucket, got %q", result.Blockers[0].Code)
-	}
-}
-
-func TestInvalidActionReturnsTypedBlocker(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "planned",
-		RequestedAction: "teleport",
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blockers for invalid action")
-	}
-
-	if result.Blockers[0].Code != "invalid_action" {
-		t.Fatalf("expected blocker code invalid_action, got %q", result.Blockers[0].Code)
-	}
-
-	if !strings.Contains(result.Blockers[0].Message, "teleport") {
-		t.Fatalf("expected blocker message to mention action, got %q", result.Blockers[0].Message)
-	}
-
-	if len(result.NextValidActions) == 0 {
-		t.Fatal("expected NextValidActions for invalid action")
-	}
-}
-
-func TestTerminalClosedStatusBucketBlocksTransitions(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "closed",
-		CurrentState:    "closed",
-		RequestedAction: "start_implementation",
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blockers for closed status bucket")
-	}
-
-	if result.Blockers[0].Code != "terminal_status_bucket" {
-		t.Fatalf("expected blocker code terminal_status_bucket, got %q", result.Blockers[0].Code)
-	}
-}
-
-func TestCloseTransitionBlockedByOpenBlockers(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "approve",
-		OpenBlockers:    []string{"env_down"},
-		GateResults:     allGatesPassed(),
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected close blocked by open blockers")
-	}
-
-	found := false
-
-	for _, b := range result.Blockers {
-		if b.Code == "open_blockers" {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Fatalf("expected open_blockers blocker, got %v", result.Blockers)
-	}
-
-	if result.ToState != "" {
-		t.Fatalf("expected no state transition, got ToState %q", result.ToState)
-	}
-}
-
-func TestWriteProductWorkflowTransitionRejectsSymlinkedEventsParent(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
-
-	if err := os.WriteFile(filepath.Join(root, "workflow_state.json"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write workflow_state.json: %v", err)
-	}
-
-	if err := os.Symlink(outside, filepath.Join(root, "events")); err != nil {
-		t.Fatalf("symlink events parent: %v", err)
-	}
-
-	err := writeProductWorkflowTransition(root, WorkflowState{
-		ArtifactPaths: map[string]string{"events": "events/log.jsonl"},
-	}, ProductWorkflowTransitionEvent{Event: "transition_test"})
-	if err == nil {
-		t.Fatal("expected symlinked events parent to be rejected")
-	}
-
-	if !strings.Contains(err.Error(), "events must not be a symlink") {
-		t.Fatalf("expected symlink parent error, got %v", err)
-	}
-
-	if _, statErr := os.Stat(filepath.Join(outside, "log.jsonl")); !os.IsNotExist(statErr) {
-		t.Fatalf("transition must not write through symlinked events parent, stat err=%v", statErr)
-	}
-}
-
-func TestCloseTransitionBlockedByOpenObligations(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "approve",
-		OpenObligations: []string{"TDD-001"},
-		GateResults:     allGatesPassed(),
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected close blocked by open obligations")
-	}
-
-	found := false
-
-	for _, b := range result.Blockers {
-		if b.Code == "open_obligations" {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Fatalf("expected open_obligations blocker, got %v", result.Blockers)
-	}
-}
-
-func TestCloseTransitionBlockedByMissingVerificationGate(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "approve",
-		GateResults: []GateResult{
-			{Gate: "review", Status: "passed"},
-			{Gate: "investigation", Status: "passed"},
-		},
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected close blocked by missing verification gate")
-	}
-
-	found := false
-
-	for _, b := range result.Blockers {
-		if b.Code == "missing_gate" && strings.Contains(b.Message, "verification") {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Fatalf("expected missing_gate blocker for verification, got %v", result.Blockers)
-	}
-}
-
-func TestCloseTransitionBlockedByFailedReviewGate(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "approve",
-		GateResults: []GateResult{
-			{Gate: "verification", Status: "passed"},
-			{Gate: "review", Status: "failed"},
-			{Gate: "investigation", Status: "passed"},
-		},
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected close blocked by failed review gate")
-	}
-
-	found := false
-
-	for _, b := range result.Blockers {
-		if b.Code == "gate_not_passed" && strings.Contains(b.Message, "review") {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Fatalf("expected gate_not_passed blocker for review, got %v", result.Blockers)
-	}
-}
-
-func TestCloseTransitionBlockedByMissingInvestigationGate(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "approve",
-		GateResults: []GateResult{
-			{Gate: "verification", Status: "passed"},
-			{Gate: "review", Status: "passed"},
-		},
-	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected close blocked by missing investigation gate")
-	}
-
-	found := false
-
-	for _, b := range result.Blockers {
-		if b.Code == "missing_gate" && strings.Contains(b.Message, "investigation") {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Fatalf("expected missing_gate blocker for investigation, got %v", result.Blockers)
-	}
-}
-
-func TestCloseTransitionSucceedsWithAllPreconditionsMet(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "approve",
-		OpenBlockers:    nil,
-		OpenObligations: nil,
-		GateResults:     allGatesPassed(),
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "closed" {
-		t.Fatalf("expected ToState closed, got %q", result.ToState)
-	}
-
-	if result.FromState != "reviewing" {
-		t.Fatalf("expected FromState reviewing, got %q", result.FromState)
-	}
-}
-
-func TestApplyCloseTransitionPersistsClosedBucketAndState(t *testing.T) {
-	root := writeMetricsFixture(t)
-	data, err := os.ReadFile(filepath.Join(root, WorkflowStateFileName))
-	if err != nil {
-		t.Fatalf("read workflow state: %v", err)
-	}
-
-	wsJSON := string(data)
-	wsJSON = strings.Replace(wsJSON, `"current_state":"implementing"`, `"current_state":"reviewing"`, 1)
-	wsJSON = strings.Replace(wsJSON, `"gate_results":[{"gate":"scope","status":"pass"},{"gate":"verify","status":"fail"}]`, `"gate_results":[{"gate":"verification","status":"passed"},{"gate":"review","status":"passed"},{"gate":"investigation","status":"passed"}]`, 1)
-	wsJSON = strings.Replace(wsJSON, `"open_obligations":["OB-1","OB-2"]`, `"open_obligations":[]`, 1)
-	wsJSON = strings.Replace(wsJSON, `"blockers":["review pending"]`, `"blockers":[]`, 1)
-	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["close","retest"]`, `"next_valid_actions":["approve"]`, 1)
-
-	if err := os.WriteFile(filepath.Join(root, WorkflowStateFileName), []byte(wsJSON), 0o644); err != nil {
-		t.Fatalf("write workflow state: %v", err)
-	}
-	writeFixtureFile(t, root, "briefs/test.md", "# Brief\n\nClose the workflow.\n")
-	writeFixtureFile(t, root, "reports/r.json", "{}\n")
-	writeFixtureFile(t, root, "implementation_ledger.jsonl", `{"record_type":"atom_planned","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"m","command":"c"},"reviewer":{"id":"rev","model":"m","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["a.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/i-implementation.json","review":"reports/r-review.json","investigation":"reports/x-investigation.json"}}`+"\n"+`{"record_type":"verification_completed","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:01:00Z","tdd_obligations_satisfied":["TDD-1","TDD-2"],"verification_status":"pass","verification_commands_run":["go test"],"actor":"verifier"}`+"\n")
-
-	result := ApplyProductWorkflowTransition(ProductWorkflowTransitionApplyOptions{
-		EffortRoot:            root,
-		Action:                ProductWorkflowActionApprove,
-		Actor:                 ProductWorkflowActionOwnerReviewer,
-		UpdatedAt:             "2026-06-26T12:00:00Z",
-		EventID:               "evt-close-test",
-		ExpectedStateRevision: 7,
-	})
-	if result.Status != ProductWorkflowStatusApplied {
-		t.Fatalf("expected applied transition, got status=%q blockers=%v", result.Status, result.Blockers)
-	}
-	if result.UpdatedWorkflowState.StatusBucket != WorkflowStatusBucketClosed {
-		t.Fatalf("expected result status_bucket closed, got %q", result.UpdatedWorkflowState.StatusBucket)
-	}
-	if result.UpdatedWorkflowState.CurrentState != WorkflowStateClosed {
-		t.Fatalf("expected result current_state closed, got %q", result.UpdatedWorkflowState.CurrentState)
-	}
-	if len(result.UpdatedWorkflowState.NextValidActions) != 0 {
-		t.Fatalf("expected no next actions for closed workflow, got %v", result.UpdatedWorkflowState.NextValidActions)
-	}
-
-	persisted, err := LoadWorkflowState(root)
-	if err != nil {
-		t.Fatalf("reload workflow state: %v", err)
-	}
-	if persisted.StatusBucket != WorkflowStatusBucketClosed || persisted.CurrentState != WorkflowStateClosed {
-		t.Fatalf("expected persisted closed bucket/state, got bucket=%q state=%q", persisted.StatusBucket, persisted.CurrentState)
-	}
-
-	statusView, workflowState, err := LoadCheckedProductStatus(root)
-	if err != nil {
-		t.Fatalf("load checked status: %v", err)
-	}
-	operatorStatus := BuildProductOperatorStatusView(statusView, workflowState)
-	if operatorStatus.Dispatchable {
-		t.Fatal("closed workflow must not be dispatchable")
-	}
-	if operatorStatus.WorkflowTerminalState == "" {
-		t.Fatal("closed workflow should have a terminal projection")
-	}
-}
-
-func TestCloseTransitionBlockedByAllPreconditionsFailing(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "approve",
-		OpenBlockers:    []string{"b1"},
-		OpenObligations: []string{"o1"},
-		GateResults:     []GateResult{},
-	})
-	codes := map[string]bool{}
-
-	for _, b := range result.Blockers {
-		codes[b.Code] = true
-	}
-
-	for _, want := range []string{"open_blockers", "open_obligations", "missing_gate"} {
-		if !codes[want] {
-			t.Fatalf("expected blocker code %q, got blockers: %v", want, result.Blockers)
-		}
-	}
-}
-
-func TestApproveActionNotListedWhenPreconditionsNotMet(t *testing.T) {
-	actions, blockers := NextActionsForState("started", "reviewing")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
-
-	for _, a := range actions {
-		if a.Action == "approve" {
-			t.Fatal("approve should not appear in next actions when preconditions cannot be verified")
-		}
-	}
-}
-
-func TestApproveActionListedWhenPreconditionsMet(t *testing.T) {
-	gates := allGatesPassed()
-	actions := nextActionsFor("reviewing", gates)
-	found := false
-
-	for _, a := range actions {
-		if a.Action == "approve" {
-			found = true
-
-			if a.Owner != "reviewer" {
-				t.Fatalf("expected approve owner reviewer, got %q", a.Owner)
-			}
-
-			break
-		}
-	}
-
-	if !found {
-		t.Fatal("expected approve action when all gates passed")
-	}
-}
-
-func TestValidTransitionPlannedToHumanVerification(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "planned",
-		RequestedAction: "submit_for_human_verification",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "human_verification" {
-		t.Fatalf("expected ToState human_verification, got %q", result.ToState)
-	}
-}
-
-func TestValidTransitionHumanVerificationToImplementing(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "human_verification",
-		RequestedAction: "approve_for_implementation",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "implementing" {
-		t.Fatalf("expected ToState implementing, got %q", result.ToState)
-	}
-}
-
-func TestValidTransitionImplementingToVerifying(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "implementing",
-		RequestedAction: "submit_for_verification",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "verifying" {
-		t.Fatalf("expected ToState verifying, got %q", result.ToState)
-	}
-}
-
-func TestValidTransitionVerifyingToReviewing(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "verifying",
-		RequestedAction: "submit_for_review",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "reviewing" {
-		t.Fatalf("expected ToState reviewing, got %q", result.ToState)
-	}
-}
-
-func TestValidTransitionReviewingToImplementing(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "request_changes",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "implementing" {
-		t.Fatalf("expected ToState implementing, got %q", result.ToState)
-	}
-}
-
-func TestValidTransitionReviewingToInvestigating(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "reviewing",
-		RequestedAction: "request_investigation",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "investigating" {
-		t.Fatalf("expected ToState investigating, got %q", result.ToState)
-	}
-}
-
-func TestValidTransitionInvestigatingToReviewing(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "investigating",
-		RequestedAction: "complete_investigation",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "reviewing" {
-		t.Fatalf("expected ToState reviewing, got %q", result.ToState)
-	}
-}
-
-func TestValidTransitionBlockedToPlanned(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "blocked",
-		RequestedAction: "resolve_blocker",
-	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
-
-	if result.ToState != "planned" {
-		t.Fatalf("expected ToState planned, got %q", result.ToState)
-	}
-}
-
-func TestMarkBlockedFromMultipleStates(t *testing.T) {
-	for _, state := range []string{"implementing", "verifying", "investigating"} {
-		t.Run(state, func(t *testing.T) {
-			result := EvaluateTransition(TransitionInput{
-				StatusBucket:    "started",
-				CurrentState:    state,
-				RequestedAction: "mark_blocked",
 			})
-			if len(result.Blockers) > 0 {
-				t.Fatalf("expected no blockers, got %v", result.Blockers)
-			}
-
-			if result.ToState != "blocked" {
-				t.Fatalf("expected ToState blocked, got %q", result.ToState)
-			}
+		}
+	})
+	ginkgo.It("InvalidStateReturnsTypedBlocker", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "nonexistent",
+			RequestedAction: "start_implementation",
 		})
-	}
-}
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blockers for invalid state"))
+		gomega.Expect(result.Blockers[0].Code != "invalid_state").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_state, got %q", result.Blockers[0].Code))
+		gomega.Expect(!strings.Contains(result.Blockers[0].Message, "nonexistent")).To(gomega.BeFalse(), fmt.Sprintf("expected blocker message to mention state, got %q", result.Blockers[0].Message))
 
-func TestUnstartedStartTransition(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "unstarted",
-		CurrentState:    "",
-		RequestedAction: "start",
 	})
-	if len(result.Blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", result.Blockers)
-	}
+	ginkgo.It("InvalidStatusBucketReturnsTypedBlocker", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "bogus",
+			CurrentState:    "planned",
+			RequestedAction: "start_implementation",
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blockers for invalid status bucket"))
+		gomega.Expect(result.Blockers[0].Code != "invalid_status_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_status_bucket, got %q", result.Blockers[0].Code))
 
-	if result.ToState != "planned" {
-		t.Fatalf("expected ToState planned, got %q", result.ToState)
-	}
-}
-
-func TestUnstartedRejectsNonStartAction(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "unstarted",
-		CurrentState:    "",
-		RequestedAction: "start_implementation",
 	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blockers for non-start action on unstarted bucket")
-	}
+	ginkgo.It("InvalidActionReturnsTypedBlocker", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "planned",
+			RequestedAction: "teleport",
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blockers for invalid action"))
+		gomega.Expect(result.Blockers[0].Code != "invalid_action").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_action, got %q", result.Blockers[0].Code))
+		gomega.Expect(!strings.Contains(result.Blockers[0].Message, "teleport")).To(gomega.BeFalse(), fmt.Sprintf("expected blocker message to mention action, got %q", result.Blockers[0].Message))
+		gomega.Expect(len(result.NextValidActions) == 0).To(gomega.BeFalse(), fmt.Sprint("expected NextValidActions for invalid action"))
 
-	if result.Blockers[0].Code != "invalid_action" {
-		t.Fatalf("expected blocker code invalid_action, got %q", result.Blockers[0].Code)
-	}
-}
-
-func TestTransitionPurity_NoForbiddenImports(t *testing.T) {
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			break
-		}
-
-		next := filepath.Dir(dir)
-		if next == dir {
-			t.Fatal("could not find repo root")
-		}
-
-		dir = next
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "internal", "workflows", "productworkflow", "transition.go"))
-	if err != nil {
-		t.Fatalf("read transition.go: %v", err)
-	}
-
-	src := string(data)
-	forbidden := []string{
-		"os.", "io.", "net/", "http/",
-		"fmt.", "log.", "time.",
-		"sync.", "atomic.",
-		"path/", "filepath.",
-		"bufio.", "regexp.",
-		"exec.", "syscall.",
-		"runtime.", "debug.",
-		"json.", "xml.", "yaml.",
-	}
-
-	for _, f := range forbidden {
-		if strings.Contains(src, f) {
-			t.Fatalf("transition.go must not import %q (purity constraint)", f)
-		}
-	}
-}
-
-func TestNextActionsForClosedStatusBucketReturnsEmpty(t *testing.T) {
-	actions, blockers := NextActionsForState("closed", "closed")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
-
-	if len(actions) > 0 {
-		t.Fatalf("expected no actions for closed, got %v", actions)
-	}
-}
-
-func TestNextActionsStableOrder_Planned(t *testing.T) {
-	actions, blockers := NextActionsForState("started", "planned")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
-
-	want := []TransitionAction{
-		{Action: "submit_for_human_verification", Owner: "planner"},
-		{Action: "start_investigation", Owner: "investigator"},
-	}
-	if len(actions) != len(want) {
-		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
-	}
-
-	for i := range want {
-		if actions[i] != want[i] {
-			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
-		}
-	}
-}
-
-func TestNextActionsStableOrder_HumanVerification(t *testing.T) {
-	actions, blockers := NextActionsForState("started", "human_verification")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
-
-	want := []TransitionAction{
-		{Action: "approve_for_implementation", Owner: "operator"},
-		{Action: "request_changes", Owner: "operator"},
-		{Action: "request_investigation", Owner: "operator"},
-	}
-	if len(actions) != len(want) {
-		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
-	}
-
-	for i := range want {
-		if actions[i] != want[i] {
-			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
-		}
-	}
-}
-
-func TestNextActionsStableOrder_Reviewing(t *testing.T) {
-	actions, blockers := NextActionsForState("started", "reviewing")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
-
-	want := []TransitionAction{
-		{Action: "request_changes", Owner: "reviewer"},
-		{Action: "request_investigation", Owner: "orchestrator"},
-	}
-	if len(actions) != len(want) {
-		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
-	}
-
-	for i := range want {
-		if actions[i] != want[i] {
-			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
-		}
-	}
-}
-
-func TestNextActionsStableOrder_Implementing(t *testing.T) {
-	actions, blockers := NextActionsForState("started", "implementing")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
-
-	want := []TransitionAction{
-		{Action: "submit_for_verification", Owner: "implementor"},
-		{Action: "mark_blocked", Owner: "orchestrator"},
-	}
-	if len(actions) != len(want) {
-		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
-	}
-
-	for i := range want {
-		if actions[i] != want[i] {
-			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
-		}
-	}
-}
-
-func TestStableOrderHoldsAcrossRepeatedCalls(t *testing.T) {
-	for run := 0; run < 20; run++ {
-		actions, _ := NextActionsForState("started", "planned")
-		if len(actions) != 2 || actions[0].Action != "submit_for_human_verification" || actions[1].Action != "start_investigation" {
-			t.Fatalf("run %d: ordering changed: %v", run, actions)
-		}
-	}
-}
-
-func TestInvalidStateBucketConsistency_StartedBucketWithClosedState(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "started",
-		CurrentState:    "closed",
-		RequestedAction: "start_implementation",
 	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blocker for started bucket with closed state")
-	}
+	ginkgo.It("TerminalClosedStatusBucketBlocksTransitions", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "closed",
+			CurrentState:    "closed",
+			RequestedAction: "start_implementation",
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blockers for closed status bucket"))
+		gomega.Expect(result.Blockers[0].Code != "terminal_status_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code terminal_status_bucket, got %q", result.Blockers[0].Code))
 
-	if result.Blockers[0].Code != "invalid_state_bucket" {
-		t.Fatalf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code)
-	}
-}
-
-func TestInvalidStateBucketConsistency_ClosedBucketWithNonClosedState(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "closed",
-		CurrentState:    "planned",
-		RequestedAction: "start_implementation",
 	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blocker for closed bucket with non-closed state")
-	}
+	ginkgo.It("CloseTransitionBlockedByOpenBlockers", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "approve",
+			OpenBlockers:    []string{"env_down"},
+			GateResults:     allGatesPassed(),
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected close blocked by open blockers"))
 
-	if result.Blockers[0].Code != "invalid_state_bucket" {
-		t.Fatalf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code)
-	}
-}
+		found := false
 
-func TestInvalidStateBucketConsistency_UnstartedBucketWithImplementingState(t *testing.T) {
-	result := EvaluateTransition(TransitionInput{
-		StatusBucket:    "unstarted",
-		CurrentState:    "implementing",
-		RequestedAction: "start",
+		for _, b := range result.Blockers {
+			if b.Code == "open_blockers" {
+				found = true
+				break
+			}
+		}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected open_blockers blocker, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "").To(gomega.BeFalse(), fmt.Sprintf("expected no state transition, got ToState %q", result.ToState))
+
 	})
-	if len(result.Blockers) == 0 {
-		t.Fatal("expected blocker for unstarted bucket with implementing state")
-	}
+	ginkgo.It("WriteProductWorkflowTransitionRejectsSymlinkedEventsParent", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		outside := ginkgo.GinkgoT().TempDir()
+		{
 
-	if result.Blockers[0].Code != "invalid_state_bucket" {
-		t.Fatalf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code)
-	}
-}
+			err := os.WriteFile(filepath.Join(root, "workflow_state.json"), []byte("{}\n"), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write workflow_state.json: %v", err))
+		}
+		{
 
-func TestInvalidStateBucketConsistency_NextActionsForState_ClosedBucketNonClosedState(t *testing.T) {
-	_, blockers := NextActionsForState("closed", "planned")
-	if len(blockers) == 0 {
-		t.Fatal("expected blocker for closed bucket with non-closed state via NextActionsForState")
-	}
+			err := os.Symlink(outside, filepath.Join(root, "events"))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("symlink events parent: %v", err))
+		}
 
-	if blockers[0].Code != "invalid_state_bucket" {
-		t.Fatalf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code)
-	}
-}
+		rootHandle, err := os.OpenRoot(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(rootHandle.Close)
+		lease := &productWorkflowMutationLease{root: rootHandle, effortRoot: root}
 
-func TestInvalidStateBucketConsistency_NextActionsForState_StartedBucketClosedState(t *testing.T) {
-	_, blockers := NextActionsForState("started", "closed")
-	if len(blockers) == 0 {
-		t.Fatal("expected blocker for started bucket with closed state via NextActionsForState")
-	}
+		err = writeProductWorkflowTransition(lease, WorkflowState{
+			ArtifactPaths: map[string]string{"events": "events/log.jsonl"},
+		}, ProductWorkflowTransitionEvent{Event: "transition_test"})
+		gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected symlinked events parent to be rejected"))
+		gomega.Expect(!strings.Contains(err.Error(), "events must not be a symlink")).To(gomega.BeFalse(), fmt.Sprintf("expected symlink parent error, got %v", err))
+		{
 
-	if blockers[0].Code != "invalid_state_bucket" {
-		t.Fatalf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code)
-	}
-}
+			_, statErr := os.Stat(filepath.Join(outside, "log.jsonl"))
+			gomega.Expect(!os.IsNotExist(statErr)).To(gomega.BeFalse(), fmt.Sprintf("transition must not write through symlinked events parent, stat err=%v", statErr))
+		}
 
-func TestInvalidStateBucketConsistency_NextActionsForState_UnstartedBucketImplementingState(t *testing.T) {
-	actions, blockers := NextActionsForState("unstarted", "implementing")
-	if len(blockers) == 0 {
-		t.Fatal("expected blocker for unstarted bucket with implementing state via NextActionsForState")
-	}
+	})
+	ginkgo.It("CloseTransitionBlockedByOpenObligations", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "approve",
+			OpenObligations: []string{"TDD-001"},
+			GateResults:     allGatesPassed(),
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected close blocked by open obligations"))
 
-	if blockers[0].Code != "invalid_state_bucket" {
-		t.Fatalf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code)
-	}
+		found := false
 
-	if len(actions) != 0 {
-		t.Fatalf("expected no actions, got %v", actions)
-	}
-}
+		for _, b := range result.Blockers {
+			if b.Code == "open_obligations" {
+				found = true
+				break
+			}
+		}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected open_obligations blocker, got %v", result.Blockers))
 
-func TestValidStateBucketConsistency_UnstartedBucketEmptyState(t *testing.T) {
-	actions, blockers := NextActionsForState("unstarted", "")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
+	})
+	ginkgo.It("CloseTransitionBlockedByMissingVerificationGate", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "approve",
+			GateResults: []GateResult{
+				{Gate: "review", Status: "passed"},
+				{Gate: "investigation", Status: "passed"},
+			},
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected close blocked by missing verification gate"))
 
-	if len(actions) != 1 || actions[0].Action != "start" {
-		t.Fatalf("expected [start], got %v", actions)
-	}
-}
+		found := false
 
-func TestValidStateBucketConsistency_UnstartedBucketPlannedState(t *testing.T) {
-	actions, blockers := NextActionsForState("unstarted", "planned")
-	if len(blockers) > 0 {
-		t.Fatalf("expected no blockers, got %v", blockers)
-	}
+		for _, b := range result.Blockers {
+			if b.Code == "missing_gate" && strings.Contains(b.Message, "verification") {
+				found = true
+				break
+			}
+		}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected missing_gate blocker for verification, got %v", result.Blockers))
 
-	if len(actions) != 1 || actions[0].Action != "start" {
-		t.Fatalf("expected [start], got %v", actions)
-	}
-}
+	})
+	ginkgo.It("CloseTransitionBlockedByFailedReviewGate", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "approve",
+			GateResults: []GateResult{
+				{Gate: "verification", Status: "passed"},
+				{Gate: "review", Status: "failed"},
+				{Gate: "investigation", Status: "passed"},
+			},
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected close blocked by failed review gate"))
+
+		found := false
+
+		for _, b := range result.Blockers {
+			if b.Code == "gate_not_passed" && strings.Contains(b.Message, "review") {
+				found = true
+				break
+			}
+		}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected gate_not_passed blocker for review, got %v", result.Blockers))
+
+	})
+	ginkgo.It("CloseTransitionBlockedByMissingInvestigationGate", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "approve",
+			GateResults: []GateResult{
+				{Gate: "verification", Status: "passed"},
+				{Gate: "review", Status: "passed"},
+			},
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected close blocked by missing investigation gate"))
+
+		found := false
+
+		for _, b := range result.Blockers {
+			if b.Code == "missing_gate" && strings.Contains(b.Message, "investigation") {
+				found = true
+				break
+			}
+		}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprintf("expected missing_gate blocker for investigation, got %v", result.Blockers))
+
+	})
+	ginkgo.It("CloseTransitionSucceedsWithAllPreconditionsMet", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "approve",
+			OpenBlockers:    nil,
+			OpenObligations: nil,
+			GateResults:     allGatesPassed(),
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "closed").To(gomega.BeFalse(), fmt.Sprintf("expected ToState closed, got %q", result.ToState))
+		gomega.Expect(result.FromState != "reviewing").To(gomega.BeFalse(), fmt.Sprintf("expected FromState reviewing, got %q", result.FromState))
+
+	})
+	ginkgo.It("ApplyCloseTransitionPersistsClosedBucketAndState", func() {
+		root := writeMetricsFixture()
+		data, err := os.ReadFile(filepath.Join(root, WorkflowStateFileName))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read workflow state: %v", err))
+
+		wsJSON := string(data)
+		wsJSON = strings.Replace(wsJSON, `"current_state":"implementing"`, `"current_state":"reviewing"`, 1)
+		wsJSON = strings.Replace(wsJSON, `"gate_results":[{"gate":"scope","status":"pass"},{"gate":"verify","status":"fail"}]`, `"gate_results":[{"gate":"verification","status":"passed"},{"gate":"review","status":"passed"},{"gate":"investigation","status":"passed"}]`, 1)
+		wsJSON = strings.Replace(wsJSON, `"open_obligations":["OB-1","OB-2"]`, `"open_obligations":[]`, 1)
+		wsJSON = strings.Replace(wsJSON, `"blockers":["review pending"]`, `"blockers":[]`, 1)
+		wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["close","retest"]`, `"next_valid_actions":["approve"]`, 1)
+		{
+
+			err := os.WriteFile(filepath.Join(root, WorkflowStateFileName), []byte(wsJSON), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write workflow state: %v", err))
+		}
+
+		writeFixtureFile(root, "briefs/test.md", "# Brief\n\nClose the workflow.\n")
+		writeFixtureFile(root, "reports/r.json", "{}\n")
+		writeFixtureFile(root, productWorkflowDefaultEventsPath, "")
+		writeFixtureFile(root, "implementation_ledger.jsonl", `{"record_type":"atom_planned","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"m","command":"c"},"reviewer":{"id":"rev","model":"m","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["a.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/i-implementation.json","review":"reports/r-review.json","investigation":"reports/x-investigation.json"}}`+"\n"+`{"record_type":"verification_completed","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:01:00Z","tdd_obligations_satisfied":["TDD-1","TDD-2"],"verification_status":"pass","verification_commands_run":["go test"],"actor":"verifier"}`+"\n")
+
+		result := ApplyProductWorkflowTransition(ProductWorkflowTransitionApplyOptions{
+			EffortRoot:            root,
+			Action:                ProductWorkflowActionApprove,
+			Actor:                 ProductWorkflowActionOwnerReviewer,
+			UpdatedAt:             "2026-06-26T12:00:00Z",
+			EventID:               "evt-close-test",
+			ExpectedStateRevision: 7,
+		})
+		gomega.Expect(result.Status != ProductWorkflowStatusApplied).To(gomega.BeFalse(), fmt.Sprintf("expected applied transition, got status=%q blockers=%v", result.Status, result.Blockers))
+		gomega.Expect(result.UpdatedWorkflowState.StatusBucket != WorkflowStatusBucketClosed).To(gomega.BeFalse(), fmt.Sprintf("expected result status_bucket closed, got %q", result.UpdatedWorkflowState.StatusBucket))
+		gomega.Expect(result.UpdatedWorkflowState.CurrentState != WorkflowStateClosed).To(gomega.BeFalse(), fmt.Sprintf("expected result current_state closed, got %q", result.UpdatedWorkflowState.CurrentState))
+		gomega.Expect(len(result.UpdatedWorkflowState.NextValidActions) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected no next actions for closed workflow, got %v", result.UpdatedWorkflowState.NextValidActions))
+
+		persisted, err := LoadWorkflowState(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("reload workflow state: %v", err))
+		gomega.Expect(persisted.StatusBucket).To(gomega.Equal(WorkflowStatusBucketClosed), fmt.Sprintf("expected persisted closed bucket/state, got bucket=%q state=%q", persisted.StatusBucket, persisted.CurrentState))
+		gomega.Expect(persisted.CurrentState).To(gomega.Equal(WorkflowStateClosed), fmt.Sprintf("expected persisted closed bucket/state, got bucket=%q state=%q", persisted.StatusBucket, persisted.CurrentState))
+
+		statusView, workflowState, err := LoadCheckedProductStatus(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("load checked status: %v", err))
+
+		operatorStatus := BuildProductOperatorStatusView(statusView, workflowState)
+		gomega.Expect(operatorStatus.Dispatchable).To(gomega.BeFalse(), fmt.Sprint("closed workflow must not be dispatchable"))
+		gomega.Expect(operatorStatus.WorkflowTerminalState == "").To(gomega.BeFalse(), fmt.Sprint("closed workflow should have a terminal projection"))
+
+	})
+	ginkgo.It("CloseTransitionBlockedByAllPreconditionsFailing", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "approve",
+			OpenBlockers:    []string{"b1"},
+			OpenObligations: []string{"o1"},
+			GateResults:     []GateResult{},
+		})
+		codes := map[string]bool{}
+
+		for _, b := range result.Blockers {
+			codes[b.Code] = true
+		}
+
+		for _, want := range []string{"open_blockers", "open_obligations", "missing_gate"} {
+			gomega.Expect(!codes[want]).To(gomega.BeFalse(), fmt.Sprintf("expected blocker code %q, got blockers: %v", want, result.Blockers))
+
+		}
+	})
+	ginkgo.It("ApproveActionNotListedWhenPreconditionsNotMet", func() {
+		actions, blockers := NextActionsForState("started", "reviewing")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+
+		for _, a := range actions {
+			gomega.Expect(a.Action == "approve").To(gomega.BeFalse(), fmt.Sprint("approve should not appear in next actions when preconditions cannot be verified"))
+
+		}
+	})
+	ginkgo.It("ApproveActionListedWhenPreconditionsMet", func() {
+		gates := allGatesPassed()
+		actions := nextActionsFor("reviewing", gates)
+		found := false
+
+		for _, a := range actions {
+			if a.Action == "approve" {
+				found = true
+				gomega.Expect(a.Owner != "reviewer").To(gomega.BeFalse(), fmt.Sprintf("expected approve owner reviewer, got %q", a.Owner))
+
+				break
+			}
+		}
+		gomega.Expect(!found).To(gomega.BeFalse(), fmt.Sprint("expected approve action when all gates passed"))
+
+	})
+	ginkgo.It("ValidTransitionPlannedToHumanVerification", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "planned",
+			RequestedAction: "submit_for_human_verification",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "human_verification").To(gomega.BeFalse(), fmt.Sprintf("expected ToState human_verification, got %q", result.ToState))
+
+	})
+	ginkgo.It("ValidTransitionHumanVerificationToImplementing", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "human_verification",
+			RequestedAction: "approve_for_implementation",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "implementing").To(gomega.BeFalse(), fmt.Sprintf("expected ToState implementing, got %q", result.ToState))
+
+	})
+	ginkgo.It("ValidTransitionImplementingToVerifying", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "implementing",
+			RequestedAction: "submit_for_verification",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "verifying").To(gomega.BeFalse(), fmt.Sprintf("expected ToState verifying, got %q", result.ToState))
+
+	})
+	ginkgo.It("ValidTransitionVerifyingToReviewing", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "verifying",
+			RequestedAction: "submit_for_review",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "reviewing").To(gomega.BeFalse(), fmt.Sprintf("expected ToState reviewing, got %q", result.ToState))
+
+	})
+	ginkgo.It("ValidTransitionReviewingToImplementing", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "request_changes",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "implementing").To(gomega.BeFalse(), fmt.Sprintf("expected ToState implementing, got %q", result.ToState))
+
+	})
+	ginkgo.It("ValidTransitionReviewingToInvestigating", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "reviewing",
+			RequestedAction: "request_investigation",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "investigating").To(gomega.BeFalse(), fmt.Sprintf("expected ToState investigating, got %q", result.ToState))
+
+	})
+	ginkgo.It("ValidTransitionInvestigatingToReviewing", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "investigating",
+			RequestedAction: "complete_investigation",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "reviewing").To(gomega.BeFalse(), fmt.Sprintf("expected ToState reviewing, got %q", result.ToState))
+
+	})
+	ginkgo.It("ValidTransitionBlockedToPlanned", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "blocked",
+			RequestedAction: "resolve_blocker",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "planned").To(gomega.BeFalse(), fmt.Sprintf("expected ToState planned, got %q", result.ToState))
+
+	})
+	ginkgo.It("MarkBlockedFromMultipleStates", func() {
+		for _, state := range []string{"implementing", "verifying", "investigating"} {
+			ginkgo.By(state, func() {
+				result := EvaluateTransition(TransitionInput{
+					StatusBucket:    "started",
+					CurrentState:    state,
+					RequestedAction: "mark_blocked",
+				})
+				gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+				gomega.Expect(result.ToState != "blocked").To(gomega.BeFalse(), fmt.Sprintf("expected ToState blocked, got %q", result.ToState))
+
+			})
+		}
+	})
+	ginkgo.It("UnstartedStartTransition", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "unstarted",
+			CurrentState:    "",
+			RequestedAction: "start",
+		})
+		gomega.Expect(len(result.Blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", result.Blockers))
+		gomega.Expect(result.ToState != "planned").To(gomega.BeFalse(), fmt.Sprintf("expected ToState planned, got %q", result.ToState))
+
+	})
+	ginkgo.It("UnstartedRejectsNonStartAction", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "unstarted",
+			CurrentState:    "",
+			RequestedAction: "start_implementation",
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blockers for non-start action on unstarted bucket"))
+		gomega.Expect(result.Blockers[0].Code != "invalid_action").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_action, got %q", result.Blockers[0].Code))
+
+	})
+	ginkgo.It("TransitionPurity NoForbiddenImports", func() {
+		dir, err := os.Getwd()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprint(err))
+
+		for {
+			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+				break
+			}
+
+			next := filepath.Dir(dir)
+			gomega.Expect(next == dir).To(gomega.BeFalse(), fmt.Sprint("could not find repo root"))
+
+			dir = next
+		}
+
+		data, err := os.ReadFile(filepath.Join(dir, "internal", "workflows", "productworkflow", "transition.go"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read transition.go: %v", err))
+
+		src := string(data)
+		forbidden := []string{
+			"os.", "io.", "net/", "http/",
+			"fmt.", "log.", "time.",
+			"sync.", "atomic.",
+			"path/", "filepath.",
+			"bufio.", "regexp.",
+			"exec.", "syscall.",
+			"runtime.", "debug.",
+			"json.", "xml.", "yaml.",
+		}
+
+		for _, f := range forbidden {
+			gomega.Expect(strings.Contains(src, f)).To(gomega.BeFalse(), fmt.Sprintf("transition.go must not import %q (purity constraint)", f))
+
+		}
+	})
+	ginkgo.It("NextActionsForClosedStatusBucketReturnsEmpty", func() {
+		actions, blockers := NextActionsForState("closed", "closed")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+		gomega.Expect(len(actions) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no actions for closed, got %v", actions))
+
+	})
+	ginkgo.It("NextActionsStableOrder Planned", func() {
+		actions, blockers := NextActionsForState("started", "planned")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+
+		want := []TransitionAction{
+			{Action: "submit_for_human_verification", Owner: "planner"},
+			{Action: "start_investigation", Owner: "investigator"},
+		}
+		gomega.Expect(len(actions) != len(want)).To(gomega.BeFalse(), fmt.Sprintf("expected %d actions, got %d: %v", len(want), len(actions), actions))
+
+		for i := range want {
+			gomega.Expect(actions[i] != want[i]).To(gomega.BeFalse(), fmt.Sprintf("action[%d]: expected %+v, got %+v", i, want[i], actions[i]))
+
+		}
+	})
+	ginkgo.It("NextActionsStableOrder HumanVerification", func() {
+		actions, blockers := NextActionsForState("started", "human_verification")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+
+		want := []TransitionAction{
+			{Action: "approve_for_implementation", Owner: "operator"},
+			{Action: "request_changes", Owner: "operator"},
+			{Action: "request_investigation", Owner: "operator"},
+		}
+		gomega.Expect(len(actions) != len(want)).To(gomega.BeFalse(), fmt.Sprintf("expected %d actions, got %d: %v", len(want), len(actions), actions))
+
+		for i := range want {
+			gomega.Expect(actions[i] != want[i]).To(gomega.BeFalse(), fmt.Sprintf("action[%d]: expected %+v, got %+v", i, want[i], actions[i]))
+
+		}
+	})
+	ginkgo.It("NextActionsStableOrder Reviewing", func() {
+		actions, blockers := NextActionsForState("started", "reviewing")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+
+		want := []TransitionAction{
+			{Action: "request_changes", Owner: "reviewer"},
+			{Action: "request_investigation", Owner: "orchestrator"},
+		}
+		gomega.Expect(len(actions) != len(want)).To(gomega.BeFalse(), fmt.Sprintf("expected %d actions, got %d: %v", len(want), len(actions), actions))
+
+		for i := range want {
+			gomega.Expect(actions[i] != want[i]).To(gomega.BeFalse(), fmt.Sprintf("action[%d]: expected %+v, got %+v", i, want[i], actions[i]))
+
+		}
+	})
+	ginkgo.It("NextActionsStableOrder Implementing", func() {
+		actions, blockers := NextActionsForState("started", "implementing")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+
+		want := []TransitionAction{
+			{Action: "submit_for_verification", Owner: "implementor"},
+			{Action: "mark_blocked", Owner: "orchestrator"},
+		}
+		gomega.Expect(len(actions) != len(want)).To(gomega.BeFalse(), fmt.Sprintf("expected %d actions, got %d: %v", len(want), len(actions), actions))
+
+		for i := range want {
+			gomega.Expect(actions[i] != want[i]).To(gomega.BeFalse(), fmt.Sprintf("action[%d]: expected %+v, got %+v", i, want[i], actions[i]))
+
+		}
+	})
+	ginkgo.It("StableOrderHoldsAcrossRepeatedCalls", func() {
+		for run := 0; run < 20; run++ {
+			actions, _ := NextActionsForState("started", "planned")
+			gomega.Expect(actions).To(gomega.HaveLen(2), fmt.Sprintf("run %d: ordering changed: %v", run, actions))
+			gomega.Expect(actions[0].Action).To(gomega.Equal("submit_for_human_verification"), fmt.Sprintf("run %d: ordering changed: %v", run, actions))
+			gomega.Expect(actions[1].Action).To(gomega.Equal("start_investigation"), fmt.Sprintf("run %d: ordering changed: %v", run, actions))
+
+		}
+	})
+	ginkgo.It("InvalidStateBucketConsistency StartedBucketWithClosedState", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "started",
+			CurrentState:    "closed",
+			RequestedAction: "start_implementation",
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blocker for started bucket with closed state"))
+		gomega.Expect(result.Blockers[0].Code != "invalid_state_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code))
+
+	})
+	ginkgo.It("InvalidStateBucketConsistency ClosedBucketWithNonClosedState", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "closed",
+			CurrentState:    "planned",
+			RequestedAction: "start_implementation",
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blocker for closed bucket with non-closed state"))
+		gomega.Expect(result.Blockers[0].Code != "invalid_state_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code))
+
+	})
+	ginkgo.It("InvalidStateBucketConsistency UnstartedBucketWithImplementingState", func() {
+		result := EvaluateTransition(TransitionInput{
+			StatusBucket:    "unstarted",
+			CurrentState:    "implementing",
+			RequestedAction: "start",
+		})
+		gomega.Expect(len(result.Blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blocker for unstarted bucket with implementing state"))
+		gomega.Expect(result.Blockers[0].Code != "invalid_state_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code))
+
+	})
+	ginkgo.It("InvalidStateBucketConsistency NextActionsForState ClosedBucketNonClosedState", func() {
+		_, blockers := NextActionsForState("closed", "planned")
+		gomega.Expect(len(blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blocker for closed bucket with non-closed state via NextActionsForState"))
+		gomega.Expect(blockers[0].Code != "invalid_state_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code))
+
+	})
+	ginkgo.It("InvalidStateBucketConsistency NextActionsForState StartedBucketClosedState", func() {
+		_, blockers := NextActionsForState("started", "closed")
+		gomega.Expect(len(blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blocker for started bucket with closed state via NextActionsForState"))
+		gomega.Expect(blockers[0].Code != "invalid_state_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code))
+
+	})
+	ginkgo.It("InvalidStateBucketConsistency NextActionsForState UnstartedBucketImplementingState", func() {
+		actions, blockers := NextActionsForState("unstarted", "implementing")
+		gomega.Expect(len(blockers) == 0).To(gomega.BeFalse(), fmt.Sprint("expected blocker for unstarted bucket with implementing state via NextActionsForState"))
+		gomega.Expect(blockers[0].Code != "invalid_state_bucket").To(gomega.BeFalse(), fmt.Sprintf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code))
+		gomega.Expect(len(actions) != 0).To(gomega.BeFalse(), fmt.Sprintf("expected no actions, got %v", actions))
+
+	})
+	ginkgo.It("ValidStateBucketConsistency UnstartedBucketEmptyState", func() {
+		actions, blockers := NextActionsForState("unstarted", "")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+		gomega.Expect(actions).To(gomega.HaveLen(1), fmt.Sprintf("expected [start], got %v", actions))
+		gomega.Expect(actions[0].Action).To(gomega.Equal("start"), fmt.Sprintf("expected [start], got %v", actions))
+
+	})
+	ginkgo.It("ValidStateBucketConsistency UnstartedBucketPlannedState", func() {
+		actions, blockers := NextActionsForState("unstarted", "planned")
+		gomega.Expect(len(blockers) > 0).To(gomega.BeFalse(), fmt.Sprintf("expected no blockers, got %v", blockers))
+		gomega.Expect(actions).To(gomega.HaveLen(1), fmt.Sprintf("expected [start], got %v", actions))
+		gomega.Expect(actions[0].Action).To(gomega.Equal("start"), fmt.Sprintf("expected [start], got %v", actions))
+
+	})
+})
 
 func allGatesPassed() []GateResult {
 	return []GateResult{

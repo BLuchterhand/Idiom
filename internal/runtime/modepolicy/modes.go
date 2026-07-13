@@ -1,15 +1,14 @@
 package modepolicy
 
 import (
-	"strings"
-
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/contracts/toolpolicy"
 )
 
 // Mode is a user-selectable agent profile. Each Mode bundles a system-prompt
 // identity, a static permission ruleset, and a step cap.
 type Mode struct {
-	Name              string
+	Name              runprofile.AgentMode
 	Description       string
 	SystemPromptFiles []string
 	PermissionRules   map[string][]toolpolicy.Rule
@@ -18,7 +17,7 @@ type Mode struct {
 
 func BuildMode() Mode {
 	return Mode{
-		Name:              "build",
+		Name:              runprofile.AgentModeBuild,
 		Description:       "Full read/write/shell capability. The default for interactive development.",
 		SystemPromptFiles: []string{"prompts/base.md"},
 		PermissionRules: map[string][]toolpolicy.Rule{
@@ -36,7 +35,7 @@ func BuildMode() Mode {
 
 func PlanMode() Mode {
 	return Mode{
-		Name:              "plan",
+		Name:              runprofile.AgentModePlan,
 		Description:       "Read-only. Edits and mutating shell are denied. Use when you want the agent to think, not act.",
 		SystemPromptFiles: []string{"prompts/base.md", "prompts/plan-mode.md"},
 		PermissionRules: map[string][]toolpolicy.Rule{
@@ -60,7 +59,7 @@ func PlanMode() Mode {
 
 func GeneralMode() Mode {
 	return Mode{
-		Name:              "general",
+		Name:              runprofile.AgentModeGeneral,
 		Description:       "Reads freely; writes require approval. Use when you aren't sure what the agent should be allowed to do.",
 		SystemPromptFiles: []string{"prompts/base.md"},
 		PermissionRules: map[string][]toolpolicy.Rule{
@@ -84,9 +83,13 @@ func DefaultModes() []Mode {
 }
 
 func ModeByName(name string) (Mode, bool) {
-	name = strings.TrimSpace(strings.ToLower(name))
+	parsed, ok := runprofile.ParseAgentMode(name)
+	if !ok {
+		return Mode{}, false
+	}
+
 	for _, mode := range DefaultModes() {
-		if mode.Name == name {
+		if mode.Name == parsed {
 			return mode, true
 		}
 	}

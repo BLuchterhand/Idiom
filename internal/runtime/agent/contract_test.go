@@ -1,14 +1,15 @@
 package agent
 
 import (
-	"testing"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 )
 
 // --- contract parity tests ---
-func TestCompareParityReportsMatchingDecisions(t *testing.T) {
+var _ = ginkgo.It("CompareParityReportsMatchingDecisions", func() {
 	report := CompareParity(ParityInput{
 		ContractID:               "contract",
 		ProtocolHash:             "protocol",
@@ -22,15 +23,14 @@ func TestCompareParityReportsMatchingDecisions(t *testing.T) {
 		ObligationDeltasAfter:    []string{"source_body:closed"},
 	})
 
-	if report.Diverged || report.DivergenceReason != "" {
-		t.Fatalf("expected no divergence: %#v", report)
-	}
-	if report.ContractID != "contract" || report.ProtocolHash != "protocol" || report.SurfaceID != "visible_tool_manifest" {
-		t.Fatalf("report dropped provenance: %#v", report)
-	}
-}
+	gomega.Expect(report.Diverged).To(gomega.BeFalse(), "report=%#v", report)
+	gomega.Expect(report.DivergenceReason).To(gomega.BeEmpty(), "report=%#v", report)
+	gomega.Expect(report.ContractID).To(gomega.Equal("contract"), "report=%#v", report)
+	gomega.Expect(report.ProtocolHash).To(gomega.Equal("protocol"), "report=%#v", report)
+	gomega.Expect(report.SurfaceID).To(gomega.Equal("visible_tool_manifest"), "report=%#v", report)
+})
 
-func TestCompareParityReportsDivergenceWithReason(t *testing.T) {
+var _ = ginkgo.It("CompareParityReportsDivergenceWithReason", func() {
 	report := CompareParity(ParityInput{
 		ContractID:   "contract",
 		ProtocolHash: "protocol",
@@ -40,34 +40,29 @@ func TestCompareParityReportsDivergenceWithReason(t *testing.T) {
 		NewDecision:  "reject",
 	})
 
-	if !report.Diverged || report.DivergenceReason != "decision_mismatch" {
-		t.Fatalf("expected decision divergence: %#v", report)
-	}
-}
+	gomega.Expect(report.Diverged).To(gomega.BeTrue(), "report=%#v", report)
+	gomega.Expect(report.DivergenceReason).To(gomega.Equal("decision_mismatch"), "report=%#v", report)
+})
 
 // --- turn contract projection tests ---
-func TestTurnContractHasActiveAuthority(t *testing.T) {
-	if (TurnContract{ContractID: "contract", ProtocolHash: "hash", InvariantIDs: []string{"contract.active_authority"}}).HasActiveAuthority() != true {
-		t.Fatal("expected active authority when contract and protocol refs are present")
-	}
-	if (TurnContract{ContractID: "contract"}).HasActiveAuthority() {
-		t.Fatal("expected missing protocol ref to be inactive")
-	}
-}
+var _ = ginkgo.It("TurnContractHasActiveAuthority", func() {
+	gomega.Expect((TurnContract{
+		ContractID:   "contract",
+		ProtocolHash: "hash",
+		InvariantIDs: []string{"contract.active_authority"},
+	}).HasActiveAuthority()).To(gomega.BeTrue())
+	gomega.Expect((TurnContract{ContractID: "contract"}).HasActiveAuthority()).To(gomega.BeFalse())
+})
 
-func TestTurnContractWithProtocolHash(t *testing.T) {
+var _ = ginkgo.It("TurnContractWithProtocolHash", func() {
 	contract := TurnContract{ContractID: "contract", ProtocolHash: "old"}
 
 	got := contract.WithProtocolHash("new")
-	if got.ProtocolHash != "new" {
-		t.Fatalf("ProtocolHash = %q, want new", got.ProtocolHash)
-	}
-	if got := contract.WithProtocolHash(""); got.ProtocolHash != "old" {
-		t.Fatalf("empty protocol hash should preserve existing value: %#v", got)
-	}
-}
+	gomega.Expect(got.ProtocolHash).To(gomega.Equal("new"))
+	gomega.Expect(contract.WithProtocolHash("").ProtocolHash).To(gomega.Equal("old"))
+})
 
-func TestTurnContractFromCompileResultProjectsCanonicalAuthority(t *testing.T) {
+var _ = ginkgo.It("TurnContractFromCompileResultProjectsCanonicalAuthority", func() {
 	result := contractcompile.CompileResult{
 		Contract: autonomy.AutonomyContract{
 			ContractID:    "contract-1",
@@ -95,16 +90,12 @@ func TestTurnContractFromCompileResultProjectsCanonicalAuthority(t *testing.T) {
 	}
 
 	got := FromCompileResult(result)
-	if got.ContractID != "contract-1" || got.ProtocolHash != "sha256:protocol" || got.PhaseID != "plan_execute.required_source" {
-		t.Fatalf("projection ids = %#v", got)
-	}
-	if !got.HasActiveAuthority() {
-		t.Fatalf("expected active canonical authority: %#v", got)
-	}
-	if got.Canonical.ContractID != "contract-1" || got.Protocol.ProtocolHash != "sha256:protocol" || got.ActiveAuthority.RuntimeContractID != "runtime-1" {
-		t.Fatalf("canonical fields not preserved: %#v", got)
-	}
-	if len(got.ObligationIDs) != 2 || got.ObligationIDs[0] != "source_body" || got.ObligationIDs[1] != "submit_plan" {
-		t.Fatalf("ObligationIDs = %#v", got.ObligationIDs)
-	}
-}
+	gomega.Expect(got.ContractID).To(gomega.Equal("contract-1"), "projection=%#v", got)
+	gomega.Expect(got.ProtocolHash).To(gomega.Equal("sha256:protocol"), "projection=%#v", got)
+	gomega.Expect(got.PhaseID).To(gomega.Equal("plan_execute.required_source"), "projection=%#v", got)
+	gomega.Expect(got.HasActiveAuthority()).To(gomega.BeTrue(), "projection=%#v", got)
+	gomega.Expect(got.Canonical.ContractID).To(gomega.Equal("contract-1"), "projection=%#v", got)
+	gomega.Expect(got.Protocol.ProtocolHash).To(gomega.Equal("sha256:protocol"), "projection=%#v", got)
+	gomega.Expect(got.ActiveAuthority.RuntimeContractID).To(gomega.Equal("runtime-1"), "projection=%#v", got)
+	gomega.Expect(got.ObligationIDs).To(gomega.Equal([]string{"source_body", "submit_plan"}))
+})

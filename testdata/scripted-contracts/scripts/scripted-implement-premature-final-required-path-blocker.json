@@ -1,8 +1,10 @@
 [
   "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel source before editing\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\"}",
   "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: not run.",
   "<<QUESTION>>: internal/labels/labels.go remains unresolved after the completion gate rejected a final answer with no successful workspace write. I do not have a safe successful edit for that required path in this scripted run.",
   "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the save label after the completion gate rejected a premature final answer\"}",
   "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"refresh the changed target after verification\"}",
   "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
 ]

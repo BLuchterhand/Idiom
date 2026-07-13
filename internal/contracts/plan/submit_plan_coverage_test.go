@@ -1,116 +1,68 @@
 package plan
 
 import (
-	"strings"
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-// --- submit_plan coverage validation tests ---
-func TestValidateCoverageAcceptsCompleteRequiredPlan(t *testing.T) {
-	decision := ValidateCoverage(CoverageInput{
-		Scope: SubmitPlanCoverageScope{Coverage: []string{"a.go"}, DirectoryScopes: []string{"dir"}},
-		Edits: []SubmitPlanCoverageEdit{
-			{Path: "a.go", OldText: "old", NewText: "new"},
-			{Path: "dir/b.go", OldText: "old", NewText: "new"},
-		},
+var _ = Describe("Submit-plan coverage", func() {
+	It("accepts a plan covering every required file and directory", func() {
+		decision := ValidateCoverage(CoverageInput{
+			Scope: SubmitPlanCoverageScope{Coverage: []string{"a.go"}, DirectoryScopes: []string{"dir"}},
+			Edits: []SubmitPlanCoverageEdit{
+				{Path: "a.go", OldText: "old", NewText: "new"},
+				{Path: "dir/b.go", OldText: "old", NewText: "new"},
+			},
+		})
+		Expect(decision.Rejected).To(BeFalse())
 	})
 
-	if decision.Rejected {
-		t.Fatalf("expected complete required plan, got %#v", decision.Details)
-	}
-}
-
-func TestValidateCoverageRejectsMissingAndOutsidePaths(t *testing.T) {
-	decision := ValidateCoverage(CoverageInput{
-		Scope: SubmitPlanCoverageScope{Coverage: []string{"a.go"}},
-		Edits: []SubmitPlanCoverageEdit{{Path: "b.go", OldText: "old", NewText: "new"}},
+	It("rejects missing required paths and out-of-scope edits", func() {
+		decision := ValidateCoverage(CoverageInput{
+			Scope: SubmitPlanCoverageScope{Coverage: []string{"a.go"}},
+			Edits: []SubmitPlanCoverageEdit{{Path: "b.go", OldText: "old", NewText: "new"}},
+		})
+		Expect(decision.Rejected).To(BeTrue())
+		Expect(decision.Details.MissingRequiredPaths).To(ContainElement("a.go"))
+		Expect(decision.Details.OutsideRequiredPaths).To(ContainElement("b.go"))
+		Expect(decision.ErrorText()).To(ContainSubstring("submit_plan must use edits[]"))
 	})
 
-	if !decision.Rejected {
-		t.Fatal("expected coverage rejection")
-	}
-	if !contains(decision.Details.MissingRequiredPaths, "a.go") {
-		t.Fatalf("expected missing required path, got %#v", decision.Details.MissingRequiredPaths)
-	}
-	if !contains(decision.Details.OutsideRequiredPaths, "b.go") {
-		t.Fatalf("expected outside path, got %#v", decision.Details.OutsideRequiredPaths)
-	}
-	if !strings.Contains(decision.ErrorText(), "submit_plan must use edits[]") {
-		t.Fatalf("expected owned requirement text, got %q", decision.ErrorText())
-	}
-}
-
-func TestValidateCoverageRejectsMissingEditPathAndPlaceholder(t *testing.T) {
-	decision := ValidateCoverage(CoverageInput{
-		Edits: []SubmitPlanCoverageEdit{{Content: "... existing code ..."}},
+	It("rejects missing edit paths and placeholder bodies", func() {
+		decision := ValidateCoverage(CoverageInput{
+			Edits: []SubmitPlanCoverageEdit{{Content: "... existing code ..."}},
+		})
+		Expect(decision.Rejected).To(BeTrue())
+		Expect(decision.Details.MissingPathEdits).To(ContainElement("edits[0]"))
+		Expect(decision.Details.PlaceholderEditBodies).To(HaveLen(1))
 	})
 
-	if !decision.Rejected {
-		t.Fatal("expected rejection")
-	}
-	if !contains(decision.Details.MissingPathEdits, "edits[0]") {
-		t.Fatalf("expected missing path detail, got %#v", decision.Details.MissingPathEdits)
-	}
-	if len(decision.Details.PlaceholderEditBodies) != 1 {
-		t.Fatalf("expected placeholder detail, got %#v", decision.Details.PlaceholderEditBodies)
-	}
-}
-
-func TestCoverageDetailsRoundTrip(t *testing.T) {
-	details := CoverageDetails{
-		Code:                 CoverageMismatchCode,
-		MissingRequiredPaths: []string{"a.go"},
-	}
-	raw := CoverageDetailsJSON(details)
-	decoded, ok := CoverageDetailsFromJSON(raw)
-	if !ok {
-		t.Fatalf("expected round trip parse, raw=%s", raw)
-	}
-	if !contains(decoded.MissingRequiredPaths, "a.go") {
-		t.Fatalf("expected decoded missing path, got %#v", decoded.MissingRequiredPaths)
-	}
-}
-
-func TestRequiredScopeDerivesCoverageAllowedAndDirectories(t *testing.T) {
-	scope := RequiredScope(
-		[]string{"a.go", "pkg", "pkg/b.go"},
-		[]string{"tools", "tools/c.go", "extra.go"},
-		func(path string) bool { return path == "pkg" || path == "tools" },
-	)
-
-	if !contains(scope.Coverage, "a.go") || !contains(scope.Coverage, "pkg/b.go") {
-		t.Fatalf("expected file coverage paths, got %#v", scope.Coverage)
-	}
-	if !contains(scope.DirectoryScopes, "pkg") {
-		t.Fatalf("expected required directory scope, got %#v", scope.DirectoryScopes)
-	}
-	if !contains(scope.AllowedDirectoryScopes, "tools") {
-		t.Fatalf("expected allowed directory scope, got %#v", scope.AllowedDirectoryScopes)
-	}
-	if !contains(scope.AllowedExact, "extra.go") {
-		t.Fatalf("expected allowed exact path, got %#v", scope.AllowedExact)
-	}
-}
-
-func TestRequiredScopeFallsBackToAllowedOnly(t *testing.T) {
-	scope := RequiredScope(nil, []string{"allowed", "allowed/a.go"}, func(path string) bool { return path == "allowed" })
-
-	if !scope.AllowedOnly {
-		t.Fatalf("expected allowed-only scope: %#v", scope)
-	}
-	if len(scope.Coverage) != 0 {
-		t.Fatalf("allowed-only scope should not create required coverage, got %#v", scope.Coverage)
-	}
-	if !contains(scope.DirectoryScopes, "allowed") {
-		t.Fatalf("expected directory scope, got %#v", scope.DirectoryScopes)
-	}
-}
-
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
+	It("round-trips coverage details through JSON", func() {
+		details := CoverageDetails{
+			Code:                 CoverageMismatchCode,
+			MissingRequiredPaths: []string{"a.go"},
 		}
-	}
-	return false
-}
+		decoded, ok := CoverageDetailsFromJSON(CoverageDetailsJSON(details))
+		Expect(ok).To(BeTrue())
+		Expect(decoded.MissingRequiredPaths).To(ContainElement("a.go"))
+	})
+
+	It("derives required and allowed exact and directory scope", func() {
+		scope := RequiredScope(
+			[]string{"a.go", "pkg", "pkg/b.go"},
+			[]string{"tools", "tools/c.go", "extra.go"},
+			func(path string) bool { return path == "pkg" || path == "tools" },
+		)
+		Expect(scope.Coverage).To(And(ContainElement("a.go"), ContainElement("pkg/b.go")))
+		Expect(scope.DirectoryScopes).To(ContainElement("pkg"))
+		Expect(scope.AllowedDirectoryScopes).To(ContainElement("tools"))
+		Expect(scope.AllowedExact).To(ContainElement("extra.go"))
+	})
+
+	It("falls back to allowed-only directory scope", func() {
+		scope := RequiredScope(nil, []string{"allowed", "allowed/a.go"}, func(path string) bool { return path == "allowed" })
+		Expect(scope.AllowedOnly).To(BeTrue())
+		Expect(scope.Coverage).To(BeEmpty())
+		Expect(scope.DirectoryScopes).To(ContainElement("allowed"))
+	})
+})

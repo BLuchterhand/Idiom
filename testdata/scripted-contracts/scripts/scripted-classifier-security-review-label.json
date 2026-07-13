@@ -1,0 +1,5 @@
+[
+  "{\"family\":\"security_review\",\"initial_lane\":\"review\",\"reason\":\"security_review\",\"contract\":\"review_findings\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"inspect the bounded function requested for security review\",\"why_not_answering\":\"need source evidence for a bounded finding or no-finding result\"}",
+  "`ShortLabel` in `internal/labels/labels.go:3-5` accepts no input and returns a fixed string. Within that bounded function there is no security finding because it performs no parsing, filesystem access, command execution, or trust-boundary crossing. This conclusion is limited to the inspected function and makes no claim about uninspected repository code."
+]

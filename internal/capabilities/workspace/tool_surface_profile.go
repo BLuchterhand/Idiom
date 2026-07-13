@@ -190,12 +190,13 @@ var toolSurfaceProjectionSpecs = map[toolSurfaceProjectionID]toolSurfaceProjecti
 	},
 	toolSurfaceProjectionImplementationVerificationReady: {
 		Steps: []toolSurfaceProjectionStep{
-			projectionTools(ToolNameSourceSanity, ToolNameShell, ToolNameGitDiff, ToolNameGitStatus, ToolNameWriteFile, ToolNameApplyPatch, ToolNameMkdir),
+			projectionTools(ToolNameSourceSanity, ToolNameShell, ToolNameGitDiff, ToolNameGitStatus),
+			projectionWorkspaceWriteTools(),
 		},
 	},
 	toolSurfaceProjectionImplementationVerificationRepair: {
 		Steps: []toolSurfaceProjectionStep{
-			projectionTools(ToolNameEditFile, ToolNameWriteFile, ToolNameAppendFile, ToolNameApplyPatch, ToolNameDelegateEdit, ToolNameGoMoveDeclarations, ToolNameReadFile, ToolNameCodeNavigate, ToolNameContextQuery, ToolNameContextZoom, ToolNameSearchContent, ToolNameSourceSanity, ToolNameShell, ToolNameGitDiff, ToolNameGitStatus),
+			projectionTools(ToolNameEditFile, ToolNameWriteFile, ToolNameAppendFile, ToolNameApplyPatch, ToolNameGoMoveDeclarations, ToolNameReadFile, ToolNameCodeNavigate, ToolNameContextQuery, ToolNameContextZoom, ToolNameSearchContent, ToolNameSourceSanity, ToolNameShell, ToolNameGitDiff, ToolNameGitStatus),
 		},
 	},
 	toolSurfaceProjectionPlanExecuteReviewRepairInitial: {

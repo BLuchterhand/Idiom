@@ -224,7 +224,7 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string, file
 			continue
 		}
 
-			linePaths := PromptWorkspacePaths(line)
+		linePaths := PromptWorkspacePaths(line)
 		if fileOnly {
 			linePaths = pathparse.FilterWorkspaceFilePaths(linePaths)
 		}

@@ -5,10 +5,13 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
-	"testing"
 	"time"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
@@ -19,40 +22,31 @@ import (
 
 func thinkingOff() *bool { v := false; return &v }
 
-// TestQwenE2EReadOnlyWithLines verifies a Qwen model can complete a
-// read-only conversation lane query against a real Go codebase.
-//
-// Requires a running Qwen backend at QWEN_E2E_URL (default
-// http://127.0.0.1:47780).  Skip with -short or when the backend is
-// unreachable.
-func TestQwenE2EReadOnlyWithLines(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
-	}
+var _ = ginkgo.Describe("live Qwen end-to-end behavior", ginkgo.Label("e2e", "live"), func() {
+	ginkgo.It("completes a read-only query with source lines", func() {
+		baseURL := os.Getenv("QWEN_E2E_URL")
+		if baseURL == "" {
+			baseURL = "http://127.0.0.1:47780"
+		}
 
-	baseURL := os.Getenv("QWEN_E2E_URL")
-	if baseURL == "" {
-		baseURL = "http://127.0.0.1:47780"
-	}
+		client := llama.NewClient(baseURL, 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
 
-	client := llama.NewClient(baseURL, 30*time.Second)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
+		models, err := client.ListModels(ctx)
+		if err != nil {
+			ginkgo.Skip(fmt.Sprintf("Qwen backend not reachable at %s: %v", baseURL, err))
+		}
+		modelID := ""
+		if len(models) > 0 {
+			modelID = models[0].ID
+		}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "Qwen model: %s\n", modelID)
 
-	models, err := client.ListModels(ctx)
-	if err != nil {
-		t.Skipf("Qwen backend not reachable at %s: %v", baseURL, err)
-	}
-	modelID := ""
-	if len(models) > 0 {
-		modelID = models[0].ID
-	}
-	t.Logf("Qwen model: %s", modelID)
-
-	// --- workspace ---
-	root := t.TempDir()
-	writeTestFile(root, "go.mod", "module example.com/idiom\n\ngo 1.24\n")
-	writeTestFile(root, "internal/repository/comprehension/pack.go", `package comprehension
+		// --- workspace ---
+		root := ginkgo.GinkgoT().TempDir()
+		writeRunnerE2EFile(root, "go.mod", "module example.com/idiom\n\ngo 1.24\n")
+		writeRunnerE2EFile(root, "internal/repository/comprehension/pack.go", `package comprehension
 
 import "fmt"
 
@@ -79,222 +73,184 @@ func (p *Packet) Summary() string {
 }
 `)
 
-	mgr := workspace.NewManager(config.Workspace{
-		Root:         root,
-		CWD:          root,
-		EnableWrites: false,
+		mgr := workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: false,
+		})
+		gomega.Expect(mgr.SetMode(workspace.ModeExplore)).To(gomega.Succeed())
+
+		systemPrompt := `You are a coding agent. Use the provided tools to inspect the codebase, then answer the user's question. Cite file paths in your answer.`
+
+		// --- runner ---
+		events := []RunEvent(nil)
+		results := []workspace.ToolResult(nil)
+
+		runner := &Runner{
+			Client:    client,
+			Workspace: mgr,
+			Policy:    RunPolicy{MaxToolSteps: 0, MaxNoProgressTurns: 8, MaxModelCalls: 12},
+			RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "conversation",
+				Contract:          "direct_answer",
+				PermissionProfile: "read_only_workspace",
+			},
+			OnEvent: func(event RunEvent) {
+				events = append(events, event)
+			},
+		}
+
+		start := time.Now()
+		answer, err := runner.Run(
+			ctx,
+			[]llama.ChatMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: "What does the Packet type in internal/repository/comprehension/pack.go do? Show me the key methods."},
+			},
+			llama.ChatOptions{
+				MaxTokens:          8192,
+				TopP:               0.95,
+				Temperature:        0.7,
+				EnableThinking:     thinkingOff(),
+				ChatTemplateKwargs: true,
+				ForceNativeTools:   true, // send OpenAI tools array to Qwen
+			},
+			nil,
+			nil,
+			func(event ToolResultEvent) {
+				results = append(results, event.Result)
+			},
+		)
+		elapsed := time.Since(start)
+		fmt.Fprintf(ginkgo.GinkgoWriter, "completed in %v, answer length=%d\n", elapsed.Round(time.Millisecond), len(answer))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// --- assertions ---
+		gomega.Expect(len(answer)).To(gomega.BeNumerically(">=", 50), answer)
+
+		hasPacket := strings.Contains(answer, "Packet") || strings.Contains(answer, "packet")
+		hasPath := strings.Contains(answer, "pack.go") || strings.Contains(answer, "comprehension")
+		fmt.Fprintf(ginkgo.GinkgoWriter, "mentions Packet=%v path=%v\n", hasPacket, hasPath)
+		gomega.Expect(hasPacket).To(gomega.BeTrue(), "full answer:\n%s", answer)
+
+		// Check that the model used at least one discovery tool.
+		toolsUsed := map[string]int{}
+		for _, r := range results {
+			toolsUsed[r.Tool]++
+		}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "tools used: %v\n", toolsUsed)
+		gomega.Expect(toolsUsed["read_file"] + toolsUsed["code_navigate"]).To(gomega.BeNumerically(">", 0))
+
+		// Check for doom-loop guard.
+		for _, ev := range events {
+			gomega.Expect(ev.Role).NotTo(gomega.Equal("doom_loop_guard"))
+		}
 	})
-	if err := mgr.SetMode(workspace.ModeExplore); err != nil {
-		t.Fatalf("set explore mode: %v", err)
-	}
 
-	systemPrompt := `You are a coding agent. Use the provided tools to inspect the codebase, then answer the user's question. Cite file paths in your answer.`
-
-	// --- runner ---
-	events := []RunEvent(nil)
-	results := []workspace.ToolResult(nil)
-
-	runner := &Runner{
-		Client:    client,
-		Workspace: mgr,
-		Policy:    RunPolicy{MaxToolSteps: 0, MaxNoProgressTurns: 8, MaxModelCalls: 12},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "conversation",
-			Contract:          "direct_answer",
-			PermissionProfile: "read_only_workspace",
-		},
-		OnEvent: func(event RunEvent) {
-			events = append(events, event)
-		},
-	}
-
-	start := time.Now()
-	answer, err := runner.Run(
-		ctx,
-		[]llama.ChatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "What does the Packet type in internal/repository/comprehension/pack.go do? Show me the key methods."},
-		},
-		llama.ChatOptions{
-			MaxTokens:          8192,
-			TopP:               0.95,
-			Temperature:        0.7,
-			EnableThinking:     thinkingOff(),
-			ChatTemplateKwargs: true,
-			ForceNativeTools:   true, // send OpenAI tools array to Qwen
-		},
-		nil,
-		nil,
-		func(event ToolResultEvent) {
-			results = append(results, event.Result)
-		},
-	)
-	elapsed := time.Since(start)
-	t.Logf("completed in %v, answer length=%d", elapsed.Round(time.Millisecond), len(answer))
-
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	// --- assertions ---
-	if len(answer) < 50 {
-		t.Fatalf("answer too short (%d chars): %q", len(answer), answer)
-	}
-
-	hasPacket := strings.Contains(answer, "Packet") || strings.Contains(answer, "packet")
-	hasPath := strings.Contains(answer, "pack.go") || strings.Contains(answer, "comprehension")
-	t.Logf("mentions Packet=%v path=%v", hasPacket, hasPath)
-
-	if !hasPacket {
-		t.Logf("full answer:\n%s", answer)
-		t.Fatalf("answer does not mention Packet type")
-	}
-
-	// Check that the model used at least one discovery tool.
-	toolsUsed := map[string]int{}
-	for _, r := range results {
-		toolsUsed[r.Tool]++
-	}
-	t.Logf("tools used: %v", toolsUsed)
-	if toolsUsed["read_file"]+toolsUsed["code_navigate"] == 0 {
-		t.Fatalf("expected at least one read_file or code_navigate call, got tools=%v", toolsUsed)
-	}
-
-	// Check for doom-loop guard.
-	for _, ev := range events {
-		if ev.Role == "doom_loop_guard" {
-			t.Fatalf("doom loop guard triggered; model got stuck repeating tools")
+	ginkgo.It("completes a read-only query through textual tools", func() {
+		baseURL := os.Getenv("QWEN_E2E_URL")
+		if baseURL == "" {
+			baseURL = "http://127.0.0.1:47780"
 		}
-	}
-}
 
-// TestQwenE2ETextualToolsEndToEnd verifies a complete read-only
-// conversation lane query against a live Qwen backend using the
-// textual key-value tool format (no ForceNativeTools). This is
-// the default MLX path where tools are stripped and the model
-// must follow overlay instructions.
-func TestQwenE2ETextualToolsEndToEnd(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
-	}
+		client := llama.NewClient(baseURL, 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
 
-	baseURL := os.Getenv("QWEN_E2E_URL")
-	if baseURL == "" {
-		baseURL = "http://127.0.0.1:47780"
-	}
+		models, err := client.ListModels(ctx)
+		if err != nil {
+			ginkgo.Skip(fmt.Sprintf("Qwen backend not reachable at %s: %v", baseURL, err))
+		}
+		modelID := ""
+		if len(models) > 0 {
+			modelID = models[0].ID
+		}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "model: %s\n", modelID)
 
-	client := llama.NewClient(baseURL, 30*time.Second)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+		// --- workspace ---
+		root := ginkgo.GinkgoT().TempDir()
+		writeRunnerE2EFile(root, "go.mod", "module example.com/idiom\n\ngo 1.24\n")
+		writeRunnerE2EFile(root, "internal/repository/comprehension/pack.go", "package comprehension\n\nimport \"fmt\"\n\n// Packet bundles ranked candidates for a task query.\ntype Packet struct {\n\tTask    string   `json:\"task\"`\n\tFiles   []string `json:\"files\"`\n\tSymbols []string `json:\"symbols\"`\n}\n\nfunc NewPacket(task string) *Packet { return &Packet{Task: task} }\nfunc (p *Packet) Summary() string { return fmt.Sprintf(\"packet: %d files\", len(p.Files)) }\n")
 
-	models, err := client.ListModels(ctx)
-	if err != nil {
-		t.Skipf("Qwen backend not reachable at %s: %v", baseURL, err)
-	}
-	modelID := ""
-	if len(models) > 0 {
-		modelID = models[0].ID
-	}
-	t.Logf("model: %s", modelID)
+		mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: false})
+		gomega.Expect(mgr.SetMode(workspace.ModeExplore)).To(gomega.Succeed())
 
-	// --- workspace ---
-	root := t.TempDir()
-	writeTestFile(root, "go.mod", "module example.com/idiom\n\ngo 1.24\n")
-	writeTestFile(root, "internal/repository/comprehension/pack.go", "package comprehension\n\nimport \"fmt\"\n\n// Packet bundles ranked candidates for a task query.\ntype Packet struct {\n\tTask    string   `json:\"task\"`\n\tFiles   []string `json:\"files\"`\n\tSymbols []string `json:\"symbols\"`\n}\n\nfunc NewPacket(task string) *Packet { return &Packet{Task: task} }\nfunc (p *Packet) Summary() string { return fmt.Sprintf(\"packet: %d files\", len(p.Files)) }\n")
+		// --- prompt with Qwen overlay ---
+		overlays := promptstack.ModelCompatibilityOverlays("qwen", modelID)
+		stack := promptstack.AppendOverlays(promptstack.Stack{}, overlays)
+		systemPrompt := "You are a coding agent. Answer the user. Use workspace tools to inspect the codebase.\n\n" + stack.Text
 
-	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: false})
-	if err := mgr.SetMode(workspace.ModeExplore); err != nil {
-		t.Fatalf("set explore mode: %v", err)
-	}
+		// --- runner ---
+		events := []RunEvent(nil)
+		results := []workspace.ToolResult(nil)
+		runner := &Runner{
+			Client:    client,
+			Workspace: mgr,
+			Policy:    RunPolicy{MaxToolSteps: 0, MaxNoProgressTurns: 8, MaxModelCalls: 15},
+			RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "conversation",
+				Contract:          "direct_answer",
+				PermissionProfile: "read_only_workspace",
+			},
+			OnEvent: func(event RunEvent) {
+				events = append(events, event)
+				switch event.Role {
+				case "tool_request_normalizer":
+					fmt.Fprintf(ginkgo.GinkgoWriter, "  normalizer: %s\n", event.Content[:min(200, len(event.Content))])
+				case "completion_gate":
+					fmt.Fprintf(ginkgo.GinkgoWriter, "  completion_gate: summary=%s error=%s\n",
+						event.Content[:min(100, len(event.Content))], "")
+				}
+			},
+		}
 
-	// --- prompt with Qwen overlay ---
-	overlays := promptstack.ModelCompatibilityOverlays("qwen", modelID)
-	stack := promptstack.AppendOverlays(promptstack.Stack{}, overlays)
-	systemPrompt := "You are a coding agent. Answer the user. Use workspace tools to inspect the codebase.\n\n" + stack.Text
+		fmt.Fprintln(ginkgo.GinkgoWriter, "starting run...")
+		start := time.Now()
+		answer, err := runner.Run(
+			ctx,
+			[]llama.ChatMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: "What does the Packet type in internal/repository/comprehension/pack.go do?"},
+			},
+			llama.ChatOptions{
+				MaxTokens:          4096,
+				TopP:               0.95,
+				Temperature:        0.7,
+				EnableThinking:     thinkingOff(),
+				ChatTemplateKwargs: true,
+				// No ForceNativeTools: model uses textual key-value format.
+			},
+			nil, nil,
+			func(event ToolResultEvent) {
+				results = append(results, event.Result)
+				s := event.Result.Summary
+				if event.Result.Error != "" {
+					s = event.Result.Error
+				}
+				fmt.Fprintf(ginkgo.GinkgoWriter, "  tool[%s]: %s\n", event.Result.Tool, s[:min(200, len(s))])
+			},
+		)
+		elapsed := time.Since(start)
+		fmt.Fprintf(ginkgo.GinkgoWriter, "completed in %v, answer=%d chars\n", elapsed.Round(time.Millisecond), len(answer))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "full answer on error: %s", answer)
 
-	// --- runner ---
-	events := []RunEvent(nil)
-	results := []workspace.ToolResult(nil)
-	runner := &Runner{
-		Client:    client,
-		Workspace: mgr,
-		Policy:    RunPolicy{MaxToolSteps: 0, MaxNoProgressTurns: 8, MaxModelCalls: 15},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "conversation",
-			Contract:          "direct_answer",
-			PermissionProfile: "read_only_workspace",
-		},
-		OnEvent: func(event RunEvent) {
-			events = append(events, event)
-			switch event.Role {
-			case "tool_request_normalizer":
-				t.Logf("  normalizer: %s", event.Content[:min(200, len(event.Content))])
-			case "completion_gate":
-				t.Logf("  completion_gate: summary=%s error=%s",
-					event.Content[:min(100, len(event.Content))], "")
+		// --- assertions ---
+		fmt.Fprintf(ginkgo.GinkgoWriter, "answer: %s\n", answer[:min(500, len(answer))])
+		gomega.Expect(len(answer)).To(gomega.BeNumerically(">=", 50), answer)
+		gomega.Expect(strings.ToLower(answer)).To(gomega.ContainSubstring("packet"))
+
+		toolsUsed := map[string]int{}
+		for _, r := range results {
+			toolsUsed[r.Tool]++
+		}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "tools used: %v\n", toolsUsed)
+		gomega.Expect(toolsUsed["read_file"] + toolsUsed["code_navigate"] + toolsUsed["discovery_query"]).To(gomega.BeNumerically(">", 0))
+
+		for _, ev := range events {
+			gomega.Expect(ev.Role).NotTo(gomega.ContainSubstring("doom_loop"), ev.Content)
+			if ev.Role == "completion_gate" {
+				fmt.Fprintln(ginkgo.GinkgoWriter, "completion gate fired (may be expected for final answer routing)")
 			}
-		},
-	}
-
-	t.Logf("starting run...")
-	start := time.Now()
-	answer, err := runner.Run(
-		ctx,
-		[]llama.ChatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "What does the Packet type in internal/repository/comprehension/pack.go do?"},
-		},
-		llama.ChatOptions{
-			MaxTokens:          4096,
-			TopP:               0.95,
-			Temperature:        0.7,
-			EnableThinking:     thinkingOff(),
-			ChatTemplateKwargs: true,
-			// No ForceNativeTools: model uses textual key-value format.
-		},
-		nil, nil,
-		func(event ToolResultEvent) {
-			results = append(results, event.Result)
-			s := event.Result.Summary
-			if event.Result.Error != "" {
-				s = event.Result.Error
-			}
-			t.Logf("  tool[%s]: %s", event.Result.Tool, s[:min(200, len(s))])
-		},
-	)
-	elapsed := time.Since(start)
-	t.Logf("completed in %v, answer=%d chars", elapsed.Round(time.Millisecond), len(answer))
-
-	if err != nil {
-		t.Logf("full answer on error: %s", answer)
-		t.Fatalf("Run: %v", err)
-	}
-
-	// --- assertions ---
-	t.Logf("answer: %s", answer[:min(500, len(answer))])
-
-	if len(answer) < 50 {
-		t.Fatalf("answer too short: %q", answer)
-	}
-	if !strings.Contains(answer, "Packet") && !strings.Contains(answer, "packet") {
-		t.Fatalf("answer does not mention Packet type")
-	}
-
-	toolsUsed := map[string]int{}
-	for _, r := range results {
-		toolsUsed[r.Tool]++
-	}
-	t.Logf("tools used: %v", toolsUsed)
-	if toolsUsed["read_file"]+toolsUsed["code_navigate"]+toolsUsed["discovery_query"] == 0 {
-		t.Fatalf("no discovery tool used; tools=%v", toolsUsed)
-	}
-
-	for _, ev := range events {
-		if strings.Contains(ev.Role, "doom_loop") {
-			t.Fatalf("doom loop triggered: %s", ev.Content)
 		}
-		if ev.Role == "completion_gate" {
-			t.Logf("completion gate fired (may be expected for final answer routing)")
-		}
-	}
-}
+	})
+})

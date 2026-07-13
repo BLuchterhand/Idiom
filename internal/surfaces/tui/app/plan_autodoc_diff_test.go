@@ -2,25 +2,28 @@ package app
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"testing"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-// snapshotModel builds a Model wired to a real workspace rooted at root
-// so capturePlanSnapshot can read pre-edit file state from disk. Uses
-// a fixed session id ("sessA") via the debug-log path, same as the
-// sibling failure-log tests.
-func snapshotModel(t *testing.T, root string) *Model {
-	t.Helper()
+// snapshotModel builds live state wired to a real workspace rooted at root.
+// Session-owned plan tests snapshot it through snapshotSession, while UI tests
+// retain the live Model owner.
+func snapshotModel(t ginkgo.FullGinkgoTInterface, root string) *Model {
+	ginkgo.GinkgoHelper()
 
-	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 
 	return &Model{
 		workspace:    ws,
@@ -28,13 +31,18 @@ func snapshotModel(t *testing.T, root string) *Model {
 	}
 }
 
-func readDiffEntries(t *testing.T, path string) []planDiffEntry {
-	t.Helper()
+// snapshotSession gives plan bookkeeping tests the concrete execution owner.
+func snapshotSession(t ginkgo.FullGinkgoTInterface, root string) *promptExecutionSession {
+	ginkgo.GinkgoHelper()
+
+	return newDetachedPromptExecutionSession(context.Background(), snapshotModel(t, root))
+}
+
+func readDiffEntries(t ginkgo.FullGinkgoTInterface, path string) []planDiffEntry {
+	ginkgo.GinkgoHelper()
 
 	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open diffs log: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("open diffs log: %v", err))
 	defer f.Close()
 
 	var out []planDiffEntry
@@ -50,243 +58,224 @@ func readDiffEntries(t *testing.T, path string) []planDiffEntry {
 
 		var rec planDiffEntry
 
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Fatalf("decode diff record %q: %v", line, err)
+		{
+			err := json.Unmarshal([]byte(line), &rec)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode diff record %q: %v", line, err))
 		}
 
 		out = append(out, rec)
 	}
 
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan diffs log: %v", err)
+	{
+		err := scanner.Err()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("scan diffs log: %v", err))
 	}
 
 	return out
 }
 
-func writeFile(t *testing.T, root, rel, content string) {
-	t.Helper()
+func writeFile(t ginkgo.FullGinkgoTInterface, root, rel, content string) {
+	ginkgo.GinkgoHelper()
 
 	abs := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	{
+		err := os.MkdirAll(filepath.Dir(abs), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir: %v", err))
 	}
 
-	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", rel, err)
+	{
+		err := os.WriteFile(abs, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write %s: %v", rel, err))
 	}
 }
 
+func executeAndRecordPlanWrite(t ginkgo.FullGinkgoTInterface, session *promptExecutionSession, step int, request workspace.ToolRequest) workspace.ToolResult {
+	ginkgo.GinkgoHelper()
+	if request.Tool == workspace.ToolNameEditFile {
+		observed := session.workspace.Execute(session.promptExecutionContext, workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: request.Path})
+		gomega.Expect(observed.Error).To(gomega.BeEmpty(), observed.Error)
+	}
+	result := session.workspace.Execute(session.promptExecutionContext, request)
+	gomega.Expect(result.Error).To(gomega.BeEmpty(), result.Error)
+	session.recordWriteSuccess(step, request, result)
+	return result
+}
+
 // TestRecordWriteSuccessCapturesDiffAndPlanEntry exercises the full
-// snapshot → execute → record pipeline end-to-end: pre-write snapshot
-// of a file, on-disk mutation, and a post-write recordWriteSuccess
+// rooted execute → record pipeline end-to-end: owner-produced pre/post evidence
+// and a post-write recordWriteSuccess
 // that lands (a) a plan-diff JSONL record with a unified diff, and
 // (b) a checked-off plan markdown line pointing at it by id.
-func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
+var _ = ginkgo.It("record write success captures diff and plan entry", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeFile(t, root, "README.md", "hello\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{
 		Tool:        "edit_file",
 		Path:        "README.md",
+		OldText:     "hello\n",
+		NewText:     "bye\n",
 		Description: "change greeting",
 	}
-	m.capturePlanSnapshot(5, req)
-
-	if _, ok := m.plan.writeSnapshots[5]; !ok {
-		t.Fatalf("snapshot was not captured for step 5")
-	}
-
-	// Simulate the tool executing and mutating the file.
-	writeFile(t, root, "README.md", "bye\n")
-
-	res := workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md"}
-	m.recordWriteSuccess(5, req, res)
-
-	if _, ok := m.plan.writeSnapshots[5]; ok {
-		t.Errorf("snapshot map should be cleared after record")
-	}
+	executeAndRecordPlanWrite(t, m, 5, req)
 
 	diffs := readDiffEntries(t, filepath.Join(root, ".planning", "sessA.diffs.jsonl"))
-	if len(diffs) != 1 {
-		t.Fatalf("want 1 diff record, got %d", len(diffs))
-	}
+	gomega.Expect(len(diffs)).To(gomega.Equal(1), fmt.Sprintf("want 1 diff record, got %d", len(diffs)))
 
 	entry := diffs[0]
-	if entry.Tool != "edit_file" || entry.Path != "README.md" {
-		t.Errorf("unexpected entry metadata: %#v", entry)
-	}
+	gomega.Expect(entry.Tool).To(gomega.Equal("edit_file"), fmt.Sprintf("unexpected entry metadata: %#v", entry))
+	gomega.Expect(entry.Path).To(gomega.Equal("README.md"), fmt.Sprintf("unexpected entry metadata: %#v", entry))
 
-	if entry.Description != "change greeting" {
-		t.Errorf("description not propagated: %q", entry.Description)
-	}
+	gomega.Expect(entry.Description).To(gomega.Equal("change greeting"), fmt.Sprintf("description not propagated: %q", entry.Description))
 
-	if !strings.Contains(entry.Diff, "-hello") || !strings.Contains(entry.Diff, "+bye") {
-		t.Errorf("diff missing expected lines:\n%s", entry.Diff)
-	}
+	gomega.Expect(entry.Diff).To(gomega.ContainSubstring("-hello"), fmt.Sprintf("diff missing expected lines:\n%s", entry.Diff))
+	gomega.Expect(entry.Diff).To(gomega.ContainSubstring("+bye"), fmt.Sprintf("diff missing expected lines:\n%s", entry.Diff))
 
-	if entry.ID == "" {
-		t.Error("diff entry missing id")
-	}
+	gomega.Expect(entry.ID).NotTo(gomega.Equal(""), fmt.Sprint("diff entry missing id"))
 
 	planBytes, err := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-	if err != nil {
-		t.Fatalf("read plan: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read plan: %v", err))
 
 	plan := string(planBytes)
-	if !strings.Contains(plan, "## Session sessA") {
-		t.Errorf("plan missing session heading:\n%s", plan)
-	}
+	gomega.Expect(strings.Contains(plan, "## Session sessA")).To(gomega.BeTrue(), fmt.Sprintf("plan missing session heading:\n%s", plan))
 
-	if !strings.Contains(plan, "- [x] change greeting") {
-		t.Errorf("plan missing checked-off description line:\n%s", plan)
-	}
+	gomega.Expect(strings.Contains(plan, "- [x] change greeting")).To(gomega.BeTrue(), fmt.Sprintf("plan missing checked-off description line:\n%s", plan))
 
-	if !strings.Contains(plan, "<!-- id:"+entry.ID+" -->") {
-		t.Errorf("plan line missing id anchor for %q:\n%s", entry.ID, plan)
-	}
-}
+	gomega.Expect(strings.Contains(plan, "<!-- id:"+entry.ID+" -->")).To(gomega.BeTrue(), fmt.Sprintf("plan line missing id anchor for %q:\n%s", entry.ID, plan))
+})
 
 // TestRecordWriteSuccessIgnoresFailures verifies no plan line / diff
 // entry is written when the tool returned an error. Failed writes
 // belong in the failures log, not the success-only plan document.
-func TestRecordWriteSuccessIgnoresFailures(t *testing.T) {
+var _ = ginkgo.It("record write success ignores failures", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeFile(t, root, "x.go", "pkg\n")
+	writeFile(t, root, "x.go", "package x\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "x.go", Description: "nope"}
-	m.capturePlanSnapshot(1, req)
 	m.recordWriteSuccess(1, req, workspace.ToolResult{Tool: "edit_file", Error: "boom"})
 
 	diffs := filepath.Join(root, ".planning", "sessA.diffs.jsonl")
-	if _, err := os.Stat(diffs); !os.IsNotExist(err) {
-		t.Fatalf("failed write should not produce diff log; stat err = %v", err)
+	{
+		_, err := os.Stat(diffs)
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("failed write should not produce diff log; stat err = %v", err))
 	}
 
 	plan := filepath.Join(root, ".planning", "sessA.md")
-	if _, err := os.Stat(plan); !os.IsNotExist(err) {
-		t.Fatalf("failed write should not produce plan file; stat err = %v", err)
+	{
+		_, err := os.Stat(plan)
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("failed write should not produce plan file; stat err = %v", err))
 	}
 
-	if _, ok := m.plan.writeSnapshots[1]; ok {
-		t.Errorf("snapshot still present after failed recordWriteSuccess — would leak into next step")
-	}
-}
+})
 
 // TestRecordWriteSuccessIgnoresNonWriteTools guards against read-tool
 // results bleeding into the plan panel. A read_file event should never
 // produce a plan line or diff record.
-func TestRecordWriteSuccessIgnoresNonWriteTools(t *testing.T) {
+var _ = ginkgo.It("record write success ignores non write tools", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 	req := workspace.ToolRequest{Tool: "read_file", Path: "x.go"}
 	m.recordWriteSuccess(1, req, workspace.ToolResult{Tool: "read_file", Summary: "read x.go"})
 
-	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
-		t.Fatalf("read tool should not create .planning; stat err = %v", err)
+	{
+		_, err := os.Stat(filepath.Join(root, ".planning"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("read tool should not create .planning; stat err = %v", err))
 	}
-}
+})
 
 // TestRecordWriteSuccessWithNoSessionIDNoOps ensures the very-first-
 // turn race (PreExecute fires before initDebugLogger) does not crash
 // and does not write to a stray file at the workspace root.
-func TestRecordWriteSuccessWithNoSessionIDNoOps(t *testing.T) {
+var _ = ginkgo.It("record write success with no session id no ops", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	writeFile(t, root, "x.go", "pkg\n")
+	writeFile(t, root, "x.go", "package x\n")
 
-	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
-	m := &Model{workspace: ws} // no debugLogPath → empty session id
+	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
+	m := newDetachedPromptExecutionSession(context.Background(), &Model{workspace: ws}) // no debugLogPath → empty session id
 
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "x.go", Description: "no id"}
-	m.capturePlanSnapshot(1, req) // should be a no-op, not panic
-	writeFile(t, root, "x.go", "changed\n")
-	m.recordWriteSuccess(1, req, workspace.ToolResult{Tool: "edit_file", Summary: "ok"})
+	req.OldText = "package x\n"
+	req.NewText = "package x\n// changed\n"
+	observed := m.workspace.Execute(m.promptExecutionContext, workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: req.Path})
+	gomega.Expect(observed.Error).To(gomega.BeEmpty(), observed.Error)
+	result := m.workspace.Execute(m.promptExecutionContext, req)
+	gomega.Expect(result.Error).To(gomega.BeEmpty(), result.Error)
+	m.recordWriteSuccess(1, req, result)
 
-	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
-		t.Fatalf("no session id should not create .planning; err = %v", err)
+	{
+		_, err := os.Stat(filepath.Join(root, ".planning"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), fmt.Sprintf("no session id should not create .planning; err = %v", err))
 	}
-}
+})
 
 // TestRecordWriteSuccessNilModelNoop verifies the nil-receiver guard —
 // identical to the failure-log nil-safety test.
-func TestRecordWriteSuccessNilModelNoop(t *testing.T) {
+var _ = ginkgo.It("record write success nil model noop", func() {
 	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("nil model must not panic; recovered: %v", r)
+		{
+			r := recover()
+			gomega.Expect(r).To(gomega.BeNil(), fmt.Sprintf("nil model must not panic; recovered: %v", r))
 		}
 	}()
 
-	var m *Model
+	var m *promptExecutionSession
 
-	m.capturePlanSnapshot(1, workspace.ToolRequest{Tool: "edit_file", Path: "x"})
 	m.recordWriteSuccess(1, workspace.ToolRequest{Tool: "edit_file"}, workspace.ToolResult{Summary: "ok"})
-}
+})
 
-// TestCapturePlanSnapshotMissingFileRecordsEmptyBaseline verifies that
-// write_file on a brand-new path records a snapshot with Existed=false
-// so the diff renders as pure additions rather than getting skipped.
-func TestCapturePlanSnapshotMissingFileRecordsEmptyBaseline(t *testing.T) {
+// A new file uses the rooted transaction's missing preimage and renders a
+// pure-addition diff without a speculative host read.
+var _ = ginkgo.It("records a new file from workspace-owned commit evidence", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	m := snapshotModel(t, root)
-	req := workspace.ToolRequest{Tool: "write_file", Path: "new.md", Description: "create file"}
-	m.capturePlanSnapshot(2, req)
-
-	snaps, ok := m.plan.writeSnapshots[2]
-	if !ok {
-		t.Fatalf("missing-path write should still record a snapshot")
-	}
-
-	if len(snaps) != 1 || snaps[0].Existed {
-		t.Errorf("snapshot Existed should be false for a new file: %#v", snaps)
-	}
-
-	if snaps[0].Before != "" {
-		t.Errorf("missing-file baseline should be empty, got %q", snaps[0].Before)
-	}
-}
+	m := snapshotSession(t, root)
+	req := workspace.ToolRequest{Tool: "write_file", Path: "new.md", Content: "new\n", Description: "create file"}
+	result := executeAndRecordPlanWrite(t, m, 2, req)
+	changes := result.CommitReceipt().FileChanges()
+	gomega.Expect(changes).To(gomega.HaveLen(1))
+	before, existed := changes[0].BeforeBody()
+	gomega.Expect(existed).To(gomega.BeFalse())
+	gomega.Expect(before).To(gomega.BeEmpty())
+	diffs := readDiffEntries(t, filepath.Join(root, ".planning", "sessA.diffs.jsonl"))
+	gomega.Expect(diffs).To(gomega.HaveLen(1))
+	gomega.Expect(diffs[0].Diff).To(gomega.ContainSubstring("+new"))
+})
 
 // TestSessionHeadingWrittenOnce locks in the idempotence of the session
 // heading. Two successful writes in the same session should add one
 // heading, not two, regardless of in-memory state between calls.
-func TestSessionHeadingWrittenOnce(t *testing.T) {
+var _ = ginkgo.It("session heading written once", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeFile(t, root, "a.md", "a\n")
 	writeFile(t, root, "b.md", "b\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
-	m.capturePlanSnapshot(1, workspace.ToolRequest{Tool: "edit_file", Path: "a.md", Description: "edit a"})
-	writeFile(t, root, "a.md", "A\n")
-	m.recordWriteSuccess(1, workspace.ToolRequest{Tool: "edit_file", Path: "a.md", Description: "edit a"}, workspace.ToolResult{Summary: "ok"})
-
-	m.capturePlanSnapshot(2, workspace.ToolRequest{Tool: "edit_file", Path: "b.md", Description: "edit b"})
-	writeFile(t, root, "b.md", "B\n")
-	m.recordWriteSuccess(2, workspace.ToolRequest{Tool: "edit_file", Path: "b.md", Description: "edit b"}, workspace.ToolResult{Summary: "ok"})
+	executeAndRecordPlanWrite(t, m, 1, workspace.ToolRequest{Tool: "write_file", Path: "a.md", Content: "A\n", Description: "edit a"})
+	executeAndRecordPlanWrite(t, m, 2, workspace.ToolRequest{Tool: "write_file", Path: "b.md", Content: "B\n", Description: "edit b"})
 
 	plan, err := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
-	if err != nil {
-		t.Fatalf("read plan: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read plan: %v", err))
 
 	count := strings.Count(string(plan), "## Session sessA")
-	if count != 1 {
-		t.Errorf("want 1 session heading, got %d. plan:\n%s", count, string(plan))
-	}
+	gomega.Expect(count).To(gomega.Equal(1), fmt.Sprintf("want 1 session heading, got %d. plan:\n%s", count, string(plan)))
 
-	if strings.Count(string(plan), "- [x]") != 2 {
-		t.Errorf("want 2 checked items, plan:\n%s", string(plan))
-	}
-}
+	gomega.Expect(strings.Count(string(plan), "- [x]")).To(gomega.Equal(2), fmt.Sprintf("want 2 checked items, plan:\n%s", string(plan)))
+})
 
 // TestPlanLineLabelFallbacks covers the fallback ladder: description
 // only, description+path, tool-only, tool+path. A blank label in the
 // plan would be user-hostile so every branch produces readable text.
-func TestPlanLineLabelFallbacks(t *testing.T) {
+var _ = ginkgo.It("plan line label fallbacks", func() {
 	cases := []struct {
 		name string
 		req  workspace.ToolRequest
@@ -299,11 +288,12 @@ func TestPlanLineLabelFallbacks(t *testing.T) {
 		{"tool only", workspace.ToolRequest{Tool: "mkdir"}, "", "create a directory"},
 	}
 	for _, tc := range cases {
-		if got := planLineLabel(tc.req, tc.path); got != tc.want {
-			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		{
+			got := planLineLabel(tc.req, tc.path)
+			gomega.Expect(got).To(gomega.Equal(tc.want), fmt.Sprintf("%s: got %q, want %q", tc.name, got, tc.want))
 		}
 	}
-}
+})
 
 // TestRecordWriteSuccessMultiplePathsPerCall exercises the apply_patch
 // path where a single tool call touches multiple files — each path
@@ -311,69 +301,48 @@ func TestPlanLineLabelFallbacks(t *testing.T) {
 // line. This is the critical correctness check for the snapshot-slice
 // data shape; collapsing to a single snapshot would silently drop
 // the second file's diff.
-func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
+var _ = ginkgo.It("record write success multiple paths per call", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "alpha\n")
 	writeFile(t, root, "b.txt", "beta\n")
 
-	m := snapshotModel(t, root)
+	m := snapshotSession(t, root)
 
-	// Simulate capturePlanSnapshot producing two entries by bypassing
-	// rollbackPathsForRequest — that helper only returns multi-path
-	// results for apply_patch, but its parser needs a real patch and
-	// we're testing the record flow, not the patch parser.
-	m.plan.writeSnapshots = map[int][]planWriteSnapshot{
-		3: {
-			{Path: "a.txt", Before: "alpha\n", Existed: true},
-			{Path: "b.txt", Before: "beta\n", Existed: true},
-		},
-	}
-
-	writeFile(t, root, "a.txt", "ALPHA\n")
-	writeFile(t, root, "b.txt", "BETA\n")
-
-	req := workspace.ToolRequest{Tool: "apply_patch", Description: "bulk rename"}
-	m.recordWriteSuccess(3, req, workspace.ToolResult{Tool: "apply_patch", Summary: "patched 2 files"})
+	req := workspace.ToolRequest{Tool: "apply_patch", Description: "bulk rename", Content: "*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+ALPHA\n*** Update File: b.txt\n@@\n-beta\n+BETA\n*** End Patch"}
+	executeAndRecordPlanWrite(t, m, 3, req)
 
 	diffs := readDiffEntries(t, filepath.Join(root, ".planning", "sessA.diffs.jsonl"))
-	if len(diffs) != 2 {
-		t.Fatalf("want 2 diff records, got %d: %#v", len(diffs), diffs)
-	}
+	gomega.Expect(len(diffs)).To(gomega.Equal(2), fmt.Sprintf("want 2 diff records, got %d: %#v", len(diffs), diffs))
 
 	paths := map[string]bool{}
 	for _, d := range diffs {
 		paths[d.Path] = true
-		if d.ID == "" {
-			t.Errorf("diff entry %s missing id", d.Path)
-		}
+		gomega.Expect(d.ID).NotTo(gomega.Equal(""), fmt.Sprintf("diff entry %s missing id", d.Path))
 	}
 
-	if !paths["a.txt"] || !paths["b.txt"] {
-		t.Errorf("missing expected paths, got %v", paths)
-	}
+	gomega.Expect(paths["a.txt"]).To(gomega.BeTrue(), fmt.Sprintf("missing expected paths, got %v", paths))
+	gomega.Expect(paths["b.txt"]).To(gomega.BeTrue(), fmt.Sprintf("missing expected paths, got %v", paths))
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	// Each file touched produces one plan line.
-	if got := strings.Count(string(plan), "- [x]"); got != 2 {
-		t.Errorf("want 2 plan lines, got %d. plan:\n%s", got, string(plan))
+	{
+		got := strings.Count(string(plan), "- [x]")
+		gomega.Expect(got).To(gomega.Equal(2), fmt.Sprintf("want 2 plan lines, got %d. plan:\n%s", got, string(plan)))
 	}
-}
+})
 
 // TestNewPlanEntryIDDistinct is a cheap collision check — IDs must be
 // unique across a session so clicks resolve to the right diff record.
-func TestNewPlanEntryIDDistinct(t *testing.T) {
+var _ = ginkgo.It("new plan entry id distinct", func() {
 	seen := map[string]bool{}
 	hexIDRe := regexp.MustCompile(`^[0-9a-f]+$`)
 
 	for range 64 {
 		id := newPlanEntryID()
-		if seen[id] {
-			t.Fatalf("duplicate id %q after %d draws", id, len(seen))
-		}
+		gomega.Expect(seen[id]).To(gomega.BeFalse(), fmt.Sprintf("duplicate id %q after %d draws", id, len(seen)))
 
 		seen[id] = true
-		if !hexIDRe.MatchString(id) {
-			t.Errorf("id %q not hex/safe", id)
-		}
+		gomega.Expect(hexIDRe.MatchString(id)).To(gomega.BeTrue(), fmt.Sprintf("id %q not hex/safe", id))
 	}
-}
+})

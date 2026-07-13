@@ -1,9 +1,28 @@
 package featureplannerproduct
 
 import (
+	"fmt"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/productworkflow"
 )
+
+func LoadBriefFromEffort(effortRoot string) (*featureplanner.ProductWorkflowBrief, error) {
+	if strings.TrimSpace(effortRoot) == "" {
+		return nil, fmt.Errorf("direct product feature plan is missing effort root")
+	}
+
+	handoff, err := productworkflow.LoadImplementationHandoff(effortRoot)
+	if err != nil {
+		return nil, fmt.Errorf("load product workflow implementation handoff: %w", err)
+	}
+
+	return BriefFromImplementationHandoff(handoff), nil
+}
 
 func BriefFromImplementationHandoff(handoff productworkflow.ImplementationHandoff) *featureplanner.ProductWorkflowBrief {
 	brief := &featureplanner.ProductWorkflowBrief{
@@ -33,6 +52,24 @@ func BriefFromImplementationHandoff(handoff productworkflow.ImplementationHandof
 		Blockers:                  append([]string(nil), handoff.Blockers...),
 		AuthorizedNewPackageRoots: append([]string(nil), handoff.AuthorizedNewPackageRoots...),
 	}
+	if delivery := handoff.VerifiedSourceSatisfiedDelivery(); delivery != nil &&
+		strings.TrimSpace(handoff.StatusBucket) == productworkflow.WorkflowStatusBucketClosed &&
+		strings.TrimSpace(handoff.CurrentPhase) == string(productworkflow.PhaseComplete) &&
+		strings.TrimSpace(handoff.CurrentState) == productworkflow.WorkflowStateClosed &&
+		strings.TrimSpace(delivery.EffortID) == strings.TrimSpace(handoff.EffortID) &&
+		strings.TrimSpace(delivery.TaskID) == strings.TrimSpace(handoff.TaskID) &&
+		productworkflow.ValidateSourceSatisfiedDeliveryCloseout(*delivery) == nil {
+		brief.SourceSatisfiedDelivery = &productworkflow.SourceSatisfiedDeliveryCloseout{
+			EffortID:         strings.TrimSpace(delivery.EffortID),
+			TaskID:           strings.TrimSpace(delivery.TaskID),
+			Outcome:          delivery.Outcome,
+			SessionID:        strings.TrimSpace(delivery.SessionID),
+			CompletionDigest: strings.TrimSpace(delivery.CompletionDigest),
+			EvidencePaths:    append([]string(nil), delivery.EvidencePaths...),
+			Evidence:         append([]plancontract.SourceSatisfiedEvidenceRef(nil), delivery.Evidence...),
+			RecordedAt:       strings.TrimSpace(delivery.RecordedAt),
+		}
+	}
 	for _, req := range handoff.PRDRequirements {
 		brief.PRDRequirements = append(brief.PRDRequirements, featureplanner.PRDRequirementBrief{
 			ID:          req.ID,
@@ -55,6 +92,297 @@ func BriefFromImplementationHandoff(handoff productworkflow.ImplementationHandof
 	}
 
 	return brief
+}
+
+// FinalizeSourceSatisfiedDeliveryFromFeatureState projects a finalized plan
+// whose every atom closed through typed source-satisfied verification into the
+// product workflow's durable post-planning delivery authority. Artifact
+// creation is completed first when the effort is still in TDD synthesis; that
+// phase remains distinct from the delivery outcome recorded afterward.
+func FinalizeSourceSatisfiedDeliveryFromFeatureState(
+	brief *featureplanner.ProductWorkflowBrief,
+	state featureplanner.FeatureState,
+) (bool, error) {
+	if brief == nil {
+		return false, fmt.Errorf("source-satisfied product delivery requires product workflow context")
+	}
+	if strings.TrimSpace(brief.EffortRoot) == "" || strings.TrimSpace(brief.EffortID) == "" || strings.TrimSpace(brief.TaskID) == "" {
+		return false, fmt.Errorf("source-satisfied product delivery requires effort root, effort_id, and task_id")
+	}
+	completion, candidate, err := sourceSatisfiedCompletionFromFinalFeatureState(state)
+	if err != nil {
+		return false, err
+	}
+	if !candidate {
+		return false, nil
+	}
+	if strings.TrimSpace(state.EffortID) != strings.TrimSpace(brief.EffortID) {
+		return false, fmt.Errorf(
+			"source-satisfied feature state effort_id %q does not match product effort_id %q",
+			strings.TrimSpace(state.EffortID),
+			strings.TrimSpace(brief.EffortID),
+		)
+	}
+	if strings.TrimSpace(state.TaskID) == "" || strings.TrimSpace(state.TaskID) != strings.TrimSpace(brief.TaskID) {
+		return false, fmt.Errorf(
+			"source-satisfied feature state task_id %q does not match product task_id %q",
+			strings.TrimSpace(state.TaskID),
+			strings.TrimSpace(brief.TaskID),
+		)
+	}
+	if stateRoot := strings.TrimSpace(state.EffortRoot); stateRoot == "" || filepath.Clean(stateRoot) != filepath.Clean(brief.EffortRoot) {
+		return false, fmt.Errorf(
+			"source-satisfied feature state effort_root %q does not match product effort_root %q",
+			stateRoot,
+			strings.TrimSpace(brief.EffortRoot),
+		)
+	}
+	if strings.TrimSpace(brief.CurrentPhase) != string(productworkflow.PhaseComplete) {
+		completed, err := productworkflow.CompleteEffort(brief.EffortRoot)
+		if err != nil {
+			return false, fmt.Errorf("complete source-satisfied product artifacts: %w", err)
+		}
+		if completed.Status != productworkflow.ProductWorkflowStatusOK {
+			return false, fmt.Errorf(
+				"complete source-satisfied product artifacts: %s",
+				strings.Join(completed.Blockers, "; "),
+			)
+		}
+		refreshed, err := LoadBriefFromEffort(brief.EffortRoot)
+		if err != nil {
+			return false, fmt.Errorf("reload completed source-satisfied product effort: %w", err)
+		}
+		if strings.TrimSpace(refreshed.EffortID) != strings.TrimSpace(brief.EffortID) ||
+			strings.TrimSpace(refreshed.TaskID) != strings.TrimSpace(brief.TaskID) {
+			return false, fmt.Errorf(
+				"source-satisfied product identity changed while completing artifacts: expected %s/%s, found %s/%s",
+				strings.TrimSpace(brief.EffortID),
+				strings.TrimSpace(brief.TaskID),
+				strings.TrimSpace(refreshed.EffortID),
+				strings.TrimSpace(refreshed.TaskID),
+			)
+		}
+		brief = refreshed
+	}
+	if _, err := productworkflow.RecordSourceSatisfiedDelivery(productworkflow.SourceSatisfiedDeliveryRequest{
+		EffortRoot:       brief.EffortRoot,
+		ExpectedEffortID: brief.EffortID,
+		ExpectedTaskID:   brief.TaskID,
+		Completion:       completion,
+	}); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func sourceSatisfiedCompletionFromFinalFeatureState(
+	state featureplanner.FeatureState,
+) (plancontract.PlanExecuteTerminalCompletionRecord, bool, error) {
+	if strings.TrimSpace(state.Status) != featureplanner.FeatureStateComplete {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, nil
+	}
+
+	candidate := false
+	for _, atom := range state.Atoms {
+		if atom.State == featureplanner.AtomStateSourceSatisfied {
+			candidate = true
+		}
+	}
+	for _, closure := range state.VerificationClosures {
+		if closure.Status == featureplanner.VerificationClosureStatusSourceSatisfied ||
+			strings.TrimSpace(closure.Outcome) == string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied) {
+			candidate = true
+		}
+	}
+	if !candidate {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, nil
+	}
+	if strings.TrimSpace(state.TaskID) == "" {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf("source-satisfied feature state is missing durable task_id")
+	}
+
+	atomsByID := make(map[string]featureplanner.FeatureAtomState, len(state.Atoms))
+	allAtomsSourceSatisfied := true
+	for _, atom := range state.Atoms {
+		atomID := strings.TrimSpace(atom.ID)
+		if atomID == "" {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf("source-satisfied feature state contains an atom without identity")
+		}
+		if _, exists := atomsByID[atomID]; exists {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf("source-satisfied feature state duplicates atom %q", atomID)
+		}
+		if atom.State != featureplanner.AtomStateSourceSatisfied {
+			if atom.State != featureplanner.AtomStateComplete {
+				return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+					"source-satisfied candidate contains nonterminal atom %q in state %q",
+					atomID,
+					atom.State,
+				)
+			}
+			allAtomsSourceSatisfied = false
+		}
+		atomsByID[atomID] = atom
+	}
+	if len(atomsByID) == 0 {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf("source-satisfied product delivery requires finalized atoms")
+	}
+
+	closuresByAtom := make(map[string]featureplanner.VerificationClosure, len(state.VerificationClosures))
+	closureEventIDs := make(map[string]struct{}, len(state.VerificationClosures))
+	for _, closure := range state.VerificationClosures {
+		atomID := strings.TrimSpace(closure.AtomID)
+		if _, exists := atomsByID[atomID]; !exists {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied verification closure references stale or unknown atom %q",
+				atomID,
+			)
+		}
+		if _, exists := closuresByAtom[atomID]; exists {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied feature state has duplicate verification closures for atom %q",
+				atomID,
+			)
+		}
+		eventID := strings.TrimSpace(closure.EventID)
+		if _, exists := closureEventIDs[eventID]; exists {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied feature state duplicates verification closure event_id %q",
+				eventID,
+			)
+		}
+		closureEventIDs[eventID] = struct{}{}
+		closuresByAtom[atomID] = closure
+	}
+	if err := featureplanner.ValidateDurableState(state); err != nil {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+			"validate finalized source-satisfied feature state: %w",
+			err,
+		)
+	}
+	for atomID, atom := range atomsByID {
+		closure, ok := closuresByAtom[atomID]
+		sourceClosure := ok && closure.Status == featureplanner.VerificationClosureStatusSourceSatisfied &&
+			strings.TrimSpace(closure.Outcome) == string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied)
+		if atom.State == featureplanner.AtomStateSourceSatisfied && !sourceClosure {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q is missing matching source-satisfied verification authority",
+				atomID,
+			)
+		}
+		if atom.State != featureplanner.AtomStateSourceSatisfied && sourceClosure {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied verification authority for atom %q does not match atom state %q",
+				atomID,
+				atom.State,
+			)
+		}
+	}
+	if !allAtomsSourceSatisfied {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, nil
+	}
+	if state.ReleaseReadiness.Status != featureplanner.ReleaseReadinessStatusReady {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+			"source-satisfied feature state is not release-ready: %s",
+			state.ReleaseReadiness.Status,
+		)
+	}
+	readiness := featureplanner.EvaluateReleaseReadiness(state, state.ReleaseReadiness.DecidedAt)
+	if readiness.Status != featureplanner.ReleaseReadinessStatusReady {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+			"source-satisfied feature state fails current release-readiness evaluation: %s",
+			strings.Join(readiness.Blockers, "; "),
+		)
+	}
+
+	var requiredPaths []string
+	var evidencePaths []string
+	var evidence []plancontract.SourceSatisfiedEvidenceRef
+	for _, atom := range state.Atoms {
+		atomID := strings.TrimSpace(atom.ID)
+		closure, ok := closuresByAtom[atomID]
+		if !ok {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q is missing its verification closure",
+				atomID,
+			)
+		}
+		if closure.Status != featureplanner.VerificationClosureStatusSourceSatisfied ||
+			strings.TrimSpace(closure.Outcome) != string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied) {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q has non-source verification authority %q/%q",
+				atomID,
+				closure.Status,
+				strings.TrimSpace(closure.Outcome),
+			)
+		}
+		if len(plancontract.UniqueScopePaths(closure.ChangedPaths)) > 0 {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q verification closure contains changed paths",
+				atomID,
+			)
+		}
+
+		atomRequiredPaths := plancontract.UniqueScopePaths(atom.RequiredEditPaths)
+		if len(atomRequiredPaths) == 0 || !slices.Equal(atomRequiredPaths, atom.RequiredEditPaths) {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q required edit paths are missing or not normalized",
+				atomID,
+			)
+		}
+		atomEvidencePaths := plancontract.UniqueScopePaths(closure.SourceSatisfiedEvidencePaths)
+		if len(atomEvidencePaths) == 0 || !slices.Equal(atomEvidencePaths, closure.SourceSatisfiedEvidencePaths) {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q evidence paths are missing or not normalized",
+				atomID,
+			)
+		}
+		atomEvidence := plancontract.NormalizeSourceSatisfiedEvidenceRefs(closure.SourceSatisfiedEvidence)
+		if len(atomEvidence) == 0 || !slices.Equal(atomEvidence, closure.SourceSatisfiedEvidence) {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q evidence refs are missing or not normalized",
+				atomID,
+			)
+		}
+		pathViolations := plancontract.ValidateSourceSatisfiedPathCoverage(plancontract.SourceSatisfiedPathCoverageInput{
+			RequiredPaths:        atomRequiredPaths,
+			SourceSatisfiedPaths: atomEvidencePaths,
+			Evidence:             atomEvidence,
+			RequireEvidence:      true,
+		})
+		if len(atomEvidencePaths) != len(atomRequiredPaths) || len(atomEvidence) != len(atomEvidencePaths) || len(pathViolations) > 0 {
+			return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+				"source-satisfied atom %q evidence must exactly cover its required edit paths with current-state refs",
+				atomID,
+			)
+		}
+		requiredPaths = append(requiredPaths, atomRequiredPaths...)
+		evidencePaths = append(evidencePaths, atomEvidencePaths...)
+		evidence = append(evidence, atomEvidence...)
+	}
+
+	requiredPaths = plancontract.UniqueScopePaths(requiredPaths)
+	evidencePaths = plancontract.UniqueScopePaths(evidencePaths)
+	evidence = plancontract.NormalizeSourceSatisfiedEvidenceRefs(evidence)
+	if len(requiredPaths) != len(evidencePaths) || len(evidencePaths) != len(evidence) {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false, fmt.Errorf(
+			"source-satisfied feature state does not preserve exact required path and evidence coverage",
+		)
+	}
+
+	return plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
+		SchemaVersion:                plancontract.PlanExecuteTerminalCompletionSchemaVersion,
+		Type:                         plancontract.PlanExecuteTerminalCompletionRecordType,
+		TS:                           strings.TrimSpace(state.ReleaseReadiness.DecidedAt),
+		SessionID:                    strings.TrimSpace(state.SessionID),
+		Phase:                        plancontract.PlanExecuteProgressPhaseComplete,
+		Status:                       plancontract.PlanExecuteTerminalStatusSourceSatisfied,
+		TerminalClass:                plancontract.PlanExecuteTerminalClassSuccess,
+		Outcome:                      plancontract.PlanExecuteTerminalOutcomeSourceSatisfied,
+		RequiredEditPaths:            requiredPaths,
+		SourceSatisfiedEvidencePaths: evidencePaths,
+		SourceSatisfiedEvidence:      evidence,
+	}), true, nil
 }
 
 func coverageContractRefFromHandoff(ref *productworkflow.ImplementationHandoffCoverageContract) *featureplanner.CoverageContractRef {

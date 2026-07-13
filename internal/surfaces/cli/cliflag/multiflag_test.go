@@ -2,21 +2,19 @@ package cliflag
 
 import (
 	"flag"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestMultiFlag(t *testing.T) {
-	var mf MultiFlag
+var _ = ginkgo.Describe("MultiFlag", func() {
+	ginkgo.It("collects repeated flag values in order", func() {
+		var values MultiFlag
+		flags := flag.NewFlagSet("test", flag.ContinueOnError)
+		flags.Var(&values, "f", "test flag")
 
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	fs.Var(&mf, "f", "test flag")
-	fs.Parse([]string{"-f", "a", "-f", "b", "-f", "c"})
-
-	if len(mf) != 3 {
-		t.Fatalf("expected 3 values, got %d: %v", len(mf), mf)
-	}
-
-	if mf.String() != "a,b,c" {
-		t.Fatalf("expected a,b,c got %s", mf.String())
-	}
-}
+		gomega.Expect(flags.Parse([]string{"-f", "a", "-f", "b", "-f", "c"})).To(gomega.Succeed())
+		gomega.Expect(values).To(gomega.Equal(MultiFlag{"a", "b", "c"}))
+		gomega.Expect(values.String()).To(gomega.Equal("a,b,c"))
+	})
+})

@@ -1,12 +1,14 @@
 package featureplanner
 
 import (
-	"testing"
-
+	"fmt"
 	featureplannercontract "idiom/internal/contracts/featureplanner"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestProductSourceSatisfiedCloseoutBuildsTerminalStateAndEvent(t *testing.T) {
+var _ = ginkgo.It("product source satisfied closeout builds terminal state and event", func() {
 	state := FeatureState{
 		SessionID: "session-1",
 		Status:    FeatureStateDispatching,
@@ -27,6 +29,7 @@ func TestProductSourceSatisfiedCloseoutBuildsTerminalStateAndEvent(t *testing.T)
 	}
 	brief := ProductWorkflowBrief{
 		EffortID:         "brief-effort",
+		TaskID:           "brief-task",
 		EffortRoot:       " /tmp/effort ",
 		StatusBucket:     "closed",
 		CurrentPhase:     "source-satisfied-closeout",
@@ -35,28 +38,31 @@ func TestProductSourceSatisfiedCloseoutBuildsTerminalStateAndEvent(t *testing.T)
 	}
 
 	next, event := ProductSourceSatisfiedCloseout(state, brief, " requested-effort ")
+	gomega.Expect(next.Status).To(gomega.Equal(FeatureStateSourceSatisfied), fmt.Sprintf("expected source-satisfied state, got status=%q loop=%q", next.Status, next.PlanningLoop.State))
+	gomega.Expect(next.PlanningLoop.State).To(gomega.Equal(FeatureStateSourceSatisfied), fmt.Sprintf("expected source-satisfied state, got status=%q loop=%q", next.Status, next.PlanningLoop.State))
+	gomega.Expect(next.EffortID).To(gomega.Equal("requested-effort"), fmt.Sprintf("unexpected effort identity: id=%q root=%q", next.EffortID, next.EffortRoot))
+	gomega.Expect(next.TaskID).To(gomega.Equal("brief-task"))
+	gomega.Expect(next.EffortRoot).To(gomega.Equal("/tmp/effort"), fmt.Sprintf("unexpected effort identity: id=%q root=%q", next.EffortID, next.EffortRoot))
+	gomega.Expect(next.Blockers).To(gomega.HaveLen(0), fmt.Sprintf("closeout should clear terminal-incompatible state: %#v", next))
+	gomega.Expect(next.OpenQuestions).To(gomega.HaveLen(0), fmt.Sprintf("closeout should clear terminal-incompatible state: %#v", next))
+	gomega.Expect(next.OpenRecoveryPackets).To(gomega.HaveLen(0), fmt.Sprintf("closeout should clear terminal-incompatible state: %#v", next))
+	gomega.Expect(next.PlanningLoop.OpenQuestionIDs).To(gomega.HaveLen(0), fmt.Sprintf("closeout should clear terminal-incompatible state: %#v", next))
+	gomega.Expect(next.ActiveRuns).To(gomega.HaveLen(0), fmt.Sprintf("closeout should clear terminal-incompatible state: %#v", next))
+	gomega.Expect(event.Type).To(gomega.Equal(featureplannercontract.EventName(featureplannercontract.EventProductSourceSatisfied)), fmt.Sprintf("unexpected event identity: %#v", event))
+	gomega.Expect(event.SessionID).To(gomega.Equal("session-1"), fmt.Sprintf("unexpected event identity: %#v", event))
+	gomega.Expect(event.FeatureTo).To(gomega.Equal(FeatureStateSourceSatisfied), fmt.Sprintf("unexpected event identity: %#v", event))
+	gomega.Expect(event.ActiveRunDeltas).To(gomega.HaveLen(1), fmt.Sprintf("expected active run fold delta, got %#v", event.ActiveRunDeltas))
+	gomega.Expect(event.ActiveRunDeltas[0].Op).To(gomega.Equal("fold_terminal"), fmt.Sprintf("expected active run fold delta, got %#v", event.ActiveRunDeltas))
+	gomega.Expect(event.ActiveRunDeltas[0].AfterState).To(gomega.Equal(FeatureStateSourceSatisfied), fmt.Sprintf("expected active run fold delta, got %#v", event.ActiveRunDeltas))
+	gomega.Expect(event.Fields["effort_id"]).To(gomega.Equal("brief-effort"), fmt.Sprintf("unexpected event fields: %#v", event.Fields))
+	gomega.Expect(event.Fields["task_id"]).To(gomega.Equal("brief-task"))
+	gomega.Expect(event.Fields["current_phase"]).To(gomega.Equal("source-satisfied-closeout"), fmt.Sprintf("unexpected event fields: %#v", event.Fields))
 
-	if next.Status != FeatureStateSourceSatisfied || next.PlanningLoop.State != FeatureStateSourceSatisfied {
-		t.Fatalf("expected source-satisfied state, got status=%q loop=%q", next.Status, next.PlanningLoop.State)
-	}
+})
+var _ = ginkgo.It("product source satisfied closeout preserves an established task identity", func() {
+	state := FeatureState{TaskID: "established-task"}
+	brief := ProductWorkflowBrief{TaskID: "current-brief-task"}
 
-	if next.EffortID != "requested-effort" || next.EffortRoot != "/tmp/effort" {
-		t.Fatalf("unexpected effort identity: id=%q root=%q", next.EffortID, next.EffortRoot)
-	}
-
-	if len(next.Blockers) != 0 || len(next.OpenQuestions) != 0 || len(next.OpenRecoveryPackets) != 0 || len(next.PlanningLoop.OpenQuestionIDs) != 0 || len(next.ActiveRuns) != 0 {
-		t.Fatalf("closeout should clear terminal-incompatible state: %#v", next)
-	}
-
-	if event.Type != featureplannercontract.EventName(featureplannercontract.EventProductSourceSatisfied) || event.SessionID != "session-1" || event.FeatureTo != FeatureStateSourceSatisfied {
-		t.Fatalf("unexpected event identity: %#v", event)
-	}
-
-	if len(event.ActiveRunDeltas) != 1 || event.ActiveRunDeltas[0].Op != "fold_terminal" || event.ActiveRunDeltas[0].AfterState != FeatureStateSourceSatisfied {
-		t.Fatalf("expected active run fold delta, got %#v", event.ActiveRunDeltas)
-	}
-
-	if event.Fields["effort_id"] != "brief-effort" || event.Fields["current_phase"] != "source-satisfied-closeout" {
-		t.Fatalf("unexpected event fields: %#v", event.Fields)
-	}
-}
+	next, _ := ProductSourceSatisfiedCloseout(state, brief, "")
+	gomega.Expect(next.TaskID).To(gomega.Equal("established-task"))
+})

@@ -2,9 +2,8 @@ package app
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -28,25 +27,21 @@ func (m *Model) sendProductFeaturePlannerTurnAsync(message string) {
 	m.currentTurnBusyStatus = busyStatusForPrompt(message)
 	m.beginAgentHistoryTurn()
 
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		answer, err := m.runProductFeaturePlannerTurn(ctx, message)
+	m.startPromptExecution(func(ctx context.Context, worker *promptExecutionSession) (string, error) {
+		answer, err := worker.runProductFeaturePlannerTurn(ctx, message)
 		if err != nil {
-			m.events <- streamDoneMsg{err: err}
-			return
+			return "", err
 		}
 
-		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: answer})
-		m.logMessage("assistant", answer)
+		worker.appendPromptTranscriptMessage(llama.ChatMessage{Role: "assistant", Content: answer})
+		worker.logMessage("assistant", answer)
 
-		m.events <- streamDoneMsg{}
-	}()
+		return answer, nil
+	})
 }
 
 // runProductFeaturePlannerTurn routes a message to the appropriate phase handler.
-func (m *Model) runProductFeaturePlannerTurn(ctx context.Context, message string) (string, error) {
+func (m *promptExecutionSession) runProductFeaturePlannerTurn(ctx context.Context, message string) (string, error) {
 	if err := m.ensureServerReady(ctx); err != nil {
 		return "", fmt.Errorf("server not ready: %w", err)
 	}
@@ -62,62 +57,54 @@ func (m *Model) runProductFeaturePlannerTurn(ctx context.Context, message string
 }
 
 // runProductApproveGate handles /product-approve during product creation phases.
-func (m *Model) runProductApproveGate() (string, error) {
+func (m *promptExecutionSession) runProductApproveGate(ctx context.Context) (string, error) {
 	effortRoot := m.featurePlannerEffortRoot
 	switch m.featurePlannerPhase {
 	case productworkflow.PhasePRDDrafting:
-		return m.approvePRDAndAdvance(effortRoot)
+		return m.approvePRDAndAdvance(ctx, effortRoot)
 	case productworkflow.PhaseADRDrafting:
-		return m.approveADRAndPlan(effortRoot)
+		return m.approveADRAndPlan(ctx, effortRoot)
+	case productworkflow.PhaseTDDSynthesis:
+		return m.completeProductTDDSynthesis(ctx, effortRoot)
 	default:
 		return "", fmt.Errorf("no active product creation phase to approve")
 	}
 }
 
 // runPRDDraftingTurn generates or refines a PRD based on the operator's message.
-func (m *Model) runPRDDraftingTurn(ctx context.Context, message string) (string, error) {
+func (m *promptExecutionSession) runPRDDraftingTurn(ctx context.Context, message string) (string, error) {
 	effortRoot := m.featurePlannerEffortRoot
-	prdPath := filepath.Join(effortRoot, "prd.md")
-
-	hasExisting := false
-	if _, err := os.Stat(prdPath); err == nil {
-		hasExisting = true
+	draftContext, err := productworkflow.LoadPRDDraftContext(effortRoot)
+	if err != nil {
+		return "", fmt.Errorf("load PRD draft context: %w", err)
 	}
-
-	var (
-		prompt      string
-		previousPRD *productworkflow.PRDDocument
-	)
+	hasExisting := draftContext.OriginalMarkdown != ""
+	previousPRD := draftContext.Document
+	var prompt string
 
 	if hasExisting {
-		current, err := os.ReadFile(prdPath)
-		if err != nil {
-			return "", fmt.Errorf("read prd.md: %w", err)
+		if draftContext.ParseError != nil {
+			m.logFeaturePlannerInternalEvent("feature_planner_prd_draft_parse_repair", draftContext.ParseError.Error())
 		}
-
-		if parsed, _, parseErr := productworkflow.TryParsePRDMarkdown(string(current)); parseErr == nil {
-			previousPRD = &parsed
-		}
-
-		prompt = buildPRDRefinementPrompt(string(current), message, effortRoot)
+		prompt = buildPRDRefinementPrompt(draftContext.OriginalMarkdown, message, draftContext.Identity)
 	} else {
-		prompt = buildPRDGenerationPrompt(message, effortRoot)
+		prompt = buildPRDGenerationPrompt(message, draftContext.Identity)
 	}
 
 	m.logFeaturePlannerInternalEvent("feature_planner_prd_turn", message)
 
-	opts := m.chatOptions()
+	opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 
 	opts.MaxTokens = 8192
 
 	// PRD generation with parse-repair loop.
-	answer, prd, directPlan, err := m.generatePRDWithRepair(ctx, prompt, opts, effortRoot, hasExisting)
+	answer, prd, directPlan, err := m.generatePRDWithRepair(ctx, prompt, opts, effortRoot, draftContext.Identity)
 	if err != nil {
 		return "", fmt.Errorf("PRD generation: %w", err)
 	}
 
 	if directPlan {
-		return m.runDirectFeaturePlannerPlanFromDraft(ctx, answer, effortRoot, hasExisting)
+		return m.runDirectFeaturePlannerPlanFromDraft(ctx, answer, effortRoot)
 	}
 
 	if len(prd.Requirements) == 0 {
@@ -125,12 +112,15 @@ func (m *Model) runPRDDraftingTurn(ctx context.Context, message string) (string,
 		return answer, nil
 	}
 
-	// Parse succeeded — write and validate.
-	if writeErr := productworkflow.WritePRDMarkdown(effortRoot, prd); writeErr != nil {
+	// Parse succeeded — persist and validate through the product workflow owner.
+	intake, writeErr := productworkflow.PersistPRDDraft(productworkflow.PRDDraftPersistenceRequest{
+		EffortRoot:         effortRoot,
+		Document:           prd,
+		ExpectedGeneration: draftContext.Generation,
+	})
+	if writeErr != nil {
 		return "", fmt.Errorf("write prd.md: %w", writeErr)
 	}
-
-	intake := productworkflow.ValidatePRDIntake(prd)
 	if !intake.Passed && hasExisting {
 		return "PRD updated but has intake issues:\n" + formatPRDIntakeFailures(intake), nil
 	}
@@ -142,7 +132,13 @@ func (m *Model) runPRDDraftingTurn(ctx context.Context, message string) (string,
 // If parsing fails, it saves the raw output, asks the model to fix formatting,
 // and retries up to maxParseRepairRetries times. Returns the parsed PRD and
 // the raw answer text on success, or an error after exhausting retries.
-func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts llama.ChatOptions, effortRoot string, hasExisting bool) (string, productworkflow.PRDDocument, bool, error) {
+func (m *promptExecutionSession) generatePRDWithRepair(
+	ctx context.Context,
+	prompt string,
+	opts llama.ChatOptions,
+	effortRoot string,
+	identity productworkflow.PRDDraftIdentity,
+) (string, productworkflow.PRDDocument, bool, error) {
 	answer, err := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
 	if err != nil {
 		return "", productworkflow.PRDDocument{}, false, fmt.Errorf("PRD model call: %w", err)
@@ -160,20 +156,36 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 	// Parse failed — enter repair loop.
 	for attempt := 0; attempt < maxParseRepairRetries; attempt++ {
 		// Save raw output for operator inspection with attempt-specific filename.
-		saveRawParseFailure(effortRoot, fmt.Sprintf("prd_parse_failure_raw_%03d.md", attempt+1), answer)
+		if persistErr := productworkflow.PersistRawParseFailure(
+			effortRoot,
+			fmt.Sprintf("prd_parse_failure_raw_%03d.md", attempt+1),
+			answer,
+		); persistErr != nil {
+			return answer, productworkflow.PRDDocument{}, false, fmt.Errorf(
+				"persist PRD parse failure attempt %d: %w",
+				attempt+1,
+				persistErr,
+			)
+		}
 
 		// Build repair prompt with the error and ask model to fix formatting.
-		repairPrompt := buildPRDFormatRepairPrompt(answer, parseErr, effortRoot)
-		opts := m.chatOptions()
+		repairPrompt := buildPRDFormatRepairPrompt(answer, parseErr, identity)
+		opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 
 		opts.MaxTokens = 8192
 
 		repairAnswer, repErr := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: repairPrompt}}, opts)
 		if repErr != nil {
 			// Model call itself failed — not a format issue.
-			saveRawParseFailure(effortRoot, "prd_parse_failure_final.md", answer)
+			repairErr := fmt.Errorf("PRD repair call failed (attempt %d/%d): %w", attempt+1, maxParseRepairRetries, repErr)
+			if persistErr := productworkflow.PersistRawParseFailure(effortRoot, "prd_parse_failure_final.md", answer); persistErr != nil {
+				return answer, productworkflow.PRDDocument{}, false, errors.Join(
+					repairErr,
+					fmt.Errorf("persist final PRD parse failure: %w", persistErr),
+				)
+			}
 
-			return answer, productworkflow.PRDDocument{}, false, fmt.Errorf("PRD repair call failed (attempt %d/%d): %w", attempt+1, maxParseRepairRetries, repErr)
+			return answer, productworkflow.PRDDocument{}, false, repairErr
 		}
 
 		answer = repairAnswer
@@ -191,7 +203,9 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 	// All retries exhausted — save final raw output and return a message,
 	// not a fatal error, so the session stays alive and the operator can
 	// inspect the raw output.
-	saveRawParseFailure(effortRoot, "prd_parse_failure_final.md", answer)
+	if persistErr := productworkflow.PersistRawParseFailure(effortRoot, "prd_parse_failure_final.md", answer); persistErr != nil {
+		return answer, productworkflow.PRDDocument{}, false, fmt.Errorf("persist final PRD parse failure: %w", persistErr)
+	}
 
 	msg := fmt.Sprintf(
 		"PRD parsing failed after %d total attempts. The raw model output has been saved to %s.\nParse error: %v\n\nContinue chatting to refine the PRD, or type /product-approve to attempt auto-repair.",
@@ -208,7 +222,7 @@ func featurePlannerAnswerIsDirectPlan(answer string) bool {
 	return err == nil && parsed.Kind == featureplannercontract.ToolSubmitFeaturePlan
 }
 
-func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPlan string, effortRoot string, hasExisting bool) (string, error) {
+func (m *promptExecutionSession) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPlan string, effortRoot string) (string, error) {
 	parsed, err := featureplanner.ParsePlannerOutput(rawPlan)
 	if err != nil {
 		return "", err
@@ -219,14 +233,14 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 
 	var events []featureplanner.Event
 
-	brief, briefErr := loadDirectFeaturePlannerProductBrief(effortRoot)
+	brief, briefErr := featureplannerproduct.LoadBriefFromEffort(effortRoot)
 	if briefErr != nil {
 		state.Status = featureplanner.FeatureStatePlanningRepair
 		state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
 		state.Blockers = append(state.Blockers, briefErr.Error())
 		events = append(events, featureplanner.Event{Type: featureplannercontract.EventName(featureplannercontract.EventProductContextBlocked), SessionID: state.SessionID, Message: briefErr.Error()})
 	} else if parsed.Kind == featureplannercontract.ToolSubmitFeaturePlan && brief != nil {
-		workspaceRoot := m.projectRoot()
+		workspaceRoot := resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace)
 		if err := featureplanner.ValidatePlanProductWorkflowContext(parsed.Plan, *brief, workspaceRoot); err != nil {
 			state.Status = featureplanner.FeatureStatePlanningRepair
 			state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
@@ -269,14 +283,14 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		m.logFeaturePlannerEvent(event)
 	}
 
-	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), state.SessionID, events)
+	eventsPath, err := featureplanner.AppendEvents(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), state.SessionID, events)
 	if err != nil {
 		return "", err
 	}
 
 	state.EventsPath = eventsPath
 
-	statePath, err := featureplanner.SaveState(m.projectRoot(), &state)
+	statePath, err := featureplanner.SaveState(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), &state)
 	if err != nil {
 		return "", err
 	}
@@ -285,35 +299,15 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		m.featurePlannerPhase = ""
 	}
 
-	if !hasExisting && strings.TrimSpace(effortRoot) != "" {
-		_ = os.RemoveAll(effortRoot)
-	}
-
-	answer := formatFeaturePlannerTUIAnswerForRoot(state, statePath, m.projectRoot())
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, statePath, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(state.Status), answer)
 
 	return answer, nil
 }
 
-func loadDirectFeaturePlannerProductBrief(effortRoot string) (*featureplanner.ProductWorkflowBrief, error) {
-	if strings.TrimSpace(effortRoot) == "" {
-		return nil, fmt.Errorf("direct product feature plan is missing effort root")
-	}
-
-	handoff, err := productworkflow.LoadImplementationHandoff(effortRoot)
-	if err != nil {
-		return nil, fmt.Errorf("load product workflow implementation handoff: %w", err)
-	}
-
-	return featureplannerproduct.BriefFromImplementationHandoff(handoff), nil
-}
-
 // buildPRDFormatRepairPrompt creates a prompt asking the model to fix
 // formatting issues in its PRD output.
-func buildPRDFormatRepairPrompt(badOutput string, parseErr error, effortRoot string) string {
-	effortID := filepath.Base(effortRoot)
-	now := time.Now().UTC().Format(time.RFC3339)
-
+func buildPRDFormatRepairPrompt(badOutput string, parseErr error, identity productworkflow.PRDDraftIdentity) string {
 	var b strings.Builder
 
 	b.WriteString("Your PRD output could not be parsed because of formatting issues.\n\n")
@@ -326,25 +320,16 @@ func buildPRDFormatRepairPrompt(badOutput string, parseErr error, effortRoot str
 	b.WriteString("Please fix the formatting and output the complete, corrected PRD.\n")
 	b.WriteString("Requirements:\n")
 	b.WriteString("- The document MUST begin with --- on its own line and MUST end the front matter block with a second --- on its own line immediately after the last field\n")
-	b.WriteString(fmt.Sprintf("- Required front matter between the --- delimiters:\n  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", effortID, effortID, now))
+	b.WriteString(fmt.Sprintf("- Required front matter between the --- delimiters:\n  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", identity.PRDID, identity.TaskID, identity.CreatedAt))
 	b.WriteString("- Do NOT wrap the output in ``` code fences\n")
 	b.WriteString("- Do NOT add any preamble text before the --- delimiter\n")
 	b.WriteString("- Output only the PRD markdown, nothing else\n")
 	b.WriteString("- Example: the front matter block must look like this (both --- lines are required):\n")
 	b.WriteString("  ---\n")
-	b.WriteString(fmt.Sprintf("  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", effortID, effortID, now))
+	b.WriteString(fmt.Sprintf("  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", identity.PRDID, identity.TaskID, identity.CreatedAt))
 	b.WriteString("  ---\n")
 
 	return b.String()
-}
-
-// saveRawParseFailure writes raw model output to disk when parsing fails,
-// so the operator can inspect what went wrong without losing the data.
-func saveRawParseFailure(effortRoot, filename, content string) {
-	path := filepath.Join(effortRoot, filename)
-
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	_ = os.WriteFile(path, []byte(content), 0o644)
 }
 
 // formatPRDIntakeFailures formats PRD intake validation failures for display.
@@ -361,10 +346,7 @@ func formatPRDIntakeFailures(intake productworkflow.IntakeResult) string {
 }
 
 // buildPRDGenerationPrompt creates the initial PRD drafting prompt.
-func buildPRDGenerationPrompt(featureDescription, effortRoot string) string {
-	effortID := filepath.Base(effortRoot)
-	now := time.Now().UTC().Format(time.RFC3339)
-
+func buildPRDGenerationPrompt(featureDescription string, identity productworkflow.PRDDraftIdentity) string {
 	var b strings.Builder
 
 	b.WriteString("You are drafting a Product Requirements Document (PRD). ")
@@ -372,10 +354,10 @@ func buildPRDGenerationPrompt(featureDescription, effortRoot string) string {
 	b.WriteString("PRD format requirements:\n")
 	b.WriteString("- Include YAML front matter with an opening --- on its own line, the fields below, and a closing --- on its own line:\n")
 	b.WriteString("  schema_version: idiom.prd.v1\n")
-	b.WriteString(fmt.Sprintf("  prd_id: %s\n", effortID))
+	b.WriteString(fmt.Sprintf("  prd_id: %s\n", identity.PRDID))
 	b.WriteString("  status: draft\n")
-	b.WriteString(fmt.Sprintf("  task_id: %s\n", effortID))
-	b.WriteString(fmt.Sprintf("  created_at: %s\n", now))
+	b.WriteString(fmt.Sprintf("  task_id: %s\n", identity.TaskID))
+	b.WriteString(fmt.Sprintf("  created_at: %s\n", identity.CreatedAt))
 	b.WriteString("- After the front matter, list each requirement using these exact bullet keys:\n")
 	b.WriteString("  - **id**: REQ-001\n")
 	b.WriteString("  - **priority**: P1 (must be one of: P0, P1, P2, P3)\n")
@@ -399,10 +381,7 @@ func buildPRDGenerationPrompt(featureDescription, effortRoot string) string {
 }
 
 // buildPRDRefinementPrompt creates a prompt to refine an existing PRD.
-func buildPRDRefinementPrompt(currentPRD, feedback, effortRoot string) string {
-	effortID := filepath.Base(effortRoot)
-	now := time.Now().UTC().Format(time.RFC3339)
-
+func buildPRDRefinementPrompt(currentPRD, feedback string, identity productworkflow.PRDDraftIdentity) string {
 	var b strings.Builder
 
 	b.WriteString("You are refining an existing Product Requirements Document (PRD). ")
@@ -413,7 +392,7 @@ func buildPRDRefinementPrompt(currentPRD, feedback, effortRoot string) string {
 	b.WriteString(feedback)
 	b.WriteString("\n\n")
 	b.WriteString("Preserve the existing PRD format, including the opening and closing --- front matter delimiters. The front matter fields must remain:\n")
-	b.WriteString(fmt.Sprintf("  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", effortID, effortID, now))
+	b.WriteString(fmt.Sprintf("  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", identity.PRDID, identity.TaskID, identity.CreatedAt))
 	b.WriteString("\nKeep or update the requirements list based on the feedback. Output only the complete PRD markdown, nothing else.\n")
 
 	return b.String()
@@ -440,27 +419,10 @@ func buildPRDRepairPrompt(currentPRD string, intake productworkflow.IntakeResult
 }
 
 // runADRDraftingTurn generates or refines ADRs from the current PRD.
-func (m *Model) runADRDraftingTurn(ctx context.Context, message string) (string, error) {
+func (m *promptExecutionSession) runADRDraftingTurn(ctx context.Context, message string) (string, error) {
 	effortRoot := m.featurePlannerEffortRoot
-	adrsDir := filepath.Join(effortRoot, "adrs")
-	idxPath := filepath.Join(adrsDir, "index.json")
-
-	prdData, err := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
-	if err != nil {
-		return "", fmt.Errorf("read prd.md: %w", err)
-	}
-
-	prd, _, err := productworkflow.TryParsePRDMarkdown(string(prdData))
-	if err != nil {
-		return "", fmt.Errorf("parse prd.md: %w", err)
-	}
-
-	hasExisting := false
-	if _, err := os.Stat(idxPath); err == nil {
-		hasExisting = true
-	}
-
-	if !hasExisting {
+	draftContext, err := productworkflow.LoadADRDraftContext(effortRoot)
+	if errors.Is(err, productworkflow.ErrADRDraftIndexNotFound) {
 		// Initial ADR generation: use shared helper.
 		m.logFeaturePlannerInternalEvent("feature_planner_adr_turn", message)
 
@@ -471,132 +433,86 @@ func (m *Model) runADRDraftingTurn(ctx context.Context, message string) (string,
 
 		return formatADRStatus(indexEntries, adrDocs, false, nil), nil
 	}
+	if err != nil {
+		return "", fmt.Errorf("load ADR draft context: %w", err)
+	}
 
 	// Refinement path: model call with existing ADRs as context.
 	var (
 		existing     strings.Builder
-		previousADRs []productworkflow.ADRDocument
+		previousADRs = make([]productworkflow.ADRDocument, 0, len(draftContext.Documents))
 	)
 
-	idxData, _ := os.ReadFile(idxPath)
-
 	existing.WriteString("Current ADR Index:\n")
-	existing.Write(idxData)
+	existing.Write(draftContext.OriginalIndexJSON)
 	existing.WriteString("\n\nCurrent ADR Documents:\n")
 
-	idx, _ := productworkflow.ParseADRIndexJSON(idxData)
-	for _, entry := range idx.ADRs {
-		adrData, readErr := os.ReadFile(filepath.Join(adrsDir, entry.Path))
-		if readErr != nil {
-			continue
-		}
-
-		fmt.Fprintf(&existing, "=== %s ===\n", entry.Path)
-		existing.Write(adrData)
+	for _, document := range draftContext.Documents {
+		fmt.Fprintf(&existing, "=== %s ===\n", document.IndexPath)
+		existing.WriteString(document.OriginalMarkdown)
 		existing.WriteString("\n")
-
-		if adrDoc, _, parseErr := productworkflow.TryParseADRMarkdown(string(adrData)); parseErr == nil {
-			previousADRs = append(previousADRs, adrDoc)
-		}
+		previousADRs = append(previousADRs, document.Document)
 	}
 
 	m.logFeaturePlannerInternalEvent("feature_planner_adr_turn", message)
 
 	// ADR refinement with parse-repair loop.
 	adrDocs, indexEntries, err := m.generateADRsWithRepair(
-		ctx, effortRoot, mustReadFile(filepath.Join(effortRoot, "prd.md")),
-		prd,
-		func(content, root string) string {
-			return buildADRRefinementPrompt(existing.String(), message, effortRoot)
+		ctx, effortRoot, []byte(draftContext.OriginalPRDMarkdown),
+		draftContext.PRD,
+		func(prdContent string) string {
+			return buildADRRefinementPrompt(existing.String(), message, prdContent)
 		},
 	)
 	if err != nil {
 		return "", fmt.Errorf("ADR refinement: %w", err)
 	}
 
-	existingIdx, _ := productworkflow.ParseADRIndexJSON(mustReadFile(idxPath))
-
-	adrDocs, indexEntries = mergeADRIndex(existingIdx, adrDocs, indexEntries)
-	adrDocs = preserveExistingADRDocuments(adrDocs, previousADRs)
-
-	if len(adrDocs) == 0 {
-		// Parse-repair exhausted — raw output on disk for operator inspection.
-		return "ADR parsing failed after all repair attempts. The raw model output has been saved to adrs_parse_failure_final.txt in the effort directory. Continue chatting to refine the ADRs.", nil
+	persisted, persistErr := productworkflow.PersistADRDrafts(productworkflow.ADRDraftPersistenceRequest{
+		EffortRoot:         effortRoot,
+		Documents:          adrDocs,
+		IndexEntries:       indexEntries,
+		ExpectedGeneration: draftContext.Generation,
+	})
+	if persistErr != nil {
+		return "", persistErr
 	}
-
-	for i, doc := range adrDocs {
-		path := indexEntries[i].Path
-		if writeErr := productworkflow.WriteADRMarkdown(effortRoot, path, doc); writeErr != nil {
-			return "", fmt.Errorf("write %s: %w", path, writeErr)
-		}
-	}
-
-	// Write index.
-	ws, wsErr := productworkflow.LoadWorkflowState(effortRoot)
-	effortID := filepath.Base(effortRoot)
-
-	if wsErr == nil {
-		effortID = ws.EffortID
-	}
-
-	adrIndex := productworkflow.ADRIndex{
-		SchemaVersion: "idiom.adr_index.v1",
-		EffortID:      effortID,
-		ADRs:          indexEntries,
-	}
-	if writeErr := productworkflow.WriteADRIndexJSON(effortRoot, adrIndex); writeErr != nil {
-		return "", fmt.Errorf("write adrs/index.json: %w", writeErr)
-	}
+	adrDocs = persisted.Documents
+	indexEntries = persisted.IndexEntries
 
 	return formatADRStatus(indexEntries, adrDocs, true, previousADRs), nil
 }
 
 // generateADRs makes a model call to produce ADRs from the PRD, parses them,
 // writes the files and index, and returns the documents and index entries.
-func (m *Model) generateADRs(ctx context.Context, effortRoot string) ([]productworkflow.ADRDocument, []productworkflow.ADRIndexEntry, error) {
-	prdData, err := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
+func (m *promptExecutionSession) generateADRs(ctx context.Context, effortRoot string) ([]productworkflow.ADRDocument, []productworkflow.ADRIndexEntry, error) {
+	adrInput, err := productworkflow.LoadADRGenerationContext(effortRoot)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read prd.md: %w", err)
+		return nil, nil, fmt.Errorf("load ADR generation context: %w", err)
 	}
 
-	prd, _, err := productworkflow.TryParsePRDMarkdown(string(prdData))
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse prd.md: %w", err)
-	}
-
-	adrDocs, indexEntries, genErr := m.generateADRsWithRepair(ctx, effortRoot, prdData, prd, buildADRGenerationPrompt)
+	adrDocs, indexEntries, genErr := m.generateADRsWithRepair(
+		ctx,
+		effortRoot,
+		[]byte(adrInput.OriginalPRDMarkdown),
+		adrInput.PRD,
+		buildADRGenerationPrompt,
+	)
 	if genErr != nil {
 		return nil, nil, genErr
 	}
 
-	// Write successfully parsed ADRs (only for initial generation path —
-	// the refinement path in runADRDraftingTurn handles its own writes
-	// after mergeADRIndex).
-	for i, doc := range adrDocs {
-		path := indexEntries[i].Path
-		if writeErr := productworkflow.WriteADRMarkdown(effortRoot, path, doc); writeErr != nil {
-			return nil, nil, fmt.Errorf("write %s: %w", path, writeErr)
-		}
+	persisted, err := productworkflow.PersistADRDrafts(productworkflow.ADRDraftPersistenceRequest{
+		EffortRoot:         effortRoot,
+		Documents:          adrDocs,
+		IndexEntries:       indexEntries,
+		ExpectedGeneration: adrInput.Generation,
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// Write index.
-	ws, wsErr := productworkflow.LoadWorkflowState(effortRoot)
-	effortID := filepath.Base(effortRoot)
-
-	if wsErr == nil {
-		effortID = ws.EffortID
-	}
-
-	idx := productworkflow.ADRIndex{
-		SchemaVersion: "idiom.adr_index.v1",
-		EffortID:      effortID,
-		ADRs:          indexEntries,
-	}
-	if writeErr := productworkflow.WriteADRIndexJSON(effortRoot, idx); writeErr != nil {
-		return nil, nil, fmt.Errorf("write adrs/index.json: %w", writeErr)
-	}
-
-	return adrDocs, indexEntries, nil
+	return persisted.Documents, persisted.IndexEntries, nil
 }
 
 // generateADRsWithRepair calls the model and attempts to split/parse ADR output.
@@ -604,12 +520,12 @@ func (m *Model) generateADRs(ctx context.Context, effortRoot string) ([]productw
 // The repair loop parses the repair model output directly via TrySplitAndParseADRs
 // rather than routing through tryGenerateADRs (which would rebuild the prompt
 // and call the model a second time).
-func (m *Model) generateADRsWithRepair(
+func (m *promptExecutionSession) generateADRsWithRepair(
 	ctx context.Context,
 	effortRoot string,
 	prdData []byte,
 	prd productworkflow.PRDDocument,
-	buildPrompt func(string, string) string,
+	buildPrompt func(string) string,
 ) ([]productworkflow.ADRDocument, []productworkflow.ADRIndexEntry, error) {
 
 	rawAnswer, adrDocs, indexEntries, failures, err := m.tryGenerateADRs(ctx, effortRoot, string(prdData), prd, buildPrompt)
@@ -625,18 +541,30 @@ func (m *Model) generateADRsWithRepair(
 	var splitErr error
 
 	for attempt := 0; attempt < maxParseRepairRetries; attempt++ {
-		saveRawParseFailure(effortRoot, fmt.Sprintf("adrs_parse_failure_raw_%03d.txt", attempt+1), rawAnswer)
+		if persistErr := productworkflow.PersistRawParseFailure(
+			effortRoot,
+			fmt.Sprintf("adrs_parse_failure_raw_%03d.txt", attempt+1),
+			rawAnswer,
+		); persistErr != nil {
+			return nil, nil, fmt.Errorf("persist ADR parse failure attempt %d: %w", attempt+1, persistErr)
+		}
 
-		repairPrompt := buildADRFormatRepairPrompt(rawAnswer, failures, effortRoot)
-		opts := m.chatOptions()
+		repairPrompt := buildADRFormatRepairPrompt(rawAnswer, failures)
+		opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 
 		opts.MaxTokens = 16384
 
 		repairAnswer, repErr := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: repairPrompt}}, opts)
 		if repErr != nil {
-			saveRawParseFailure(effortRoot, "adrs_parse_failure_final.txt", rawAnswer)
+			repairErr := fmt.Errorf("ADR repair call failed (attempt %d/%d): %w", attempt+1, maxParseRepairRetries, repErr)
+			if persistErr := productworkflow.PersistRawParseFailure(effortRoot, "adrs_parse_failure_final.txt", rawAnswer); persistErr != nil {
+				return nil, nil, errors.Join(
+					repairErr,
+					fmt.Errorf("persist final ADR parse failure: %w", persistErr),
+				)
+			}
 
-			return nil, nil, fmt.Errorf("ADR repair call failed (attempt %d/%d): %w", attempt+1, maxParseRepairRetries, repErr)
+			return nil, nil, repairErr
 		}
 
 		rawAnswer = repairAnswer
@@ -653,22 +581,24 @@ func (m *Model) generateADRsWithRepair(
 		}
 	}
 
-	saveRawParseFailure(effortRoot, "adrs_parse_failure_final.txt", rawAnswer)
+	if persistErr := productworkflow.PersistRawParseFailure(effortRoot, "adrs_parse_failure_final.txt", rawAnswer); persistErr != nil {
+		return nil, nil, fmt.Errorf("persist final ADR parse failure: %w", persistErr)
+	}
 
 	return nil, nil, fmt.Errorf("ADR parsing failed after %d repair attempt(s); raw output saved to %s", maxParseRepairRetries, filepath.Join(effortRoot, "adrs_parse_failure_final.txt"))
 }
 
 // tryGenerateADRs makes one model call and attempts to parse ADR output.
-func (m *Model) tryGenerateADRs(
+func (m *promptExecutionSession) tryGenerateADRs(
 	ctx context.Context,
 	effortRoot string,
 	promptContent string,
 	prd productworkflow.PRDDocument,
-	buildPrompt func(string, string) string,
+	buildPrompt func(string) string,
 ) (string, []productworkflow.ADRDocument, []productworkflow.ADRIndexEntry, []productworkflow.ADRParseFailure, error) {
 
-	prompt := buildPrompt(promptContent, effortRoot)
-	opts := m.chatOptions()
+	prompt := buildPrompt(promptContent)
+	opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
 
 	opts.MaxTokens = 16384
 
@@ -688,9 +618,7 @@ func (m *Model) tryGenerateADRs(
 
 // buildADRFormatRepairPrompt creates a prompt asking the model to fix
 // formatting issues in its ADR output.
-func buildADRFormatRepairPrompt(badOutput string, failures []productworkflow.ADRParseFailure, effortRoot string) string {
-	effortID := filepath.Base(effortRoot)
-
+func buildADRFormatRepairPrompt(badOutput string, failures []productworkflow.ADRParseFailure) string {
 	var b strings.Builder
 
 	b.WriteString("Your ADR output could not be parsed because of formatting issues.\n\n")
@@ -707,7 +635,6 @@ func buildADRFormatRepairPrompt(badOutput string, failures []productworkflow.ADR
 	b.WriteString("Requirements:\n")
 	b.WriteString("- Each ADR MUST begin with --- on its own line and MUST end the front matter block with a second --- on its own line immediately after the last field\n")
 	b.WriteString("- Separate ADRs with a line containing exactly three equals signs: ===\n")
-	b.WriteString(fmt.Sprintf("- Effort ID: %s\n", effortID))
 	b.WriteString("- Do NOT wrap the output in ``` code fences\n")
 	b.WriteString("- Do NOT add any preamble text before the first --- delimiter\n")
 	b.WriteString("- Output only the ADRs separated by === lines. Do not add any preamble or postamble.\n")
@@ -716,9 +643,7 @@ func buildADRFormatRepairPrompt(badOutput string, failures []productworkflow.ADR
 }
 
 // buildADRGenerationPrompt creates the initial ADR drafting prompt.
-func buildADRGenerationPrompt(prdContent string, effortRoot string) string {
-	effortID := filepath.Base(effortRoot)
-
+func buildADRGenerationPrompt(prdContent string) string {
 	var b strings.Builder
 
 	b.WriteString("Draft Architecture Decision Records (ADRs) for the PRD below. ")
@@ -740,103 +665,39 @@ func buildADRGenerationPrompt(prdContent string, effortRoot string) string {
 	b.WriteString("## Context\n## Decision\n## Alternatives Considered\n## Evidence\n")
 	b.WriteString("## Consequences\n## Compatibility and Migration\n## TDD Obligations\n")
 	b.WriteString("## Rollback\n## Open Questions\n\n")
-	b.WriteString(fmt.Sprintf("Effort ID: %s\n", effortID))
 	b.WriteString("Output only the ADRs separated by === lines. Do not add any preamble or postamble.\n")
 
 	return b.String()
 }
 
 // buildADRRefinementPrompt creates a prompt to refine existing ADRs.
-func buildADRRefinementPrompt(currentADRs, feedback, effortRoot string) string {
-	effortID := filepath.Base(effortRoot)
-
+func buildADRRefinementPrompt(currentADRs, feedback, prdContent string) string {
 	var b strings.Builder
 
 	b.WriteString("You are refining existing Architecture Decision Records (ADRs). ")
 	b.WriteString("Incorporate the operator's feedback below into the ADRs.\n\n")
 	b.WriteString("Current ADRs:\n")
 	b.WriteString(currentADRs)
+	b.WriteString("\n\nCurrent PRD:\n")
+	b.WriteString(prdContent)
 	b.WriteString("\n\nOperator feedback:\n")
 	b.WriteString(feedback)
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Effort ID: %s. ", effortID))
 	b.WriteString("Maintain the same ADR format, including opening and closing --- front matter delimiters, YAML front matter fields, and all required sections. ")
 	b.WriteString("Output the complete set of ADRs separated by === lines. Do not add any preamble or postamble.\n")
 
 	return b.String()
 }
 
-// mergeADRIndex merges new ADRs into an existing index, replacing matching IDs.
-func mergeADRIndex(existing productworkflow.ADRIndex, newDocs []productworkflow.ADRDocument, newEntries []productworkflow.ADRIndexEntry) ([]productworkflow.ADRDocument, []productworkflow.ADRIndexEntry) {
-	existingByID := map[string]int{}
-	for i, entry := range existing.ADRs {
-		existingByID[entry.ADRID] = i
-	}
-
-	for _, entry := range newEntries {
-		if idx, ok := existingByID[entry.ADRID]; ok {
-			existing.ADRs[idx] = entry
-		} else {
-			existing.ADRs = append(existing.ADRs, entry)
-		}
-	}
-
-	orderedDocs := make([]productworkflow.ADRDocument, 0, len(existing.ADRs))
-	for _, entry := range existing.ADRs {
-		found := false
-
-		for _, doc := range newDocs {
-			if doc.FrontMatter.ADRID == entry.ADRID {
-				orderedDocs = append(orderedDocs, doc)
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
-			orderedDocs = append(orderedDocs, productworkflow.ADRDocument{
-				FrontMatter: productworkflow.ADRFrontMatter{ADRID: entry.ADRID, Status: entry.Status},
-			})
-		}
-	}
-
-	return orderedDocs, existing.ADRs
-}
-
-func preserveExistingADRDocuments(docs []productworkflow.ADRDocument, previous []productworkflow.ADRDocument) []productworkflow.ADRDocument {
-	if len(docs) == 0 || len(previous) == 0 {
-		return docs
-	}
-
-	previousByID := map[string]productworkflow.ADRDocument{}
-
-	for _, doc := range previous {
-		adrID := strings.TrimSpace(doc.FrontMatter.ADRID)
-		if adrID != "" {
-			previousByID[adrID] = doc
-		}
-	}
-
-	for i, doc := range docs {
-		adrID := strings.TrimSpace(doc.FrontMatter.ADRID)
-		if adrID == "" || strings.TrimSpace(doc.BodyMarkdown) != "" {
-			continue
-		}
-
-		if oldDoc, ok := previousByID[adrID]; ok && strings.TrimSpace(oldDoc.BodyMarkdown) != "" {
-			docs[i] = oldDoc
-		}
-	}
-
-	return docs
-}
-
 // approvePRDAndAdvance runs the PRD intake validator, advances to ADR drafting,
 // and generates initial ADRs automatically.
-func (m *Model) approvePRDAndAdvance(effortRoot string) (string, error) {
-	if _, err := productworkflow.AdvanceCreatePhase(effortRoot, productworkflow.PhasePRDReview); err != nil {
+func (m *promptExecutionSession) approvePRDAndAdvance(ctx context.Context, effortRoot string) (string, error) {
+	transition, err := productworkflow.SubmitPRDForReview(effortRoot)
+	if err != nil {
 		return "", fmt.Errorf("advance to PRD review: %w", err)
+	}
+	if transition.Status != productworkflow.ProductWorkflowStatusOK {
+		return "", fmt.Errorf("advance to PRD review: %s", strings.Join(transition.Blockers, "; "))
 	}
 
 	result, intake, err := productworkflow.ApprovePRDGate(effortRoot)
@@ -845,46 +706,61 @@ func (m *Model) approvePRDAndAdvance(effortRoot string) (string, error) {
 	}
 
 	if result.Status == "blocked" {
-		_ = resetCreatePhase(effortRoot, productworkflow.PhasePRDDrafting)
-
-		prdData, readErr := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
-		if readErr == nil {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			if serr := m.ensureServerReady(ctx); serr == nil {
-				prompt := buildPRDRepairPrompt(string(prdData), intake)
-				opts := m.chatOptions()
-
-				opts.MaxTokens = 8192
-
-				repair, repErr := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
-				if repErr == nil {
-					repairedPRD, _, parseErr := productworkflow.TryParsePRDMarkdown(repair)
-					if parseErr == nil {
-						_ = productworkflow.WritePRDMarkdown(effortRoot, repairedPRD)
-
-						newIntake := productworkflow.ValidatePRDIntake(repairedPRD)
-
-						if newIntake.Passed {
-							return "PRD was rejected but has been auto-repaired. Review the updated requirements and type /product-approve to try again.", nil
-						}
-
-						return formatPRDApprovalBlocked(intake, true), nil
-					}
-				}
-			}
+		recovery, recoveryErr := productworkflow.RequestCreateChanges(effortRoot)
+		if recoveryErr != nil {
+			return "", fmt.Errorf("return blocked PRD to drafting: %w", recoveryErr)
+		}
+		if recovery.Status != productworkflow.ProductWorkflowStatusOK {
+			return "", fmt.Errorf("return blocked PRD to drafting: %s", strings.Join(recovery.Blockers, "; "))
 		}
 
-		return formatPRDApprovalBlocked(intake, false), nil
+		draftContext, loadErr := productworkflow.LoadPRDDraftContext(effortRoot)
+		if loadErr != nil {
+			m.logFeaturePlannerInternalEvent("feature_planner_prd_auto_repair_failed", "load draft: "+loadErr.Error())
+
+			return formatPRDApprovalBlocked(intake, false), nil
+		}
+		if serr := m.ensureServerReady(ctx); serr != nil {
+			m.logFeaturePlannerInternalEvent("feature_planner_prd_auto_repair_failed", "server readiness: "+serr.Error())
+
+			return formatPRDApprovalBlocked(intake, false), nil
+		}
+
+		prompt := buildPRDRepairPrompt(draftContext.OriginalMarkdown, intake)
+		opts := chatOptions(m.cfg.Chat, m.modelID, m.modelThinkingFloor, m.disableThinkingOverride)
+		opts.MaxTokens = 8192
+
+		repair, repErr := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
+		if repErr != nil {
+			m.logFeaturePlannerInternalEvent("feature_planner_prd_auto_repair_failed", "model call: "+repErr.Error())
+
+			return formatPRDApprovalBlocked(intake, false), nil
+		}
+
+		repairedPRD, _, parseErr := productworkflow.TryParsePRDMarkdown(repair)
+		if parseErr != nil {
+			m.logFeaturePlannerInternalEvent("feature_planner_prd_auto_repair_failed", "parse repair: "+parseErr.Error())
+
+			return formatPRDApprovalBlocked(intake, false), nil
+		}
+
+		newIntake, persistErr := productworkflow.PersistPRDDraft(productworkflow.PRDDraftPersistenceRequest{
+			EffortRoot:         effortRoot,
+			Document:           repairedPRD,
+			ExpectedGeneration: draftContext.Generation,
+		})
+		if persistErr != nil {
+			return "", fmt.Errorf("write repaired prd.md: %w", persistErr)
+		}
+		if newIntake.Passed {
+			return "PRD was rejected but has been auto-repaired. Review the updated requirements and type /product-approve to try again.", nil
+		}
+
+		return formatPRDApprovalBlocked(newIntake, true), nil
 	}
 
 	// PRD approved — advance to ADR drafting phase.
 	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
-	m.status = "ADR drafting phase started."
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	if serr := m.ensureServerReady(ctx); serr != nil {
 		return "", fmt.Errorf("server not ready for ADR generation: %w", serr)
@@ -894,9 +770,6 @@ func (m *Model) approvePRDAndAdvance(effortRoot string) (string, error) {
 	if genErr != nil {
 		return "", fmt.Errorf("PRD approved but ADR generation failed: %w", genErr)
 	}
-
-	// Advance to ADR drafting in workflow state.
-	_, _ = productworkflow.AdvanceCreatePhase(effortRoot, productworkflow.PhaseADRDrafting)
 
 	var output strings.Builder
 
@@ -909,9 +782,13 @@ func (m *Model) approvePRDAndAdvance(effortRoot string) (string, error) {
 }
 
 // approveADRAndPlan runs ADR intake validation, TDD synthesis, and feature planning.
-func (m *Model) approveADRAndPlan(effortRoot string) (string, error) {
-	if _, err := productworkflow.AdvanceCreatePhase(effortRoot, productworkflow.PhaseADRReview); err != nil {
+func (m *promptExecutionSession) approveADRAndPlan(ctx context.Context, effortRoot string) (string, error) {
+	transition, err := productworkflow.SubmitADRsForReview(effortRoot)
+	if err != nil {
 		return "", fmt.Errorf("advance to ADR review: %w", err)
+	}
+	if transition.Status != productworkflow.ProductWorkflowStatusOK {
+		return "", fmt.Errorf("advance to ADR review: %s", strings.Join(transition.Blockers, "; "))
 	}
 
 	result, intakes, err := productworkflow.ApproveADRGate(effortRoot)
@@ -920,135 +797,94 @@ func (m *Model) approveADRAndPlan(effortRoot string) (string, error) {
 	}
 
 	if result.Status == "blocked" {
-		_ = resetCreatePhase(effortRoot, productworkflow.PhaseADRDrafting)
+		recovery, recoveryErr := productworkflow.RequestCreateChanges(effortRoot)
+		if recoveryErr != nil {
+			return "", fmt.Errorf("return blocked ADRs to drafting: %w", recoveryErr)
+		}
+		if recovery.Status != productworkflow.ProductWorkflowStatusOK {
+			return "", fmt.Errorf("return blocked ADRs to drafting: %s", strings.Join(recovery.Blockers, "; "))
+		}
 		return formatADRApprovalBlocked(intakes), nil
 	}
+	m.featurePlannerPhase = productworkflow.PhaseTDDSynthesis
 
-	// ADRs approved.
-	_, _ = productworkflow.AdvanceCreatePhase(effortRoot, productworkflow.PhaseTDDSynthesis)
+	return m.completeProductTDDSynthesis(ctx, effortRoot)
+}
 
-	planResult, plannerState, statePath, planErr := m.synthesizeTDDAndRunPlanner(effortRoot)
+func (m *promptExecutionSession) completeProductTDDSynthesis(ctx context.Context, effortRoot string) (string, error) {
+	planResult, plannerState, statePath, planErr := m.runPlannerAfterTDDSynthesis(ctx, effortRoot)
 	if planErr != nil {
+		if recoveryErr := m.recoverProductTDDSynthesis(effortRoot); recoveryErr != nil {
+			return "", fmt.Errorf("feature planning failed: %v; TDD synthesis recovery failed: %w", planErr, recoveryErr)
+		}
 		return "", fmt.Errorf("feature planning: %w", planErr)
 	}
 
 	if recoveryMessage, blocked := formatProductWorkflowFeaturePlannerRecovery(plannerState, statePath); blocked {
+		if err := m.recoverProductTDDSynthesis(effortRoot); err != nil {
+			return "", fmt.Errorf("recover blocked TDD synthesis: %w", err)
+		}
 		m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventRecoveryOpen), recoveryMessage)
 
 		return strings.TrimSpace(planResult + "\n\n" + recoveryMessage), nil
 	}
 
-	// Only mark complete and clear phase on success.
-	_, _ = productworkflow.CompleteEffort(effortRoot)
+	completion, err := productworkflow.CompleteEffort(effortRoot)
+	if err != nil {
+		return "", fmt.Errorf("complete product effort: %w", err)
+	}
+	if completion.Status != productworkflow.ProductWorkflowStatusOK {
+		return "", fmt.Errorf("complete product effort: %s", strings.Join(completion.Blockers, "; "))
+	}
+	if plannerState.Status == featureplanner.FeatureStateComplete {
+		completedBrief, err := featureplannerproduct.LoadBriefFromEffort(effortRoot)
+		if err != nil {
+			return "", fmt.Errorf("reload source-satisfied product effort: %w", err)
+		}
+		if _, err := featureplannerproduct.FinalizeSourceSatisfiedDeliveryFromFeatureState(completedBrief, plannerState); err != nil {
+			return "", fmt.Errorf("record product source-satisfied delivery: %w", err)
+		}
+	}
+
 	m.featurePlannerPhase = ""
 	m.featurePlannerEffortRoot = ""
 
 	return planResult, nil
 }
 
-// synthesizeTDDAndRunPlanner builds TDD obligations from PRD+ADRs, loads
-// product workflow context, and runs the feature planner with it.
-func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featureplanner.FeatureState, string, error) {
-	prdData, err := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
+func (m *promptExecutionSession) recoverProductTDDSynthesis(effortRoot string) error {
+	recovery, err := productworkflow.RecoverTDDSynthesis(effortRoot)
 	if err != nil {
-		return "", featureplanner.FeatureState{}, "", fmt.Errorf("read prd.md: %w", err)
+		return err
+	}
+	if recovery.Status != productworkflow.ProductWorkflowStatusOK {
+		return fmt.Errorf("TDD synthesis recovery blocked: %s", strings.Join(recovery.Blockers, "; "))
 	}
 
-	prd, err := productworkflow.ParsePRDMarkdown(prdData)
+	m.featurePlannerPhase = recovery.CurrentPhase
+
+	return nil
+}
+
+// runPlannerAfterTDDSynthesis delegates durable TDD synthesis to the product
+// workflow owner, then runs the interactive feature-planner delivery loop.
+func (m *promptExecutionSession) runPlannerAfterTDDSynthesis(ctx context.Context, effortRoot string) (string, featureplanner.FeatureState, string, error) {
+	synthesis, err := productworkflow.SynthesizeTDDLedgerFromEffort(effortRoot)
 	if err != nil {
-		return "", featureplanner.FeatureState{}, "", fmt.Errorf("parse prd.md: %w", err)
+		return "", featureplanner.FeatureState{}, "", err
 	}
+	ledger := synthesis.Ledger
+	synthPlan := synthesis.Plan
 
-	idxData, err := os.ReadFile(filepath.Join(effortRoot, "adrs", "index.json"))
-	if err != nil {
-		return "", featureplanner.FeatureState{}, "", fmt.Errorf("read adrs/index.json: %w", err)
+	brief, briefErr := featureplannerproduct.LoadBriefFromEffort(effortRoot)
+	if briefErr != nil {
+		return "", featureplanner.FeatureState{}, "", briefErr
 	}
-
-	adrIdx, err := productworkflow.ParseADRIndexJSON(idxData)
-	if err != nil {
-		return "", featureplanner.FeatureState{}, "", fmt.Errorf("parse adrs/index.json: %w", err)
-	}
-
-	var parsedADRs []productworkflow.ParsedADR
-
-	adrPathByID := map[string]string{}
-
-	for _, entry := range adrIdx.ADRs {
-		if entry.Status == "" || entry.Path == "" {
-			continue
-		}
-
-		adrData, readErr := os.ReadFile(filepath.Join(effortRoot, "adrs", entry.Path))
-		if readErr != nil {
-			continue
-		}
-
-		adrDoc, _, parseErr := productworkflow.TryParseADRMarkdown(string(adrData))
-		if parseErr != nil {
-			continue
-		}
-
-		parsedADRs = append(parsedADRs, productworkflow.ParsedADR{
-			Doc:         adrDoc,
-			RelPath:     filepath.Join("adrs", entry.Path),
-			RawMarkdown: string(adrData),
-		})
-		adrPathByID[adrDoc.FrontMatter.ADRID] = filepath.Join("adrs", entry.Path)
-	}
-
-	ws, wsErr := productworkflow.LoadWorkflowState(effortRoot)
-	effortID := filepath.Base(effortRoot)
-
-	if wsErr == nil {
-		effortID = ws.EffortID
-	}
-
-	ledger := productworkflow.TDDLedger{
-		SchemaVersion: "idiom.tdd_ledger.v1",
-		EffortID:      effortID,
-		TaskID:        effortID,
-		CoverageTier:  "unit",
-		Obligations:   []productworkflow.TDDObligation{},
-	}
-
-	synthPlan := productworkflow.PlanTDDObligations(prd, parsedADRs, ledger, adrPathByID)
-	obligationID := 1
-
-	for _, item := range synthPlan.Obligations {
-		if item.BlockerReason != "" {
-			continue
-		}
-
-		ledger.Obligations = append(ledger.Obligations, productworkflow.TDDObligation{
-			ID:             fmt.Sprintf("TDD-%03d", obligationID),
-			Type:           item.SuggestedType,
-			Behavior:       fmt.Sprintf("Verify %s behavior for PRD requirement %s", item.ADRRef, item.PRDRequirementRef),
-			Owner:          item.OwnerPath,
-			Command:        firstNonEmpty(item.Command, "go test ./..."),
-			RequiredBefore: "implementation",
-			Status:         "planned",
-		})
-		obligationID++
-	}
-
-	tddJSON, _ := json.MarshalIndent(ledger, "", "  ")
-	if writeErr := os.WriteFile(filepath.Join(effortRoot, "tdd.json"), append(tddJSON, '\n'), 0o644); writeErr != nil {
-		return "", featureplanner.FeatureState{}, "", fmt.Errorf("write tdd.json: %w", writeErr)
-	}
-
-	handoff, handoffErr := productworkflow.LoadImplementationHandoff(effortRoot)
-	if handoffErr != nil {
-		return "", featureplanner.FeatureState{}, "", fmt.Errorf("load product workflow implementation handoff: %w", handoffErr)
-	}
-	brief := featureplannerproduct.BriefFromImplementationHandoff(handoff)
 	brief.Constraints = appendUniqueBriefStrings(brief.Constraints,
 		"Preserve accepted PRD requirements and ADR decisions unless a new accepted ADR supersedes them.",
 		"Do not mutate product workflow artifacts while implementing the feature atom.",
 		"Report a planner question if PRD, ADR, or TDD obligations contradict the implementation scope.",
 	)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	if err := m.ensureServerReady(ctx); err != nil {
 		return "", featureplanner.FeatureState{}, "", fmt.Errorf("server not ready: %w", err)
@@ -1056,6 +892,8 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 
 	sessionID := m.featurePlannerSessionID()
 	state := featureplanner.NewState(sessionID, "Implement feature from PRD/ADR artifacts", "", 3, time.Now().UTC())
+	state.EffortID = brief.EffortID
+	state.EffortRoot = effortRoot
 
 	m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventStart), "Planning from product workflow artifacts")
 
@@ -1068,7 +906,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  brief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
-		WorkspaceRoot:         m.projectRoot(),
+		WorkspaceRoot:         resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace),
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			if implementorBlocked {
@@ -1093,11 +931,17 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 		m.logFeaturePlannerEvent(event)
 	}
 
-	eventsPath, _ := featureplanner.AppendEvents(m.projectRoot(), result.State.SessionID, result.Events)
+	eventsPath, err := featureplanner.AppendEvents(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), result.State.SessionID, result.Events)
+	if err != nil {
+		return "", result.State, "", fmt.Errorf("append feature planner events: %w", err)
+	}
 
 	result.State.EventsPath = eventsPath
 
-	statePath, _ := featureplanner.SaveState(m.projectRoot(), &result.State)
+	statePath, err := featureplanner.SaveState(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), &result.State)
+	if err != nil {
+		return "", result.State, "", fmt.Errorf("save feature planner state: %w", err)
+	}
 
 	var output strings.Builder
 
@@ -1113,7 +957,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 	}
 
 	output.WriteString("\n")
-	output.WriteString(formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, m.projectRoot()))
+	output.WriteString(formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace)))
 
 	answer := output.String()
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), answer)
@@ -1343,7 +1187,11 @@ func formatPRDApprovalBlocked(intake productworkflow.IntakeResult, repaired bool
 		fmt.Fprintf(&b, "  - [%s] %s\n", f.Code, f.Message)
 	}
 
-	b.WriteString("\nThe PRD has been updated. Review and type /product-approve to try again.")
+	if repaired {
+		b.WriteString("\nThe repaired PRD was persisted. Review and type /product-approve to try again.")
+	} else {
+		b.WriteString("\nNo repair was persisted. Continue refining the PRD, then type /product-approve to try again.")
+	}
 
 	return b.String()
 }
@@ -1677,29 +1525,6 @@ func formatADRApprovalBlocked(intakes []productworkflow.IntakeResult) string {
 	return b.String()
 }
 
-// resetCreatePhase directly writes the given phase to workflow_state.json
-// without going through the creation state machine. Used to return to
-// drafting after a blocked approval gate.
-func resetCreatePhase(absRoot string, phase string) error {
-	ws, err := productworkflow.LoadWorkflowState(absRoot)
-	if err != nil {
-		return err
-	}
-
-	ws.CurrentPhase = phase
-	ws.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	ws.StateRevision++
-
-	data, err := json.MarshalIndent(ws, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	data = append(data, '\n')
-
-	return os.WriteFile(filepath.Join(absRoot, "workflow_state.json"), data, 0o644)
-}
-
 const (
 	// maxParseRepairRetries is the maximum number of model retry calls
 	// when PRD or ADR parsing fails. The initial attempt does not count
@@ -1716,14 +1541,4 @@ func firstNonEmpty(values ...string) string {
 	}
 
 	return ""
-}
-
-// mustReadFile reads a file and returns its content, or nil on error.
-func mustReadFile(path string) []byte {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	return data
 }

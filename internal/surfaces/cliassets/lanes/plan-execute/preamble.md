@@ -9,7 +9,7 @@ There is no second turn for per-edit verification — the executor either succee
 or surfaces the failing edit, and the lane reports accordingly.
 
 Per-edit write adapters — `edit_file`, `write_file`, `append_file`, `apply_patch`,
-`delegate_edit`, `mkdir`, `go_move_declarations` — are unavailable in this
+`mkdir`, `go_move_declarations` — are unavailable in this
 phase; the runner rejects them against the plan-submission contract.
 If the brief body below uses language like "use edit_file with exact anchors"
 or "use old_text/new_text anchors" treat that as guidance about the EDIT SHAPE

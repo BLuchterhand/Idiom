@@ -7,24 +7,27 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/safepath"
 )
 
-// PathAccess owns workspace path resolution, display projection, and
-// session-scoped read approval for paths outside the configured workspace.
+// PathAccess owns workspace path resolution, mutation serialization, display
+// projection, and session-scoped read approval outside the configured root.
 type PathAccess struct {
 	cfg config.Workspace
 
 	mu                        sync.Mutex
+	mutationGate              workspaceMutationGate
 	systemSearchApprover      SystemSearchAccessApprover
-	approvedSystemSearchRoots map[string]SystemSearchAccessScope
+	approvedSystemSearchRoots map[executionSessionGrantKey]map[string]systemSearchAccessGrant
+	mutationEpoch             *atomic.Uint64
 }
 
 type systemSearchAccessGrant struct {
-	Path  string
-	Scope SystemSearchAccessScope
+	Path     string
+	Scope    SystemSearchAccessScope
+	Identity os.FileInfo
 }
 
 func NewPathAccess(cfg config.Workspace) PathAccess {
@@ -81,49 +84,15 @@ func (a *PathAccess) ResolvePath(path string, workdir string) (string, error) {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes workspace root", path)
 	}
+	if !a.PathWithinWorkspace(candidate) {
+		return "", fmt.Errorf("path %q escapes workspace root through a symlink", path)
+	}
 
 	return candidate, nil
 }
 
-func (a *PathAccess) ResolveWritePath(path string, workdir string) (string, error) {
-	if !a.Enabled() {
-		return "", fmt.Errorf("workspace root is not configured")
-	}
-
-	if strings.TrimSpace(path) == "" {
-		return "", fmt.Errorf("path is required")
-	}
-
-	var candidate string
-
-	switch {
-	case filepath.IsAbs(path):
-		candidate = filepath.Clean(path)
-	case workdir != "":
-		base, err := a.ResolveWorkdir(workdir)
-		if err != nil {
-			return "", err
-		}
-
-		candidate = filepath.Clean(filepath.Join(base, path))
-	default:
-		candidate = filepath.Clean(filepath.Join(a.cfg.CWD, path))
-	}
-
-	fullPath, _, err := safepath.UnderRoot(a.cfg.Root, candidate, "workspace write path", safepath.Options{
-		AllowMissing:           true,
-		RejectSymlinkAncestors: true,
-		RejectSymlinkTarget:    true,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	return fullPath, nil
-}
-
-func (a *PathAccess) ResolveReadPath(path string, workdir string) (string, error) {
-	candidate, err := a.candidatePath(path, workdir, true)
+func (a *PathAccess) ResolveReadPath(identity executionSessionIdentity, path string, workdir string) (string, error) {
+	candidate, err := a.candidatePath(identity, path, workdir, true)
 	if err != nil {
 		return "", err
 	}
@@ -132,14 +101,14 @@ func (a *PathAccess) ResolveReadPath(path string, workdir string) (string, error
 		return candidate, nil
 	}
 
-	if _, ok := a.ApprovedSystemSearchScope(candidate); ok {
+	if _, ok := a.ApprovedSystemSearchScope(identity, candidate); ok {
 		return candidate, nil
 	}
 
 	return "", fmt.Errorf("path %q escapes workspace root and has not been approved for system search", path)
 }
 
-func (a *PathAccess) ResolveReadWorkdir(workdir string) (string, error) {
+func (a *PathAccess) ResolveReadWorkdir(identity executionSessionIdentity, workdir string) (string, error) {
 	if !a.Enabled() {
 		return "", fmt.Errorf("workspace root is not configured")
 	}
@@ -149,14 +118,28 @@ func (a *PathAccess) ResolveReadWorkdir(workdir string) (string, error) {
 		return a.cfg.CWD, nil
 	}
 
-	return a.ResolveReadPath(workdir, "")
+	return a.ResolveReadPath(identity, workdir, "")
 }
 
-func (a *PathAccess) SystemSearchCandidate(path string, workdir string) (string, error) {
-	return a.candidatePath(path, workdir, false)
+func (a *PathAccess) inspectSystemSearchCandidate(path string, workdir string) (string, os.FileInfo, error) {
+	candidate, err := a.candidatePath(executionSessionIdentity{}, path, workdir, false)
+	if err != nil {
+		return "", nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", nil, err
+	}
+	resolved = filepath.Clean(resolved)
+	identity, err := inspectFilesystemPathIdentity(resolved)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return resolved, identity, nil
 }
 
-func (a *PathAccess) candidatePath(path string, workdir string, allowApprovedWorkdir bool) (string, error) {
+func (a *PathAccess) candidatePath(identity executionSessionIdentity, path string, workdir string, allowApprovedWorkdir bool) (string, error) {
 	if !a.Enabled() {
 		return "", fmt.Errorf("workspace root is not configured")
 	}
@@ -173,7 +156,7 @@ func (a *PathAccess) candidatePath(path string, workdir string, allowApprovedWor
 		var base string
 		var err error
 		if allowApprovedWorkdir {
-			base, err = a.ResolveReadWorkdir(workdir)
+			base, err = a.ResolveReadWorkdir(identity, workdir)
 		} else {
 			base, err = a.ResolveWorkdir(workdir)
 		}
@@ -212,19 +195,60 @@ func (a *PathAccess) RelativeWorkspacePath(path string) (string, bool) {
 		return "", false
 	}
 
-	if rel, err := filepath.Rel(root, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") && !strings.HasPrefix(rel, `..\`) {
-		return rel, true
-	}
+	lexicalRel, lexicalWithin := workspaceRelativePath(root, path)
 
 	evaluatedRoot, rootErr := filepath.EvalSymlinks(root)
-	evaluatedPath, pathErr := filepath.EvalSymlinks(path)
-
-	if rootErr != nil || pathErr != nil {
+	if rootErr != nil {
+		return "", false
+	}
+	evaluatedPath, pathResolved := resolvePathForWorkspaceContainment(path)
+	if !pathResolved {
 		return "", false
 	}
 
-	rel, err := filepath.Rel(evaluatedRoot, evaluatedPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, `..\`) {
+	evaluatedRel, evaluatedWithin := workspaceRelativePath(evaluatedRoot, evaluatedPath)
+	if !evaluatedWithin {
+		return "", false
+	}
+
+	if lexicalWithin {
+		return lexicalRel, true
+	}
+
+	return evaluatedRel, true
+}
+
+func resolvePathForWorkspaceContainment(path string) (string, bool) {
+	current := filepath.Clean(path)
+	var missingComponents []string
+
+	for {
+		if evaluated, err := filepath.EvalSymlinks(current); err == nil {
+			parts := append([]string{evaluated}, missingComponents...)
+			return filepath.Join(parts...), true
+		} else if !os.IsNotExist(err) {
+			return "", false
+		}
+
+		if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", false
+		} else if err != nil && !os.IsNotExist(err) {
+			return "", false
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+
+		missingComponents = append([]string{filepath.Base(current)}, missingComponents...)
+		current = parent
+	}
+}
+
+func workspaceRelativePath(root string, path string) (string, bool) {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", false
 	}
 
@@ -250,9 +274,66 @@ func (a *PathAccess) ProtectedPathKeys(path string) []string {
 		keys = append(keys, normalizePathKey(filepath.Join(root, cleaned)))
 	}
 
+	canonicalCandidate := cleaned
+	if !filepath.IsAbs(canonicalCandidate) && strings.TrimSpace(a.cfg.Root) != "" {
+		canonicalCandidate = filepath.Join(a.cfg.Root, canonicalCandidate)
+	}
+	keys = append(keys, a.canonicalWorkspacePathKeys(canonicalCandidate, "")...)
+
+	return uniquePathKeys(keys)
+}
+
+// canonicalWorkspacePathKeys returns canonical relative and absolute matcher
+// keys for a path whose resolved target remains inside the workspace. This is
+// intentionally separate from display projection: policy evaluates aliases
+// against their real workspace target without exposing that target to callers.
+func (a *PathAccess) canonicalWorkspacePathKeys(path string, workdir string) []string {
+	if !a.Enabled() || strings.TrimSpace(path) == "" {
+		return nil
+	}
+
+	base := strings.TrimSpace(a.cfg.CWD)
+	if base == "" {
+		base = strings.TrimSpace(a.cfg.Root)
+	}
+
+	cleanedWorkdir := strings.TrimSpace(workdir)
+	if cleanedWorkdir != "" {
+		if filepath.IsAbs(cleanedWorkdir) {
+			base = filepath.Clean(cleanedWorkdir)
+		} else {
+			base = filepath.Join(base, cleanedWorkdir)
+		}
+	}
+
+	candidate := filepath.Clean(path)
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(base, candidate)
+	}
+
+	evaluatedRoot, err := filepath.EvalSymlinks(filepath.Clean(a.cfg.Root))
+	if err != nil {
+		return nil
+	}
+
+	evaluatedCandidate, ok := resolvePathForWorkspaceContainment(candidate)
+	if !ok {
+		return nil
+	}
+
+	rel, within := workspaceRelativePath(evaluatedRoot, evaluatedCandidate)
+	if !within {
+		return nil
+	}
+
+	return uniquePathKeys([]string{rel, evaluatedCandidate})
+}
+
+func uniquePathKeys(keys []string) []string {
 	out := make([]string, 0, len(keys))
 	seen := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
+		key = normalizePathKey(key)
 		if key == "" {
 			continue
 		}
@@ -290,18 +371,7 @@ func (a *PathAccess) SystemSearchAccessApprover() SystemSearchAccessApprover {
 	return a.systemSearchApprover
 }
 
-func (a *PathAccess) ClearSystemSearchApprovals() {
-	if a == nil {
-		return
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	a.approvedSystemSearchRoots = nil
-}
-
-func (a *PathAccess) ApprovedSystemSearchGrantsSnapshot() []systemSearchAccessGrant {
+func (a *PathAccess) ApprovedSystemSearchGrantsSnapshot(identity executionSessionIdentity) []systemSearchAccessGrant {
 	if a == nil {
 		return nil
 	}
@@ -309,9 +379,11 @@ func (a *PathAccess) ApprovedSystemSearchGrantsSnapshot() []systemSearchAccessGr
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	grants := make([]systemSearchAccessGrant, 0, len(a.approvedSystemSearchRoots))
-	for root, scope := range a.approvedSystemSearchRoots {
-		grants = append(grants, systemSearchAccessGrant{Path: root, Scope: normalizeSystemSearchAccessScope(scope)})
+	sessionGrants := a.approvedSystemSearchRoots[identity.grantKey()]
+	grants := make([]systemSearchAccessGrant, 0, len(sessionGrants))
+	for _, grant := range sessionGrants {
+		grant.Scope = normalizeSystemSearchAccessScope(grant.Scope)
+		grants = append(grants, grant)
 	}
 	slices.SortFunc(grants, func(a, b systemSearchAccessGrant) int {
 		if a.Path == b.Path {
@@ -324,32 +396,49 @@ func (a *PathAccess) ApprovedSystemSearchGrantsSnapshot() []systemSearchAccessGr
 	return grants
 }
 
-func (a *PathAccess) RecordApprovedSystemSearchRoot(root string, scope SystemSearchAccessScope) {
+func (a *PathAccess) recordApprovedSystemSearchGrant(identity executionSessionIdentity, grant systemSearchAccessGrant) error {
 	if a == nil {
-		return
+		return fmt.Errorf("workspace path access is not configured")
 	}
 
-	root = filepath.Clean(strings.TrimSpace(root))
-	if root == "" {
-		return
+	grant.Path = filepath.Clean(strings.TrimSpace(grant.Path))
+	if grant.Path == "" || grant.Identity == nil {
+		return fmt.Errorf("system search grant identity is incomplete")
+	}
+	current, err := inspectFilesystemPathIdentity(grant.Path)
+	if err != nil {
+		return fmt.Errorf("revalidate approved system search target: %w", err)
+	}
+	if !os.SameFile(grant.Identity, current) {
+		return fmt.Errorf("approved system search target changed before the grant was recorded")
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if a.approvedSystemSearchRoots == nil {
-		a.approvedSystemSearchRoots = make(map[string]SystemSearchAccessScope)
+		a.approvedSystemSearchRoots = make(map[executionSessionGrantKey]map[string]systemSearchAccessGrant)
+	}
+	grantKey := identity.grantKey()
+	if a.approvedSystemSearchRoots[grantKey] == nil {
+		a.approvedSystemSearchRoots[grantKey] = make(map[string]systemSearchAccessGrant)
 	}
 
-	scope = normalizeSystemSearchAccessScope(scope)
-	if existing := normalizeSystemSearchAccessScope(a.approvedSystemSearchRoots[root]); existing == SystemSearchAccessScopeContents {
-		return
+	sessionGrants := a.approvedSystemSearchRoots[grantKey]
+	grant.Scope = normalizeSystemSearchAccessScope(grant.Scope)
+	if existing, ok := sessionGrants[grant.Path]; ok &&
+		existing.Identity != nil && os.SameFile(existing.Identity, grant.Identity) &&
+		normalizeSystemSearchAccessScope(existing.Scope) == SystemSearchAccessScopeContents {
+
+		return nil
 	}
 
-	a.approvedSystemSearchRoots[root] = scope
+	sessionGrants[grant.Path] = grant
+
+	return nil
 }
 
-func (a *PathAccess) ApprovedSystemSearchScope(path string) (SystemSearchAccessScope, bool) {
+func (a *PathAccess) ApprovedSystemSearchScope(identity executionSessionIdentity, path string) (SystemSearchAccessScope, bool) {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "" {
 		return "", false
@@ -358,9 +447,13 @@ func (a *PathAccess) ApprovedSystemSearchScope(path string) (SystemSearchAccessS
 	found := false
 	best := SystemSearchAccessScopeSelected
 
-	for _, grant := range a.ApprovedSystemSearchGrantsSnapshot() {
+	for _, grant := range a.ApprovedSystemSearchGrantsSnapshot(identity) {
 		root := filepath.Clean(grant.Path)
 		scope := normalizeSystemSearchAccessScope(grant.Scope)
+		currentRoot, rootErr := inspectFilesystemPathIdentity(root)
+		if rootErr != nil || grant.Identity == nil || !os.SameFile(grant.Identity, currentRoot) {
+			continue
+		}
 		evaluatedRoot, rootErr := filepath.EvalSymlinks(root)
 		evaluatedPath, pathErr := filepath.EvalSymlinks(path)
 		if rootErr == nil && pathErr == nil {
@@ -392,11 +485,62 @@ func (a *PathAccess) ApprovedSystemSearchScope(path string) (SystemSearchAccessS
 	return best, found
 }
 
-func (a *PathAccess) SelectedSystemSearchDirectoryAccess(path string, info os.FileInfo) bool {
+func inspectFilesystemPathIdentity(path string) (os.FileInfo, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" {
+		return nil, fmt.Errorf("filesystem identity path is empty")
+	}
+
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if before.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("filesystem identity path must not be a symlink")
+	}
+	if !before.IsDir() && !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("filesystem identity path must be a regular file or directory")
+	}
+
+	var opened os.FileInfo
+	if before.IsDir() {
+		root, err := os.OpenRoot(path)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		opened, err = root.Stat(".")
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		opened, err = file.Stat()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	after, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if after.Mode()&os.ModeSymlink != 0 || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
+		return nil, fmt.Errorf("filesystem identity path changed while opening")
+	}
+
+	return opened, nil
+}
+
+func (a *PathAccess) SelectedSystemSearchDirectoryAccess(identity executionSessionIdentity, path string, info os.FileInfo) bool {
 	if a == nil || info == nil || !info.IsDir() || a.PathWithinWorkspace(path) {
 		return false
 	}
 
-	scope, ok := a.ApprovedSystemSearchScope(path)
+	scope, ok := a.ApprovedSystemSearchScope(identity, path)
 	return ok && scope == SystemSearchAccessScopeSelected
 }

@@ -1,313 +1,160 @@
 package intentloop
 
 import (
-	"testing"
-
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/planexecute"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestAssessResumeReloadsIncompleteCyclePromptAndChildProgress(t *testing.T) {
-	root := t.TempDir()
-	prompt := "cycle prompt"
-	state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, prompt)
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
+var _ = ginkgo.Describe("Resume assessment", func() {
+	ginkgo.It("reloads an incomplete cycle prompt and resumable child progress", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state, identity, prompt := resumeStateWithDispatchedCycle(root)
+		state.Cycles[0].PreRunScopedFingerprint = "scope-fingerprint"
 
-	identity := testChildIdentity()
-	state.Cycles = []CycleRecord{{
-		CycleNumber:             1,
-		Status:                  "dispatched",
-		PlanExecuteSessionID:    "child-1",
-		CyclePromptPath:         promptPath,
-		CyclePromptSHA256:       promptHash,
-		PreRunScopedFingerprint: "scope-fingerprint",
-		ChildIdentity:           &identity,
-	}}
+		progress := planexecute.NewProgressState("child-1", prompt, state.Cycles[0].CyclePromptPath, nil, nil, testNow())
+		progress.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
+		progress.Status = plancontract.PlanExecuteProgressStatusRunning
+		progress.PlanPath = "plan.json"
+		progress.Executor.Status = plancontract.PlanExecuteProgressStatusCompleted
+		progress.ChangedPaths = []string{"a.go"}
+		_, err := planexecute.SaveProgressState(root, &progress)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	progress := planexecute.NewProgressState("child-1", prompt, promptPath, nil, nil, testNow())
-	progress.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
-	progress.Status = plancontract.PlanExecuteProgressStatusRunning
-	progress.PlanPath = "plan.json"
-	progress.Executor.Status = plancontract.PlanExecuteProgressStatusCompleted
-	progress.ChangedPaths = []string{"a.go"}
-	if _, err := planexecute.SaveProgressState(root, &progress); err != nil {
-		t.Fatalf("SaveProgressState: %v", err)
-	}
-
-	assessment, err := AssessResume(ResumeAssessmentInput{
-		Root:                     root,
-		State:                    state,
-		CurrentChildIdentity:     &identity,
-		CurrentScopedFingerprint: "scope-fingerprint",
-	})
-	if err != nil {
-		t.Fatalf("AssessResume error = %v", err)
-	}
-	if assessment.Blocked {
-		t.Fatalf("resume unexpectedly blocked: %#v", assessment)
-	}
-	if !assessment.HasIncompleteCycle || !assessment.CanResumeChild {
-		t.Fatalf("assessment did not detect resumable child: %#v", assessment)
-	}
-	if assessment.CyclePrompt != prompt {
-		t.Fatalf("CyclePrompt = %q, want %q", assessment.CyclePrompt, prompt)
-	}
-	if assessment.ChildResumeID != "child-1" || assessment.ChildProgressPath == "" {
-		t.Fatalf("child resume metadata missing: %#v", assessment)
-	}
-}
-
-func TestAssessResumeUsesPlanExecuteResumeReadiness(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		phase          plancontract.PlanExecuteProgressPhase
-		status         plancontract.PlanExecuteProgressStatus
-		executorStatus plancontract.PlanExecuteProgressStatus
-		wantResume     bool
-	}{
-		{
-			name:           "review repair ready",
-			phase:          plancontract.PlanExecuteProgressPhaseReviewRepair,
-			status:         plancontract.PlanExecuteProgressStatusRunning,
-			executorStatus: plancontract.PlanExecuteProgressStatusCompleted,
-			wantResume:     true,
-		},
-		{
-			name:           "planning is not resumable",
-			phase:          plancontract.PlanExecuteProgressPhasePlanning,
-			status:         plancontract.PlanExecuteProgressStatusRunning,
-			executorStatus: "",
-			wantResume:     false,
-		},
-		{
-			name:           "executor in progress is not review resumable",
-			phase:          plancontract.PlanExecuteProgressPhaseExecutor,
-			status:         plancontract.PlanExecuteProgressStatusRunning,
-			executorStatus: plancontract.PlanExecuteProgressStatusRunning,
-			wantResume:     false,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			prompt := "cycle prompt"
-			state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
-			promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, prompt)
-			if err != nil {
-				t.Fatalf("SaveCyclePrompt: %v", err)
-			}
-
-			identity := testChildIdentity()
-			state.Cycles = []CycleRecord{{
-				CycleNumber:          1,
-				Status:               "dispatched",
-				PlanExecuteSessionID: "child-1",
-				CyclePromptPath:      promptPath,
-				CyclePromptSHA256:    promptHash,
-				ChildIdentity:        &identity,
-			}}
-
-			progress := planexecute.NewProgressState("child-1", prompt, promptPath, nil, nil, testNow())
-			progress.Phase = tc.phase
-			progress.Status = tc.status
-			progress.PlanPath = "plan.json"
-			progress.Executor.Status = tc.executorStatus
-			progress.ChangedPaths = []string{"a.go"}
-			if _, err := planexecute.SaveProgressState(root, &progress); err != nil {
-				t.Fatalf("SaveProgressState: %v", err)
-			}
-
-			assessment, err := AssessResume(ResumeAssessmentInput{
-				Root:                 root,
-				State:                state,
-				CurrentChildIdentity: &identity,
-			})
-			if err != nil {
-				t.Fatalf("AssessResume error = %v", err)
-			}
-			if assessment.CanResumeChild != tc.wantResume {
-				t.Fatalf("CanResumeChild = %v, want %v; assessment=%#v", assessment.CanResumeChild, tc.wantResume, assessment)
-			}
+		assessment, err := AssessResume(ResumeAssessmentInput{
+			Root:                     root,
+			State:                    state,
+			CurrentChildIdentity:     &identity,
+			CurrentScopedFingerprint: "scope-fingerprint",
 		})
-	}
-}
-
-func TestAssessResumeBlocksCyclePromptHashMismatch(t *testing.T) {
-	root := t.TempDir()
-	state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
-	promptPath, _, err := SaveCyclePrompt(root, state.SessionID, 1, "changed prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := testChildIdentity()
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    sha256Hex("original prompt"),
-		ChildIdentity:        &identity,
-	}}
-
-	assessment, err := AssessResume(ResumeAssessmentInput{
-		Root:                 root,
-		State:                state,
-		CurrentChildIdentity: &identity,
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(assessment.Blocked).To(gomega.BeFalse())
+		gomega.Expect(assessment.HasIncompleteCycle).To(gomega.BeTrue())
+		gomega.Expect(assessment.CanResumeChild).To(gomega.BeTrue())
+		gomega.Expect(assessment.CyclePrompt).To(gomega.Equal(prompt))
+		gomega.Expect(assessment.ChildResumeID).To(gomega.Equal("child-1"))
+		gomega.Expect(assessment.ChildProgressPath).NotTo(gomega.BeEmpty())
 	})
-	if err != nil {
-		t.Fatalf("AssessResume error = %v", err)
-	}
-	if !assessment.Blocked || assessment.BlockReason != ResumeBlockPromptMismatch {
-		t.Fatalf("assessment = %#v, want prompt mismatch blocker", assessment)
-	}
-}
 
-func TestAssessResumeBlocksChildProgressPromptMismatch(t *testing.T) {
-	root := t.TempDir()
+	ginkgo.DescribeTable("uses plan-execute resume readiness",
+		func(phase plancontract.PlanExecuteProgressPhase, status, executorStatus plancontract.PlanExecuteProgressStatus, wantResume bool) {
+			root := ginkgo.GinkgoT().TempDir()
+			state, identity, prompt := resumeStateWithDispatchedCycle(root)
+			progress := planexecute.NewProgressState("child-1", prompt, state.Cycles[0].CyclePromptPath, nil, nil, testNow())
+			progress.Phase = phase
+			progress.Status = status
+			progress.PlanPath = "plan.json"
+			progress.Executor.Status = executorStatus
+			progress.ChangedPaths = []string{"a.go"}
+			_, err := planexecute.SaveProgressState(root, &progress)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			assessment, err := AssessResume(ResumeAssessmentInput{Root: root, State: state, CurrentChildIdentity: &identity})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(assessment.CanResumeChild).To(gomega.Equal(wantResume), "assessment=%#v", assessment)
+		},
+		ginkgo.Entry("review repair ready", plancontract.PlanExecuteProgressPhaseReviewRepair, plancontract.PlanExecuteProgressStatusRunning, plancontract.PlanExecuteProgressStatusCompleted, true),
+		ginkgo.Entry("planning is not resumable", plancontract.PlanExecuteProgressPhasePlanning, plancontract.PlanExecuteProgressStatusRunning, plancontract.PlanExecuteProgressStatus(""), false),
+		ginkgo.Entry("executor in progress is not review resumable", plancontract.PlanExecuteProgressPhaseExecutor, plancontract.PlanExecuteProgressStatusRunning, plancontract.PlanExecuteProgressStatusRunning, false),
+	)
+
+	ginkgo.It("blocks a cycle prompt hash mismatch", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
+		promptPath, _, err := SaveCyclePrompt(root, state.SessionID, 1, "changed prompt")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		identity := testChildIdentity()
+		state.Cycles = []CycleRecord{{
+			CycleNumber: 1, Status: "dispatched", PlanExecuteSessionID: "child-1",
+			CyclePromptPath: promptPath, CyclePromptSHA256: sha256Hex("original prompt"), ChildIdentity: &identity,
+		}}
+
+		assessment, err := AssessResume(ResumeAssessmentInput{Root: root, State: state, CurrentChildIdentity: &identity})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		expectResumeBlock(assessment, ResumeBlockPromptMismatch)
+	})
+
+	ginkgo.It("blocks a child-progress prompt mismatch", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state, identity, _ := resumeStateWithDispatchedCycle(root)
+		progress := planexecute.NewProgressState("child-1", "different prompt", state.Cycles[0].CyclePromptPath, nil, nil, testNow())
+		_, err := planexecute.SaveProgressState(root, &progress)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		assessment, err := AssessResume(ResumeAssessmentInput{Root: root, State: state, CurrentChildIdentity: &identity})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		expectResumeBlock(assessment, ResumeBlockPromptMismatch)
+	})
+
+	ginkgo.It("blocks a child identity mismatch and identifies the field", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state, saved, _ := resumeStateWithDispatchedCycle(root)
+		current := saved
+		current.ToolManifestSHA256 = "different-tools"
+
+		assessment, err := AssessResume(ResumeAssessmentInput{Root: root, State: state, CurrentChildIdentity: &current})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		expectResumeBlock(assessment, ResumeBlockChildIdentityMismatch)
+		gomega.Expect(assessment.BlockDetail).To(gomega.Equal("tool_manifest_sha256"))
+	})
+
+	ginkgo.It("blocks external scoped changes", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		state, identity, _ := resumeStateWithDispatchedCycle(root)
+		state.Cycles[0].PostRunScopedFingerprint = "previous"
+
+		assessment, err := AssessResume(ResumeAssessmentInput{
+			Root: root, State: state, CurrentChildIdentity: &identity, CurrentScopedFingerprint: "current",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		expectResumeBlock(assessment, ResumeBlockExternalScopedChange)
+	})
+
+	ginkgo.It("ignores a completed last cycle", func() {
+		_, _, incomplete := IncompleteCycle(IntentLoopState{Cycles: []CycleRecord{{Status: "completed"}}})
+		gomega.Expect(incomplete).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("reports no incomplete cycle for empty state", func() {
+		assessment, err := AssessResume(ResumeAssessmentInput{Root: ginkgo.GinkgoT().TempDir(), State: IntentLoopState{}})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(assessment.HasIncompleteCycle).To(gomega.BeFalse())
+		gomega.Expect(assessment.Blocked).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("blocks an unsafe cycle-prompt path", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		identity := testChildIdentity()
+		state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
+		state.Cycles = []CycleRecord{{
+			CycleNumber: 1, Status: "dispatched", PlanExecuteSessionID: "child-1",
+			CyclePromptPath: "../outside.md", CyclePromptSHA256: sha256Hex("prompt"), ChildIdentity: &identity,
+		}}
+
+		assessment, err := AssessResume(ResumeAssessmentInput{Root: root, State: state, CurrentChildIdentity: &identity})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		expectResumeBlock(assessment, ResumeBlockPromptMismatch)
+	})
+})
+
+func resumeStateWithDispatchedCycle(root string) (IntentLoopState, ChildRunIdentity, string) {
 	prompt := "cycle prompt"
 	state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
 	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, prompt)
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	identity := testChildIdentity()
 	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    promptHash,
-		ChildIdentity:        &identity,
+		CycleNumber: 1, Status: "dispatched", PlanExecuteSessionID: "child-1",
+		CyclePromptPath: promptPath, CyclePromptSHA256: promptHash, ChildIdentity: &identity,
 	}}
-	progress := planexecute.NewProgressState("child-1", "different prompt", promptPath, nil, nil, testNow())
-	if _, err := planexecute.SaveProgressState(root, &progress); err != nil {
-		t.Fatalf("SaveProgressState: %v", err)
-	}
-
-	assessment, err := AssessResume(ResumeAssessmentInput{
-		Root:                 root,
-		State:                state,
-		CurrentChildIdentity: &identity,
-	})
-	if err != nil {
-		t.Fatalf("AssessResume error = %v", err)
-	}
-	if !assessment.Blocked || assessment.BlockReason != ResumeBlockPromptMismatch {
-		t.Fatalf("assessment = %#v, want child prompt mismatch blocker", assessment)
-	}
+	return state, identity, prompt
 }
 
-func TestAssessResumeBlocksChildIdentityMismatch(t *testing.T) {
-	root := t.TempDir()
-	state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	saved := testChildIdentity()
-	current := saved
-	current.ToolManifestSHA256 = "different-tools"
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      promptPath,
-		CyclePromptSHA256:    promptHash,
-		ChildIdentity:        &saved,
-	}}
-
-	assessment, err := AssessResume(ResumeAssessmentInput{
-		Root:                 root,
-		State:                state,
-		CurrentChildIdentity: &current,
-	})
-	if err != nil {
-		t.Fatalf("AssessResume error = %v", err)
-	}
-	if !assessment.Blocked || assessment.BlockReason != ResumeBlockChildIdentityMismatch {
-		t.Fatalf("assessment = %#v, want identity mismatch blocker", assessment)
-	}
-	if assessment.BlockDetail != "tool_manifest_sha256" {
-		t.Fatalf("BlockDetail = %q", assessment.BlockDetail)
-	}
-}
-
-func TestAssessResumeBlocksExternalScopedChange(t *testing.T) {
-	root := t.TempDir()
-	state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
-	promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, "cycle prompt")
-	if err != nil {
-		t.Fatalf("SaveCyclePrompt: %v", err)
-	}
-	identity := testChildIdentity()
-	state.Cycles = []CycleRecord{{
-		CycleNumber:              1,
-		Status:                   "dispatched",
-		PlanExecuteSessionID:     "child-1",
-		CyclePromptPath:          promptPath,
-		CyclePromptSHA256:        promptHash,
-		PostRunScopedFingerprint: "previous",
-		ChildIdentity:            &identity,
-	}}
-
-	assessment, err := AssessResume(ResumeAssessmentInput{
-		Root:                     root,
-		State:                    state,
-		CurrentChildIdentity:     &identity,
-		CurrentScopedFingerprint: "current",
-	})
-	if err != nil {
-		t.Fatalf("AssessResume error = %v", err)
-	}
-	if !assessment.Blocked || assessment.BlockReason != ResumeBlockExternalScopedChange {
-		t.Fatalf("assessment = %#v, want scoped change blocker", assessment)
-	}
-}
-
-func TestIncompleteCycleIgnoresCompletedLastCycle(t *testing.T) {
-	state := IntentLoopState{Cycles: []CycleRecord{{Status: "completed"}}}
-	if _, _, ok := IncompleteCycle(state); ok {
-		t.Fatal("completed cycle reported incomplete")
-	}
-}
-
-func TestAssessResumeReturnsNoIncompleteCycle(t *testing.T) {
-	assessment, err := AssessResume(ResumeAssessmentInput{Root: t.TempDir(), State: IntentLoopState{}})
-	if err != nil {
-		t.Fatalf("AssessResume error = %v", err)
-	}
-	if assessment.HasIncompleteCycle || assessment.Blocked {
-		t.Fatalf("assessment = %#v, want no incomplete cycle", assessment)
-	}
-}
-
-func TestAssessResumeRejectsUnsafePromptPath(t *testing.T) {
-	root := t.TempDir()
-	identity := testChildIdentity()
-	state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
-	state.Cycles = []CycleRecord{{
-		CycleNumber:          1,
-		Status:               "dispatched",
-		PlanExecuteSessionID: "child-1",
-		CyclePromptPath:      "../outside.md",
-		CyclePromptSHA256:    sha256Hex("prompt"),
-		ChildIdentity:        &identity,
-	}}
-
-	assessment, err := AssessResume(ResumeAssessmentInput{
-		Root:                 root,
-		State:                state,
-		CurrentChildIdentity: &identity,
-	})
-	if err != nil {
-		t.Fatalf("AssessResume error = %v", err)
-	}
-	if !assessment.Blocked || assessment.BlockReason != ResumeBlockPromptMismatch {
-		t.Fatalf("assessment = %#v, want prompt path blocker", assessment)
-	}
+func expectResumeBlock(assessment ResumeAssessment, reason string) {
+	gomega.Expect(assessment.Blocked).To(gomega.BeTrue(), "assessment=%#v", assessment)
+	gomega.Expect(assessment.BlockReason).To(gomega.Equal(reason))
 }
 
 func testChildIdentity() ChildRunIdentity {

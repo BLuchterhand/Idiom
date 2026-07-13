@@ -3,10 +3,14 @@ package jsoneventstest
 import (
 	"encoding/json"
 	"strings"
-	"testing"
 )
 
-func DecodeLines(t *testing.T, stdout string) []map[string]any {
+type testingT interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
+
+func DecodeLines(t testingT, stdout string) []map[string]any {
 	t.Helper()
 
 	var events []map[string]any

@@ -144,7 +144,7 @@ The executable proof lives in
 and is linked from
 [`testdata/sidecar/integration-proofs.json`](../testdata/sidecar/integration-proofs.json).
 It is replayed by
-`go test ./internal/surfaces/cli/mcp -run TestP86MCPStdioIntegrationProofReplay -count=1`.
+`go test ./internal/surfaces/cli/mcp -ginkgo.focus='P8\.6 MCP stdio proof replays the release proof without leaking protected evidence' -ginkgo.fail-on-empty -count=1`.
 
 ## Local Or Private-Code User
 
@@ -191,10 +191,11 @@ It covers:
 - `context_status --profile discovery --input '{"refresh":true}'` denial with a
   typed `sidecar.error.class == "profile_denied"` before execution.
 
-The fixture is replayed by `go test ./internal/evidence/sidecarvalidation -run TestSidecarSmokeTranscript`.
+The fixture is replayed by
+`go test ./internal/evidence/sidecarvalidation -ginkgo.focus='sidecar smoke transcript' -ginkgo.fail-on-empty -count=1`.
 The v1 compatibility golden tests are replayed by
-`go test ./internal/evidence/sidecarvalidation -run TestSidecarV1CompatibilityGoldenCases`.
+`go test ./internal/evidence/sidecarvalidation -ginkgo.focus='sidecar v1 compatibility golden cases' -ginkgo.fail-on-empty -count=1`.
 The P7.8 integration proof records are validated by
-`go test ./internal/evidence/sidecarvalidation -run TestP78IntegrationProofRecords`.
+`go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p78 integration proof records' -ginkgo.fail-on-empty -count=1`.
 The P8.6 MCP stdio proof is replayed by
-`go test ./internal/surfaces/cli/mcp -run TestP86MCPStdioIntegrationProofReplay`.
+`go test ./internal/surfaces/cli/mcp -ginkgo.focus='P8\.6 MCP stdio proof replays the release proof without leaking protected evidence' -ginkgo.fail-on-empty -count=1`.

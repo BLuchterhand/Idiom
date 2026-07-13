@@ -3,74 +3,119 @@ package agent
 import (
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/platform/textutil"
 )
 
 var (
 	sourceCitationInlineCodePathCandidatePattern = regexp.MustCompile("`([^`\\n]+)`")
-	sourceCitationLinePathPattern                = regexp.MustCompile("(?i)(?:^|[\\s`'\"(])([a-z0-9_.-]+\\.(?:go|py|ts|tsx|js|jsx|rs|java|c|cc|cpp|h|hpp|sh|zsh|gd|astro|md|mdx|markdown|json|jsonl|yaml|yml|toml|txt)):\\d+")
-	sourceCitationRootLinePathPattern            = regexp.MustCompile("(?i)(?:^|[\\s`'\"(])((?:go\\.mod|go\\.sum|makefile|dockerfile|readme\\.md|agents\\.md|package\\.json|package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|pyproject\\.toml|poetry\\.lock|cargo\\.toml|cargo\\.lock)):\\d+")
+	sourceCitationLinePathPattern                = regexp.MustCompile("(?i)(?:^|[\\s`'\"(])([^\\s`'\"()\\[\\]{}<>,;]+:\\d+(?:-\\d+)?)")
 )
 
 type sourceCitationAnalysis struct {
-	Answer         string
-	MentionedPaths []string
-	EscapingPaths  []string
+	Answer     string
+	References []sourceReference
+}
+
+type sourceReferenceKind string
+
+const (
+	sourceReferenceSourceFile       sourceReferenceKind = "source_file"
+	sourceReferenceDirectoryLabel   sourceReferenceKind = "directory_label"
+	sourceReferenceExternalDocument sourceReferenceKind = "external_document"
+)
+
+type sourceReference struct {
+	Kind             sourceReferenceKind  `json:"kind"`
+	Path             string               `json:"path"`
+	LineRange        *sourceCitationRange `json:"line_range,omitempty"`
+	EscapesWorkspace bool                 `json:"escapes_workspace,omitempty"`
+}
+
+type sourceCitationRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+func (lineRange sourceCitationRange) Valid() bool {
+	return lineRange.Start > 0 && lineRange.End >= lineRange.Start
+}
+
+func (reference sourceReference) BodyReadable() bool {
+	return reference.Kind == sourceReferenceSourceFile ||
+		reference.Kind == sourceReferenceExternalDocument
+}
+
+func (analysis sourceCitationAnalysis) BodyReadableReferences() []sourceReference {
+	return filterSourceReferences(analysis.References, func(reference sourceReference) bool {
+		return reference.BodyReadable()
+	})
+}
+
+func (analysis sourceCitationAnalysis) BodyReadablePaths() []string {
+	return sourceReferencePaths(analysis.BodyReadableReferences())
+}
+
+func (analysis sourceCitationAnalysis) EscapingReferences() []sourceReference {
+	return filterSourceReferences(analysis.References, func(reference sourceReference) bool {
+		return reference.EscapesWorkspace
+	})
+}
+
+func (analysis sourceCitationAnalysis) ReferencePaths() []string {
+	return sourceReferencePaths(analysis.References)
 }
 
 func analyzeSourceCitations(answer string) sourceCitationAnalysis {
 	scanText := stripQuotedAndFencedSourceExamples(answer)
-	mentioned := sourceCitationMentionedPaths(scanText)
+	references := sourceCitationMentionedReferences(scanText)
+	references = append(references, sourceCitationEscapingReferences(scanText)...)
 
-	var repositoryPaths []string
-	for _, path := range mentioned {
-		if sourceCitationIsSchemaPlaceholder(answer, path) {
+	var repositoryReferences []sourceReference
+	for _, reference := range references {
+		if sourceCitationIsSchemaPlaceholder(answer, reference.Path) {
 			continue
 		}
-		repositoryPaths = append(repositoryPaths, path)
+		repositoryReferences = append(repositoryReferences, reference)
 	}
 
 	return sourceCitationAnalysis{
-		Answer:         answer,
-		MentionedPaths: uniqueSortedRunnerPaths(repositoryPaths),
-		EscapingPaths:  sourceCitationEscapingPaths(scanText),
+		Answer:     answer,
+		References: normalizeSourceReferences(repositoryReferences),
 	}
 }
 
-func sourceCitationMentionedPaths(scanText string) []string {
-	var paths []string
+func sourceCitationMentionedReferences(scanText string) []sourceReference {
+	var references []sourceReference
 	for _, path := range pathparse.MentionedWorkspaceFiles(scanText) {
 		if sourceCitationMentionedPathLooksPlausible(path) {
-			paths = append(paths, path)
+			references = append(references, sourceReferenceForPath(path))
 		}
 	}
 
-	quotedPaths := sourceCitationQuotedPathCandidates(scanText)
-	if len(quotedPaths) > 0 {
-		paths = sourceCitationDropQuotedPathFragments(paths, quotedPaths)
-		paths = append(paths, quotedPaths...)
+	quotedReferences := sourceCitationQuotedReferences(scanText)
+	if len(quotedReferences) > 0 {
+		references = sourceCitationDropQuotedPathFragments(references, quotedReferences)
+		references = append(references, quotedReferences...)
 	}
 
 	for _, match := range sourceCitationLinePathPattern.FindAllStringSubmatch(scanText, -1) {
-		if len(match) > 1 && sourceCitationMentionedPathLooksPlausible(match[1]) {
-			paths = append(paths, match[1])
+		if len(match) > 1 {
+			reference := sourceReferenceForPath(match[1])
+			if sourceCitationMentionedPathLooksPlausible(reference.Path) {
+				references = append(references, reference)
+			}
 		}
 	}
 
-	for _, match := range sourceCitationRootLinePathPattern.FindAllStringSubmatch(scanText, -1) {
-		if len(match) > 1 && sourceCitationMentionedPathLooksPlausible(match[1]) {
-			paths = append(paths, match[1])
-		}
-	}
-
-	return uniqueSortedRunnerPaths(paths)
+	return normalizeSourceReferences(references)
 }
 
-func sourceCitationQuotedPathCandidates(text string) []string {
-	var paths []string
+func sourceCitationQuotedReferences(text string) []sourceReference {
+	var references []sourceReference
 	for _, match := range sourceCitationInlineCodePathCandidatePattern.FindAllStringSubmatch(text, -1) {
 		if len(match) <= 1 {
 			continue
@@ -81,10 +126,10 @@ func sourceCitationQuotedPathCandidates(text string) []string {
 			continue
 		}
 
-		paths = append(paths, sourceCitationPathWithoutLineSuffix(path))
+		references = append(references, sourceReferenceForPath(path))
 	}
 
-	return uniqueSortedRunnerPaths(paths)
+	return normalizeSourceReferences(references)
 }
 
 func sourceCitationQuotedPathCandidateLooksLikeCitation(path string) bool {
@@ -119,17 +164,29 @@ func sourceCitationPathLooksLikePath(token string) bool {
 }
 
 func sourceCitationPathWithoutLineSuffix(token string) string {
+	path, _ := sourceCitationPathAndRange(token)
+	return path
+}
+
+func sourceCitationPathAndRange(token string) (string, *sourceCitationRange) {
 	token = strings.TrimSpace(token)
 	idx := strings.LastIndex(token, ":")
 	if idx <= 0 || idx == len(token)-1 {
-		return token
+		return token, nil
 	}
 
-	if !sourceCitationLineSuffix(token[idx+1:]) {
-		return token
+	suffix := token[idx+1:]
+	if !sourceCitationLineSuffix(suffix) {
+		return token, nil
 	}
 
-	return token[:idx]
+	startText, endText, ranged := strings.Cut(strings.TrimSpace(suffix), "-")
+	start, _ := strconv.Atoi(startText)
+	end := start
+	if ranged {
+		end, _ = strconv.Atoi(endText)
+	}
+	return token[:idx], &sourceCitationRange{Start: start, End: end}
 }
 
 func sourceCitationLineSuffix(suffix string) bool {
@@ -149,31 +206,32 @@ func sourceCitationLineSuffix(suffix string) bool {
 	return end != "" && strings.Trim(end, "0123456789") == ""
 }
 
-func sourceCitationDropQuotedPathFragments(paths []string, quotedPaths []string) []string {
-	if len(paths) == 0 || len(quotedPaths) == 0 {
-		return paths
+func sourceCitationDropQuotedPathFragments(references []sourceReference, quotedReferences []sourceReference) []sourceReference {
+	if len(references) == 0 || len(quotedReferences) == 0 {
+		return references
 	}
 
-	var out []string
-	for _, path := range paths {
-		if sourceCitationPathCoveredByQuotedCandidate(path, quotedPaths) {
+	var out []sourceReference
+	for _, reference := range references {
+		if sourceCitationPathCoveredByQuotedCandidate(reference.Path, quotedReferences) {
 			continue
 		}
 
-		out = append(out, path)
+		out = append(out, reference)
 	}
 
 	return out
 }
 
-func sourceCitationPathCoveredByQuotedCandidate(path string, quotedPaths []string) bool {
+func sourceCitationPathCoveredByQuotedCandidate(path string, quotedReferences []sourceReference) bool {
 	path = filepath.ToSlash(strings.TrimSpace(strings.Trim(path, "`'\"()[]{}<>,;")))
 	if path == "" {
 		return false
 	}
 
 	pathLower := strings.ToLower(path)
-	for _, quotedPath := range quotedPaths {
+	for _, reference := range quotedReferences {
+		quotedPath := reference.Path
 		quotedPath = filepath.ToSlash(strings.TrimSpace(strings.Trim(quotedPath, "`'\"()[]{}<>,;")))
 		if quotedPath == "" || strings.EqualFold(quotedPath, path) {
 			continue
@@ -190,37 +248,125 @@ func sourceCitationPathCoveredByQuotedCandidate(path string, quotedPaths []strin
 	return false
 }
 
-func sourceCitationEscapingPaths(scanText string) []string {
-	seen := map[string]struct{}{}
-	var paths []string
-
-	var candidates []string
-	for _, match := range sourceCitationInlineCodePathCandidatePattern.FindAllStringSubmatch(scanText, -1) {
-		if len(match) > 1 {
-			candidates = append(candidates, match[1])
-		}
-	}
-	candidates = append(candidates, strings.Fields(scanText)...)
-
-	for _, raw := range candidates {
+func sourceCitationEscapingReferences(scanText string) []sourceReference {
+	var references []sourceReference
+	for _, raw := range sourceCitationEscapingPathCandidates(scanText) {
 		raw = strings.Trim(raw, "`'\"()[]{}<>,;")
-		if !readOnlyPathEscapesWorkspace(raw) {
+		if !runnerPathEscapesWorkspace(raw) {
 			continue
 		}
 
 		path := sourceCitationEscapingPathDisplay(raw)
-		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
+		if path == "" || !pathparse.LooksLikeWorkspaceFilePath(path) {
 			continue
 		}
 
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		paths = append(paths, path)
+		reference := sourceReferenceForPath(path)
+		reference.Kind = sourceReferenceExternalDocument
+		reference.EscapesWorkspace = true
+		references = append(references, reference)
 	}
 
-	return textutil.Sorted(paths)
+	return normalizeSourceReferences(references)
+}
+
+func sourceCitationEscapingPathCandidates(text string) []string {
+	var candidates []string
+	for _, match := range sourceCitationInlineCodePathCandidatePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) > 1 {
+			candidates = append(candidates, match[1])
+		}
+	}
+	return append(candidates, strings.Fields(text)...)
+}
+
+func sourceReferenceForPath(rawPath string) sourceReference {
+	path, lineRange := sourceCitationPathAndRange(strings.TrimSpace(strings.Trim(rawPath, "`'\"()[]{}<>,;")))
+	path = filepath.ToSlash(path)
+
+	reference := sourceReference{Path: NormalizeRunnerPath(path), LineRange: lineRange}
+	switch {
+	case filepath.IsAbs(path), filepath.VolumeName(path) != "", pathparse.LooksLikeWindowsAbsolutePath(path), runnerPathEscapesWorkspace(path):
+		reference.Kind = sourceReferenceExternalDocument
+		reference.EscapesWorkspace = true
+	case pathparse.LooksLikeWorkspaceFilePath(path):
+		reference.Kind = sourceReferenceSourceFile
+	default:
+		reference.Kind = sourceReferenceDirectoryLabel
+		reference.Path = strings.TrimRight(reference.Path, "/")
+	}
+
+	return reference
+}
+
+func normalizeSourceReferences(references []sourceReference) []sourceReference {
+	seen := make(map[string]struct{}, len(references))
+	rangedPaths := make(map[string]struct{})
+	for _, reference := range references {
+		if reference.LineRange != nil {
+			rangedPaths[string(reference.Kind)+"\x00"+strings.TrimSpace(reference.Path)] = struct{}{}
+		}
+	}
+	out := make([]sourceReference, 0, len(references))
+
+	for _, reference := range references {
+		reference.Path = strings.TrimSpace(reference.Path)
+		if reference.Path == "" || reference.Kind == "" {
+			continue
+		}
+		pathKey := string(reference.Kind) + "\x00" + reference.Path
+		if reference.LineRange == nil {
+			if _, ranged := rangedPaths[pathKey]; ranged {
+				continue
+			}
+		}
+
+		key := pathKey
+		if reference.LineRange != nil {
+			key += "\x00" + strconv.Itoa(reference.LineRange.Start) + "-" + strconv.Itoa(reference.LineRange.End)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		out = append(out, reference)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path == out[j].Path {
+			if out[i].LineRange != nil && out[j].LineRange != nil && out[i].LineRange.Start != out[j].LineRange.Start {
+				return out[i].LineRange.Start < out[j].LineRange.Start
+			}
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Path < out[j].Path
+	})
+
+	return out
+}
+
+func filterSourceReferences(references []sourceReference, keep func(sourceReference) bool) []sourceReference {
+	var out []sourceReference
+	for _, reference := range references {
+		if keep != nil && keep(reference) {
+			out = append(out, reference)
+		}
+	}
+	return normalizeSourceReferences(out)
+}
+
+func sourceReferencePaths(references []sourceReference) []string {
+	paths := make([]string, 0, len(references))
+	seen := make(map[string]struct{}, len(references))
+	for _, reference := range normalizeSourceReferences(references) {
+		if _, duplicate := seen[reference.Path]; duplicate {
+			continue
+		}
+		seen[reference.Path] = struct{}{}
+		paths = append(paths, reference.Path)
+	}
+	return paths
 }
 
 func sourceCitationEscapingPathDisplay(raw string) string {

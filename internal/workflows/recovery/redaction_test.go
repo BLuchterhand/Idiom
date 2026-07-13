@@ -1,34 +1,33 @@
 package recovery
 
 import (
-	"strings"
-	"testing"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
-func TestRedactTextRemovesTranscriptAndFileBodyShapes(t *testing.T) {
-	redacted := RedactText("raw_prompt: operator text\nfile_body:\n```text\ncustomer source\npassword=secret\n```\ntranscript: hidden")
+var _ = ginkgo.Describe("Recovery detail redaction", func() {
+	ginkgo.It("removes transcript and file-body content", func() {
+		redacted := RedactText("raw_prompt: operator text\nfile_body:\n```text\ncustomer source\npassword=secret\n```\ntranscript: hidden")
 
-	for _, forbidden := range []string{"operator text", "customer source", "password=secret", "hidden"} {
-		if strings.Contains(redacted, forbidden) {
-			t.Fatalf("redaction leaked %q in %q", forbidden, redacted)
+		forbiddenDetails := []string{"operator text", "customer source", "password=secret", "hidden"}
+		for _, forbidden := range forbiddenDetails {
+			gomega.Expect(redacted).NotTo(gomega.ContainSubstring(forbidden))
 		}
-	}
+		gomega.Expect(redacted).To(gomega.And(
+			gomega.ContainSubstring("[redacted sensitive recovery detail]"),
+			gomega.ContainSubstring("[redacted fenced recovery detail]"),
+		))
+	})
 
-	if !strings.Contains(redacted, "[redacted sensitive recovery detail]") || !strings.Contains(redacted, "[redacted fenced recovery detail]") {
-		t.Fatalf("expected redaction markers, got %q", redacted)
-	}
-}
-
-func TestRedactTextRedactsSharedSecretMarkers(t *testing.T) {
-	for _, input := range []string{
-		"Authorization: Bearer abc123",
-		"aws=AKIA1234567890ABCD",
-		"github=ghp_1234567890abcdef",
-		"api_key=secret-value",
-	} {
-		redacted := RedactText(input)
-		if strings.Contains(redacted, input) || !strings.Contains(redacted, "[redacted sensitive recovery detail]") {
-			t.Fatalf("RedactText(%q) = %q, want marker redacted", input, redacted)
-		}
-	}
-}
+	ginkgo.DescribeTable("redacts shared-secret markers",
+		func(input string) {
+			redacted := RedactText(input)
+			gomega.Expect(redacted).NotTo(gomega.ContainSubstring(input))
+			gomega.Expect(redacted).To(gomega.ContainSubstring("[redacted sensitive recovery detail]"))
+		},
+		ginkgo.Entry("authorization bearer token", "Authorization: Bearer abc123"),
+		ginkgo.Entry("AWS access key", "aws=AKIA1234567890ABCD"),
+		ginkgo.Entry("GitHub personal access token", "github=ghp_1234567890abcdef"),
+		ginkgo.Entry("API key", "api_key=secret-value"),
+	)
+})

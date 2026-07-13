@@ -1,14 +1,21 @@
 package workspace
 
-import "testing"
+import (
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
+)
 
-func TestNormalizeGraphOutputPathRejectsBackslashTraversal(t *testing.T) {
-	root := t.TempDir()
-	if got := normalizeGraphOutputPath(`..\secret.go`, root); got != "" {
-		t.Fatalf("expected backslash traversal to be rejected, got %q", got)
-	}
+var _ = ginkgo.Describe("context enrichers", func() {
+	ginkgo.It("normalize graph output path rejects backslash traversal", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(normalizeGraphOutputPath(`..\secret.go`, root)).To(
+			gomega.BeEmpty(),
+			"expected backslash traversal to be rejected",
+		)
 
-	if got := normalizeGraphOutputPath(`internal\capabilities\workspace\manager.go`, root); got != "internal/capabilities/workspace/manager.go" {
-		t.Fatalf("expected backslash path to normalize, got %q", got)
-	}
-}
+		gomega.Expect(normalizeGraphOutputPath(`internal\capabilities\workspace\manager.go`, root)).To(
+			gomega.Equal("internal/capabilities/workspace/manager.go"),
+			"expected backslash path to normalize",
+		)
+	})
+})

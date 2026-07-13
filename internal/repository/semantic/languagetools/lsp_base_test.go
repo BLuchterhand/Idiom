@@ -8,15 +8,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"idiom/internal/platform/commandexec"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestParseLSPLocations(t *testing.T) {
+var _ = Describe("LSP base protocol", func() {
 	selectionRange := LSPRange{
 		Start: LSPPosition{Line: 2, Character: 4},
 		End:   LSPPosition{Line: 2, Character: 9},
@@ -26,31 +28,30 @@ func TestParseLSPLocations(t *testing.T) {
 		End:   LSPPosition{Line: 3, Character: 0},
 	}
 
-	tests := []struct {
-		name    string
-		raw     string
-		want    []LSPLocation
-		wantErr bool
-	}{
-		{
-			name: "null",
-			raw:  "null",
+	DescribeTable("parses location response shapes",
+		func(raw string, expected []LSPLocation, shouldFail bool) {
+			locations, err := parseLSPLocations(json.RawMessage(raw), "test-server")
+			if shouldFail {
+				Expect(err).To(HaveOccurred())
+				return
+			}
+			Expect(err).NotTo(HaveOccurred())
+			Expect(locations).To(Equal(expected))
 		},
-		{
-			name: "single location",
-			raw:  `{"uri":"file:///tmp/a.go","range":{"start":{"line":1,"character":2},"end":{"line":1,"character":5}}}`,
-			want: []LSPLocation{{
+		Entry("null", "null", []LSPLocation(nil), false),
+		Entry("single location",
+			`{"uri":"file:///tmp/a.go","range":{"start":{"line":1,"character":2},"end":{"line":1,"character":5}}}`,
+			[]LSPLocation{{
 				URI: "file:///tmp/a.go",
 				Range: LSPRange{
 					Start: LSPPosition{Line: 1, Character: 2},
 					End:   LSPPosition{Line: 1, Character: 5},
 				},
-			}},
-		},
-		{
-			name: "location list",
-			raw:  `[{"uri":"file:///tmp/a.go","range":{"start":{"line":1,"character":2},"end":{"line":1,"character":5}}},{"uri":"file:///tmp/b.go","range":{"start":{"line":6,"character":7},"end":{"line":6,"character":8}}}]`,
-			want: []LSPLocation{
+			}}, false,
+		),
+		Entry("location list",
+			`[{"uri":"file:///tmp/a.go","range":{"start":{"line":1,"character":2},"end":{"line":1,"character":5}}},{"uri":"file:///tmp/b.go","range":{"start":{"line":6,"character":7},"end":{"line":6,"character":8}}}]`,
+			[]LSPLocation{
 				{
 					URI: "file:///tmp/a.go",
 					Range: LSPRange{
@@ -65,125 +66,78 @@ func TestParseLSPLocations(t *testing.T) {
 						End:   LSPPosition{Line: 6, Character: 8},
 					},
 				},
-			},
-		},
-		{
-			name: "single link falls back to target range",
-			raw:  marshalTestJSON(t, LSPLocationLink{TargetURI: "file:///tmp/target.go", TargetRange: targetRange}),
-			want: []LSPLocation{{URI: "file:///tmp/target.go", Range: targetRange}},
-		},
-		{
-			name: "link list uses selection range",
-			raw: marshalTestJSON(t, []LSPLocationLink{
+			}, false,
+		),
+		Entry("single link falls back to target range",
+			marshalTestJSON(LSPLocationLink{TargetURI: "file:///tmp/target.go", TargetRange: targetRange}),
+			[]LSPLocation{{URI: "file:///tmp/target.go", Range: targetRange}}, false,
+		),
+		Entry("link list uses the selection range",
+			marshalTestJSON([]LSPLocationLink{
 				{TargetURI: "file:///tmp/target.go", TargetRange: targetRange, TargetSelectionRange: selectionRange},
 				{TargetURI: "file:///tmp/other.go", TargetRange: targetRange, TargetSelectionRange: selectionRange},
 			}),
-			want: []LSPLocation{
+			[]LSPLocation{
 				{URI: "file:///tmp/target.go", Range: selectionRange},
 				{URI: "file:///tmp/other.go", Range: selectionRange},
-			},
-		},
-		{
-			name:    "unsupported payload",
-			raw:     `{"targetRange":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}}}`,
-			wantErr: true,
-		},
-	}
+			}, false,
+		),
+		Entry("unsupported payload",
+			`{"targetRange":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}}}`,
+			nil, true,
+		),
+	)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseLSPLocations(json.RawMessage(tt.raw), "test-server")
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("parseLSPLocations error: %v", err)
-			}
-
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("parseLSPLocations() = %#v, want %#v", got, tt.want)
-			}
+	It("includes process stderr when a request read fails", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		DeferCleanup(cancel)
+		process, err := commandexec.Start(ctx, commandexec.Spec{
+			Name: os.Args[0], Args: []string{"-test.run=TestLSPHelperProcess", "--", "stderr-after-request"}, Timeout: 5 * time.Second,
 		})
-	}
-}
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(process.Close)
 
-func TestLSPRequestIncludesProcessStderrOnReadFailure(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	process, err := commandexec.Start(ctx, commandexec.Spec{
-		Name:    os.Args[0],
-		Args:    []string{"-test.run=TestLSPHelperProcess", "--", "stderr-after-request"},
-		Timeout: 5 * time.Second,
+		client := lspBaseClient{
+			process: process, stdin: process.Stdin(), stdout: bufio.NewReader(process.Stdout()), serverName: "test-lsp",
+		}
+		err = client.request(ctx, "test/request", map[string]any{"ok": true}, nil)
+		Expect(err).To(MatchError(ContainSubstring("server stderr detail")))
 	})
-	if err != nil {
-		t.Fatalf("Start helper: %v", err)
-	}
-	defer process.Close()
 
-	client := lspBaseClient{
-		process:    process,
-		stdin:      process.Stdin(),
-		stdout:     bufio.NewReader(process.Stdout()),
-		serverName: "test-lsp",
-	}
+	It("starts the process with the requested directory and arguments", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		DeferCleanup(cancel)
+		root := GinkgoT().TempDir()
+		client, err := newLSPBaseClient(
+			ctx, root, "test-lsp", os.Args[0],
+			[]string{"-test.run=TestLSPHelperProcess", "--", "echo", "arg-ok"}, nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(client.forceClose)
 
-	err = client.request(ctx, "test/request", map[string]any{"ok": true}, nil)
-	if err == nil {
-		t.Fatal("expected request to fail when helper closes stdout")
-	}
-	if !strings.Contains(err.Error(), "server stderr detail") {
-		t.Fatalf("request error missing server stderr: %v", err)
-	}
-}
+		var result struct {
+			CWD string `json:"cwd"`
+			Arg string `json:"arg"`
+		}
+		Expect(client.request(ctx, "test/echo", nil, &result)).To(Succeed())
+		Expect(filepath.Clean(result.CWD)).To(Equal(filepath.Clean(root)))
+		Expect(result.Arg).To(Equal("arg-ok"))
+	})
 
-func TestLSPBaseClientStartsProcessWithDirArgsAndFrames(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	It("forces close when a server ignores shutdown", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		DeferCleanup(cancel)
+		client, err := newLSPBaseClient(
+			ctx, GinkgoT().TempDir(), "quiet-lsp", os.Args[0],
+			[]string{"-test.run=TestLSPHelperProcess", "--", "quiet"}, nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
 
-	root := t.TempDir()
-	client, err := newLSPBaseClient(ctx, root, "test-lsp", os.Args[0], []string{"-test.run=TestLSPHelperProcess", "--", "echo", "arg-ok"}, nil)
-	if err != nil {
-		t.Fatalf("newLSPBaseClient: %v", err)
-	}
-	defer client.forceClose()
-
-	var result struct {
-		CWD string `json:"cwd"`
-		Arg string `json:"arg"`
-	}
-	if err := client.request(ctx, "test/echo", nil, &result); err != nil {
-		t.Fatalf("request: %v", err)
-	}
-
-	if filepath.Clean(result.CWD) != filepath.Clean(root) {
-		t.Fatalf("helper cwd = %q, want %q", result.CWD, root)
-	}
-	if result.Arg != "arg-ok" {
-		t.Fatalf("helper arg = %q, want arg-ok", result.Arg)
-	}
-}
-
-func TestLSPCloseReturnsWhenServerIgnoresShutdown(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	client, err := newLSPBaseClient(ctx, t.TempDir(), "quiet-lsp", os.Args[0], []string{"-test.run=TestLSPHelperProcess", "--", "quiet"}, nil)
-	if err != nil {
-		t.Fatalf("newLSPBaseClient: %v", err)
-	}
-
-	start := time.Now()
-	client.close()
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Fatalf("close took %s; expected shutdown timeout and force close", elapsed)
-	}
-}
+		started := time.Now()
+		client.close()
+		Expect(time.Since(started)).To(BeNumerically("<=", 3*time.Second))
+	})
+})
 
 func TestLSPHelperProcess(t *testing.T) {
 	mode, args, ok := lspHelperMode()
@@ -202,32 +156,26 @@ func TestLSPHelperProcess(t *testing.T) {
 	case "stderr-after-request":
 		fmt.Fprintln(os.Stderr, "server stderr detail")
 		os.Exit(0)
-
 	case "echo":
-		var req struct {
+		var request struct {
 			ID json.RawMessage `json:"id"`
 		}
-		if err := json.Unmarshal(body, &req); err != nil {
+		if err := json.Unmarshal(body, &request); err != nil {
 			fmt.Fprintf(os.Stderr, "decode request: %v\n", err)
 			os.Exit(2)
 		}
 
-		cwd, _ := os.Getwd()
-		arg := ""
+		workingDirectory, _ := os.Getwd()
+		argument := ""
 		if len(args) > 0 {
-			arg = args[0]
+			argument = args[0]
 		}
-
 		writeLSPHelperMessage(map[string]any{
 			"jsonrpc": "2.0",
-			"id":      json.RawMessage(req.ID),
-			"result": map[string]any{
-				"cwd": cwd,
-				"arg": arg,
-			},
+			"id":      json.RawMessage(request.ID),
+			"result":  map[string]any{"cwd": workingDirectory, "arg": argument},
 		})
 		os.Exit(0)
-
 	case "quiet":
 		_, _ = io.Copy(io.Discard, reader)
 		os.Exit(0)
@@ -242,7 +190,6 @@ func lspHelperMode() (string, []string, bool) {
 			return os.Args[i+1], os.Args[i+2:], true
 		}
 	}
-
 	return "", nil, false
 }
 
@@ -253,12 +200,10 @@ func readLSPHelperMessage(reader *bufio.Reader) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
 			break
 		}
-
 		var value int
 		if _, err := fmt.Sscanf(line, "Content-Length: %d", &value); err == nil {
 			contentLength = value
@@ -270,10 +215,8 @@ func readLSPHelperMessage(reader *bufio.Reader) ([]byte, error) {
 		if _, err := io.ReadFull(reader, body); err != nil {
 			return nil, err
 		}
-
 		return body, nil
 	}
-
 	return nil, nil
 }
 
@@ -283,17 +226,12 @@ func writeLSPHelperMessage(payload any) {
 		fmt.Fprintf(os.Stderr, "marshal response: %v\n", err)
 		os.Exit(2)
 	}
-
 	fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
 }
 
-func marshalTestJSON(t *testing.T, value any) string {
-	t.Helper()
-
+func marshalTestJSON(value any) string {
+	GinkgoHelper()
 	raw, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal test json: %v", err)
-	}
-
+	Expect(err).NotTo(HaveOccurred())
 	return string(raw)
 }

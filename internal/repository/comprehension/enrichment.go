@@ -1,5 +1,7 @@
 package comprehension
 
+//go:generate go tool mockgen -source=enrichment.go -destination=mock_graph_enricher_test.go -package=comprehension -typed
+
 import (
 	"cmp"
 	"context"

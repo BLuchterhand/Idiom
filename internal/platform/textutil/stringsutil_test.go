@@ -1,114 +1,65 @@
 package textutil
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestFirstNonEmpty(t *testing.T) {
-	if got := FirstNonEmpty("", "  ", "hello", "world"); got != "hello" {
-		t.Errorf("FirstNonEmpty = %q, want %q", got, "hello")
-	}
+var _ = ginkgo.Describe("String utilities", func() {
+	ginkgo.DescribeTable("returns the first non-empty trimmed value",
+		func(values []string, want string) {
+			gomega.Expect(FirstNonEmpty(values...)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("later value", []string{"", "  ", "hello", "world"}, "hello"),
+		ginkgo.Entry("all empty", []string{"", "  "}, ""),
+		ginkgo.Entry("first value", []string{"first", "second"}, "first"),
+	)
 
-	if got := FirstNonEmpty("", "  "); got != "" {
-		t.Errorf("FirstNonEmpty all empty = %q, want empty", got)
-	}
+	ginkgo.DescribeTable("detects any substring",
+		func(haystack string, needles []string, want bool) {
+			gomega.Expect(ContainsAny(haystack, needles...)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("present", "hello world", []string{"world", "foo"}, true),
+		ginkgo.Entry("absent", "hello", []string{"world", "foo"}, false),
+		ginkgo.Entry("empty needle", "hello", []string{""}, true),
+	)
 
-	if got := FirstNonEmpty("first", "second"); got != "first" {
-		t.Errorf("FirstNonEmpty = %q, want %q", got, "first")
-	}
-}
+	ginkgo.It("returns normalized unique non-empty values", func() {
+		gomega.Expect(UniqueNonEmpty([]string{"a", "  b  ", "a", "", "b", "c"})).To(gomega.Equal([]string{"a", "b", "c"}))
+		gomega.Expect(UniqueNonEmpty(nil)).To(gomega.BeEmpty())
+	})
 
-func TestContainsAny(t *testing.T) {
-	if !ContainsAny("hello world", "world", "foo") {
-		t.Error("ContainsAny should find 'world'")
-	}
+	ginkgo.DescribeTable("compares trimmed values without case",
+		func(left, right string, want bool) {
+			gomega.Expect(EqualTrimFold(left, right)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("equal", "  Hello  ", "hello", true),
+		ginkgo.Entry("different", "hello", "world", false),
+	)
 
-	if ContainsAny("hello", "world", "foo") {
-		t.Error("ContainsAny should not find any needle")
-	}
+	ginkgo.It("returns non-empty trimmed lines", func() {
+		gomega.Expect(NonEmptyTrimmedLines("  a  \n\n  b  \n  c  ")).To(gomega.Equal([]string{"a", "b", "c"}))
+		gomega.Expect(NonEmptyTrimmedLines("")).To(gomega.BeEmpty())
+	})
 
-	if !ContainsAny("hello", "") {
-		t.Error("ContainsAny with empty needle should match")
-	}
-}
+	ginkgo.DescribeTable("uses a fallback for empty primary values",
+		func(primary, alternative, want string) {
+			gomega.Expect(Fallback(primary, alternative)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("primary", "hello", "alt", "hello"),
+		ginkgo.Entry("empty", "", "alt", "alt"),
+		ginkgo.Entry("whitespace", "   ", "alt", "alt"),
+		ginkgo.Entry("both empty", "", "", ""),
+	)
 
-func TestUniqueNonEmpty(t *testing.T) {
-	result := UniqueNonEmpty([]string{"a", "  b  ", "a", "", "b", "c"})
-	if len(result) != 3 {
-		t.Fatalf("UniqueNonEmpty len = %d, want 3: %v", len(result), result)
-	}
-
-	if result[0] != "a" || result[1] != "b" || result[2] != "c" {
-		t.Errorf("UniqueNonEmpty = %v, want [a b c]", result)
-	}
-
-	if len(UniqueNonEmpty(nil)) != 0 {
-		t.Error("UniqueNonEmpty(nil) should return empty")
-	}
-}
-
-func TestEqualTrimFold(t *testing.T) {
-	if !EqualTrimFold("  Hello  ", "hello") {
-		t.Error("EqualTrimFold should match case-insensitive trimmed")
-	}
-
-	if EqualTrimFold("hello", "world") {
-		t.Error("EqualTrimFold should not match different strings")
-	}
-}
-
-func TestNonEmptyTrimmedLines(t *testing.T) {
-	result := NonEmptyTrimmedLines("  a  \n\n  b  \n  c  ")
-	if len(result) != 3 {
-		t.Fatalf("NonEmptyTrimmedLines len = %d, want 3", len(result))
-	}
-
-	if result[0] != "a" || result[1] != "b" || result[2] != "c" {
-		t.Errorf("NonEmptyTrimmedLines = %v", result)
-	}
-
-	if len(NonEmptyTrimmedLines("")) != 0 {
-		t.Error("NonEmptyTrimmedLines empty should return empty")
-	}
-}
-
-func TestFallbackNonEmpty(t *testing.T) {
-	if got := Fallback("hello", "alt"); got != "hello" {
-		t.Errorf("Fallback = %q, want %q", got, "hello")
-	}
-}
-
-func TestFallbackEmpty(t *testing.T) {
-	if got := Fallback("", "alt"); got != "alt" {
-		t.Errorf("Fallback = %q, want %q", got, "alt")
-	}
-}
-
-func TestFallbackWhitespaceOnly(t *testing.T) {
-	if got := Fallback("   ", "alt"); got != "alt" {
-		t.Errorf("Fallback = %q, want %q", got, "alt")
-	}
-}
-
-func TestFallbackBothEmpty(t *testing.T) {
-	if got := Fallback("", ""); got != "" {
-		t.Errorf("Fallback = %q, want empty", got)
-	}
-}
-
-func TestContainsFold(t *testing.T) {
-	tests := []struct {
-		haystack, needle string
-		want             bool
-	}{
-		{"Hello World", "hello", true},
-		{"Hello World", "WORLD", true},
-		{"Hello World", "foo", false},
-		{"Hello World", "", false},
-		{"Hello World", "   ", false},
-	}
-	for _, tt := range tests {
-		got := ContainsFold(tt.haystack, tt.needle)
-		if got != tt.want {
-			t.Errorf("ContainsFold(%q, %q) = %v, want %v", tt.haystack, tt.needle, got, tt.want)
-		}
-	}
-}
+	ginkgo.DescribeTable("finds non-empty substrings without case",
+		func(haystack, needle string, want bool) {
+			gomega.Expect(ContainsFold(haystack, needle)).To(gomega.Equal(want))
+		},
+		ginkgo.Entry("lowercase", "Hello World", "hello", true),
+		ginkgo.Entry("uppercase", "Hello World", "WORLD", true),
+		ginkgo.Entry("absent", "Hello World", "foo", false),
+		ginkgo.Entry("empty", "Hello World", "", false),
+		ginkgo.Entry("whitespace", "Hello World", "   ", false),
+	)
+})

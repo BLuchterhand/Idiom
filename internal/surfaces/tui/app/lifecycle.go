@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,188 +16,23 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
+	plancontract "idiom/internal/contracts/plan"
+	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/agent"
-	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
+	runtimesession "idiom/internal/runtime/session"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/projectartifacts"
 )
-
-// backendsModelToLlamaServer converts a backends.Model entry into a
-// config.LlamaServer suitable for both client construction and the
-// llama.ServerController launcher. Fields the backends schema doesn't
-// carry (CtxSize, Threads, Reasoning*, LogFile, etc.) inherit from
-// `defaults` so a sparsely-declared backends.json entry still produces
-// a working spec — the project's existing config.json fields fill the
-// rest.
-//
-// out.Model resolves in this priority order: the Model entry's hosted/API
-// model id, then ModelPath (direct-mode file path), then the Model entry's
-// Alias (proxy-mode identifier — overrides any inherited path because the alias
-// is what the proxy routes by), then the inherited defaults.
-//
-// When backends.Model.Host is empty, the host falls back to defaults
-// or 127.0.0.1 — every shipped config uses 127.0.0.1 and a missing
-// host in backends.json shouldn't be a hard error.
-func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) config.LlamaServer {
-	out := defaults
-	explicitKind := strings.TrimSpace(m.Kind)
-	explicitBaseURL := strings.TrimSpace(m.BaseURL)
-
-	if explicitKind != "" {
-		if explicitBaseURL == "" && !strings.EqualFold(explicitKind, strings.TrimSpace(defaults.Kind)) {
-			out.BaseURL = ""
-		}
-
-		k := explicitKind
-
-		out.Kind = k
-	}
-
-	if b := strings.TrimSpace(m.Binary); b != "" {
-		out.Binary = b
-	}
-
-	if h := strings.TrimSpace(m.Host); h != "" {
-		out.Host = h
-	} else if strings.TrimSpace(out.Host) == "" {
-		out.Host = "127.0.0.1"
-	}
-
-	if m.Port > 0 {
-		out.Port = m.Port
-		if strings.TrimSpace(m.BaseURL) == "" {
-			out.BaseURL = ""
-		}
-	}
-
-	if model := strings.TrimSpace(m.Model); model != "" {
-		out.Model = model
-	} else if mp := strings.TrimSpace(m.ModelPath); mp != "" {
-		out.Model = mp
-	} else if alias := strings.TrimSpace(m.Alias); alias != "" {
-		// Alias wins over an inherited model path. Proxy-fronted setups
-		// declare an alias and let the proxy route by that name; falling
-		// through to the inherited path here would silently send the
-		// planner's model identifier to the proxy and route the request
-		// to the wrong backend.
-		out.Model = alias
-	}
-
-	if alias := strings.TrimSpace(m.Alias); alias != "" {
-		out.DisplayName = alias
-	}
-
-	if explicitBaseURL != "" {
-		out.BaseURL = explicitBaseURL
-	}
-
-	if apiKeyEnv := strings.TrimSpace(m.APIKeyEnv); apiKeyEnv != "" {
-		out.APIKeyEnv = apiKeyEnv
-	}
-
-	if effort := strings.TrimSpace(m.ReasoningEffort); effort != "" {
-		out.ReasoningEffort = effort
-	}
-
-	if verbosity := strings.TrimSpace(m.Verbosity); verbosity != "" {
-		out.Verbosity = verbosity
-	}
-
-	if len(m.ExtraArgs) > 0 {
-		out.ExtraArgs = append([]string(nil), m.ExtraArgs...)
-	}
-
-	return out
-}
-
-// roleSpec resolves a backends.json role to a config.LlamaServer, or
-// returns (defaults, false) when the role isn't declared. Errors from
-// backends.json parsing surface to stderr (the harness boots with the
-// fallback rather than crashing on a malformed sidecar file).
-//
-// When `defaults.Model` names a specific alias in backends.json (e.g.,
-// the caller passed `--model qwen3.6-35b-nothink`), that explicit
-// choice overrides the role-default lookup. Direct-mode wiring then
-// connects to that alias's backend (host + port from the alias entry)
-// while keeping the actual loaded model path on out.Model so mlx-lm
-// recognizes it. This is how setups with two backends sharing the same
-// weights but different chat-template-args disambiguate.
-func roleSpec(projectRoot, role string, defaults config.LlamaServer) (config.LlamaServer, bool) {
-	file, found, err := backends.LoadFromProjectRoot(projectRoot)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "lifecycle: backends role %q resolution failed: %v\n", role, err)
-
-		return defaults, false
-	}
-
-	if !found {
-		return defaults, false
-	}
-
-	prof, profOK := file.Profile("")
-	if !profOK {
-		return defaults, false
-	}
-
-	// Explicit-alias override: when defaults.Model names a registered
-	// backend alias, that backend wins over the role default.
-	if explicit := strings.TrimSpace(defaults.Model); explicit != "" {
-		if model, ok := prof.ModelByAlias(explicit); ok {
-			if explicitAliasCanOverrideRole(model, role) {
-				return backendsModelToLlamaServer(model, defaults), true
-			}
-		}
-
-		if model, ok := file.ModelByAlias(explicit); ok {
-			if explicitAliasCanOverrideRole(model, role) {
-				return backendsModelToLlamaServer(model, defaults), true
-			}
-		}
-	}
-
-	alias, ok := prof.AliasForRole(role)
-	if !ok {
-		return defaults, false
-	}
-
-	model, _ := prof.ModelByAlias(alias)
-
-	return backendsModelToLlamaServer(model, defaults), true
-}
-
-func explicitAliasCanOverrideRole(model backends.Model, role string) bool {
-	if role != backends.RoleExecutor || len(model.Roles) == 0 {
-		return true
-	}
-
-	for _, r := range model.Roles {
-		if textutil.EqualTrimFold(r, backends.RoleExecutor) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// sameLlamaTarget reports whether two LlamaServer specs would route
-// to functionally identical backends. Used to decide whether to skip
-// building a separate implementer client when backends.json's executor
-// role resolves to the same target as the planner — in that case
-// delegate_edit's direct-dispatch fallback gives identical behavior
-// without the extra round-trip.
-func sameLlamaTarget(a, b config.LlamaServer) bool {
-	return a.EndpointBaseURL() == b.EndpointBaseURL() && a.Model == b.Model && strings.EqualFold(a.Kind, b.Kind) && a.APIKeyEnvName() == b.APIKeyEnvName()
-}
 
 type serverStatusMsg struct {
 	running   bool
@@ -204,6 +40,65 @@ type serverStatusMsg struct {
 	displayID string
 	err       error
 	owned     bool
+	source    *serverStatusSource
+}
+
+func (m *promptExecutionSession) observePlanExecuteSourceSatisfiedLifecycle(event agent.RunEvent) {
+	if m == nil || !m.planExecuteActive || m.planExecuteSourceSatisfiedObserver == nil ||
+		event.Role != "implementation_lifecycle_state" {
+
+		return
+	}
+	var state recoverycontract.ImplementationState
+	if json.Unmarshal([]byte(event.Content), &state) != nil ||
+		state.TerminalDisposition != "source_satisfied" || len(state.SourceSatisfiedPaths) == 0 {
+
+		return
+	}
+	accepted := make(map[string]struct{}, len(state.SourceSatisfiedPaths))
+	paths := append([]string(nil), state.SourceSatisfiedPaths...)
+	for _, path := range state.SourceSatisfiedPaths {
+		accepted[path] = struct{}{}
+	}
+	if state.CanonicalMutationScope != nil {
+		for _, presentation := range state.CanonicalMutationScope.Presentations {
+			if _, ok := accepted[presentation.CanonicalID]; ok {
+				paths = append(paths, presentation.PresentedPath)
+			}
+		}
+	}
+	m.planExecuteSourceSatisfiedObserver(plancontract.UniqueScopePaths(paths))
+}
+
+// serverStatusSource correlates a detached worker's readiness result with the
+// live backend selection it snapshotted. The revision catches alias-only model
+// swaps that leave the controller and server spec unchanged.
+type serverStatusSource struct {
+	backendRevision uint64
+	controller      *llama.ServerController
+	kind            string
+	endpoint        string
+	model           string
+	displayName     string
+}
+
+func (source serverStatusSource) matches(model *Model) bool {
+	if model == nil {
+		return false
+	}
+
+	current := currentServerStatusSource(model.backendRevision, model.controller, model.plannerSpec)
+
+	return source.backendRevision == current.backendRevision &&
+		source.controller == current.controller &&
+		source.kind == current.kind &&
+		source.endpoint == current.endpoint &&
+		source.model == current.model &&
+		source.displayName == current.displayName
+}
+
+type serverStartRequestedMsg struct {
+	source *serverStatusSource
 }
 
 type streamDoneMsg struct {
@@ -243,125 +138,41 @@ func New(cfg config.Config) *Model {
 
 	spin.Spinner = spinner.Dot
 	spin.Style = lipgloss.NewStyle().Foreground(colorSpinner)
+	agentModeName, _ := runprofile.ParseAgentMode(string(cfg.Chat.AgentMode))
 
-	// Per-HTTP-call timeout on the primary and implementer llama clients.
-	// Bounds a single stuck chat request so it can't hang forever. This is
-	// deliberately scoped to one transport call, not to the model's turn.
-	callTimeout := time.Duration(cfg.Chat.RequestTimeoutSeconds) * time.Second
-
-	// Each role (planner / executor / classifier) is resolved through
-	// backends.json first. When a role is declared there, the spec
-	// overrides the matching cfg.* field and that single source feeds
-	// both the client URL and the launcher controller. When the role
-	// isn't declared, the cfg.* field is the source of truth and the
-	// behavior is identical to the pre-roles wiring.
-	projectRoot := strings.TrimSpace(cfg.Workspace.Root)
-	if projectRoot == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			projectRoot = cwd
-		}
-	}
-
-	plannerSpec, _ := roleSpec(projectRoot, backends.RolePlanner, cfg.LlamaServer)
-	plannerClient := llama.NewClientForServer(plannerSpec, callTimeout)
-
-	// Executor inherits from cfg.Implementer when set, falling back to
-	// cfg.LlamaServer otherwise so a project can declare just the
-	// executor in backends.json without also setting up an implementer
-	// block in config.json.
-	implementerEnabled := cfg.Implementer != nil
-	executorDefaults := cfg.LlamaServer
-
-	if implementerEnabled {
-		executorDefaults = *cfg.Implementer
-	}
-
-	executorSpec, executorFromBackends := roleSpec(projectRoot, backends.RoleExecutor, executorDefaults)
-	if executorFromBackends {
-		// Only enable the implementer client when the resolved executor
-		// target is actually distinct from the planner. Single-model
-		// projects (lone-model fallback in AliasForRole) resolve both
-		// roles to the same target; building a separate client would
-		// add a round-trip on every delegate_edit for no benefit. The
-		// runner's direct-dispatch fallback handles that case.
-		if !sameLlamaTarget(executorSpec, plannerSpec) {
-			implementerEnabled = true
-		} else {
-			// Keep executorSpec aligned with the planner so resolveModelID
-			// renders the right label if status code reads it.
-			executorSpec = plannerSpec
-		}
-	}
-
-	classifierDefaults := cfg.RouteClassifier.LlamaServerSpec()
-	classifierSpec, classifierFromBackends := roleSpec(projectRoot, backends.RoleClassifier, classifierDefaults)
-
-	var (
-		summaryClient     llama.LLMClient
-		summaryController *llama.ServerController
-	)
-
-	classifierBaseURL := strings.TrimSpace(cfg.RouteClassifier.BaseURL)
-
-	if classifierFromBackends {
-		classifierBaseURL = classifierSpec.EndpointBaseURL()
-	}
-
-	if classifierFromBackends && sameLlamaTarget(classifierSpec, plannerSpec) {
-		// The classifier role often aliases the active planner model in
-		// .idiom/backends.json. Reuse the already-managed planner client so
-		// lazy classifier startup does not try to bind the planner port twice.
-		summaryClient = plannerClient
-	} else if classifierBaseURL != "" {
-		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
-
-		classifierSpec.BaseURL = classifierBaseURL
-
-		classifierClient := llama.NewClientForServer(classifierSpec, timeout)
-
-		summaryClient = classifierClient
-
-		if cfg.RouteClassifier.AutoStartServer && classifierSpec.IsLaunchable() && classifierSpec.Binary != "" {
-			summaryController = llama.NewServerController(classifierSpec, classifierClient)
-		}
-	}
-
-	var (
-		implementerClient     *llama.Client
-		implementerController *llama.ServerController
-	)
-
-	if implementerEnabled {
-		implementerClient = llama.NewClientForServer(executorSpec, callTimeout)
-		if executorSpec.IsLaunchable() {
-			implementerController = llama.NewServerController(executorSpec, implementerClient)
-		}
+	backendResources := runtimesession.ResolveBackendResources(cfg)
+	for _, warning := range backendResources.Warnings {
+		fmt.Fprintf(os.Stderr, "lifecycle: backends role %q resolution failed: %v\n", warning.Role, warning.Err)
 	}
 
 	m := &Model{
 		cfg:                   cfg,
-		plannerSpec:           plannerSpec,
-		executorSpec:          executorSpec,
-		client:                plannerClient,
-		implementerClient:     implementerClient,
-		implementerController: implementerController,
-		summaryClient:         summaryClient,
-		summaryController:     summaryController,
+		plannerSpec:           backendResources.PlannerSpec,
+		executorSpec:          backendResources.ExecutorSpec,
+		client:                backendResources.PlannerClient,
+		controller:            backendResources.PlannerController,
+		implementerClient:     backendResources.ExecutorClient,
+		implementerController: backendResources.ExecutorController,
+		managedServers:        newManagedServerRegistry(),
+		backgroundOperations:  newBackgroundOperationGroup(),
+		summaryClient:         backendResources.ClassifierClient,
+		summaryController:     backendResources.ClassifierController,
+		summaryServerState:    newSummaryServerLaunchState(),
 		events:                make(chan tea.Msg, 256),
 		input:                 in,
 		spinner:               spin,
-		activeProfiles:        append([]string(nil), cfg.Chat.DefaultProfiles...),
-		status:                "Booting up.",
-		bootingServer:         false,
-		traceMode:             traceDisplayCompact,
-		agentModeName:         strings.TrimSpace(cfg.Chat.AgentMode),
-	}
-	if plannerSpec.IsLaunchable() {
-		m.controller = llama.NewServerController(plannerSpec, plannerClient)
+		promptRuntimeState: promptRuntimeState{
+			promptRuntimeSnapshotState: promptRuntimeSnapshotState{
+				activeProfiles: append([]string(nil), cfg.Chat.DefaultProfiles...),
+			},
+		},
+		status:        "Booting up.",
+		bootingServer: false,
+		agentModeName: agentModeName,
+		traceMode:     traceDisplayCompact,
 	}
 
 	m.workspace = workspace.NewManager(cfg.Workspace)
-	m.wireSystemSearchAccessApprover()
 	if cfg.Chat.AttachInstructionFiles {
 		if candidates, explicit := instructionAttachmentCandidates(cfg.Chat); explicit {
 			if len(candidates) > 0 {
@@ -372,7 +183,7 @@ func New(cfg config.Config) *Model {
 		}
 	}
 
-	mode := modepolicy.ModeOrDefault(m.agentModeName)
+	mode := modepolicy.ModeOrDefault(string(m.agentModeName))
 	m.applyModePermissions(mode)
 
 	m.toolSurfaceSetup = workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{
@@ -386,15 +197,7 @@ func New(cfg config.Config) *Model {
 		m.setContextError("External tools setup: " + extErr.Error())
 	}
 
-	m.runner = &agent.Runner{
-		Client:            m.client,
-		ImplementerClient: m.implementerClient,
-		Workspace:         m.workspace,
-		MaxToolSteps:      modeStepCap(cfg.Chat.MaxToolSteps, mode),
-		AgentName:         "main",
-		ReadApprovalGate:  m.newReadApprovalGate(),
-	}
-	if err := m.reloadPromptStack(); err != nil {
+	if err := m.reloadPromptStackWithProfiles(m.activeProfiles); err != nil {
 		m.setContextError("Prompt context failed: " + err.Error())
 	}
 
@@ -418,9 +221,31 @@ func (m *Model) UseConfigPlannerModel() {
 
 	spec := m.cfg.LlamaServer
 	callTimeout := time.Duration(m.cfg.Chat.RequestTimeoutSeconds) * time.Second
+	priorClient := m.client
+	classifierReusedPlanner := m.summaryClient != nil && m.summaryClient == priorClient
+	if m.managedServer && m.controller != nil {
+		if m.managedServers == nil {
+			m.managedServers = newManagedServerRegistry()
+		}
+		m.managedServers.add(m.controller)
+	}
 
+	m.backendRevision++
+	m.bootingServer = false
+	m.managedServer = false
+	m.serverUp = false
 	m.plannerSpec = spec
-	m.client = llama.NewClientForServer(spec, callTimeout)
+	client := llama.NewClientForServer(spec, callTimeout)
+	m.client = client
+	if spec.IsLaunchable() {
+		m.controller = llama.NewServerController(spec, client)
+	} else {
+		m.controller = nil
+	}
+	if classifierReusedPlanner {
+		m.summaryClient = client
+		m.summaryController = nil
+	}
 	m.modelID = resolveModelID(spec, spec.Model)
 	m.modelDisplayID = resolveModelDisplayID(spec, spec.Model)
 	m.modelThinkingFloor = spec.IsHosted() || spec.IsMLX()
@@ -491,15 +316,13 @@ func modeRunPolicy(mode modepolicy.Mode, cfg config.Chat) agent.RunPolicy {
 }
 
 func (m *Model) Init() tea.Cmd {
+	bootstrap := m.bootstrapCommand()
+
 	return tea.Batch(
 		textarea.Blink,
 		m.spinner.Tick,
 		m.waitForEventCmd(),
-		func() tea.Msg {
-			go m.bootstrap()
-
-			return nil
-		},
+		bootstrap,
 	)
 }
 
@@ -572,6 +395,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case serverStartRequestedMsg:
+		if msg.source == nil || msg.source.matches(m) {
+			m.startServerAsync()
+		}
 	case streamDoneMsg:
 		cmd, done := m.handleStreamDone(msg)
 		if done {
@@ -581,6 +408,73 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case promptWorkerResultMsg:
+		cmd, done := m.handlePromptWorkerResult(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case undoCompletedMsg:
+		cmd, done := m.handleUndoCompleted(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case promptTranscriptMsg:
+		cmd, done := m.handlePromptTranscript(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case approvalPendingMsg:
+		cmd, done := m.handleApprovalPending(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case approvalAwaitingMsg:
+		m.handleApprovalAwaiting(msg)
+	case approvalClearedMsg:
+		cmd, done := m.handleApprovalCleared(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case planApprovalPendingMsg:
+		cmd, done := m.handlePlanApprovalPending(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case planApprovalClearedMsg:
+		cmd, done := m.handlePlanApprovalCleared(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case laneSwitchPopupMsg:
+		m.openLaneSwitchPopup(msg.objective, msg.recommended)
 	case thoughtMsg:
 		cmd, done := m.handleThought(msg)
 		if done {
@@ -738,12 +632,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) ensureServerReady(ctx context.Context) error {
+func (m *promptExecutionSession) ensureServerReady(ctx context.Context) error {
 	if m.plannerSpec.IsHosted() {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, m.plannerSpec.Model)
 		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, m.plannerSpec.Model)
-		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
+		m.reportServerStatus(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
 
 		return nil
 	}
@@ -753,7 +647,7 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
 		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, models[0].ID)
-		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
+		m.reportServerStatus(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
 
 		return nil
 	}
@@ -775,14 +669,15 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	}
 
 	if err := m.controller.Start(ctx); err != nil {
-		m.logServerEvent(serverStatusMsg{err: err})
+		m.reportServerStatus(serverStatusMsg{err: err})
 
 		return err
 	}
 
 	m.managedServer = true
+	m.managedServers.add(m.controller)
 	if err := m.controller.WaitUntilReady(ctx); err != nil {
-		m.logServerEvent(serverStatusMsg{err: err})
+		m.reportServerStatus(serverStatusMsg{err: err, owned: true})
 
 		return err
 	}
@@ -792,7 +687,7 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, "local-model")
 		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, "local-model")
-		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
+		m.reportServerStatus(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
 
 		return nil
 	}
@@ -800,19 +695,37 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	m.serverUp = true
 	m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
 	m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, models[0].ID)
-	m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
+	m.reportServerStatus(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
 
 	return nil
+}
+
+func (m *promptExecutionSession) reportServerStatus(msg serverStatusMsg) {
+	source := currentServerStatusSource(m.backendRevision, m.controller, m.plannerSpec)
+	msg.source = &source
+	m.queueUIEvent(msg)
 }
 
 func (m *Model) saveTranscriptAsync() {
 	m.status = "Saving transcript."
 
 	messages := transcriptMessages(m.messages)
-	go func() {
-		path, err := transcript.SaveMarkdown(m.cfg.Chat.SaveDir, messages)
-		m.events <- transcriptSavedMsg{path: path, err: err}
-	}()
+	saveDir := m.cfg.Chat.SaveDir
+	events := m.events
+	if events == nil {
+		path, err := transcript.SaveMarkdown(saveDir, messages)
+		_, _ = m.handleTranscriptSaved(transcriptSavedMsg{path: path, err: err})
+
+		return
+	}
+
+	_ = m.ensureBackgroundOperations().start(func(ctx context.Context) {
+		path, err := transcript.SaveMarkdown(saveDir, messages)
+		select {
+		case events <- transcriptSavedMsg{path: path, err: err}:
+		case <-ctx.Done():
+		}
+	})
 }
 
 func transcriptMessages(messages []llama.ChatMessage) []transcript.Message {
@@ -827,16 +740,9 @@ func transcriptMessages(messages []llama.ChatMessage) []transcript.Message {
 	return out
 }
 
-// sendPromptAsync is the interactive-mode wrapper around RunPromptOnce.
-// Runs in a goroutine so the Bubble Tea loop keeps pumping events.
-//
-// RunPromptOnce is the single owner of m.messages bookkeeping: it appends
-// the user message before the agent loop and the assistant reply after.
-// This function therefore must NOT append a chat placeholder or re-emit the
-// reply — doing so causes the assistant content to appear twice, once
-// before the user message (from the filled placeholder) and once after
-// (from finishPromptOnceReply). The streaming spinner is rendered inline
-// based on m.streaming; the side-panel uses its own non-chat placeholder.
+// sendPromptAsync starts a detached interactive execution. runPromptOnce owns
+// the worker's private transcript; typed projection events let Update apply
+// the same messages to the live transcript without sharing mutable Model state.
 func (m *Model) sendPromptAsync(prompt string) {
 	m.streaming = true
 	m.workingFrame = 0
@@ -844,17 +750,9 @@ func (m *Model) sendPromptAsync(prompt string) {
 	m.currentTurnBusyStatus = busyStatusForPrompt(prompt)
 	m.beginAgentHistoryTurn()
 
-	go func() {
-		// The outer ctx intentionally has no deadline. Per-call HTTP timeouts
-		// live on the llama client (Chat.RequestTimeoutSeconds); the model owns
-		// turn strategy unless a real loop, tool error, or explicit operational
-		// fuse is encountered.
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := m.RunPromptOnce(ctx, prompt)
-		m.events <- streamDoneMsg{err: err}
-	}()
+	m.startPromptExecution(func(ctx context.Context, worker *promptExecutionSession) (string, error) {
+		return worker.runPromptOnce(ctx, prompt)
+	})
 }
 
 func (m *Model) sendPlanExecuteCommandAsync(objective string) {
@@ -864,13 +762,9 @@ func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
 
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := m.runPlanExecuteCommandOnce(ctx, objective)
-		m.events <- streamDoneMsg{err: err}
-	}()
+	m.startPromptExecution(func(ctx context.Context, worker *promptExecutionSession) (string, error) {
+		return worker.runPlanExecuteCommandOnce(ctx, objective)
+	})
 }
 
 func (m *Model) sendImplementCommandAsync(objective string) {
@@ -880,13 +774,9 @@ func (m *Model) sendImplementCommandAsync(objective string) {
 	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
 
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := m.runImplementCommandOnce(ctx, objective)
-		m.events <- streamDoneMsg{err: err}
-	}()
+	m.startPromptExecution(func(ctx context.Context, worker *promptExecutionSession) (string, error) {
+		return worker.runImplementCommandOnce(ctx, objective)
+	})
 }
 
 func formatToolRequestTrace(event agent.ToolRequestEvent) string {
@@ -1073,10 +963,10 @@ func toolRequestTraceTarget(req workspace.ToolRequest) string {
 
 // runAgentTurn drives a single agent.Runner.Run invocation for the active
 // Mode. Uses the workspace.Manager's active ToolRules (populated from the
-// Mode in New() and /mode) to block/ask per-tool; the Mode's StepCap has
-// already been folded into m.runner.MaxToolSteps.
-func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama.ChatMessage, opts llama.ChatOptions, plan promptExecutionPlan) (string, error) {
-	mode := m.currentMode()
+// Mode in New() and /mode) to block/ask per-tool; each turn receives the
+// current mode's step cap when its runner is constructed below.
+func (m *promptExecutionSession) runAgentTurn(ctx context.Context, prompt string, history []llama.ChatMessage, opts llama.ChatOptions, plan promptExecutionPlan) (string, error) {
+	mode := currentMode(m.agentModeName, m.cfg.Chat.AgentMode)
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
 	policy := modeRunPolicy(mode, m.cfg.Chat)
 	if m.nonInteractive && steps > 0 {
@@ -1087,7 +977,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// but the default 40-message limit compacts every ~13 tool calls,
 	// destroying working memory before the model can synthesize.
 	if plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer) {
-		budget := NewContextBudget(m.compactionContextSize())
+		budget := NewContextBudget(compactionContextSize(m.cfg.LlamaServer.CtxSize, m.cfg.RouteClassifier.CtxSize))
 		maxMsgs, maxChars := budget.ConvMaxMessages, budget.ConvMaxChars
 
 		policy.MaxContextMessages = maxMsgs
@@ -1111,30 +1001,38 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	if activePlanSeed, ok := m.activeFeaturePlannerPlanSeedResult(); ok && (plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer)) {
 		seedResults = append(seedResults, activePlanSeed)
 	}
+	seedImplementationState := cloneRecoveryImplementationState(m.resumeImplementationState)
+	m.resumeImplementationState = nil
+	var lastAssistantReasoningContent string
 
 	runner := &agent.Runner{
-		Client:              m.client,
-		ImplementerClient:   m.implementerClient,
-		Workspace:           m.workspace,
-		MaxToolSteps:        steps,
-		Policy:              policy,
-		AgentName:           "main",
-		SeedResults:         seedResults,
-		RuntimeBrief:        runtimeBrief,
-		InstructionAttacher: m.instructionAttacher,
-		ContextSize:         m.cfg.LlamaServer.CtxSize,
-		ReadApprovalGate:    m.newReadApprovalGate(),
+		Client:                  m.client,
+		ImplementerClient:       m.implementerClient,
+		Workspace:               m.workspace,
+		MaxToolSteps:            steps,
+		Policy:                  policy,
+		AgentName:               "main",
+		SeedResults:             seedResults,
+		SeedImplementationState: seedImplementationState,
+		RuntimeBrief:            runtimeBrief,
+		InstructionAttacher:     m.instructionAttacher,
+		ContextSize:             m.cfg.LlamaServer.CtxSize,
+		ReadApprovalGate:        m.newReadApprovalGate(),
 		OnEvent: func(event agent.RunEvent) {
+			m.observePlanExecuteSourceSatisfiedLifecycle(event)
 			m.logRunEvent(event)
 		},
 		OnThought: func(event agent.ThoughtEvent) {
 			m.queueUIEvent(thoughtMsg{step: event.Step, text: event.Text})
 		},
+		OnAssistantMessage: func(message llama.ChatMessage) {
+			lastAssistantReasoningContent = strings.TrimSpace(message.ReasoningContent)
+		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
 			return m.preExecuteToolRequest(step, req, mode)
 		},
 		DoomLoopGate: func(req workspace.ToolRequest, count int) bool {
-			return m.requestApproval(req, mode.Name)
+			return m.requestApproval(req, string(mode.Name))
 		},
 	}
 	// Collect source-body tool results from this turn to seed the next.
@@ -1184,6 +1082,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		func(event agent.ToolResultEvent) {
 			m.logToolResult(event)
 			m.pinPathsFromToolResult(event.Result)
+			m.recordMutationRollback(ctx, event.Result)
 			m.recordWriteFailure(event.Step, event.Request, event.Result)
 			m.recordWriteSuccess(event.Step, event.Request, event.Result)
 			m.recordTaskLedger(event.Request, event.Result)
@@ -1212,10 +1111,28 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		},
 	)
 	if err != nil {
+		if seedImplementationState != nil {
+			switch {
+			case agent.IsRecoveredMutationStateMismatch(err):
+				m.emitMutationStateResumeAudit(mutationStateResumeAudit{
+					Status:             "mismatch",
+					Reason:             "fresh_scope_disagrees_with_persisted_projection",
+					ScopePresent:       seedImplementationState.CanonicalMutationScope != nil,
+					CommitReceiptCount: len(seedImplementationState.CommitReceipts),
+				})
+			case agent.IsRecoveredMutationStateInvalid(err):
+				m.emitMutationStateResumeAudit(mutationStateResumeAudit{
+					Status:             "rejected",
+					Reason:             "runtime_projection_invalid",
+					ScopePresent:       seedImplementationState.CanonicalMutationScope != nil,
+					CommitReceiptCount: len(seedImplementationState.CommitReceipts),
+				})
+			}
+		}
 		return "", err
 	}
 
-	m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
+	m.lastAssistantReasoningContent = lastAssistantReasoningContent
 	// Store source-body results for follow-up turns only in conversation
 	// and direct-answer lanes — these are the routes where the user may
 	// ask a follow-up question without re-reading source files.
@@ -1253,16 +1170,13 @@ func lastAssistantAnswer(history []llama.ChatMessage) (string, bool) {
 	return "", false
 }
 
-func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode modepolicy.Mode) *workspace.ToolResult {
+func (m *promptExecutionSession) preExecuteToolRequest(step int, req workspace.ToolRequest, mode modepolicy.Mode) *workspace.ToolResult {
 	if m == nil || m.workspace == nil {
 		return nil
 	}
 
 	switch m.workspace.EvaluateToolRule(req) {
 	case toolpolicy.Allow:
-		m.recordRollbackSnapshot(req)
-		m.capturePlanSnapshot(step, req)
-
 		return nil
 	case toolpolicy.Deny:
 		return &workspace.ToolResult{
@@ -1271,10 +1185,10 @@ func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode 
 			Error:   fmt.Sprintf("permission rules deny %s under agent mode %q", req.Tool, mode.Name),
 		}
 	case toolpolicy.Ask:
-		if m.requestApproval(req, mode.Name) {
-			m.recordRollbackSnapshot(req)
-			m.capturePlanSnapshot(step, req)
-
+		if workspace.IsWorkspaceWriteTool(req.Tool) {
+			return nil
+		}
+		if m.requestApproval(req, string(mode.Name)) {
 			return nil
 		}
 
@@ -1290,7 +1204,7 @@ func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode 
 
 // pinPathsFromToolResult attaches any file a successful tool result touched
 // to the session pin set so it rides along in future turn payloads.
-func (m *Model) pinPathsFromToolResult(result workspace.ToolResult) {
+func (m *promptExecutionSession) pinPathsFromToolResult(result workspace.ToolResult) {
 	if m == nil || strings.TrimSpace(result.Error) != "" {
 		return
 	}
@@ -1373,7 +1287,7 @@ func (m *Model) initDebugLogger() {
 
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
-		Mode:          transcript.DebugLogMode(textutil.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
+		Mode:          m.cfg.Chat.DebugLogMode,
 		WorkspaceRoot: m.workspace.Root(),
 		SessionID:     m.cfg.Workspace.SessionID,
 	})
@@ -1410,98 +1324,40 @@ func (m *Model) initDebugLogger() {
 // The prompt stack is maintained by reloadPromptStack; Mode-specific prompt
 // files are layered on top of the base stack.
 func (m *Model) systemPrompt() string {
-	prompt, _ := m.composedSystemPrompt()
-	return prompt
+	if m == nil {
+		return ""
+	}
+
+	derivation := derivePromptComposition(
+		m.agentModeName,
+		m.cfg.Chat.AgentMode,
+		m.cfg.Chat.ModelFamily,
+		m.plannerSpec.Model,
+		m.cfg.LlamaServer.Model,
+	)
+	result := m.promptRuntimeCompletionState.resolveComposedPrompt(
+		m.promptStack,
+		derivation,
+		func(existing []promptstack.Source) systemPromptFragments {
+			return loadModeSystemPromptFragments(
+				derivation.mode,
+				resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace),
+				existing,
+			)
+		},
+	)
+
+	return result.text
 }
 
 func (m *Model) systemPromptSources() []promptstack.Source {
-	_, sources := m.composedSystemPrompt()
-	return sources
-}
-
-func (m *Model) composedSystemPrompt() (string, []promptstack.Source) {
 	if m == nil {
-		return "", nil
+		return nil
 	}
 
-	key := m.composedPromptKey()
-	if m.composedPromptCacheKey == key {
-		return m.composedPrompt, append([]promptstack.Source(nil), m.composedPromptSources...)
-	}
+	_ = m.systemPrompt()
 
-	mode := m.currentMode()
-	overlayModel := textutil.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)
-	stack := promptstack.AppendOverlays(
-		m.promptStack,
-		promptstack.ModelCompatibilityOverlays(m.cfg.Chat.ModelFamily, overlayModel),
-	)
-	sources := append([]promptstack.Source(nil), stack.Sources...)
-	parts := make([]string, 0, 4)
-
-	if base := strings.TrimSpace(stack.Text); base != "" {
-		parts = append(parts, base)
-	}
-
-	modeFragments := loadModeSystemPromptFragments(mode, m.projectRoot(), sources)
-	if extras := strings.TrimSpace(modeFragments.Text); extras != "" {
-		parts = append(parts, extras)
-		sources = append(sources, modeFragments.Sources...)
-	}
-
-	prompt := strings.Join(parts, "\n\n")
-
-	m.composedPrompt = prompt
-
-	m.composedPromptSources = append([]promptstack.Source(nil), sources...)
-	m.composedPromptCacheKey = key
-
-	return prompt, append([]promptstack.Source(nil), sources...)
-}
-
-func (m *Model) composedPromptKey() string {
-	if m == nil {
-		return ""
-	}
-
-	return strings.Join([]string{
-		m.currentMode().Name,
-		strings.TrimSpace(m.cfg.Chat.ModelFamily),
-		strings.TrimSpace(textutil.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)),
-	}, "\x00")
-}
-
-func (m *Model) invalidateComposedPrompt() {
-	if m == nil {
-		return
-	}
-
-	m.composedPrompt = ""
-	m.composedPromptSources = nil
-	m.composedPromptCacheKey = ""
-}
-
-// projectRoot returns the directory that Mode.SystemPromptFiles paths
-// resolve against. Falls back to the workspace root so a Mode that names
-// "prompts/plan-mode.md" finds the repo-level prompts/ directory.
-func (m *Model) projectRoot() string {
-	if m == nil {
-		return ""
-	}
-
-	if root := strings.TrimSpace(m.cfg.Chat.ProjectRoot); root != "" {
-		return root
-	}
-
-	if m.workspace != nil {
-		return m.workspace.Root()
-	}
-
-	return ""
-}
-
-type systemPromptFragments struct {
-	Text    string
-	Sources []promptstack.Source
+	return append([]promptstack.Source(nil), m.composedPromptSources...)
 }
 
 func loadModeSystemPromptFragments(mode modepolicy.Mode, projectRoot string, existing []promptstack.Source) systemPromptFragments {
@@ -1566,7 +1422,7 @@ func loadModeSystemPromptFragments(mode modepolicy.Mode, projectRoot string, exi
 			sections = append(sections, trimmed)
 			sources = append(sources, promptstack.Source{
 				Kind:        "mode",
-				DisplayName: "mode:" + mode.Name + ":" + filepath.Base(path),
+				DisplayName: "mode:" + string(mode.Name) + ":" + filepath.Base(path),
 				Path:        path,
 			})
 		}
@@ -1595,13 +1451,6 @@ func transcriptPromptSources(sources []promptstack.Source) []transcript.PromptSo
 	return out
 }
 
-// reloadPromptStack rebuilds the prompt stack from the active config and
-// profiles. Delegates to promptstack; kept here so callers can trigger a
-// refresh after /system or /profile commands.
-func (m *Model) reloadPromptStack() error {
-	return m.reloadPromptStackWithProfiles(m.activeProfiles)
-}
-
 func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
 	chat := m.cfg.Chat
 	if strings.TrimSpace(chat.ProjectRoot) != "" {
@@ -1610,23 +1459,11 @@ func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
 		}
 	}
 
-	stack, err := promptstack.Build(chat, profiles)
+	stack, err := buildPromptStack(chat, profiles)
 	if err != nil {
-		if !m.cfg.Chat.AllowMissingPrompts {
-			return err
-		}
-
-		lenientStack, lenientErr := promptstack.BuildLenient(chat, profiles)
-		if lenientErr != nil {
-			return err
-		}
-
-		lenientStack.Warnings = append([]string{"prompt context degraded: " + err.Error()}, lenientStack.Warnings...)
-		stack = lenientStack
+		return err
 	}
-
-	m.promptStack = stack
-	m.invalidateComposedPrompt()
+	m.promptRuntimeCompletionState.applyPromptStackBuild(stack)
 
 	if len(stack.Warnings) > 0 {
 		m.setContextError(strings.Join(stack.Warnings, "; "))

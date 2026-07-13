@@ -3,37 +3,28 @@ package instructions
 import (
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestAttacherDefaultsToAgentsOnly(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
-		t.Fatalf("mkdir src: %v", err)
-	}
+var _ = Describe("Instruction attacher candidates", func() {
+	var root string
 
-	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("Claude-specific guidance\n"), 0o644); err != nil {
-		t.Fatalf("write CLAUDE.md: %v", err)
-	}
+	BeforeEach(func() {
+		root = GinkgoT().TempDir()
+		Expect(os.MkdirAll(filepath.Join(root, "src"), 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("Claude-specific guidance\n"), 0o644)).To(Succeed())
+	})
 
-	if attachment := NewAttacher(root).OnFileTouch("src/main.go"); attachment != nil {
-		t.Fatalf("default instruction attachment should not load CLAUDE.md, got %#v", attachment)
-	}
-}
+	It("does not load CLAUDE.md by default", func() {
+		Expect(NewAttacher(root).OnFileTouch("src/main.go")).To(BeNil())
+	})
 
-func TestAttacherCanOptIntoClaudeCandidate(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
-		t.Fatalf("mkdir src: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("Claude-specific guidance\n"), 0o644); err != nil {
-		t.Fatalf("write CLAUDE.md: %v", err)
-	}
-
-	attachment := NewAttacher(root, "CLAUDE.md").OnFileTouch("src/main.go")
-	if attachment == nil || !strings.HasSuffix(attachment.Path, "CLAUDE.md") || !strings.Contains(attachment.Content, "Claude-specific guidance") {
-		t.Fatalf("expected explicit CLAUDE.md attachment, got %#v", attachment)
-	}
-}
+	It("loads CLAUDE.md when explicitly configured", func() {
+		attachment := NewAttacher(root, "CLAUDE.md").OnFileTouch("src/main.go")
+		Expect(attachment).NotTo(BeNil())
+		Expect(attachment.Path).To(HaveSuffix("CLAUDE.md"))
+		Expect(attachment.Content).To(ContainSubstring("Claude-specific guidance"))
+	})
+})

@@ -103,17 +103,6 @@ func laneSwitchReferralFromReply(reply string) (string, bool) {
 	return laneSwitchImplement, true
 }
 
-// isHeadless mirrors the approval.go predicate: when any of these flags is
-// set there is no TUI thread to resolve an interactive popup, so the
-// affordance must degrade to a numbered text block appended to the reply.
-func (m *Model) isHeadless() bool {
-	if m == nil {
-		return false
-	}
-
-	return m.eventStream != nil || m.suppressPromptTranscript || m.nonInteractive
-}
-
 // laneSwitchHeadlessReply renders the numbered text block appended to the
 // assistant reply in headless mode (-prompt / -json / artifact runners).
 // The user re-dispatches by typing the listed slash command on the next

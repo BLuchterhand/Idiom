@@ -66,15 +66,11 @@ const (
 	turnViolationValidationStatusContradictsEvidence                turnViolationKind = "validation_status_contradicts_evidence"
 )
 
-type turnEvidenceRef struct {
-	Path string
-}
-
 type turnDiagnostic struct {
-	Kind       turnDiagnosticKind
-	ReasonCode turnReasonCode
-	Evidence   []turnEvidenceRef
-	Message    string
+	Kind          turnDiagnosticKind
+	ReasonCode    turnReasonCode
+	EvidencePaths []string
+	Message       string
 }
 
 type turnViolation struct {
@@ -82,7 +78,7 @@ type turnViolation struct {
 	PackID          autonomy.ContractPackID
 	InvariantID     string
 	ReasonCode      turnReasonCode
-	Evidence        []turnEvidenceRef
+	EvidencePaths   []string
 	Message         string
 	SourceGrounding sourceGroundingAssessment
 }
@@ -161,12 +157,12 @@ func rejectFinalAnswerAcceptanceWithMessage(acceptance finalAnswerAcceptance, ki
 	acceptance.Reason = strings.TrimSpace(textutil.FirstNonEmpty(message, string(reason), string(kind)))
 	acceptance.ContractAssessment.Violations = nil
 	acceptance.ContractAssessment = acceptance.ContractAssessment.withViolation(turnViolation{
-		Kind:        kind,
-		PackID:      autonomy.ContractPackFinalAnswerAcceptance,
-		InvariantID: finalAnswerPolicyInvariantAcceptance,
-		ReasonCode:  reason,
-		Evidence:    turnEvidenceRefsFromPaths(acceptance.EvidencePaths),
-		Message:     acceptance.Reason,
+		Kind:          kind,
+		PackID:        autonomy.ContractPackFinalAnswerAcceptance,
+		InvariantID:   finalAnswerPolicyInvariantAcceptance,
+		ReasonCode:    reason,
+		EvidencePaths: textutil.Unique(acceptance.EvidencePaths),
+		Message:       acceptance.Reason,
 	})
 	return finalAnswerAcceptanceWithPolicy(acceptance)
 }
@@ -181,7 +177,7 @@ func rejectFinalAnswerAcceptanceWithSourceGrounding(acceptance finalAnswerAccept
 		PackID:          autonomy.ContractPackFinalAnswerAcceptance,
 		InvariantID:     finalAnswerPolicyInvariantAcceptance,
 		ReasonCode:      turnReasonSourceGroundingUnmet,
-		Evidence:        turnEvidenceRefsFromPaths(acceptance.EvidencePaths),
+		EvidencePaths:   textutil.Unique(acceptance.EvidencePaths),
 		Message:         acceptance.Reason,
 		SourceGrounding: assessment,
 	})
@@ -309,10 +305,10 @@ func turnDiagnosticFromLegacyBlocker(kind string, reason string, evidencePaths [
 		return turnDiagnostic{}, false
 	}
 	return turnDiagnostic{
-		Kind:       turnDiagnosticObjectiveRelevance,
-		ReasonCode: turnReasonCode(kind),
-		Evidence:   turnEvidenceRefsFromPaths(evidencePaths),
-		Message:    strings.TrimSpace(reason),
+		Kind:          turnDiagnosticObjectiveRelevance,
+		ReasonCode:    turnReasonCode(kind),
+		EvidencePaths: textutil.Unique(evidencePaths),
+		Message:       strings.TrimSpace(reason),
 	}, true
 }
 
@@ -322,12 +318,12 @@ func turnViolationFromLegacyBlocker(kind string, reason string, evidencePaths []
 		return turnViolation{}, false
 	}
 	return turnViolation{
-		Kind:        violationKind,
-		PackID:      autonomy.ContractPackFinalAnswerAcceptance,
-		InvariantID: finalAnswerPolicyInvariantAcceptance,
-		ReasonCode:  turnReasonCodeForLegacyBlocker(kind, reason),
-		Evidence:    turnEvidenceRefsFromPaths(evidencePaths),
-		Message:     strings.TrimSpace(reason),
+		Kind:          violationKind,
+		PackID:        autonomy.ContractPackFinalAnswerAcceptance,
+		InvariantID:   finalAnswerPolicyInvariantAcceptance,
+		ReasonCode:    turnReasonCodeForLegacyBlocker(kind, reason),
+		EvidencePaths: textutil.Unique(evidencePaths),
+		Message:       strings.TrimSpace(reason),
 	}, true
 }
 
@@ -465,6 +461,9 @@ func turnFinalAnswerRejectionRetryPolicyForBrief(brief workerruntime.WorkerRunti
 		retryable := false
 		if hasViolation {
 			retryable = turnViolationCapabilitiesForKind(violationKind).Retryable
+			if violationKind == turnViolationNonAnswerProse {
+				retryable = true
+			}
 		}
 		return turnFinalAnswerRetryPolicy{
 			Retryable:                retryable,
@@ -486,26 +485,6 @@ func turnFinalAnswerRejectionRetryPolicyForBrief(brief workerruntime.WorkerRunti
 			),
 		RequiresReadOnlyEvidence: true,
 	}
-}
-
-func turnEvidenceRefsFromPaths(paths []string) []turnEvidenceRef {
-	if len(paths) == 0 {
-		return nil
-	}
-	refs := make([]turnEvidenceRef, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		refs = append(refs, turnEvidenceRef{Path: path})
-	}
-	return refs
 }
 
 func turnCompletionGateRepeatedViolation(kind turnViolationKind) turnViolation {

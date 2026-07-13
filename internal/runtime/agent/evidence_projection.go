@@ -2,8 +2,10 @@ package agent
 
 import (
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
@@ -26,7 +28,9 @@ type toolResultEvidenceRecord struct {
 	summary             string
 	output              string
 	failed              bool
-	sourceBodies        []toolfacts.SourceBodyEvidence
+	sourceWindowFacts   []toolfacts.SourceWindowEvidence
+	sourceWindows       []workspace.WorkspaceSourceWindow
+	diagnosticLogReads  []toolfacts.DiagnosticLogReadEvidence
 	readPaths           []string
 	changedPaths        []string
 	changedSourcePaths  []string
@@ -65,13 +69,24 @@ func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultE
 }
 
 func newToolResultEvidenceRecord(result workspace.ToolResult) toolResultEvidenceRecord {
+	diagnosticLogReads := diagnosticLogReadFactsFromResult(result)
+	sourceWindowFacts := sourceWindowFactsFromResult(result)
+	sourceWindows := result.SourceWindows()
+	if len(diagnosticLogReads) > 0 {
+		// Diagnostic logs are metadata-only evidence. Even a malformed internal
+		// result must not promote the same read to source-body authority.
+		sourceWindowFacts = nil
+		sourceWindows = nil
+	}
 	record := toolResultEvidenceRecord{
 		result:              result,
 		tool:                strings.TrimSpace(result.Tool),
 		summary:             strings.TrimSpace(result.Summary),
 		output:              result.Output,
 		failed:              strings.TrimSpace(result.Error) != "",
-		sourceBodies:        sourceBodyFactsFromResult(result),
+		sourceWindowFacts:   sourceWindowFacts,
+		sourceWindows:       sourceWindows,
+		diagnosticLogReads:  diagnosticLogReads,
 		candidateAnchorOnly: CandidateAnchorOnlyText(result.Summary + "\n" + result.Output),
 	}
 	record.readPaths = record.deriveReadPaths()
@@ -81,23 +96,28 @@ func newToolResultEvidenceRecord(result workspace.ToolResult) toolResultEvidence
 }
 
 func (record toolResultEvidenceRecord) deriveReadPaths() []string {
-	if record.candidateAnchorOnly && len(record.result.Paths) == 0 && len(record.sourceBodies) == 0 {
+	if record.candidateAnchorOnly && len(record.result.Paths) == 0 && len(record.sourceWindowFacts) == 0 && len(record.diagnosticLogReads) == 0 {
 		return nil
 	}
 
-	hasTypedReadPath := len(record.result.Paths) > 0 || len(record.sourceBodies) > 0
-	if (record.tool == workspace.ToolNameCodeNavigate || record.tool == workspace.ToolNameReadOnlyCapability) &&
-		!hasTypedReadPath && !routedSourceReadOutputHasBody(record.output) {
-
+	hasTypedReadPath := len(record.result.Paths) > 0 || len(record.sourceWindowFacts) > 0 || len(record.diagnosticLogReads) > 0
+	if (record.tool == workspace.ToolNameCodeNavigate || record.tool == workspace.ToolNameReadOnlyCapability) && !hasTypedReadPath {
 		return nil
 	}
 
 	seen := map[string]struct{}{}
 	var paths []string
 
-	candidates := append([]string{}, record.result.Paths...)
-	for _, fact := range record.sourceBodies {
-		candidates = append(candidates, fact.Path)
+	var candidates []string
+	if len(record.diagnosticLogReads) > 0 {
+		for _, fact := range record.diagnosticLogReads {
+			candidates = append(candidates, fact.CanonicalID)
+		}
+	} else {
+		candidates = append(candidates, record.result.Paths...)
+		for _, fact := range record.sourceWindowFacts {
+			candidates = append(candidates, fact.CanonicalID)
+		}
 	}
 
 	for _, candidate := range candidates {
@@ -120,6 +140,21 @@ func (record toolResultEvidenceRecord) ReadPaths() []string {
 	return append([]string(nil), record.readPaths...)
 }
 
+func diagnosticLogReadFactsFromResult(result workspace.ToolResult) []toolfacts.DiagnosticLogReadEvidence {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile ||
+		strings.TrimSpace(result.Error) != "" ||
+		result.Facts == nil {
+
+		return nil
+	}
+
+	return toolfacts.NormalizeDiagnosticLogReads(result.Facts.DiagnosticLogReads)
+}
+
+func (record toolResultEvidenceRecord) DiagnosticLogReads() []toolfacts.DiagnosticLogReadEvidence {
+	return append([]toolfacts.DiagnosticLogReadEvidence(nil), record.diagnosticLogReads...)
+}
+
 func (record toolResultEvidenceRecord) ChangedPathList() []string {
 	return append([]string(nil), record.changedPaths...)
 }
@@ -129,10 +164,6 @@ func (record toolResultEvidenceRecord) ChangedSourcePathList() []string {
 }
 
 func (record toolResultEvidenceRecord) deriveChangedPaths() []string {
-	if record.failed {
-		return nil
-	}
-
 	var paths []string
 	for _, rawPath := range record.result.ChangedPaths {
 		path := NormalizeRunnerPath(rawPath)
@@ -158,62 +189,36 @@ func (record toolResultEvidenceRecord) deriveChangedSourcePaths() []string {
 	return paths
 }
 
-func (record toolResultEvidenceRecord) SourceBodyFact(path string) (toolfacts.SourceBodyEvidence, bool) {
+func (record toolResultEvidenceRecord) SourceWindowFacts(path string) []toolfacts.SourceWindowEvidence {
 	path = NormalizeRunnerPath(path)
 	if path == "" {
-		return toolfacts.SourceBodyEvidence{}, false
+		return nil
 	}
 
-	for _, fact := range record.sourceBodies {
-		if NormalizeRunnerPath(fact.Path) == path {
-			return fact, true
+	var facts []toolfacts.SourceWindowEvidence
+	for _, fact := range record.sourceWindowFacts {
+		if NormalizeRunnerPath(fact.CanonicalID) == path {
+			facts = append(facts, fact)
 		}
 	}
 
-	return toolfacts.SourceBodyEvidence{}, false
+	return facts
 }
 
-func routedSourceReadOutputHasBody(output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return false
+func (record toolResultEvidenceRecord) SourceWindowsForPath(path string) []workspace.WorkspaceSourceWindow {
+	path = NormalizeRunnerPath(path)
+	if path == "" {
+		return nil
 	}
 
-	if CandidateAnchorOnlyText(output) {
-		return false
-	}
-
-	if !strings.Contains(output, "route_summary:") {
-		return true
-	}
-
-	seenRouteSummary := false
-
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "route_summary:") {
-			seenRouteSummary = true
-			continue
+	var windows []workspace.WorkspaceSourceWindow
+	for _, window := range record.sourceWindows {
+		if NormalizeRunnerPath(window.Evidence.CanonicalID) == path {
+			windows = append(windows, window)
 		}
-
-		if !seenRouteSummary || line == "" {
-			continue
-		}
-
-		if routedSourceReadOutputHeaderLine(line) {
-			continue
-		}
-
-		return true
 	}
 
-	return false
-}
-
-func routedSourceReadOutputHeaderLine(line string) bool {
-	return strings.Contains(line, "capability:") ||
-		strings.Contains(line, "language:") ||
-		strings.Contains(line, "routed_tool:")
+	return windows
 }
 
 func (projection toolResultEvidenceProjection) ReadPaths() map[string]struct{} {
@@ -232,9 +237,9 @@ func (projection toolResultEvidenceProjection) ReadPaths() map[string]struct{} {
 	return paths
 }
 
-func sourceBodyFactsFromResult(result workspace.ToolResult) []toolfacts.SourceBodyEvidence {
-	if result.Facts != nil && len(result.Facts.SourceBodies) > 0 {
-		facts := toolfacts.NormalizeSourceBodies(result.Facts.SourceBodies)
+func sourceWindowFactsFromResult(result workspace.ToolResult) []toolfacts.SourceWindowEvidence {
+	if result.Facts != nil && len(result.Facts.SourceWindows) > 0 {
+		facts := toolfacts.NormalizeSourceWindows(result.Facts.SourceWindows)
 		if len(facts) > 0 {
 			return facts
 		}
@@ -243,11 +248,11 @@ func sourceBodyFactsFromResult(result workspace.ToolResult) []toolfacts.SourceBo
 	return nil
 }
 
-func sourceBodyFactHasRange(fact toolfacts.SourceBodyEvidence) bool {
+func sourceWindowHasRange(fact toolfacts.SourceWindowEvidence) bool {
 	return fact.StartLine > 0 && fact.EndLine >= fact.StartLine
 }
 
-func sourceBodyFactCoversWholeFile(fact toolfacts.SourceBodyEvidence) bool {
+func sourceWindowCoversWholeFile(fact toolfacts.SourceWindowEvidence) bool {
 	if fact.TotalLines == 0 && fact.StartLine == 0 && fact.EndLine == 0 {
 		return true
 	}
@@ -255,8 +260,8 @@ func sourceBodyFactCoversWholeFile(fact toolfacts.SourceBodyEvidence) bool {
 	return fact.TotalLines > 0 && fact.StartLine == 1 && fact.EndLine >= fact.TotalLines
 }
 
-func sourceBodyReadRangeFromFact(fact toolfacts.SourceBodyEvidence) (planThenExecuteReadRange, bool) {
-	if !sourceBodyFactHasRange(fact) {
+func sourceWindowReadRange(fact toolfacts.SourceWindowEvidence) (planThenExecuteReadRange, bool) {
+	if !sourceWindowHasRange(fact) {
 		return planThenExecuteReadRange{}, false
 	}
 
@@ -275,16 +280,6 @@ func (projection toolResultEvidenceProjection) SourceEvidenceForPath(path string
 	best := planThenExecuteSourceEvidence{Path: path}
 	for _, record := range projection.records {
 		evidence := record.SourceEvidenceForPath(path)
-		if redirectPath := implementationTargetWriteReadyRedirectedReadPath(record.result); redirectPath == path {
-			if tool, ok := implementationTargetWriteReadyRedirectedReadTool(record.result); ok {
-				evidence = planThenExecuteSourceEvidence{
-					Path:   path,
-					Level:  planThenExecuteEvidenceSourceBodyPending,
-					Source: record.tool,
-					Detail: "redirected to " + tool,
-				}
-			}
-		}
 		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
 			best = evidence
 		}
@@ -292,7 +287,7 @@ func (projection toolResultEvidenceProjection) SourceEvidenceForPath(path string
 	return best
 }
 
-func (projection toolResultEvidenceProjection) HasSourceBody(path string) bool {
+func (projection toolResultEvidenceProjection) HasSourceWindow(path string) bool {
 	return sourceEvidenceHasBody(projection.SourceEvidenceForPath(path))
 }
 
@@ -302,19 +297,9 @@ func (record toolResultEvidenceRecord) SourceEvidenceForPath(path string) planTh
 		return planThenExecuteSourceEvidence{}
 	}
 
-	text := strings.Join([]string{record.result.Summary, record.result.Output}, "\n")
 	evidence := planThenExecuteSourceEvidence{Path: path}
 
-	if strings.Contains(strings.ToLower(text), strings.ToLower(path)) {
-		evidence.Level = planThenExecuteEvidencePathSeen
-		evidence.Source = record.tool
-		evidence.Detail = "path mentioned by tool result"
-	}
-
 	sourceMatched := false
-	var sourceFact toolfacts.SourceBodyEvidence
-	hasSourceFact := false
-
 	for _, readPath := range record.readPaths {
 		if IsNonSourceEvidenceArtifactPath(readPath) {
 			continue
@@ -322,10 +307,6 @@ func (record toolResultEvidenceRecord) SourceEvidenceForPath(path string) planTh
 
 		if NormalizeRunnerPath(readPath) == path {
 			sourceMatched = true
-			if fact, ok := record.SourceBodyFact(path); ok {
-				sourceFact = fact
-				hasSourceFact = true
-			}
 			break
 		}
 	}
@@ -338,73 +319,33 @@ func (record toolResultEvidenceRecord) SourceEvidenceForPath(path string) planTh
 	evidence.Level = planThenExecuteEvidencePathSeen
 	evidence.Detail = "typed path seen"
 
-	if !hasSourceFact {
-		if record.CodeNavigateIsOutline() || strings.HasSuffix(record.tool, "_file_outline") {
-			evidence.Detail = "file outline"
+	windows := record.SourceWindowsForPath(path)
+	if len(windows) == 0 {
+		if len(record.SourceWindowFacts(path)) > 0 {
+			evidence.Detail = "durable source-window metadata without exact attachment"
 		}
 		return evidence
 	}
 
-	evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(sourceFact, path)
-
-	switch {
-	case record.tool == workspace.ToolNameReadFile || record.tool == workspace.ToolNamePrefetch:
-	case record.tool == workspace.ToolNameCodeNavigate || record.tool == workspace.ToolNameReadOnlyCapability:
-		if record.CodeNavigateIsOutline() {
-			evidence.Level = planThenExecuteEvidencePathSeen
-			evidence.Detail = "file outline"
-		} else if sourceFact.Truncated {
-			evidence.Level = planThenExecuteEvidenceBodyWindow
-			evidence.Detail = "truncated routed source body"
-		} else {
-			evidence.Level = planThenExecuteEvidenceAnchorReady
-			evidence.Detail = "routed source body"
-		}
-	case strings.HasSuffix(record.tool, "_file_outline"):
-		evidence.Level = planThenExecuteEvidencePathSeen
-		evidence.Detail = "file outline"
-	case strings.HasSuffix(record.tool, "_read_symbol"), strings.HasSuffix(record.tool, "_extract_body"):
-		if sourceFact.Truncated {
-			evidence.Level = planThenExecuteEvidenceBodyWindow
-			evidence.Detail = "truncated symbol/body read"
-		} else {
-			evidence.Level = planThenExecuteEvidenceAnchorReady
-			evidence.Detail = "symbol/body read"
+	for _, window := range windows {
+		level, detail := planThenExecuteReadFileEvidenceLevel(window.Evidence)
+		if planThenExecuteEvidenceRank(level) > planThenExecuteEvidenceRank(evidence.Level) {
+			evidence.Level = level
+			evidence.Detail = detail
 		}
 	}
 
 	return evidence
 }
 
-func (record toolResultEvidenceRecord) CodeNavigateIsOutline() bool {
-	output := strings.TrimSpace(record.output)
-	if output == "" {
-		return false
-	}
-	summary := strings.ToLower(record.summary)
-
-	if strings.Contains(summary, "outline") && !record.candidateAnchorOnly {
-		return true
-	}
-
-	lower := strings.ToLower(output)
-	for _, marker := range []string{"\nfn ", "\nstruct ", "\nenum ", "\nimpl ", "\ntrait "} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-
-	return strings.Contains(lower, "capability: file_outline")
-}
-
-func (record toolResultEvidenceRecord) SourceBodyPaths() []string {
+func (record toolResultEvidenceRecord) SourceWindowPaths() []string {
 	if record.failed {
 		return nil
 	}
 
 	var paths []string
-	for _, rawPath := range record.readPaths {
-		path := NormalizeRunnerPath(rawPath)
+	for _, window := range record.sourceWindows {
+		path := NormalizeRunnerPath(window.Evidence.CanonicalID)
 		if path == "" || IsNonSourceEvidenceArtifactPath(path) || readOnlyExternalDocumentBodyPath(path) || !sourceEvidenceHasBody(record.SourceEvidenceForPath(path)) {
 			continue
 		}
@@ -414,11 +355,11 @@ func (record toolResultEvidenceRecord) SourceBodyPaths() []string {
 	return paths
 }
 
-func (projection toolResultEvidenceProjection) SourceBodyPaths() []string {
+func (projection toolResultEvidenceProjection) SourceWindowPaths() []string {
 	seen := make(map[string]struct{})
 	var paths []string
 	for _, record := range projection.records {
-		for _, path := range record.SourceBodyPaths() {
+		for _, path := range record.SourceWindowPaths() {
 			if _, ok := seen[path]; ok {
 				continue
 			}
@@ -446,8 +387,14 @@ func (projection toolResultEvidenceProjection) ValidationStatusEvidenceLedgerPat
 		}
 	}
 
-	for _, path := range projection.ChangedPathList() {
-		add(path)
+	for _, result := range projection.results {
+		receipt := result.CommitReceipt()
+		if receipt == nil {
+			continue
+		}
+		for _, path := range receipt.DurableProjection().AffectedFileIDs {
+			add(path)
+		}
 	}
 
 	for _, record := range projection.records {
@@ -477,6 +424,15 @@ func (projection toolResultEvidenceProjection) MentionedEvidencePathsForObjectiv
 		if !record.AcceptedMentionedEvidenceForObjective(objective) {
 			continue
 		}
+		if len(record.diagnosticLogReads) > 0 {
+			for _, fact := range record.diagnosticLogReads {
+				paths = textutil.AppendUnique(paths, fact.CanonicalID)
+			}
+			if len(paths) >= max {
+				break
+			}
+			continue
+		}
 
 		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(record.summary))
 		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(record.output))
@@ -495,8 +451,9 @@ func (record toolResultEvidenceRecord) AcceptedMentionedEvidenceForObjective(obj
 		return false
 	}
 
-	diagnostic := record.result.Facts != nil && len(readOnlySourceLikePaths(record.result.Facts.DiagnosticEvidencePaths, 8)) > 0
-	if len(record.SourceBodyPaths()) > 0 || diagnostic {
+	diagnostic := len(record.diagnosticLogReads) > 0 ||
+		(record.result.Facts != nil && len(readOnlyDiagnosticEvidencePaths(record.result.Facts.DiagnosticEvidencePaths, 8)) > 0)
+	if len(record.SourceWindowPaths()) > 0 || diagnostic {
 		return true
 	}
 
@@ -519,6 +476,21 @@ func (record toolResultEvidenceRecord) ReadOnlyEvidenceObservations() []readOnly
 
 	var observations []readOnlyEvidenceObservation
 
+	if len(record.diagnosticLogReads) > 0 {
+		logPaths := make([]string, 0, len(record.diagnosticLogReads)*2)
+		for _, fact := range record.diagnosticLogReads {
+			logPaths = textutil.AppendUnique(logPaths, fact.CanonicalID)
+			logPaths = textutil.AppendUnique(logPaths, fact.PolicySubject)
+		}
+		if paths := readOnlyDiagnosticEvidencePaths(logPaths, 8); len(paths) > 0 {
+			return []readOnlyEvidenceObservation{{
+				Kind:           readOnlyEvidenceDiagnostic,
+				Tool:           record.tool,
+				CandidatePaths: paths,
+			}}
+		}
+	}
+
 	if record.GeneratedArtifactOnlyRead() {
 		return []readOnlyEvidenceObservation{{
 			Kind:           readOnlyEvidenceGeneratedArtifact,
@@ -530,7 +502,7 @@ func (record toolResultEvidenceRecord) ReadOnlyEvidenceObservations() []readOnly
 	}
 
 	if record.result.Facts != nil {
-		paths := readOnlySourceLikePaths(record.result.Facts.DiagnosticEvidencePaths, 8)
+		paths := readOnlyDiagnosticEvidencePaths(record.result.Facts.DiagnosticEvidencePaths, 8)
 		if len(paths) > 0 {
 			observations = append(observations, readOnlyEvidenceObservation{
 				Kind:           readOnlyEvidenceDiagnostic,
@@ -553,30 +525,14 @@ func (record toolResultEvidenceRecord) ReadOnlyEvidenceObservations() []readOnly
 		return observations
 	}
 
-	for _, path := range record.SourceBodyPaths() {
+	for _, window := range record.sourceWindows {
 		observations = append(observations, readOnlyEvidenceObservation{
-			Kind:    readOnlyEvidenceSourceBody,
+			Kind:    readOnlyEvidenceSourceWindow,
 			Tool:    record.tool,
 			Source:  record.tool,
-			Path:    path,
+			Path:    window.Evidence.CanonicalID,
 			Summary: record.summary,
-			Output:  record.output,
-		})
-	}
-
-	for _, fact := range record.sourceBodies {
-		path := normalizeReadOnlyExternalDocumentPath(fact.Path)
-		if !readOnlyExternalDocumentBodyPath(path) {
-			continue
-		}
-
-		observations = append(observations, readOnlyEvidenceObservation{
-			Kind:    readOnlyEvidenceExternalDocument,
-			Tool:    record.tool,
-			Source:  record.tool,
-			Path:    path,
-			Summary: record.summary,
-			Output:  record.output,
+			Output:  window.Content,
 		})
 	}
 
@@ -644,7 +600,7 @@ func (record toolResultEvidenceRecord) ReadOnlyEvidenceObservations() []readOnly
 func hasReadOnlyBodyObservation(observations []readOnlyEvidenceObservation) bool {
 	for _, observation := range observations {
 		switch observation.Kind {
-		case readOnlyEvidenceSourceBody, readOnlyEvidenceExternalDocument:
+		case readOnlyEvidenceSourceWindow, readOnlyEvidenceExternalDocument:
 			return true
 		}
 	}
@@ -652,7 +608,7 @@ func hasReadOnlyBodyObservation(observations []readOnlyEvidenceObservation) bool
 }
 
 func (record toolResultEvidenceRecord) readOnlyOutlineObservation() (readOnlyEvidenceObservation, bool) {
-	if record.failed || len(record.SourceBodyPaths()) > 0 {
+	if record.failed || len(record.SourceWindowPaths()) > 0 {
 		return readOnlyEvidenceObservation{}, false
 	}
 
@@ -684,7 +640,7 @@ func (record toolResultEvidenceRecord) readOnlyOutlineObservation() (readOnlyEvi
 
 func (projection toolResultEvidenceProjection) CandidatePaths() []string {
 	bodySet := make(map[string]struct{})
-	for _, path := range projection.SourceBodyPaths() {
+	for _, path := range projection.SourceWindowPaths() {
 		bodySet[path] = struct{}{}
 	}
 
@@ -800,8 +756,8 @@ func (projection toolResultEvidenceProjection) ReadOnlyEvidencePacketCandidatePa
 	return readOnlyEvidencePacketSourceLikePaths(paths, 16)
 }
 
-func (projection toolResultEvidenceProjection) ReadOnlySourceBodyEvidencePaths() []string {
-	paths := nonArtifactEvidencePaths(projection.SourceBodyPaths())
+func (projection toolResultEvidenceProjection) ReadOnlySourceWindowEvidencePaths() []string {
+	paths := nonArtifactEvidencePaths(projection.SourceWindowPaths())
 
 	var delegated []string
 	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
@@ -869,7 +825,7 @@ func (projection toolResultEvidenceProjection) directProbePaths(max int) []strin
 	var paths []string
 
 	for _, record := range projection.records {
-		if len(record.SourceBodyPaths()) == 0 {
+		if len(record.SourceWindowPaths()) == 0 {
 			continue
 		}
 
@@ -974,7 +930,7 @@ func (projection toolResultEvidenceProjection) readOnlyDirectAnswerPresentationE
 	return readOnlyEvidenceDisplayPaths(paths, max)
 }
 
-func (projection toolResultEvidenceProjection) pinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, max int) []string {
+func (projection toolResultEvidenceProjection) pinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, max int, changedPaths []string) []string {
 	if max <= 0 {
 		max = 8
 	}
@@ -989,9 +945,9 @@ func (projection toolResultEvidenceProjection) pinnedPathsForBrief(brief workerr
 
 	paths := append([]string{}, brief.RequiredEditPaths...)
 
-	paths = append(paths, mapKeys(projection.ChangedPathSet())...)
-	if implementationTargetWriteReadySurfaceActive(brief, projection.results) {
-		paths = append(paths, projection.SourceBodyPaths()...)
+	paths = append(paths, changedPaths...)
+	if implementationTargetWriteReadySurfaceActive(brief, projection.results, len(changedPaths) > 0) {
+		paths = append(paths, projection.SourceWindowPaths()...)
 	}
 	paths = append(paths, projection.evidencePathsForBrief(brief, max*2)...)
 
@@ -1502,40 +1458,174 @@ func (record toolResultEvidenceRecord) GeneratedArtifactOnlyRead() bool {
 	return true
 }
 
-func (projection toolResultEvidenceProjection) DiagnosticArtifactReadForPath(path string) bool {
-	needle := normalizeDiagnosticArtifactEvidencePath(path)
-	if needle == "" || !IsDiagnosticLogArtifactPath(needle) {
-		return false
-	}
-
+func (projection toolResultEvidenceProjection) DiagnosticLogReadCoversPath(path string, startLine int, endLine int) bool {
 	for _, record := range projection.records {
-		if record.failed ||
-			record.tool != workspace.ToolNameReadFile ||
-			!record.GeneratedArtifactOnlyRead() {
-
-			continue
-		}
-
-		for _, readPath := range record.readPaths {
-			if normalizeDiagnosticArtifactEvidencePath(readPath) == needle {
-				return true
-			}
+		if record.DiagnosticLogReadCoversPath(path, startLine, endLine) {
+			return true
 		}
 	}
 
 	return false
 }
 
-func normalizeDiagnosticArtifactEvidencePath(path string) string {
-	path = strings.TrimSpace(strings.Trim(path, "`'\" "))
-	if path == "" {
-		return ""
+func (projection toolResultEvidenceProjection) ClaimedDiagnosticLogPaths(text string, max int) []string {
+	var paths []string
+	for _, reference := range projection.DiagnosticLogReferences(text) {
+		startLine, endLine := 0, 0
+		if reference.LineRange != nil {
+			if !reference.LineRange.Valid() {
+				continue
+			}
+			startLine, endLine = reference.LineRange.Start, reference.LineRange.End
+		}
+		for _, record := range projection.records {
+			for _, fact := range record.diagnosticLogReads {
+				if !diagnosticLogReadFactCoversPath(fact, reference.Path, startLine, endLine) {
+					continue
+				}
+				paths = textutil.AppendUnique(paths, fact.CanonicalID)
+				if max > 0 && len(paths) >= max {
+					return paths
+				}
+			}
+		}
 	}
 
-	path = strings.ReplaceAll(path, "\\", "/")
-	path = strings.TrimPrefix(path, "./")
+	return paths
+}
 
-	return path
+// ClaimedDiagnosticEvidencePaths returns exact final-answer citations backed by
+// producer-owned source-diagnostic facts. Diagnostic-log reads are deliberately
+// excluded: their citations must pass the separate line-range coverage check in
+// ClaimedDiagnosticLogPaths.
+func (projection toolResultEvidenceProjection) ClaimedDiagnosticEvidencePaths(text string, max int) []string {
+	claimed := readOnlySourceLikePaths(analyzeSourceCitations(text).BodyReadablePaths(), 64)
+	if len(claimed) == 0 {
+		return nil
+	}
+
+	var produced []string
+	for _, record := range projection.records {
+		if record.failed || len(record.diagnosticLogReads) > 0 || record.result.Facts == nil {
+			continue
+		}
+		if record.tool != workspace.ToolNameSourceSanity && !semanticlanguage.IsDiagnosticToolName(record.tool) {
+			continue
+		}
+		produced = textutil.Merge(produced, readOnlyDiagnosticEvidencePaths(record.result.Facts.DiagnosticEvidencePaths, 0))
+	}
+
+	paths := intersectRunnerPaths(claimed, produced)
+	if max > 0 && len(paths) > max {
+		paths = paths[:max]
+	}
+	return paths
+}
+
+func (projection toolResultEvidenceProjection) DiagnosticLogReferences(text string) []sourceReference {
+	var references []sourceReference
+	for _, record := range projection.records {
+		for _, fact := range record.diagnosticLogReads {
+			for _, identity := range []string{fact.CanonicalID, fact.PolicySubject} {
+				references = append(references, diagnosticLogReferencesForIdentity(text, identity)...)
+			}
+		}
+	}
+
+	return normalizeSourceReferences(references)
+}
+
+func (projection toolResultEvidenceProjection) ConflictingDiagnosticLogReferences(text string) []sourceReference {
+	authorized := map[string]struct{}{}
+	for _, record := range projection.records {
+		for _, fact := range record.diagnosticLogReads {
+			authorized[fact.CanonicalID] = struct{}{}
+			authorized[fact.PolicySubject] = struct{}{}
+		}
+	}
+
+	var conflicts []sourceReference
+	for _, rawClaim := range pathparse.MentionedWorkspacePaths(text) {
+		claim := normalizedDiagnosticLogEvidenceReference(rawClaim)
+		if claim == "" {
+			continue
+		}
+		if _, exact := authorized[claim]; exact {
+			continue
+		}
+		for identity := range authorized {
+			if strings.HasPrefix(claim, identity) {
+				conflicts = append(conflicts, sourceReference{Kind: sourceReferenceSourceFile, Path: claim})
+				break
+			}
+		}
+	}
+
+	return normalizeSourceReferences(conflicts)
+}
+
+func diagnosticLogReferencesForIdentity(text string, identity string) []sourceReference {
+	identity = normalizedDiagnosticLogEvidenceReference(identity)
+	if strings.TrimSpace(text) == "" || identity == "" {
+		return nil
+	}
+
+	leadingDelimiter := "[\\s`'\"(\\[]"
+	terminalDelimiter := "[\\s`'\"),;!?}\\]]"
+	trailingBoundary := "(?:$|" + terminalDelimiter + "|\\.(?:$|" + terminalDelimiter + "))"
+	pattern := regexp.MustCompile(
+		"(?:^|" + leadingDelimiter + ")" +
+			regexp.QuoteMeta(identity) +
+			"(?::([0-9]+)(?:-([0-9]+))?)?" +
+			trailingBoundary,
+	)
+	var references []sourceReference
+	for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+		reference := sourceReference{Kind: sourceReferenceSourceFile, Path: identity}
+		if len(match) > 1 && match[1] != "" {
+			start, _ := strconv.Atoi(match[1])
+			end := start
+			if len(match) > 2 && match[2] != "" {
+				end, _ = strconv.Atoi(match[2])
+			}
+			reference.LineRange = &sourceCitationRange{Start: start, End: end}
+		}
+		references = append(references, reference)
+	}
+
+	return references
+}
+
+func (record toolResultEvidenceRecord) DiagnosticLogReadCoversPath(path string, startLine int, endLine int) bool {
+	for _, fact := range record.diagnosticLogReads {
+		if diagnosticLogReadFactCoversPath(fact, path, startLine, endLine) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func diagnosticLogReadFactCoversPath(fact toolfacts.DiagnosticLogReadEvidence, path string, startLine int, endLine int) bool {
+	path = normalizedDiagnosticLogEvidenceReference(path)
+	if path == "" || !validDiagnosticLogEvidenceRange(startLine, endLine) ||
+		(path != fact.CanonicalID && path != fact.PolicySubject) {
+
+		return false
+	}
+	if startLine == 0 && endLine == 0 {
+		return true
+	}
+
+	return fact.StartLine > 0 && fact.StartLine <= startLine && fact.EndLine >= endLine
+}
+
+func normalizedDiagnosticLogEvidenceReference(path string) string {
+	return pathparse.NormalizeWorkspaceRelativePath(strings.TrimSpace(strings.Trim(path, "`'\" ")))
+}
+
+func validDiagnosticLogEvidenceRange(startLine int, endLine int) bool {
+	return startLine == 0 && endLine == 0 || startLine > 0 && endLine >= startLine
 }
 
 func (projection toolResultEvidenceProjection) ExternalDocumentBodyMatches(path string) []string {

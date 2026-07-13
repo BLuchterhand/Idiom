@@ -2,13 +2,16 @@ package productevidence
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
-	"strings"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestFirstNonEmptyString(t *testing.T) {
+var _ = ginkgo.Describe("first non empty string", func() {
+
 	tests := []struct {
 		name   string
 		values []string
@@ -23,30 +26,25 @@ func TestFirstNonEmptyString(t *testing.T) {
 		{"mixed whitespace", []string{"\n", "\t", " x "}, " x "},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			got := firstNonEmptyString(tt.values...)
-			if got != tt.want {
-				t.Fatalf("firstNonEmptyString(%#v) = %q, want %q", tt.values, got, tt.want)
-			}
+			gomega.Expect(got).To(gomega.Equal(tt.want), fmt.Sprintf("firstNonEmptyString(%#v) = %q, want %q", tt.values, got, tt.want))
+
 		})
 	}
-}
+})
+var _ = ginkgo.Describe("dependencies", func() {
+	ginkgo.It("summarize lane history nil deps", func() {
+		deps := Dependencies{SummarizeLaneHistory: nil}
 
-func TestSummarizeLaneHistoryNilDeps(t *testing.T) {
-	deps := Dependencies{SummarizeLaneHistory: nil}
+		summary, err := deps.summarizeLaneHistory(".")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("expected no error with nil SummarizeLaneHistory, got %v", err))
+		gomega.Expect(summary.Total).To(gomega.Equal(0), fmt.Sprintf("expected empty summary with Total=0, got %#v", summary))
 
-	summary, err := deps.summarizeLaneHistory(".")
-	if err != nil {
-		t.Fatalf("expected no error with nil SummarizeLaneHistory, got %v", err)
-	}
-
-	if summary.Total != 0 {
-		t.Fatalf("expected empty summary with Total=0, got %#v", summary)
-	}
-}
-
-func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
-	t.Run("sets IDIOM_TELEMETRY=0 and restores", func(t *testing.T) {
+	})
+})
+var _ = ginkgo.Describe("p911 run main no telemetry with deps", func() {
+	ginkgo.It("sets IDIOM_TELEMETRY=0 and restores", func() {
 		previous := os.Getenv("IDIOM_TELEMETRY")
 
 		var capturedTelemetry string
@@ -58,22 +56,14 @@ func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 		code := p911RunMainNoTelemetryWithDeps([]string{"tool"}, nil, nil, Dependencies{
 			RunMainNoTelemetry: runner,
 		})
-
-		if code != 0 {
-			t.Fatalf("expected exit 0, got %d", code)
-		}
-
-		if capturedTelemetry != "0" {
-			t.Fatalf("expected IDIOM_TELEMETRY=0 during call, got %q", capturedTelemetry)
-		}
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("expected exit 0, got %d", code))
+		gomega.Expect(capturedTelemetry).To(gomega.Equal("0"), fmt.Sprintf("expected IDIOM_TELEMETRY=0 during call, got %q", capturedTelemetry))
 
 		after := os.Getenv("IDIOM_TELEMETRY")
-		if after != previous {
-			t.Fatalf("IDIOM_TELEMETRY not restored: was %q, now %q", previous, after)
-		}
-	})
+		gomega.Expect(after).To(gomega.Equal(previous), fmt.Sprintf("IDIOM_TELEMETRY not restored: was %q, now %q", previous, after))
 
-	t.Run("passes args to RunMainNoTelemetry", func(t *testing.T) {
+	})
+	ginkgo.It("passes args to RunMainNoTelemetry", func() {
 		var capturedArgs []string
 
 		runner := func(args []string, stdout, stderr io.Writer) int {
@@ -83,25 +73,19 @@ func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 		p911RunMainNoTelemetryWithDeps([]string{"tool", "context_pack"}, nil, nil, Dependencies{
 			RunMainNoTelemetry: runner,
 		})
+		gomega.Expect(capturedArgs).To(gomega.HaveLen(2), fmt.Sprintf("expected args [tool context_pack], got %#v", capturedArgs))
+		gomega.Expect(capturedArgs[0]).To(gomega.Equal("tool"), fmt.Sprintf("expected args [tool context_pack], got %#v", capturedArgs))
+		gomega.Expect(capturedArgs[1]).To(gomega.Equal("context_pack"), fmt.Sprintf("expected args [tool context_pack], got %#v", capturedArgs))
 
-		if len(capturedArgs) != 2 || capturedArgs[0] != "tool" || capturedArgs[1] != "context_pack" {
-			t.Fatalf("expected args [tool context_pack], got %#v", capturedArgs)
-		}
 	})
-
-	t.Run("returns 127 when no runner available", func(t *testing.T) {
+	ginkgo.It("returns 127 when no runner available", func() {
 		var stderr bytes.Buffer
 
 		code := p911RunMainNoTelemetryWithDeps([]string{"tool"}, nil, &stderr, Dependencies{
 			RunMainNoTelemetry: nil,
 		})
+		gomega.Expect(code).To(gomega.Equal(127), fmt.Sprintf("expected exit code 127 when no runner in deps or fallback, got %d", code))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("unavailable"), fmt.Sprintf("expected 'unavailable' message in stderr, got %q", stderr.String()))
 
-		if code != 127 {
-			t.Fatalf("expected exit code 127 when no runner in deps or fallback, got %d", code)
-		}
-
-		if !strings.Contains(stderr.String(), "unavailable") {
-			t.Fatalf("expected 'unavailable' message in stderr, got %q", stderr.String())
-		}
 	})
-}
+})

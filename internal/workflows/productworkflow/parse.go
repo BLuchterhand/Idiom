@@ -221,7 +221,6 @@ func TryParseADRMarkdown(raw string) (ADRDocument, string, error) {
 }
 
 // ADRParseFailure records a single ADR chunk that failed to parse.
-// ADRParseFailure records a single ADR chunk that failed to parse.
 type ADRParseFailure struct {
 	ChunkIndex int
 	RawChunk   string
@@ -233,6 +232,7 @@ type ADRParseFailure struct {
 // per-chunk failure details, and an error only when all chunks failed.
 func TrySplitAndParseADRs(output string, prd PRDDocument) ([]ADRDocument, []ADRIndexEntry, []ADRParseFailure, error) {
 	chunks := strings.Split(output, "===")
+	prdRequirementIDs := PRDRequirementIDSet(prd.Requirements)
 
 	var (
 		adrDocs      []ADRDocument
@@ -275,6 +275,20 @@ func TrySplitAndParseADRs(output string, prd PRDDocument) ([]ADRDocument, []ADRI
 		if adrID == "" {
 			adrID = fmt.Sprintf("ADR-%03d", len(adrDocs)+1)
 			doc.FrontMatter.ADRID = adrID
+		}
+		if linkErrors := ValidateADRCrossLinks(
+			[]ParsedADR{{Doc: doc, RelPath: adrID}},
+			prdRequirementIDs,
+			nil,
+			nil,
+		); len(linkErrors) > 0 {
+			failures = append(failures, ADRParseFailure{
+				ChunkIndex: i,
+				RawChunk:   textutil.Truncate(chunk, 200),
+				Error:      linkErrors[0].Message,
+			})
+
+			continue
 		}
 
 		status := "draft"

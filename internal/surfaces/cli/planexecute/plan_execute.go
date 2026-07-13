@@ -54,6 +54,7 @@ func AdaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 			Telemetry:                   opts.Telemetry,
 			ScopeContract:               opts.ScopeContract,
 			AuthorizedNewFiles:          opts.AuthorizedNewFiles,
+			OnSourceSatisfied:           opts.OnSourceSatisfied,
 		}, stdout)
 	}
 }

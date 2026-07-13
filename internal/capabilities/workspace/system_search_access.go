@@ -3,12 +3,13 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"idiom/internal/platform/textutil"
 )
+
+//go:generate go tool mockgen -source=system_search_access.go -destination=mock_system_search_access_approver_test.go -package=workspace -typed
 
 // SystemSearchAccessApprover asks the host/operator whether a session may
 // inspect a filesystem target outside the configured workspace. Approval is
@@ -38,6 +39,51 @@ type SystemSearchAccessDecision struct {
 	Scope    SystemSearchAccessScope
 }
 
+type systemSearchAccessApproverContextKey struct{}
+
+type boundSystemSearchAccessApprover struct {
+	approver SystemSearchAccessApprover
+}
+
+// WithSystemSearchAccessApprover binds operator routing to one invocation.
+// Binding a nil approver explicitly disables fallback to Manager state.
+func WithSystemSearchAccessApprover(ctx context.Context, approver SystemSearchAccessApprover) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return context.WithValue(ctx, systemSearchAccessApproverContextKey{}, boundSystemSearchAccessApprover{approver: approver})
+}
+
+func systemSearchAccessApproverFromContext(ctx context.Context) (SystemSearchAccessApprover, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+
+	bound, ok := ctx.Value(systemSearchAccessApproverContextKey{}).(boundSystemSearchAccessApprover)
+	if !ok {
+		return nil, false
+	}
+
+	return bound.approver, true
+}
+
+func (m *Manager) snapshotSystemSearchAccessApprover(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, bound := systemSearchAccessApproverFromContext(ctx); bound {
+		return ctx
+	}
+
+	var approver SystemSearchAccessApprover
+	if m != nil {
+		approver = m.pathAccess.SystemSearchAccessApprover()
+	}
+
+	return WithSystemSearchAccessApprover(ctx, approver)
+}
+
 func (m *Manager) SetSystemSearchAccessApprover(approver SystemSearchAccessApprover) {
 	if m == nil {
 		return
@@ -47,17 +93,18 @@ func (m *Manager) SetSystemSearchAccessApprover(approver SystemSearchAccessAppro
 }
 
 func (m *Manager) requestSystemSearchAccess(ctx context.Context, req ToolRequest) ToolResult {
-	target, err := m.pathAccess.SystemSearchCandidate(req.Path, req.Workdir)
-	if err != nil {
-		return toolInvalidArgumentResult(ToolNameSystemSearchAccess, "System search access rejected", err.Error())
+	identity, _ := executionSessionIdentityFromContext(ctx)
+	approver, approverBound := systemSearchAccessApproverFromContext(ctx)
+	if !approverBound {
+		approver = m.pathAccess.SystemSearchAccessApprover()
+	}
+	if identity.explicit && identity.sessionID == "" {
+		return toolInvalidArgumentResult(ToolNameSystemSearchAccess, "System search access rejected", "execution session id is required")
 	}
 
-	info, err := os.Stat(target)
+	target, info, err := m.pathAccess.inspectSystemSearchCandidate(req.Path, req.Workdir)
 	if err != nil {
-		return toolPathResolutionFailureResult(ToolNameSystemSearchAccess, "System search access rejected", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(target); err == nil {
-		target = resolved
+		return toolInvalidArgumentResult(ToolNameSystemSearchAccess, "System search access rejected", err.Error())
 	}
 
 	target = filepath.Clean(target)
@@ -74,7 +121,7 @@ func (m *Manager) requestSystemSearchAccess(ctx context.Context, req ToolRequest
 		targetKind = "directory"
 	}
 
-	if scope, ok := m.pathAccess.ApprovedSystemSearchScope(target); ok && (scope == SystemSearchAccessScopeContents || !info.IsDir()) {
+	if scope, ok := m.pathAccess.ApprovedSystemSearchScope(identity, target); ok && (scope == SystemSearchAccessScopeContents || !info.IsDir()) {
 		return ToolResult{
 			Tool:    ToolNameSystemSearchAccess,
 			Summary: "System search access already approved",
@@ -82,19 +129,21 @@ func (m *Manager) requestSystemSearchAccess(ctx context.Context, req ToolRequest
 		}
 	}
 
-	approver := m.pathAccess.SystemSearchAccessApprover()
 	if approver == nil {
 		return toolPermissionPolicyResult(ToolNameSystemSearchAccess, "System search access requires approval", "no interactive approver is available for broad system search")
 	}
 
 	decision, err := approver.ApproveSystemSearchAccess(ctx, SystemSearchAccessRequest{
-		SessionID:     m.SessionID(),
+		SessionID:     identity.sessionID,
 		Path:          target,
 		DisplayPath:   display,
 		TargetKind:    targetKind,
 		RequestTool:   strings.TrimSpace(req.Tool),
 		RequestReason: strings.TrimSpace(textutil.FirstNonEmpty(req.Purpose, req.NamedGap, req.WhyNotAnswering, req.Query, req.Pattern)),
 	})
+	if ctx != nil && ctx.Err() != nil {
+		return toolPermissionPolicyResult(ToolNameSystemSearchAccess, "System search access canceled", "the request ended before approval could be accepted")
+	}
 	if err != nil {
 		return toolPermissionPolicyResult(ToolNameSystemSearchAccess, "System search access denied", err.Error())
 	}
@@ -107,17 +156,32 @@ func (m *Manager) requestSystemSearchAccess(ctx context.Context, req ToolRequest
 		scope = SystemSearchAccessScopeSelected
 	}
 
-	m.pathAccess.RecordApprovedSystemSearchRoot(target, scope)
-
 	summary := "System search access approved for selected path"
 	if scope == SystemSearchAccessScopeContents {
 		summary = "System search access approved for folder contents"
 	}
 
 	return ToolResult{
-		Tool:    ToolNameSystemSearchAccess,
-		Summary: summary,
-		Output:  fmt.Sprintf("%s scope=%s", display, scope),
+		Tool:                     ToolNameSystemSearchAccess,
+		Summary:                  summary,
+		Output:                   fmt.Sprintf("%s scope=%s", display, scope),
+		pendingSystemSearchGrant: &systemSearchAccessGrant{Path: target, Scope: scope, Identity: info},
+	}
+}
+
+func (m *Manager) commitAcceptedSystemSearchGrant(identity executionSessionIdentity, result *ToolResult) {
+	if m == nil || result == nil || result.pendingSystemSearchGrant == nil {
+		return
+	}
+
+	grant := *result.pendingSystemSearchGrant
+	result.pendingSystemSearchGrant = nil
+	if err := m.pathAccess.recordApprovedSystemSearchGrant(identity, grant); err != nil {
+		*result = toolPermissionPolicyResult(
+			ToolNameSystemSearchAccess,
+			"System search access approval became stale",
+			err.Error()+"; request approval again for the current filesystem target",
+		)
 	}
 }
 

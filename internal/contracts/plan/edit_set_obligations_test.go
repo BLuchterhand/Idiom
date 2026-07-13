@@ -1,68 +1,55 @@
 package plan
 
 import (
-	"slices"
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestEditSetObligationsNormalizeAndMergeByKind(t *testing.T) {
-	obligations := MergeEditSetObligations(
-		EditSetObligations{
-			{Kind: EditSetObligationKindImplementationEdit, Path: " ./pkg/feature.go ", Source: "impl"},
-			{Kind: EditSetObligationKindTestEdit, Path: "pkg/feature_test.go", Source: "test"},
-			{Kind: EditSetObligationKindTestEdit, Path: "pkg\\feature_test.go", Source: "later"},
-			{Kind: EditSetObligationKindTestEdit},
-			{Kind: "invalid"},
-		}.WithDefaultSource("scope_contract"),
-		EditSetObligations{
-			{Kind: EditSetObligationKindImplementationEdit},
-			{Kind: EditSetObligationKindTestEdit, Source: "later"},
-		}.WithDefaultSource("options"),
-	)
+var _ = Describe("Edit-set obligations", func() {
+	It("normalizes and merges obligations by kind and path", func() {
+		obligations := MergeEditSetObligations(
+			EditSetObligations{
+				{Kind: EditSetObligationKindImplementationEdit, Path: " ./pkg/feature.go ", Source: "impl"},
+				{Kind: EditSetObligationKindTestEdit, Path: "pkg/feature_test.go", Source: "test"},
+				{Kind: EditSetObligationKindTestEdit, Path: "pkg\\feature_test.go", Source: "later"},
+				{Kind: EditSetObligationKindTestEdit},
+				{Kind: "invalid"},
+			}.WithDefaultSource("scope_contract"),
+			EditSetObligations{
+				{Kind: EditSetObligationKindImplementationEdit},
+				{Kind: EditSetObligationKindTestEdit, Source: "later"},
+			}.WithDefaultSource("options"),
+		)
+		Expect(obligations.Kinds()).To(Equal([]string{"test_edit_required", "implementation_edit_required"}))
+		Expect(obligations).To(HaveLen(4))
+		Expect([]string{obligations[0].Path, obligations[1].Path, obligations[2].Path, obligations[3].Path}).To(Equal([]string{
+			"", "pkg/feature_test.go", "", "pkg/feature.go",
+		}))
+		Expect([]string{obligations[0].Source, obligations[1].Source, obligations[2].Source, obligations[3].Source}).To(Equal([]string{
+			"scope_contract", "test", "options", "impl",
+		}))
+	})
 
-	if got, want := obligations.Kinds(), []string{"test_edit_required", "implementation_edit_required"}; !slices.Equal(got, want) {
-		t.Fatalf("obligation kinds = %#v, want %#v", got, want)
-	}
+	It("classifies changed paths against required edit kinds", func() {
+		obligations := EditSetObligations{}.
+			With(EditSetObligationKindTestEdit, "test").
+			With(EditSetObligationKindImplementationEdit, "test")
+		Expect(obligations.RejectionReason([]string{"pkg/feature.go", "pkg/feature_test.go"})).To(BeEmpty())
+		Expect(obligations.RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"})).To(Equal(PlanExecuteFailureMissingRequestedImplementationEdit))
+		Expect(obligations.MissingOpenObligations([]string{"pkg/feature.go"})).To(Equal([]string{"requested_test_edit_missing"}))
+	})
 
-	if obligations[0].Path != "" || obligations[1].Path != "pkg/feature_test.go" || obligations[2].Path != "" || obligations[3].Path != "pkg/feature.go" {
-		t.Fatalf("obligations were not stably sorted by kind and normalized path: %#v", obligations)
-	}
+	It("reports normalized open exact paths", func() {
+		obligations := EditSetObligations{
+			{Kind: EditSetObligationKindImplementationEdit, Path: "pkg/feature.go", Source: "required_scope"},
+			{Kind: EditSetObligationKindTestEdit, Path: "pkg/feature_test.go", Source: "required_scope"},
+		}.Normalized()
 
-	if obligations[0].Source != "scope_contract" || obligations[1].Source != "test" || obligations[2].Source != "options" || obligations[3].Source != "impl" {
-		t.Fatalf("obligation sources = %#v, want first source preserved for each kind/path", obligations)
-	}
-}
-
-func TestEditSetObligationRejectionReasonClassifiesChangedPaths(t *testing.T) {
-	obligations := EditSetObligations{}.
-		With(EditSetObligationKindTestEdit, "test").
-		With(EditSetObligationKindImplementationEdit, "test")
-
-	if got := obligations.RejectionReason([]string{"pkg/feature.go", "pkg/feature_test.go"}); got != "" {
-		t.Fatalf("source and test edits should satisfy obligations, got %q", got)
-	}
-
-	if got := obligations.RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"}); got != PlanExecuteFailureMissingRequestedImplementationEdit {
-		t.Fatalf("docs plus tests must not satisfy implementation obligation, got %q", got)
-	}
-
-	if got := obligations.MissingOpenObligations([]string{"pkg/feature.go"}); !slices.Equal(got, []string{"requested_test_edit_missing"}) {
-		t.Fatalf("missing obligations = %#v, want test edit missing", got)
-	}
-}
-
-func TestEditSetObligationsReportNormalizedOpenExactPaths(t *testing.T) {
-	obligations := EditSetObligations{
-		{Kind: EditSetObligationKindImplementationEdit, Path: "pkg/feature.go", Source: "required_scope"},
-		{Kind: EditSetObligationKindTestEdit, Path: "pkg/feature_test.go", Source: "required_scope"},
-	}.Normalized()
-
-	open := obligations.Open([]string{"pkg/feature.go"})
-	if len(open) != 1 {
-		t.Fatalf("open obligations = %#v, want one missing test path", open)
-	}
-
-	if got := open[0]; got.Code != EditSetOpenObligationRequestedTestEditMissing || got.Kind != EditSetObligationKindTestEdit || got.Path != "pkg/feature_test.go" || got.Source != "required_scope" {
-		t.Fatalf("open obligation = %#v, want normalized missing test path", got)
-	}
-}
+		open := obligations.Open([]string{"pkg/feature.go"})
+		Expect(open).To(HaveLen(1))
+		Expect(open[0].Code).To(Equal(EditSetOpenObligationRequestedTestEditMissing))
+		Expect(open[0].Kind).To(Equal(EditSetObligationKindTestEdit))
+		Expect(open[0].Path).To(Equal("pkg/feature_test.go"))
+		Expect(open[0].Source).To(Equal("required_scope"))
+	})
+})

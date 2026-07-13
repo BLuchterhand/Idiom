@@ -1,9 +1,9 @@
 [
   "{\"family\":\"implementation\",\"initial_lane\":\"implement\",\"reason\":\"classifier_directive\",\"contract\":\"implementation_result\"}",
-  "{\"tool\":\"code_navigate\",\"request\":{\"capability\":\"find_references\",\"path\":\"internal/surfaces/tui/app\",\"symbol\":\"input\"},\"named_gap\":\"find prompt input layout references\",\"why_not_answering\":\"need to localize the edit target before writing\"}",
-  "{\"tool\":\"code_navigate\",\"capability\":\"file_outline\",\"path\":\"internal/surfaces/tui/app\",\"named_gap\":\"list candidate app files for the prompt input layout\",\"why_not_answering\":\"need a concrete file path before reading source\"}",
-  "{\"tool\":\"read_file\",\"path\":\"internal/surfaces/tui/app/model_state.go\",\"start_line\":1,\"end_line\":80,\"named_gap\":\"current prompt input height calculation\",\"why_not_answering\":\"need exact source before editing\"}",
-  "{\"tool\":\"edit_file\",\"path\":\"internal/surfaces/tui/app/model_state.go\",\"old_text\":\"\\twidth := inputWidth\\n\",\"new_text\":\"\\twidth := max(1, inputWidth-len(prompt))\\n\",\"description\":\"account for prompt columns when computing wrapped input height\"}",
-  "{\"tool\":\"source_sanity\",\"path\":\"internal/surfaces/tui/app/model_state.go\"}",
-  "Updated the prompt input height calculation.\\n\\nChanged paths:\\n- internal/surfaces/tui/app/model_state.go\\n\\nVerification: Source sanity passed for internal/surfaces/tui/app/model_state.go."
+  "{\"tool\":\"read_file\",\"path\":\"internal/app/model_state.go\",\"named_gap\":\"inspect the prompt-width calculation before fixing wrapped input height\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/app/model_state.go\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/app/model_state.go\",\"old_text\":\"width := inputWidth\",\"new_text\":\"width := inputWidth - len(prompt)\\n\\tif width <= 0 {\\n\\t\\twidth = 1\\n\\t}\",\"description\":\"account for prompt columns when computing wrapped input height\"}",
+  "{\"tool\":\"shell\",\"command\":\"go test ./...\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/app/model_state.go\",\"named_gap\":\"refresh the changed layout calculation after verification\"}",
+  "Fixed the wrapped prompt input height calculation.\n\nChanged paths:\n- internal/app/model_state.go\n\nVerification: go test ./... passed."
 ]

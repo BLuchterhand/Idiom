@@ -3,22 +3,22 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"testing"
+	"fmt"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestJSONEventStreamAddsSchemaVersion(t *testing.T) {
+var _ = ginkgo.It("json event stream adds schema version", func() {
 	var out bytes.Buffer
 	stream := newJSONEventStream(&out, "session-1")
 	stream.emit(map[string]any{"type": "final", "content": "done"})
 
 	var event map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &event); err != nil {
-		t.Fatalf("decode event: %v", err)
+	{
+		err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &event)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode event: %v", err))
 	}
-	if event["schema_version"] != JSONEventSchemaVersion {
-		t.Fatalf("schema_version = %v, want %s", event["schema_version"], JSONEventSchemaVersion)
-	}
-	if event["session_id"] != "session-1" {
-		t.Fatalf("session_id = %v", event["session_id"])
-	}
-}
+	gomega.Expect(event["schema_version"]).To(gomega.Equal(JSONEventSchemaVersion), fmt.Sprintf("schema_version = %v, want %s", event["schema_version"], JSONEventSchemaVersion))
+	gomega.Expect(event["session_id"]).To(gomega.Equal("session-1"), fmt.Sprintf("session_id = %v", event["session_id"]))
+})

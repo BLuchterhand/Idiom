@@ -3,187 +3,120 @@ package readiness
 import (
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestBuildProfilesRejectsUnknownProfile(t *testing.T) {
-	_, err := BuildProfiles(filepath.Join(t.TempDir(), "missing-config.json"), "unknown", nil)
-	if err == nil {
-		t.Fatal("expected unknown profile to fail")
-	}
-
-	if !IsProfileSelectionError(err) {
-		t.Fatalf("expected profile selection error, got %T %v", err, err)
-	}
-}
-
-func TestWorkspaceRootFromConfigResolvesRelativeRoot(t *testing.T) {
-	dir := t.TempDir()
-	configDir := filepath.Join(dir, ".idiom")
-
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("mkdir config dir: %v", err)
-	}
-
-	configPath := filepath.Join(configDir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"workspace":{"root":".."}}`), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	got := WorkspaceRootFromConfig(configPath)
-	if got != filepath.Clean(dir) {
-		t.Fatalf("WorkspaceRootFromConfig() = %q, want %q", got, filepath.Clean(dir))
-	}
-}
-
-func TestChecksFromHostBlocksUnknownStatus(t *testing.T) {
-	checks := checksFromHost([]HostCheck{{
-		Name:   "doctor typo",
-		Status: HostCheckStatus("failed"),
-		Detail: "raw host status drifted",
-	}})
-
-	if len(checks) != 1 {
-		t.Fatalf("checks len=%d, want 1", len(checks))
-	}
-	if checks[0].State != "blocked" {
-		t.Fatalf("unknown host status state=%q, want blocked", checks[0].State)
-	}
-	if !strings.Contains(checks[0].Detail, "unknown host check status") {
-		t.Fatalf("unknown host status detail=%q", checks[0].Detail)
-	}
-}
-
-func TestRuntimeReadinessSchemaMapsMissingBackendRole(t *testing.T) {
-	report := runtimeProfileForCheck("implement", Check{
-		Name:   "backend role config",
-		State:  "blocked",
-		Detail: "missing role aliases: executor",
-		Remedy: "add role tags or proxy.default_executor aliases in .idiom/backends.json",
+var _ = Describe("Runtime readiness", func() {
+	It("rejects an unknown profile as a selection error", func() {
+		_, err := BuildProfiles(filepath.Join(GinkgoT().TempDir(), "missing-config.json"), "unknown", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(IsProfileSelectionError(err)).To(BeTrue())
 	})
 
-	gate := findReadinessGateForTest(t, report, "backend_roles_resolved")
-	if gate.InvariantID != "runtime.backend_roles_resolved" ||
-		gate.RuntimeDecision != RuntimeReadinessLaunchBlocked ||
-		gate.ReasonClass != ReasonMissingBackendRole ||
-		gate.Fallback != FallbackLegacyConfig {
+	It("resolves a workspace root relative to the config directory", func() {
+		dir := GinkgoT().TempDir()
+		configDir := filepath.Join(dir, ".idiom")
+		Expect(os.MkdirAll(configDir, 0o755)).To(Succeed())
 
-		t.Fatalf("backend gate did not expose typed role failure metadata: %#v", gate)
-	}
-
-	invariant := findRuntimeInvariantForTest(t, report.RuntimeReadiness, "runtime.backend_roles_resolved")
-	if invariant.Decision != RuntimeReadinessLaunchBlocked ||
-		invariant.ReasonClass != ReasonMissingBackendRole ||
-		invariant.Fallback != FallbackLegacyConfig {
-
-		t.Fatalf("runtime readiness invariant did not mirror backend gate: %#v", invariant)
-	}
-
-	if report.RuntimeReadiness.Decision != RuntimeReadinessLaunchBlocked || !report.RuntimeReadiness.LaunchBlocked {
-		t.Fatalf("profile runtime decision = %#v, want launch_blocked", report.RuntimeReadiness)
-	}
-}
-
-func TestRuntimeReadinessSchemaMapsInvalidContextBudget(t *testing.T) {
-	report := runtimeProfileForCheck("plan", Check{
-		Name:   "context budget",
-		State:  "degraded",
-		Detail: "ctx_size=1024 max_output=2048 leaves no prompt budget",
-		Remedy: "lower chat.max_tokens or raise the configured backend context",
+		configPath := filepath.Join(configDir, "config.json")
+		Expect(os.WriteFile(configPath, []byte(`{"workspace":{"root":".."}}`), 0o644)).To(Succeed())
+		Expect(WorkspaceRootFromConfig(configPath)).To(Equal(filepath.Clean(dir)))
 	})
 
-	gate := findReadinessGateForTest(t, report, "context_budget_valid")
-	if gate.Status != "blocked" ||
-		gate.RuntimeDecision != RuntimeReadinessLaunchBlocked ||
-		gate.ReasonClass != ReasonInvalidContextBudget ||
-		gate.Fallback != "" {
+	It("blocks unknown host check statuses", func() {
+		checks := checksFromHost([]HostCheck{{
+			Name:   "doctor typo",
+			Status: HostCheckStatus("failed"),
+			Detail: "raw host status drifted",
+		}})
 
-		t.Fatalf("context gate did not expose typed invalid-budget metadata: %#v", gate)
-	}
+		Expect(checks).To(HaveLen(1))
+		Expect(checks[0].State).To(Equal("blocked"))
+		Expect(checks[0].Detail).To(ContainSubstring("unknown host check status"))
+	})
 
-	if report.RuntimeReadiness.Decision != RuntimeReadinessLaunchBlocked {
-		t.Fatalf("profile runtime decision = %#v, want launch_blocked", report.RuntimeReadiness)
-	}
-}
+	It("maps a missing backend role to typed launch-blocking metadata", func() {
+		report := runtimeProfileForCheck("implement", Check{
+			Name:   "backend role config",
+			State:  "blocked",
+			Detail: "missing role aliases: executor",
+			Remedy: "add role tags or proxy.default_executor aliases in .idiom/backends.json",
+		})
 
-func TestRuntimeReadinessSchemaMapsQueueUnavailableAndSoftDegraded(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		checkState  string
-		reasonClass RuntimeReadinessReasonClass
-		fallback    RuntimeReadinessFallback
-	}{
-		{
-			name:        "unavailable",
-			checkState:  "unavailable",
-			reasonClass: ReasonQueueUnavailable,
-			fallback:    FallbackQueueOpportunistic,
-		},
-		{
-			name:        "soft degraded",
-			checkState:  "degraded",
-			reasonClass: ReasonQueueSoftDegraded,
-			fallback:    FallbackQueueOperatorRepair,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+		gate := findReadinessGate(report, "backend_roles_resolved")
+		Expect(gate.InvariantID).To(Equal("runtime.backend_roles_resolved"))
+		Expect(gate.RuntimeDecision).To(Equal(RuntimeReadinessLaunchBlocked))
+		Expect(gate.ReasonClass).To(Equal(ReasonMissingBackendRole))
+		Expect(gate.Fallback).To(Equal(FallbackLegacyConfig))
+
+		invariant := findRuntimeInvariant(report.RuntimeReadiness, "runtime.backend_roles_resolved")
+		Expect(invariant.Decision).To(Equal(RuntimeReadinessLaunchBlocked))
+		Expect(invariant.ReasonClass).To(Equal(ReasonMissingBackendRole))
+		Expect(invariant.Fallback).To(Equal(FallbackLegacyConfig))
+		Expect(report.RuntimeReadiness.Decision).To(Equal(RuntimeReadinessLaunchBlocked))
+		Expect(report.RuntimeReadiness.LaunchBlocked).To(BeTrue())
+	})
+
+	It("maps an invalid context budget to a launch-blocking gate", func() {
+		report := runtimeProfileForCheck("plan", Check{
+			Name:   "context budget",
+			State:  "degraded",
+			Detail: "ctx_size=1024 max_output=2048 leaves no prompt budget",
+			Remedy: "lower chat.max_tokens or raise the configured backend context",
+		})
+
+		gate := findReadinessGate(report, "context_budget_valid")
+		Expect(gate.Status).To(Equal("blocked"))
+		Expect(gate.RuntimeDecision).To(Equal(RuntimeReadinessLaunchBlocked))
+		Expect(gate.ReasonClass).To(Equal(ReasonInvalidContextBudget))
+		Expect(gate.Fallback).To(BeEmpty())
+		Expect(report.RuntimeReadiness.Decision).To(Equal(RuntimeReadinessLaunchBlocked))
+	})
+
+	DescribeTable("maps degraded queue states without blocking launch",
+		func(checkState string, reasonClass RuntimeReadinessReasonClass, fallback RuntimeReadinessFallback) {
 			report := runtimeProfileForCheck("implement", Check{
 				Name:   "queue admission",
-				State:  tc.checkState,
+				State:  checkState,
 				Detail: "queue daemon not reachable",
 				Remedy: "start the daemon with `idiom queue serve` or inspect queue status",
 			})
 
-			gate := findReadinessGateForTest(t, report, "queue_admission_known")
-			if gate.Status != "degraded" ||
-				gate.RuntimeDecision != RuntimeReadinessAllowedDegraded ||
-				gate.ReasonClass != tc.reasonClass ||
-				gate.Fallback != tc.fallback {
+			gate := findReadinessGate(report, "queue_admission_known")
+			Expect(gate.Status).To(Equal("degraded"))
+			Expect(gate.RuntimeDecision).To(Equal(RuntimeReadinessAllowedDegraded))
+			Expect(gate.ReasonClass).To(Equal(reasonClass))
+			Expect(gate.Fallback).To(Equal(fallback))
+			Expect(report.RuntimeReadiness.Decision).To(Equal(RuntimeReadinessAllowedDegraded))
+			Expect(report.RuntimeReadiness.LaunchBlocked).To(BeFalse())
+			Expect(report.RuntimeReadiness.LaunchBlockingEnforced).To(BeFalse())
+			Expect(report.RuntimeReadiness.Fallbacks).To(HaveLen(1))
+			Expect(report.RuntimeReadiness.Fallbacks[0].Fallback).To(Equal(fallback))
+		},
+		Entry("queue unavailable", "unavailable", ReasonQueueUnavailable, FallbackQueueOpportunistic),
+		Entry("queue softly degraded", "degraded", ReasonQueueSoftDegraded, FallbackQueueOperatorRepair),
+	)
 
-				t.Fatalf("queue gate did not expose typed degraded metadata: %#v", gate)
-			}
-
-			if report.RuntimeReadiness.Decision != RuntimeReadinessAllowedDegraded ||
-				report.RuntimeReadiness.LaunchBlocked ||
-				report.RuntimeReadiness.LaunchBlockingEnforced {
-
-				t.Fatalf("queue profile should remain allowed_degraded and non-blocking, got %#v", report.RuntimeReadiness)
-			}
-
-			if len(report.RuntimeReadiness.Fallbacks) != 1 ||
-				report.RuntimeReadiness.Fallbacks[0].Fallback != tc.fallback {
-
-				t.Fatalf("queue fallback not aggregated in runtime readiness: %#v", report.RuntimeReadiness.Fallbacks)
-			}
+	It("preserves report-only enforcement for launch-blocking metadata", func() {
+		report := runtimeProfileForCheck("eval", Check{
+			Name:   "queue admission",
+			State:  "unavailable",
+			Detail: "queue daemon not reachable",
+			Remedy: "start the daemon with `idiom queue serve`",
 		})
-	}
-}
 
-func TestRuntimeReadinessSchemaPreservesReportOnlyEnforcement(t *testing.T) {
-	report := runtimeProfileForCheck("eval", Check{
-		Name:   "queue admission",
-		State:  "unavailable",
-		Detail: "queue daemon not reachable",
-		Remedy: "start the daemon with `idiom queue serve`",
+		gate := findReadinessGate(report, "queue_admission_known")
+		Expect(gate.Status).To(Equal("blocked"))
+		Expect(gate.RuntimeDecision).To(Equal(RuntimeReadinessLaunchBlocked))
+		Expect(report.Enforcement).To(Equal(string(ReadinessEnforcementReportOnly)))
+		Expect(gate.Enforcement).To(Equal(string(ReadinessEnforcementReportOnly)))
+		Expect(report.RuntimeReadiness.Enforcement).To(Equal(ReadinessEnforcementReportOnly))
+		Expect(report.RuntimeReadiness.LaunchBlocked).To(BeTrue())
+		Expect(report.RuntimeReadiness.LaunchBlockingEnforced).To(BeFalse())
 	})
-
-	gate := findReadinessGateForTest(t, report, "queue_admission_known")
-	if gate.Status != "blocked" || gate.RuntimeDecision != RuntimeReadinessLaunchBlocked {
-		t.Fatalf("eval queue gate should record launch_blocked, got %#v", gate)
-	}
-
-	if report.Enforcement != string(ReadinessEnforcementReportOnly) ||
-		gate.Enforcement != string(ReadinessEnforcementReportOnly) ||
-		report.RuntimeReadiness.Enforcement != ReadinessEnforcementReportOnly {
-
-		t.Fatalf("readiness enforcement must remain report_only, report=%#v gate=%#v", report.RuntimeReadiness, gate)
-	}
-
-	if !report.RuntimeReadiness.LaunchBlocked || report.RuntimeReadiness.LaunchBlockingEnforced {
-		t.Fatalf("launch_blocked should be report-only metadata, got %#v", report.RuntimeReadiness)
-	}
-}
+})
 
 func runtimeProfileForCheck(profileName string, check Check) ProfileReport {
 	report := ProfileReport{
@@ -202,30 +135,24 @@ func runtimeProfileForCheck(profileName string, check Check) ProfileReport {
 	return report
 }
 
-func findReadinessGateForTest(t *testing.T, report ProfileReport, name string) GateDecision {
-	t.Helper()
-
+func findReadinessGate(report ProfileReport, name string) GateDecision {
 	for _, gate := range report.Gates {
 		if gate.Name == name {
 			return gate
 		}
 	}
 
-	t.Fatalf("missing gate %q in %#v", name, report.Gates)
-
+	Fail("missing readiness gate " + name)
 	return GateDecision{}
 }
 
-func findRuntimeInvariantForTest(t *testing.T, report RuntimeReadinessReport, invariantID string) RuntimeReadinessInvariant {
-	t.Helper()
-
+func findRuntimeInvariant(report RuntimeReadinessReport, invariantID string) RuntimeReadinessInvariant {
 	for _, invariant := range report.Invariants {
 		if invariant.InvariantID == invariantID {
 			return invariant
 		}
 	}
 
-	t.Fatalf("missing runtime invariant %q in %#v", invariantID, report.Invariants)
-
+	Fail("missing runtime readiness invariant " + invariantID)
 	return RuntimeReadinessInvariant{}
 }

@@ -8,18 +8,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
+	"idiom/internal/capabilities/workspace"
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/contracts/toolpolicy"
-
-	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/sessionlog"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/recovery"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
 func nopList(config.Config, io.Writer) error { return nil }
@@ -28,97 +29,90 @@ func runRuntime(args []string, stdout io.Writer, stderr io.Writer, tuiRun cmdrun
 	return cmdruntime.RunWithTelemetry(args, stdout, stderr, tuiRun, serverRun, listSessions, runVersionMain, nil)
 }
 
-func TestRunListSessionsCallsListRunner(t *testing.T) {
-	configPath := writeMainConfig(t)
+var _ = ginkgo.Describe("Runtime mode routing", func() {
+	ginkgo.It("calls the list-sessions runner exclusively", func() {
+		t := ginkgo.GinkgoT()
+		configPath := writeMainConfig(t)
+		var stdout, stderr bytes.Buffer
+		called := false
 
-	var stdout, stderr bytes.Buffer
+		code := runRuntime(
+			[]string{"-config", configPath, "-list-sessions"},
+			&stdout,
+			&stderr,
+			func(config.Config, cmdruntime.RunOptions) error {
+				ginkgo.Fail("TUI runner should not be called")
+				return nil
+			},
+			func(config.Config, cmdruntime.RunOptions) error {
+				ginkgo.Fail("server runner should not be called")
+				return nil
+			},
+			func(_ config.Config, writer io.Writer) error {
+				called = true
+				_, err := writer.Write([]byte("session-list\n"))
+				return err
+			},
+		)
 
-	called := false
-	code := runRuntime(
-		[]string{"-config", configPath, "-list-sessions"},
-		&stdout,
-		&stderr,
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("TUI runner should not be called")
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(called).To(gomega.BeTrue())
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("session-list"))
+	})
 
-			return nil
-		},
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("server runner should not be called")
+	ginkgo.It("uses the injected server runner in server-only mode", func() {
+		configPath := writeMainConfig(ginkgo.GinkgoT())
+		var stdout, stderr bytes.Buffer
+		called := false
 
-			return nil
-		},
-		func(_ config.Config, w io.Writer) error {
-			called = true
-			_, _ = w.Write([]byte("session-list\n"))
+		code := runRuntime(
+			[]string{"-config", configPath, "-server-only"},
+			&stdout,
+			&stderr,
+			func(config.Config, cmdruntime.RunOptions) error {
+				ginkgo.Fail("TUI runner should not be called in server-only mode")
+				return nil
+			},
+			func(config.Config, cmdruntime.RunOptions) error {
+				called = true
+				return nil
+			},
+			nopList,
+		)
 
-			return nil
-		},
-	)
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(called).To(gomega.BeTrue())
+	})
 
-	if code != 0 || !called || !strings.Contains(stdout.String(), "session-list") {
-		t.Fatalf("list-sessions failed code=%d called=%t stdout=%q", code, called, stdout.String())
-	}
-}
+	ginkgo.It("uses the TUI runner by default", func() {
+		configPath := writeMainConfig(ginkgo.GinkgoT())
+		var stdout, stderr bytes.Buffer
+		called := false
 
-func TestRunServerOnlyUsesInjectedRunner(t *testing.T) {
-	configPath := writeMainConfig(t)
+		code := runRuntime(
+			[]string{"-config", configPath},
+			&stdout,
+			&stderr,
+			func(config.Config, cmdruntime.RunOptions) error {
+				called = true
+				return nil
+			},
+			func(config.Config, cmdruntime.RunOptions) error {
+				ginkgo.Fail("server runner should not be called in default mode")
+				return nil
+			},
+			nopList,
+		)
 
-	var stdout, stderr bytes.Buffer
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(called).To(gomega.BeTrue())
+	})
 
-	called := false
-	code := runRuntime(
-		[]string{"-config", configPath, "-server-only"},
-		&stdout,
-		&stderr,
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("TUI runner should not be called in server-only mode")
-
-			return nil
-		},
-		func(config.Config, cmdruntime.RunOptions) error {
-			called = true
-			return nil
-		},
-		nopList,
-	)
-
-	if code != 0 || !called {
-		t.Fatalf("expected server runner success, code=%d called=%t stderr=%s", code, called, stderr.String())
-	}
-}
-
-func TestRunDefaultUsesTUIRunner(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var stdout, stderr bytes.Buffer
-
-	called := false
-	code := runRuntime(
-		[]string{"-config", configPath},
-		&stdout,
-		&stderr,
-		func(config.Config, cmdruntime.RunOptions) error {
-			called = true
-			return nil
-		},
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("server runner should not be called in default mode")
-
-			return nil
-		},
-		nopList,
-	)
-
-	if code != 0 || !called {
-		t.Fatalf("expected TUI runner success, code=%d called=%t stderr=%s", code, called, stderr.String())
-	}
-}
-
-func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
-	root := t.TempDir()
-	configPath := filepath.Join(root, "config.json")
-	configJSON := fmt.Sprintf(`{
+	ginkgo.It("loads workspace tool rules from the root config", func() {
+		t := ginkgo.GinkgoT()
+		root := t.TempDir()
+		configPath := filepath.Join(root, "config.json")
+		configJSON := fmt.Sprintf(`{
   "workspace": {
     "root": %q,
     "cwd": %q,
@@ -130,625 +124,500 @@ func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
     }
   }
 }`, root, root)
+		gomega.Expect(os.WriteFile(configPath, []byte(configJSON+"\n"), 0o644)).To(gomega.Succeed())
 
-	if err := os.WriteFile(configPath, []byte(configJSON+"\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+		var (
+			stdout, stderr bytes.Buffer
+			gotCfg         config.Config
+		)
+		code := runRuntime(
+			[]string{"-config", configPath},
+			&stdout,
+			&stderr,
+			func(cfg config.Config, _ cmdruntime.RunOptions) error {
+				gotCfg = cfg
+				return nil
+			},
+			func(config.Config, cmdruntime.RunOptions) error {
+				ginkgo.Fail("server runner should not be called in default mode")
+				return nil
+			},
+			nopList,
+		)
 
-	var (
-		stdout, stderr bytes.Buffer
-		gotCfg         config.Config
-	)
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		manager := workspace.NewManager(gotCfg.Workspace)
+		decision := manager.EvaluateConfiguredToolRule(workspace.ToolRequest{Tool: "read_file", Path: ".idiom/deny-read-test.txt"})
+		gomega.Expect(decision.Decision).To(gomega.Equal(toolpolicy.Deny), "rules=%#v", gotCfg.Workspace.ToolRules)
+	})
 
-	code := runRuntime(
-		[]string{"-config", configPath},
-		&stdout,
-		&stderr,
-		func(cfg config.Config, _ cmdruntime.RunOptions) error {
-			gotCfg = cfg
-			return nil
+	ginkgo.It("reports malformed configuration", func() {
+		badPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "bad.json")
+		gomega.Expect(os.WriteFile(badPath, []byte(`{invalid json}`), 0o644)).To(gomega.Succeed())
+		var stdout, stderr bytes.Buffer
+
+		code := runRuntime(
+			[]string{"-config", badPath},
+			&stdout,
+			&stderr,
+			func(config.Config, cmdruntime.RunOptions) error { return nil },
+			func(config.Config, cmdruntime.RunOptions) error { return nil },
+			nopList,
+		)
+
+		gomega.Expect(code).To(gomega.Equal(1))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("inspect config"))
+	})
+
+	ginkgo.It("rejects unknown flags as a usage error", func() {
+		var stdout, stderr bytes.Buffer
+		code := runRuntime(
+			[]string{"-does-not-exist"},
+			&stdout,
+			&stderr,
+			func(config.Config, cmdruntime.RunOptions) error { return nil },
+			func(config.Config, cmdruntime.RunOptions) error { return nil },
+			nopList,
+		)
+
+		gomega.Expect(code).To(gomega.Equal(2))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("flag provided but not defined"))
+	})
+
+	ginkgo.It("short-circuits all runtime runners for --version", func() {
+		var stdout, stderr bytes.Buffer
+		code := runRuntime(
+			[]string{"--version"},
+			&stdout,
+			&stderr,
+			func(config.Config, cmdruntime.RunOptions) error {
+				ginkgo.Fail("TUI runner must not be called for --version")
+				return nil
+			},
+			func(config.Config, cmdruntime.RunOptions) error {
+				ginkgo.Fail("server runner must not be called for --version")
+				return nil
+			},
+			func(config.Config, io.Writer) error {
+				ginkgo.Fail("list-sessions runner must not be called for --version")
+				return nil
+			},
+		)
+
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.And(
+			gomega.ContainSubstring("version: "),
+			gomega.ContainSubstring("go: "),
+			gomega.ContainSubstring("os/arch: "),
+		))
+	})
+
+	ginkgo.It("accepts the single-dash version spelling", func() {
+		var stdout, stderr bytes.Buffer
+		code := runRuntime(
+			[]string{"-version"},
+			&stdout,
+			&stderr,
+			func(config.Config, cmdruntime.RunOptions) error { return nil },
+			func(config.Config, cmdruntime.RunOptions) error { return nil },
+			nopList,
+		)
+
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("version: "))
+	})
+})
+
+var _ = ginkgo.Describe("Root attribution contracts", func() {
+	ginkgo.DescribeTable("derives session IDs from paths",
+		func(path, want string) {
+			gomega.Expect(sessionlog.SessionIDFromPath(path)).To(gomega.Equal(want))
 		},
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("server runner should not be called in default mode")
+		ginkgo.Entry("conversation log", "logs/conversations/20260418-055543.504.jsonl", "20260418-055543.504"),
+		ginkgo.Entry("absolute path", "/abs/path/sess.jsonl", "sess"),
+		ginkgo.Entry("plain identifier", "plain", "plain"),
+	)
 
-			return nil
+	ginkgo.DescribeTable("names command telemetry from the routed surface",
+		func(args []string, want string) {
+			gomega.Expect(rootTelemetryCommandName(args)).To(gomega.Equal(want))
 		},
-		nopList,
+		ginkgo.Entry("empty starts TUI", []string(nil), "tui"),
+		ginkgo.Entry("tool subcommand", []string{"tool", "run"}, "tool:run"),
+		ginkgo.Entry("tool root", []string{"tool"}, "tool"),
+		ginkgo.Entry("MCP subcommand", []string{"mcp", "serve"}, "mcp:serve"),
+		ginkgo.Entry("implement", []string{"implement"}, "implement"),
+		ginkgo.Entry("plan execute", []string{"plan-execute"}, "plan-execute"),
+		ginkgo.Entry("artifact", []string{"artifact"}, "artifact"),
+		ginkgo.Entry("recover subcommand", []string{"recover", "resume"}, "recover:resume"),
+		ginkgo.Entry("local ops benchmark", []string{"local-ops", "benchmark", "--json"}, "local-ops:benchmark"),
+		ginkgo.Entry("product audit", []string{"product", "audit", "--effort-root", "."}, "product:audit"),
+		ginkgo.Entry("coding rules check", []string{"coding-rules", "check"}, "coding-rules:check"),
+		ginkgo.Entry("queue run", []string{"queue", "run"}, "queue:run"),
+		ginkgo.Entry("explicit run", []string{"run", "--prompt=hello"}, "run"),
+		ginkgo.Entry("retired prompt fallback", []string{"--prompt=hello"}, "tui"),
+		ginkgo.Entry("retired turns-file fallback", []string{"-turns-file=turns.jsonl"}, "tui"),
+		ginkgo.Entry("legacy server-only fallback", []string{"--server-only"}, "server"),
+		ginkgo.Entry("legacy list-sessions fallback", []string{"-list-sessions"}, "list_sessions"),
+		ginkgo.Entry("unknown fallback", []string{"unknown"}, "tui"),
 	)
+})
 
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
+var _ = ginkgo.Describe("Direct tool routing", func() {
+	ginkgo.It("writes fully attributed telemetry for a successful direct tool", func() {
+		t := ginkgo.GinkgoT()
+		telemetryDir := t.TempDir()
+		t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
+		configPath := writeMainConfig(t)
+		var stdout, stderr bytes.Buffer
 
-	mgr := workspace.NewManager(gotCfg.Workspace)
-	decision := mgr.EvaluateConfiguredToolRule(workspace.ToolRequest{Tool: "read_file", Path: ".idiom/deny-read-test.txt"})
+		code := runMain([]string{"tool", "pwd", "-config", configPath, "--caller-id", "cli-smoke", "--request-id", "req-cli", "--trace-id", "trace:cli"}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring(`"Tool": "pwd"`))
 
-	if decision != toolpolicy.Deny {
-		t.Fatalf("default TUI config must carry root config tool_rules deny, got %s in %#v", decision, gotCfg.Workspace.ToolRules)
-	}
-}
+		entries, err := os.ReadDir(telemetryDir)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(entries).To(gomega.HaveLen(1))
+		records := readMainTelemetryRecords(t, filepath.Join(telemetryDir, entries[0].Name()))
+		gomega.Expect(recordTypesContain(records, "process_start", "tool_request", "tool_result", "process_exit")).To(gomega.BeTrue(), "records=%#v", records)
 
-func TestRunReportsConfigErrors(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	badDir := t.TempDir()
-	badPath := filepath.Join(badDir, "bad.json")
-	if err := os.WriteFile(badPath, []byte(`{invalid json}`), 0o644); err != nil {
-		t.Fatalf("write bad config: %v", err)
-	}
-
-	code := runRuntime(
-		[]string{"-config", badPath},
-		&stdout,
-		&stderr,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 1 || !strings.Contains(stderr.String(), "inspect config") {
-		t.Fatalf("expected config parse failure, code=%d stderr=%s", code, stderr.String())
-	}
-}
-
-func TestRunRejectsInvalidFlags(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := runRuntime(
-		[]string{"-does-not-exist"},
-		&stdout,
-		&stderr,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
-		t.Fatalf("expected flag parse failure, code=%d stderr=%s", code, stderr.String())
-	}
-}
-
-// TestRunVersionFlagShortCircuits verifies that `idiom --version`
-// prints version info and exits 0 without touching the prompt, TUI,
-// server, or list-sessions runners. The flag must work against any
-// cwd — including ones without a config.json — so debugging questions
-// like "what version is this binary?" never depend on project state.
-func TestRunVersionFlagShortCircuits(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := runRuntime(
-		[]string{"--version"},
-		&stdout,
-		&stderr,
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("TUI runner must not be called for --version")
-
-			return nil
-		},
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("server runner must not be called for --version")
-
-			return nil
-		},
-		func(config.Config, io.Writer) error {
-			t.Fatal("list-sessions runner must not be called for --version")
-
-			return nil
-		},
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0 for --version, got %d stderr=%q", code, stderr.String())
-	}
-
-	out := stdout.String()
-	for _, marker := range []string{"version: ", "go: ", "os/arch: "} {
-		if !strings.Contains(out, marker) {
-			t.Fatalf("--version output missing %q line; got: %s", marker, out)
-		}
-	}
-}
-
-// TestRunSingleDashVersionFlagAlsoWorks verifies the `-version` form
-// (single dash, Go-flag-package-style) is equivalent to `--version`.
-// Go's flag package accepts both spellings; users debugging in a hurry
-// shouldn't have to remember which one is canonical.
-func TestRunSingleDashVersionFlagAlsoWorks(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := runRuntime(
-		[]string{"-version"},
-		&stdout,
-		&stderr,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0 for -version, got %d stderr=%q", code, stderr.String())
-	}
-
-	if !strings.Contains(stdout.String(), "version: ") {
-		t.Fatalf("-version output missing 'version: ' line; got: %s", stdout.String())
-	}
-}
-
-func TestSessionIDFromPath(t *testing.T) {
-	cases := map[string]string{
-		"logs/conversations/20260418-055543.504.jsonl": "20260418-055543.504",
-		"/abs/path/sess.jsonl":                         "sess",
-		"plain":                                        "plain",
-	}
-	for in, want := range cases {
-		if got := sessionlog.SessionIDFromPath(in); got != want {
-			t.Errorf("sessionIDFromPath(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestRootTelemetryCommandName(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "empty starts tui", args: nil, want: "tui"},
-		{name: "tool subcommand", args: []string{"tool", "run"}, want: "tool:run"},
-		{name: "tool root", args: []string{"tool"}, want: "tool"},
-		{name: "mcp subcommand", args: []string{"mcp", "serve"}, want: "mcp:serve"},
-		{name: "direct implement", args: []string{"implement"}, want: "implement"},
-		{name: "direct plan execute", args: []string{"plan-execute"}, want: "plan-execute"},
-		{name: "direct artifact", args: []string{"artifact"}, want: "artifact"},
-		{name: "recover subcommand", args: []string{"recover", "resume"}, want: "recover:resume"},
-		{name: "local ops benchmark subcommand", args: []string{"local-ops", "benchmark", "--json"}, want: "local-ops:benchmark"},
-		{name: "product audit flags", args: []string{"product", "audit", "--effort-root", "."}, want: "product:audit"},
-		{name: "coding rules check", args: []string{"coding-rules", "check"}, want: "coding-rules:check"},
-		{name: "queue run", args: []string{"queue", "run"}, want: "queue:run"},
-		{name: "explicit run command", args: []string{"run", "--prompt=hello"}, want: "run"},
-		{name: "retired top-level prompt fallback", args: []string{"--prompt=hello"}, want: "tui"},
-		{name: "retired top-level turns file fallback", args: []string{"-turns-file=turns.jsonl"}, want: "tui"},
-		{name: "legacy server only fallback", args: []string{"--server-only"}, want: "server"},
-		{name: "legacy list sessions fallback", args: []string{"-list-sessions"}, want: "list_sessions"},
-		{name: "unknown fallback", args: []string{"unknown"}, want: "tui"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := rootTelemetryCommandName(tt.args); got != tt.want {
-				t.Fatalf("rootTelemetryCommandName(%#v) = %q, want %q", tt.args, got, tt.want)
+		var directResult map[string]any
+		for _, record := range records {
+			if record["type"] == "tool_result" && record["tool"] == "pwd" && record["agent"] == "direct" {
+				directResult = record
+				break
 			}
-		})
-	}
-}
-
-func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
-	telemetryDir := t.TempDir()
-	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
-
-	configPath := writeMainConfig(t)
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "pwd", "-config", configPath, "--caller-id", "cli-smoke", "--request-id", "req-cli", "--trace-id", "trace:cli"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	if !strings.Contains(stdout.String(), `"Tool": "pwd"`) {
-		t.Fatalf("expected tool result on stdout, got %q", stdout.String())
-	}
-
-	entries, err := os.ReadDir(telemetryDir)
-	if err != nil {
-		t.Fatalf("read telemetry dir: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("expected one telemetry file, got %d", len(entries))
-	}
-
-	records := readMainTelemetryRecords(t, filepath.Join(telemetryDir, entries[0].Name()))
-	if !recordTypesContain(records, "process_start", "tool_request", "tool_result", "process_exit") {
-		t.Fatalf("telemetry missing expected records: %#v", records)
-	}
-
-	var sawDirectToolResult bool
-
-	for _, record := range records {
-		if record["type"] == "tool_result" && record["tool"] == "pwd" && record["agent"] == "direct" {
-			if record["transport"] != "cli" ||
-				record["profile"] != "default" ||
-				record["caller_id"] != "cli-smoke" ||
-				record["request_id"] != "req-cli" ||
-				record["trace_id"] != "trace:cli" ||
-				record["sidecar_schema_version"] != workspace.ToolSidecarEnvelopeVersion ||
-				record["contract_schema_version"] != workspace.ToolSchemaExportVersion ||
-				record["contract_id"] != "idiom.tool.v1:pwd" {
-
-				t.Fatalf("direct tool telemetry attribution mismatch: %#v", record)
-			}
-
-			sawDirectToolResult = true
 		}
-	}
+		gomega.Expect(directResult).To(gomega.SatisfyAll(
+			gomega.HaveKeyWithValue("transport", "cli"),
+			gomega.HaveKeyWithValue("profile", "default"),
+			gomega.HaveKeyWithValue("caller_id", "cli-smoke"),
+			gomega.HaveKeyWithValue("request_id", "req-cli"),
+			gomega.HaveKeyWithValue("trace_id", "trace:cli"),
+			gomega.HaveKeyWithValue("sidecar_schema_version", workspace.ToolSidecarEnvelopeVersion),
+			gomega.HaveKeyWithValue("contract_schema_version", workspace.ToolSchemaExportVersion),
+			gomega.HaveKeyWithValue("contract_id", "idiom.tool.v1:pwd"),
+		))
+	})
 
-	if !sawDirectToolResult {
-		t.Fatalf("missing direct pwd tool result telemetry: %#v", records)
-	}
-}
+	ginkgo.It("returns the sidecar envelope without changing legacy fields", func() {
+		configPath := writeMainConfig(ginkgo.GinkgoT())
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "pwd", "-config", configPath}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
 
-func TestRunMainDirectToolJSONIncludesSidecarEnvelopeAndLegacyFields(t *testing.T) {
-	configPath := writeMainConfig(t)
+		var payload struct {
+			Tool    string `json:"Tool"`
+			Summary string `json:"Summary"`
+			Output  string `json:"Output"`
+			Error   string `json:"Error"`
+			Sidecar struct {
+				SchemaVersion    string         `json:"schema_version"`
+				Tool             string         `json:"tool"`
+				Profile          string         `json:"profile"`
+				Contract         map[string]any `json:"contract"`
+				Warnings         []any          `json:"warnings"`
+				AuditEventIDs    []any          `json:"audit_event_ids"`
+				StructuredOutput map[string]any `json:"structured_output"`
+				Error            any            `json:"error"`
+			} `json:"sidecar"`
+		}
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(gomega.Succeed(), "output=%s", stdout.String())
 
-	var stdout, stderr bytes.Buffer
+		gomega.Expect(payload.Tool).To(gomega.Equal("pwd"))
+		gomega.Expect(payload.Summary).NotTo(gomega.BeEmpty())
+		gomega.Expect(payload.Output).NotTo(gomega.BeEmpty())
+		gomega.Expect(payload.Error).To(gomega.BeEmpty())
+		gomega.Expect(payload.Sidecar.SchemaVersion).To(gomega.Equal("idiom.tool.v1"))
+		gomega.Expect(payload.Sidecar.Tool).To(gomega.Equal("pwd"))
+		gomega.Expect(payload.Sidecar.Profile).To(gomega.Equal("default"))
+		gomega.Expect(payload.Sidecar.Contract).To(gomega.SatisfyAll(
+			gomega.HaveKeyWithValue("id", "idiom.tool.v1:pwd"),
+			gomega.HaveKey("metadata"),
+		))
+		gomega.Expect(payload.Sidecar.Warnings).NotTo(gomega.BeNil())
+		gomega.Expect(payload.Sidecar.AuditEventIDs).NotTo(gomega.BeNil())
+		gomega.Expect(payload.Sidecar.StructuredOutput).To(gomega.HaveKeyWithValue("format", "text"))
+		gomega.Expect(payload.Sidecar.Error).To(gomega.BeNil())
+	})
 
-	code := runMain([]string{"tool", "pwd", "-config", configPath}, &stdout, &stderr)
+	ginkgo.It("returns a structured sidecar error for an unknown tool", func() {
+		configPath := writeMainConfig(ginkgo.GinkgoT())
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "not_a_tool", "-config", configPath}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(1), "stdout=%s stderr=%s", stdout.String(), stderr.String())
 
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
+		var payload struct {
+			Tool    string `json:"Tool"`
+			Summary string `json:"Summary"`
+			Error   string `json:"Error"`
+			Sidecar struct {
+				SchemaVersion string `json:"schema_version"`
+				Error         struct {
+					Class   string `json:"class"`
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			} `json:"sidecar"`
+		}
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(gomega.Succeed(), "output=%s", stdout.String())
+		gomega.Expect(payload.Tool).To(gomega.Equal("not_a_tool"))
+		gomega.Expect(payload.Summary).NotTo(gomega.BeEmpty())
+		gomega.Expect(payload.Error).NotTo(gomega.BeEmpty())
+		gomega.Expect(payload.Sidecar.SchemaVersion).To(gomega.Equal("idiom.tool.v1"))
+		gomega.Expect(payload.Sidecar.Error.Class).To(gomega.Equal("unsupported_tool"))
+		gomega.Expect(payload.Sidecar.Error.Code).To(gomega.Equal("unsupported_tool"))
+		gomega.Expect(payload.Sidecar.Error.Message).To(gomega.ContainSubstring("unsupported tool"))
+	})
 
-	var payload struct {
-		Tool    string `json:"Tool"`
-		Summary string `json:"Summary"`
-		Output  string `json:"Output"`
-		Error   string `json:"Error"`
-		Sidecar struct {
-			SchemaVersion    string         `json:"schema_version"`
-			Tool             string         `json:"tool"`
-			Profile          string         `json:"profile"`
-			Contract         map[string]any `json:"contract"`
-			Warnings         []any          `json:"warnings"`
-			AuditEventIDs    []any          `json:"audit_event_ids"`
-			StructuredOutput map[string]any `json:"structured_output"`
-			Error            any            `json:"error"`
-		} `json:"sidecar"`
-	}
+	ginkgo.It("allows a read-only tool under the discovery profile", func() {
+		configPath := writeMainConfig(ginkgo.GinkgoT())
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "context_status", "-config", configPath, "--profile", "discovery", "--input", `{"limit":1}`}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), "stdout=%s stderr=%s", stdout.String(), stderr.String())
 
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("decode tool output: %v\n%s", err, stdout.String())
-	}
+		var payload struct {
+			Tool    string `json:"Tool"`
+			Sidecar struct {
+				Profile string `json:"profile"`
+				Error   any    `json:"error"`
+			} `json:"sidecar"`
+		}
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(gomega.Succeed(), "output=%s", stdout.String())
+		gomega.Expect(payload.Tool).To(gomega.Equal("context_status"))
+		gomega.Expect(payload.Sidecar.Profile).To(gomega.Equal("discovery"))
+		gomega.Expect(payload.Sidecar.Error).To(gomega.BeNil())
+	})
 
-	if payload.Tool != "pwd" || payload.Summary == "" || payload.Output == "" || payload.Error != "" {
-		t.Fatalf("legacy fields changed: %#v", payload)
-	}
+	ginkgo.It("allows recovery inspection under the discovery profile", func() {
+		t := ginkgo.GinkgoT()
+		root := t.TempDir()
+		_, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+			SessionID:         "sid-cli",
+			Phase:             "executor",
+			Status:            "failed",
+			FailureKind:       "executor_failed",
+			FailureReason:     "exact edit did not apply",
+			RequiredEditPaths: []string{"internal/surfaces/tui/app/foo.go"},
+		}, time.Now().UTC())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	if payload.Sidecar.SchemaVersion != "idiom.tool.v1" || payload.Sidecar.Tool != "pwd" || payload.Sidecar.Profile != "default" {
-		t.Fatalf("missing sidecar identity fields: %#v", payload.Sidecar)
-	}
+		configPath := writeMainConfigRoot(t, root)
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "recovery_inspect", "-config", configPath, "--profile", "discovery", "--input", `{"session_id":"sid-cli"}`}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), "stdout=%s stderr=%s", stdout.String(), stderr.String())
 
-	if payload.Sidecar.Contract["id"] != "idiom.tool.v1:pwd" || payload.Sidecar.Contract["metadata"] == nil {
-		t.Fatalf("missing sidecar contract metadata: %#v", payload.Sidecar.Contract)
-	}
+		var payload struct {
+			Tool    string `json:"Tool"`
+			Error   string `json:"Error"`
+			Sidecar struct {
+				Profile          string         `json:"profile"`
+				Contract         map[string]any `json:"contract"`
+				StructuredOutput map[string]any `json:"structured_output"`
+				Error            any            `json:"error"`
+			} `json:"sidecar"`
+		}
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(gomega.Succeed(), "output=%s", stdout.String())
+		gomega.Expect(payload.Tool).To(gomega.Equal("recovery_inspect"))
+		gomega.Expect(payload.Error).To(gomega.BeEmpty())
+		gomega.Expect(payload.Sidecar.Profile).To(gomega.Equal("discovery"))
+		gomega.Expect(payload.Sidecar.Error).To(gomega.BeNil())
+		gomega.Expect(payload.Sidecar.Contract).To(gomega.HaveKeyWithValue("id", "idiom.tool.v1:recovery_inspect"))
+		gomega.Expect(payload.Sidecar.StructuredOutput).To(gomega.SatisfyAll(
+			gomega.HaveKeyWithValue("failure_id", "plan-execute-sid-cli"),
+			gomega.HaveKeyWithValue("next_valid_action", string(recoverycontract.NextActionReviewDecomposition)),
+		))
+	})
 
-	if payload.Sidecar.Warnings == nil || payload.Sidecar.AuditEventIDs == nil {
-		t.Fatalf("warnings and audit ids should be parseable arrays: %#v", payload.Sidecar)
-	}
+	ginkgo.It("denies context refresh before execution under discovery", func() {
+		t := ginkgo.GinkgoT()
+		root := t.TempDir()
+		configPath := writeMainConfigRoot(t, root)
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "context_status", "-config", configPath, "--profile", "discovery", "--input", `{"refresh":true}`}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(1), "stdout=%s stderr=%s", stdout.String(), stderr.String())
 
-	if payload.Sidecar.StructuredOutput["format"] != "text" {
-		t.Fatalf("expected text output to be wrapped structurally, got %#v", payload.Sidecar.StructuredOutput)
-	}
+		payload := decodeProfileDenial(stdout.Bytes())
+		gomega.Expect(payload.Tool).To(gomega.Equal("context_status"))
+		gomega.Expect(payload.Sidecar.Profile).To(gomega.Equal("discovery"))
+		gomega.Expect(payload.Sidecar.Error.Class).To(gomega.Equal("profile_denied"))
+		gomega.Expect(payload.Sidecar.Error.Code).To(gomega.Equal("profile_denied"))
+		gomega.Expect(payload.Sidecar.Error.Message).To(gomega.ContainSubstring("read_only_profile"))
 
-	if payload.Sidecar.Error != nil {
-		t.Fatalf("success envelope should not include structured error: %#v", payload.Sidecar.Error)
-	}
-}
+		for _, path := range []string{
+			filepath.Join(root, ".idiom", "comprehension"),
+			filepath.Join(root, ".idiom", "comprehension", "graph.sqlite"),
+		} {
+			_, err := os.Stat(path)
+			gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), "denied refresh created %s; stat err=%v", path, err)
+		}
+	})
 
-func TestRunMainDirectToolUnknownToolIncludesStructuredSidecarError(t *testing.T) {
-	configPath := writeMainConfig(t)
+	ginkgo.It("denies writes before execution under discovery", func() {
+		configPath := writeMainConfig(ginkgo.GinkgoT())
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "write_file", "-config", configPath, "--profile", "discovery", "--input", `{"path":"profile-denied.txt","content":"nope"}`}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(1), "stdout=%s stderr=%s", stdout.String(), stderr.String())
 
-	var stdout, stderr bytes.Buffer
+		payload := decodeProfileDenial(stdout.Bytes())
+		gomega.Expect(payload.Tool).To(gomega.Equal("write_file"))
+		gomega.Expect(payload.Sidecar.Profile).To(gomega.Equal("discovery"))
+		gomega.Expect(payload.Sidecar.Error.Class).To(gomega.Equal("profile_denied"))
+		gomega.Expect(payload.Sidecar.Error.Code).To(gomega.Equal("profile_denied"))
+		gomega.Expect(payload.Sidecar.Error.Message).To(gomega.ContainSubstring("read_only_profile"))
+		_, err := os.Stat(filepath.Join(filepath.Dir(configPath), "profile-denied.txt"))
+		gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue(), "write_file appears to have executed; stat err=%v", err)
+	})
 
-	code := runMain([]string{"tool", "not_a_tool", "-config", configPath}, &stdout, &stderr)
+	ginkgo.It("rejects an unknown tool profile as a usage error", func() {
+		configPath := writeMainConfig(ginkgo.GinkgoT())
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "pwd", "-config", configPath, "--profile", "verify"}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(2), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("unknown tool profile"))
+	})
 
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
+	ginkgo.It("writes telemetry for rejected direct-tool input", func() {
+		t := ginkgo.GinkgoT()
+		telemetryDir := t.TempDir()
+		t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
+		configPath := writeMainConfig(t)
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "harness_feedback", "-config", configPath, "-input", "{"}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(1), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("invalid input JSON"))
 
-	var payload struct {
-		Tool    string `json:"Tool"`
-		Summary string `json:"Summary"`
-		Error   string `json:"Error"`
-		Sidecar struct {
+		entries, err := os.ReadDir(telemetryDir)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(entries).To(gomega.HaveLen(1))
+		records := readMainTelemetryRecords(t, filepath.Join(telemetryDir, entries[0].Name()))
+		gomega.Expect(recordTypesContain(records, "process_start", "tool_request", "tool_result", "process_exit")).To(gomega.BeTrue(), "records=%#v", records)
+
+		gomega.Expect(records).To(gomega.ContainElement(gomega.And(
+			gomega.HaveKeyWithValue("type", "tool_result"),
+			gomega.HaveKeyWithValue("tool", "harness_feedback"),
+			gomega.HaveKeyWithValue("error", gomega.ContainSubstring("invalid input JSON")),
+		)))
+	})
+
+	ginkgo.It("uses the shared request decoder for direct-tool input", func() {
+		t := ginkgo.GinkgoT()
+		configPath := filepath.Join(t.TempDir(), "config.json")
+		repoRoot := rootTestRepoRoot(t)
+		configJSON := fmt.Sprintf(`{"workspace":{"root":%q}}`, repoRoot)
+		gomega.Expect(os.WriteFile(configPath, []byte(configJSON+"\n"), 0o644)).To(gomega.Succeed())
+
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{
+			"tool", "go_read_symbol",
+			"-config", configPath,
+			"-input", `{"path":"internal/surfaces/cli/root/root.go","pattern":"runMain"}`,
+		}, &stdout, &stderr)
+
+		gomega.Expect(code).To(gomega.Equal(0), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("runMain"))
+	})
+})
+
+var _ = ginkgo.Describe("Tool discovery surfaces", func() {
+	ginkgo.It("prints manifest-derived help without parser noise", func() {
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "harness_feedback", "--help"}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.And(
+			gomega.ContainSubstring("Usage:"),
+			gomega.ContainSubstring("Record structured feedback"),
+			gomega.ContainSubstring(`"confidence"`),
+			gomega.ContainSubstring("Example:"),
+		))
+		gomega.Expect(stderr.String()).NotTo(gomega.ContainSubstring("flag: help requested"))
+	})
+
+	ginkgo.It("exports manifest-derived schemas and policy metadata", func() {
+		var stdout, stderr bytes.Buffer
+		code := runMain([]string{"tool", "schemas"}, &stdout, &stderr)
+		gomega.Expect(code).To(gomega.Equal(0), "stderr=%s", stderr.String())
+
+		var export struct {
 			SchemaVersion string `json:"schema_version"`
-			Error         struct {
-				Class   string `json:"class"`
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		} `json:"sidecar"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("decode error output: %v\n%s", err, stdout.String())
-	}
-
-	if payload.Tool != "not_a_tool" || payload.Summary == "" || payload.Error == "" {
-		t.Fatalf("legacy error fields changed: %#v", payload)
-	}
-
-	if payload.Sidecar.SchemaVersion != "idiom.tool.v1" {
-		t.Fatalf("missing sidecar schema version: %#v", payload.Sidecar)
-	}
-
-	if payload.Sidecar.Error.Class != "unsupported_tool" || payload.Sidecar.Error.Code != "unsupported_tool" {
-		t.Fatalf("unexpected structured error: %#v", payload.Sidecar.Error)
-	}
-
-	if !strings.Contains(payload.Sidecar.Error.Message, "unsupported tool") {
-		t.Fatalf("structured error message should preserve bounded diagnostic: %#v", payload.Sidecar.Error)
-	}
-}
-
-func TestRunMainDirectToolDiscoveryProfileAllowsReadOnlyTool(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "context_status", "-config", configPath, "--profile", "discovery", "--input", `{"limit":1}`}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	var payload struct {
-		Tool    string `json:"Tool"`
-		Sidecar struct {
-			Profile string `json:"profile"`
-			Error   any    `json:"error"`
-		} `json:"sidecar"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("decode tool output: %v\n%s", err, stdout.String())
-	}
-
-	if payload.Tool != "context_status" || payload.Sidecar.Profile != "discovery" || payload.Sidecar.Error != nil {
-		t.Fatalf("unexpected discovery success envelope: %#v", payload)
-	}
-}
-
-func TestRunMainDirectToolDiscoveryProfileAllowsRecoveryInspect(t *testing.T) {
-	root := t.TempDir()
-	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
-		SessionID:         "sid-cli",
-		Phase:             "executor",
-		Status:            "failed",
-		FailureKind:       "executor_failed",
-		FailureReason:     "exact edit did not apply",
-		RequiredEditPaths: []string{"internal/surfaces/tui/app/foo.go"},
-	}, time.Now().UTC()); err != nil {
-		t.Fatalf("write recovery fixture: %v", err)
-	}
-
-	configPath := writeMainConfigRoot(t, root)
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "recovery_inspect", "-config", configPath, "--profile", "discovery", "--input", `{"session_id":"sid-cli"}`}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	var payload struct {
-		Tool    string `json:"Tool"`
-		Error   string `json:"Error"`
-		Sidecar struct {
-			Profile          string         `json:"profile"`
-			Contract         map[string]any `json:"contract"`
-			StructuredOutput map[string]any `json:"structured_output"`
-			Error            any            `json:"error"`
-		} `json:"sidecar"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("decode tool output: %v\n%s", err, stdout.String())
-	}
-
-	if payload.Tool != "recovery_inspect" || payload.Error != "" || payload.Sidecar.Profile != "discovery" || payload.Sidecar.Error != nil {
-		t.Fatalf("unexpected recovery_inspect sidecar payload: %#v", payload)
-	}
-
-	if payload.Sidecar.Contract["id"] != "idiom.tool.v1:recovery_inspect" {
-		t.Fatalf("unexpected recovery contract: %#v", payload.Sidecar.Contract)
-	}
-
-	if payload.Sidecar.StructuredOutput["failure_id"] != "plan-execute-sid-cli" ||
-		payload.Sidecar.StructuredOutput["next_valid_action"] != string(recoverycontract.NextActionReviewDecomposition) {
-
-		t.Fatalf("recovery structured output missing state: %#v", payload.Sidecar.StructuredOutput)
-	}
-}
-
-func TestRunMainDirectToolDiscoveryProfileDeniesContextStatusRefreshBeforeExecution(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeMainConfigRoot(t, root)
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "context_status", "-config", configPath, "--profile", "discovery", "--input", `{"refresh":true}`}, &stdout, &stderr)
-
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	var payload struct {
-		Tool    string `json:"Tool"`
-		Error   string `json:"Error"`
-		Sidecar struct {
-			Profile string `json:"profile"`
-			Error   struct {
-				Class   string `json:"class"`
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		} `json:"sidecar"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("decode denial output: %v\n%s", err, stdout.String())
-	}
-
-	if payload.Tool != "context_status" || payload.Sidecar.Profile != "discovery" {
-		t.Fatalf("unexpected denial identity: %#v", payload)
-	}
-
-	if payload.Sidecar.Error.Class != "profile_denied" || payload.Sidecar.Error.Code != "profile_denied" ||
-		!strings.Contains(payload.Sidecar.Error.Message, "read_only_profile") {
-
-		t.Fatalf("unexpected structured denial: %#v", payload.Sidecar.Error)
-	}
-
-	for _, path := range []string{
-		filepath.Join(root, ".idiom", "comprehension"),
-		filepath.Join(root, ".idiom", "comprehension", "graph.sqlite"),
-	} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("denied refresh should not create %s; stat err=%v", path, err)
+			Source        string `json:"source"`
+			Metadata      struct {
+				ClientClassifications []string `json:"client_classifications"`
+				ProductSignals        []string `json:"product_signals"`
+			} `json:"metadata"`
+			Tools []struct {
+				Name        string          `json:"name"`
+				InputSchema json.RawMessage `json:"input_schema"`
+				Profiles    []string        `json:"profiles"`
+				Policy      struct {
+					SideEffects       []string `json:"side_effects"`
+					DecisionAuthority string   `json:"decision_authority"`
+					ErrorClasses      []string `json:"error_classes"`
+				} `json:"policy"`
+			} `json:"tools"`
 		}
-	}
-}
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &export)).To(gomega.Succeed(), "output=%s", stdout.String())
+		gomega.Expect(export.SchemaVersion).NotTo(gomega.BeEmpty())
+		gomega.Expect(export.Source).To(gomega.ContainSubstring("BuildToolManifest"))
+		gomega.Expect(export.Metadata.ClientClassifications).To(gomega.HaveLen(7))
+		gomega.Expect(export.Metadata.ProductSignals).To(gomega.HaveLen(9))
 
-func TestRunMainDirectToolDiscoveryProfileDeniesWriteBeforeExecution(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "write_file", "-config", configPath, "--profile", "discovery", "--input", `{"path":"profile-denied.txt","content":"nope"}`}, &stdout, &stderr)
-
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	var payload struct {
-		Tool    string `json:"Tool"`
-		Error   string `json:"Error"`
-		Sidecar struct {
-			Profile string `json:"profile"`
-			Error   struct {
-				Class   string `json:"class"`
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		} `json:"sidecar"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("decode denial output: %v\n%s", err, stdout.String())
-	}
-
-	if payload.Tool != "write_file" || payload.Sidecar.Profile != "discovery" {
-		t.Fatalf("unexpected denial identity: %#v", payload)
-	}
-
-	if payload.Sidecar.Error.Class != "profile_denied" || payload.Sidecar.Error.Code != "profile_denied" ||
-		!strings.Contains(payload.Sidecar.Error.Message, "read_only_profile") {
-
-		t.Fatalf("unexpected structured denial: %#v", payload.Sidecar.Error)
-	}
-
-	if _, err := os.Stat(filepath.Join(filepath.Dir(configPath), "profile-denied.txt")); !os.IsNotExist(err) {
-		t.Fatalf("write_file appears to have executed; stat err=%v", err)
-	}
-}
-
-func TestRunMainDirectToolUnknownProfileIsUsageError(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "pwd", "-config", configPath, "--profile", "verify"}, &stdout, &stderr)
-
-	if code != 2 {
-		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	if !strings.Contains(stderr.String(), "unknown tool profile") {
-		t.Fatalf("expected unknown profile diagnostic, got %q", stderr.String())
-	}
-}
-
-func TestRunMainWritesTelemetryForRejectedDirectToolInput(t *testing.T) {
-	telemetryDir := t.TempDir()
-	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
-
-	configPath := writeMainConfig(t)
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "harness_feedback", "-config", configPath, "-input", "{"}, &stdout, &stderr)
-
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	if !strings.Contains(stderr.String(), "invalid input JSON") {
-		t.Fatalf("expected invalid JSON error, got %q", stderr.String())
-	}
-
-	entries, err := os.ReadDir(telemetryDir)
-	if err != nil {
-		t.Fatalf("read telemetry dir: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("expected one telemetry file, got %d", len(entries))
-	}
-
-	records := readMainTelemetryRecords(t, filepath.Join(telemetryDir, entries[0].Name()))
-	if !recordTypesContain(records, "process_start", "tool_request", "tool_result", "process_exit") {
-		t.Fatalf("telemetry missing expected records: %#v", records)
-	}
-
-	var sawRejectedToolResult bool
-
-	for _, record := range records {
-		if record["type"] == "tool_result" && record["tool"] == "harness_feedback" && strings.Contains(stringFieldForTest(record, "error"), "invalid input JSON") {
-			sawRejectedToolResult = true
+		var (
+			sawReadFile     bool
+			sawContextQuery bool
+		)
+		for _, tool := range export.Tools {
+			switch tool.Name {
+			case "context_query":
+				sawContextQuery = true
+				gomega.Expect(tool.Policy.ErrorClasses).To(gomega.ContainElement("stale_context"))
+				gomega.Expect(string(tool.InputSchema)).To(gomega.And(
+					gomega.ContainSubstring(`"freshness_policy"`),
+					gomega.ContainSubstring(`"freshness_max_files"`),
+				))
+			case "read_file":
+				sawReadFile = true
+				gomega.Expect(json.Valid(tool.InputSchema)).To(gomega.BeTrue())
+				gomega.Expect(tool.Profiles).NotTo(gomega.BeEmpty())
+				gomega.Expect(tool.Policy.SideEffects).NotTo(gomega.BeEmpty())
+				gomega.Expect(tool.Policy.DecisionAuthority).To(gomega.Equal("runtime_contract"))
+				gomega.Expect(tool.Policy.ErrorClasses).To(gomega.ContainElement("invalid_input"))
+			}
 		}
-	}
+		gomega.Expect(sawReadFile).To(gomega.BeTrue(), "tools=%#v", export.Tools)
+		gomega.Expect(sawContextQuery).To(gomega.BeTrue(), "tools=%#v", export.Tools)
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("Inspect one focused architecture/review question"))
+	})
 
-	if !sawRejectedToolResult {
-		t.Fatalf("missing rejected direct tool result telemetry: %#v", records)
-	}
+	ginkgo.It("recognizes help flags but not flag values", func() {
+		gomega.Expect(toolcmd.HelpRequested([]string{"--config", "custom.json", "--help"})).To(gomega.BeTrue())
+		gomega.Expect(toolcmd.HelpRequested([]string{"--input", "help"})).To(gomega.BeFalse())
+	})
+})
+
+type profileDenialPayload struct {
+	Tool    string `json:"Tool"`
+	Error   string `json:"Error"`
+	Sidecar struct {
+		Profile string `json:"profile"`
+		Error   struct {
+			Class   string `json:"class"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	} `json:"sidecar"`
 }
 
-func TestRunMainDirectToolInputUsesSharedRequestDecoder(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "config.json")
-	repoRoot := rootTestRepoRoot(t)
-	configJSON := fmt.Sprintf(`{"workspace":{"root":%q}}`, repoRoot)
-
-	if err := os.WriteFile(configPath, []byte(configJSON+"\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{
-		"tool", "go_read_symbol",
-		"-config", configPath,
-		"-input", `{"path":"internal/surfaces/cli/root/root.go","pattern":"runMain"}`,
-	}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-
-	if !strings.Contains(stdout.String(), "runMain") {
-		t.Fatalf("expected symbol read output, got %s", stdout.String())
-	}
+func decodeProfileDenial(data []byte) profileDenialPayload {
+	var payload profileDenialPayload
+	gomega.Expect(json.Unmarshal(data, &payload)).To(gomega.Succeed(), "output=%s", string(data))
+	return payload
 }
 
-func rootTestRepoRoot(t *testing.T) string {
+func rootTestRepoRoot(t rootTestContext) string {
 	t.Helper()
-
 	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get cwd: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
@@ -757,185 +626,39 @@ func rootTestRepoRoot(t *testing.T) string {
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatalf("repo root not found from cwd")
+			ginkgo.Fail("repository root not found from working directory")
+			return ""
 		}
-
 		dir = parent
 	}
 }
 
-func TestRunMainToolHelpPrintsSchemaWithoutError(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "harness_feedback", "--help"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	for _, want := range []string{"Usage:", "Record structured feedback", `"confidence"`, "Example:"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("expected tool help to contain %q, got:\n%s", want, stdout.String())
-		}
-	}
-
-	if strings.Contains(stderr.String(), "flag: help requested") {
-		t.Fatalf("tool help should not surface flag parser help errors: %q", stderr.String())
-	}
-}
-
-func TestRunMainToolSchemasExportsManifestDerivedSchemas(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := runMain([]string{"tool", "schemas"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	var export struct {
-		SchemaVersion string `json:"schema_version"`
-		Source        string `json:"source"`
-		Metadata      struct {
-			ClientClassifications []string `json:"client_classifications"`
-			ProductSignals        []string `json:"product_signals"`
-		} `json:"metadata"`
-		Tools []struct {
-			Name        string          `json:"name"`
-			InputSchema json.RawMessage `json:"input_schema"`
-			Profiles    []string        `json:"profiles"`
-			Policy      struct {
-				SideEffects       []string `json:"side_effects"`
-				DecisionAuthority string   `json:"decision_authority"`
-				ErrorClasses      []string `json:"error_classes"`
-			} `json:"policy"`
-		} `json:"tools"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &export); err != nil {
-		t.Fatalf("decode schema export: %v\n%s", err, stdout.String())
-	}
-
-	if export.SchemaVersion == "" || !strings.Contains(export.Source, "BuildToolManifest") {
-		t.Fatalf("schema export should name manifest/schema source, got %#v", export)
-	}
-
-	if len(export.Metadata.ClientClassifications) != 7 || len(export.Metadata.ProductSignals) != 9 {
-		t.Fatalf("schema export should carry generic client/product metadata, got %#v", export.Metadata)
-	}
-
-	var (
-		sawReadFile     bool
-		sawContextQuery bool
-	)
-
-	for _, tool := range export.Tools {
-		if tool.Name != "read_file" {
-			if tool.Name == "context_query" {
-				sawContextQuery = true
-
-				if !slicesContainsString(tool.Policy.ErrorClasses, "stale_context") {
-					t.Fatalf("context_query export should expose stale_context error class: %#v", tool.Policy.ErrorClasses)
-				}
-
-				if !strings.Contains(string(tool.InputSchema), `"freshness_policy"`) || !strings.Contains(string(tool.InputSchema), `"freshness_max_files"`) {
-					t.Fatalf("context_query schema should expose freshness controls, got %s", string(tool.InputSchema))
-				}
-			}
-
-			continue
-		}
-
-		sawReadFile = true
-
-		if !json.Valid(tool.InputSchema) || len(tool.Profiles) == 0 ||
-			len(tool.Policy.SideEffects) == 0 || tool.Policy.DecisionAuthority != "runtime_contract" ||
-			!slicesContainsString(tool.Policy.ErrorClasses, "invalid_input") {
-
-			t.Fatalf("read_file export missing required metadata: %#v", tool)
-		}
-	}
-
-	if !sawReadFile {
-		t.Fatalf("schema export missing read_file: %#v", export.Tools)
-	}
-
-	if !sawContextQuery {
-		t.Fatalf("schema export missing context_query: %#v", export.Tools)
-	}
-
-	if strings.Contains(stdout.String(), "Inspect one focused architecture/review question") {
-		t.Fatalf("schema export should not expose raw manifest prompt examples")
-	}
-}
-
-func TestToolHelpRequestedIgnoresFlagValues(t *testing.T) {
-	if !toolcmd.HelpRequested([]string{"--config", "custom.json", "--help"}) {
-		t.Fatal("expected help after config flag to be recognized")
-	}
-
-	if toolcmd.HelpRequested([]string{"--input", "help"}) {
-		t.Fatal("input value should not be treated as a help request")
-	}
-}
-
-func slicesContainsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-
-	return false
-}
-
-func writeMainConfig(t *testing.T) string {
+func writeMainConfig(t rootTestContext) string {
 	t.Helper()
-
-	root := t.TempDir()
-	return writeMainConfigRoot(t, root)
+	return writeMainConfigRoot(t, t.TempDir())
 }
 
-func writeMainConfigRoot(t *testing.T, root string) string {
+func writeMainConfigRoot(t rootTestContext, root string) string {
 	t.Helper()
 	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
-
 	path := filepath.Join(t.TempDir(), "config.json")
 	configJSON := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
-
-	if err := os.WriteFile(path, []byte(configJSON+"\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
+	gomega.Expect(os.WriteFile(path, []byte(configJSON+"\n"), 0o644)).To(gomega.Succeed())
 	return path
 }
 
-func stringFieldForTest(record map[string]any, key string) string {
-	value, _ := record[key].(string)
-	return value
-}
-
-func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {
+func readMainTelemetryRecords(t rootTestContext, path string) []map[string]any {
 	t.Helper()
-
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read telemetry log: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	records := make([]map[string]any, 0, len(lines))
-
 	for _, line := range lines {
 		var record map[string]any
-
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("parse telemetry line %q: %v", line, err)
-		}
-
+		gomega.Expect(json.Unmarshal([]byte(line), &record)).To(gomega.Succeed(), "line=%q", line)
 		records = append(records, record)
 	}
-
 	return records
 }
 
@@ -952,6 +675,5 @@ func recordTypesContain(records []map[string]any, want ...string) bool {
 			return false
 		}
 	}
-
 	return true
 }

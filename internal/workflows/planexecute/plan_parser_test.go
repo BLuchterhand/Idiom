@@ -1,13 +1,14 @@
 package planexecute
 
 import (
-	"strings"
-	"testing"
+	"fmt"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/contracts/workflowstate"
 )
 
-func TestPlanExecuteExactPlanEditsRequiresDispatchableStateBeforeHeadingScan(t *testing.T) {
+var _ = ginkgo.It("plan execute exact plan edits requires dispatchable state before heading scan", func() {
 	prompt := "# Atom\n\n## Required Edits\n\npkg/feature.go\n\nOld text:\n```go\nreturn 1\n```\n\nNew text:\n```go\nreturn 2\n```\n"
 	edits, reason := planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt, []string{"pkg/feature.go"}, "", PlanExecuteDispatchState{
 		WorkflowID:       workflowstate.WorkflowPlanExecutePlanner,
@@ -15,16 +16,11 @@ func TestPlanExecuteExactPlanEditsRequiresDispatchableStateBeforeHeadingScan(t *
 		ExpectedArtifact: planExecuteExpectedArtifactExactPlan,
 		Reason:           "missing-scope",
 	})
+	gomega.Expect(len(edits) != 0).To(gomega.BeFalse(), fmt.Sprintf("non-dispatchable state should not parse heading edits: %#v", edits))
+	gomega.Expect(reason != "missing-scope").To(gomega.BeFalse(), fmt.Sprintf("reason = %q, want typed non-dispatch reason", reason))
+})
 
-	if len(edits) != 0 {
-		t.Fatalf("non-dispatchable state should not parse heading edits: %#v", edits)
-	}
-	if reason != "missing-scope" {
-		t.Fatalf("reason = %q, want typed non-dispatch reason", reason)
-	}
-}
-
-func TestPlanExecuteExactPlanEditsUsesLegacyHeadingOnlyWhenDispatchable(t *testing.T) {
+var _ = ginkgo.It("plan execute exact plan edits uses legacy heading only when dispatchable", func() {
 	prompt := "# Atom\n\n## Required Edits\n\npkg/feature.go\n\nOld text:\n```go\nreturn 1\n```\n\nNew text:\n```go\nreturn 2\n```\n"
 	edits, reason := planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt, []string{"pkg/feature.go"}, "", PlanExecuteDispatchState{
 		WorkflowID:            workflowstate.WorkflowPlanExecutePlanner,
@@ -33,28 +29,16 @@ func TestPlanExecuteExactPlanEditsUsesLegacyHeadingOnlyWhenDispatchable(t *testi
 		ExpectedArtifact:      planExecuteExpectedArtifactExactPlan,
 		LegacyHeadingFallback: true,
 	})
+	gomega.Expect(reason).To(gomega.Equal(""), fmt.Sprintf("dispatchable legacy heading parse failed edits=%#v reason=%q", edits, reason))
+	gomega.Expect(edits).To(gomega.HaveLen(1), fmt.Sprintf("dispatchable legacy heading parse failed edits=%#v reason=%q", edits, reason))
+	gomega.Expect(edits[0].Path).To(gomega.Equal("pkg/feature.go"), fmt.Sprintf("unexpected parsed edit: %#v", edits[0]))
+	gomega.Expect(edits[0].OldText).To(gomega.ContainSubstring("return 1"), fmt.Sprintf("unexpected parsed edit: %#v", edits[0]))
+	gomega.Expect(edits[0].NewText).To(gomega.ContainSubstring("return 2"), fmt.Sprintf("unexpected parsed edit: %#v", edits[0]))
+})
 
-	if reason != "" || len(edits) != 1 {
-		t.Fatalf("dispatchable legacy heading parse failed edits=%#v reason=%q", edits, reason)
-	}
-	if edits[0].Path != "pkg/feature.go" ||
-		!strings.Contains(edits[0].OldText, "return 1") ||
-		!strings.Contains(edits[0].NewText, "return 2") {
-
-		t.Fatalf("unexpected parsed edit: %#v", edits[0])
-	}
-}
-
-func TestPlanExecuteExactPlanDispatchStateCarriesTerminalStateForMissingScope(t *testing.T) {
+var _ = ginkgo.It("plan execute exact plan dispatch state carries terminal state for missing scope", func() {
 	state := planExecuteExactPlanDispatchState(nil)
-
-	if state.State != workflowstate.StateTerminal {
-		t.Fatalf("state = %q, want terminal", state.State)
-	}
-	if state.TerminalState != workflowstate.TerminalStateMissingScope {
-		t.Fatalf("terminal_state = %q, want missing-scope", state.TerminalState)
-	}
-	if state.Dispatchable {
-		t.Fatal("missing required paths must not be dispatchable")
-	}
-}
+	gomega.Expect(state.State != workflowstate.StateTerminal).To(gomega.BeFalse(), fmt.Sprintf("state = %q, want terminal", state.State))
+	gomega.Expect(state.TerminalState != workflowstate.TerminalStateMissingScope).To(gomega.BeFalse(), fmt.Sprintf("terminal_state = %q, want missing-scope", state.TerminalState))
+	gomega.Expect(state.Dispatchable).To(gomega.BeFalse(), fmt.Sprint("missing required paths must not be dispatchable"))
+})

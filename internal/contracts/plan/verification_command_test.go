@@ -1,63 +1,47 @@
 package plan
 
-import "testing"
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
 
-func TestVerificationCommandArgsAllowsCanonicalTestCommands(t *testing.T) {
-	tests := []string{
-		"go test ./...",
-		"go vet ./internal/...",
-		"pytest tests/test_brain.py",
-		"python -m pytest tests/test_brain.py",
-	}
-
-	for _, command := range tests {
-		t.Run(command, func(t *testing.T) {
+var _ = Describe("Verification commands", func() {
+	DescribeTable("accepts and preserves canonical test commands",
+		func(command string) {
 			args, ok := VerificationCommandArgs(command)
-			if !ok {
-				t.Fatalf("VerificationCommandArgs(%q) rejected command", command)
-			}
-			if got := CanonicalVerificationCommand(command, args); got != command {
-				t.Fatalf("canonical command = %q, want %q", got, command)
-			}
-		})
-	}
-}
+			Expect(ok).To(BeTrue())
+			Expect(CanonicalVerificationCommand(command, args)).To(Equal(command))
+		},
+		Entry("Go test", "go test ./..."),
+		Entry("Go vet", "go vet ./internal/..."),
+		Entry("pytest", "pytest tests/test_brain.py"),
+		Entry("Python module pytest", "python -m pytest tests/test_brain.py"),
+	)
 
-func TestVerificationCommandPrefixReturnsMatchedAllowedPrefix(t *testing.T) {
-	args, ok := VerificationCommandArgs("python -m pytest tests/unit")
-	if !ok {
-		t.Fatal("VerificationCommandArgs rejected pytest command")
-	}
+	It("returns the matched allowed prefix", func() {
+		args, ok := VerificationCommandArgs("python -m pytest tests/unit")
+		Expect(ok).To(BeTrue())
+		Expect(VerificationCommandPrefix(args)).To(Equal([]string{"python", "-m", "pytest"}))
+	})
 
-	prefix := VerificationCommandPrefix(args)
-	if len(prefix) != 3 || prefix[0] != "python" || prefix[1] != "-m" || prefix[2] != "pytest" {
-		t.Fatalf("VerificationCommandPrefix = %#v, want python -m pytest", prefix)
-	}
-}
+	DescribeTable("rejects shell control operators",
+		func(command string) {
+			_, ok := VerificationCommandArgs(command)
+			Expect(ok).To(BeFalse())
+		},
+		Entry("and operator", "go test ./... && rm -rf tmp"),
+		Entry("semicolon", "pytest tests/test.py; cat secret"),
+		Entry("redirection", "python -m pytest tests/test.py > out.txt"),
+	)
 
-func TestVerificationCommandArgsRejectsShellControlOperators(t *testing.T) {
-	for _, command := range []string{
-		"go test ./... && rm -rf tmp",
-		"pytest tests/test.py; cat secret",
-		"python -m pytest tests/test.py > out.txt",
-	} {
-		t.Run(command, func(t *testing.T) {
-			if _, ok := VerificationCommandArgs(command); ok {
-				t.Fatalf("VerificationCommandArgs(%q) accepted unsafe command", command)
-			}
-		})
-	}
-}
+	It("canonicalizes argv and working-directory identity", func() {
+		fromText := VerificationCommandEvidenceKey("python -m pytest tests/test_brain.py", nil, ".")
+		fromArgv := VerificationCommandEvidenceKey("", []string{"python", "-m", "pytest", "tests/test_brain.py"}, "")
+		Expect(fromText).NotTo(BeEmpty())
+		Expect(fromArgv).To(Equal(fromText))
 
-func TestVerificationCommandEvidenceKeyCanonicalizesArgvAndWorkingDir(t *testing.T) {
-	fromText := VerificationCommandEvidenceKey("python -m pytest tests/test_brain.py", nil, ".")
-	fromArgv := VerificationCommandEvidenceKey("", []string{"python", "-m", "pytest", "tests/test_brain.py"}, "")
-	if fromText == "" || fromText != fromArgv {
-		t.Fatalf("canonical keys differ: text=%q argv=%q", fromText, fromArgv)
-	}
-
-	subdir := VerificationCommandEvidenceKey("python -m pytest tests/test_brain.py", nil, "src")
-	if subdir == "" || subdir == fromText {
-		t.Fatalf("working directory should be part of evidence identity: root=%q subdir=%q", fromText, subdir)
-	}
-}
+		subdir := VerificationCommandEvidenceKey("python -m pytest tests/test_brain.py", nil, "src")
+		Expect(subdir).NotTo(BeEmpty())
+		Expect(subdir).NotTo(Equal(fromText))
+	})
+})

@@ -47,10 +47,10 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 
 	if planExecuteSubmitReady {
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search/source-refresh after plan-execute submit_plan readiness")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: Decision: source-satisfied only with current-state evidence for every required path")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: <<QUESTION>> only with exact path-specific blockers")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "permission-authorized inspection remains callable when another concrete edit-safety fact is needed")
 
 		if textutil.ContainsAny(statusCombined, "malformed tool request", "tool_parse") {
 			guidance.InvalidNext = appendUnique(guidance.InvalidNext, "malformed_json_tool_request")
@@ -71,15 +71,15 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 
 	if exactAnchorWriteFailure(input.Constraints, tool, statusCombined) {
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search before resolving exact-anchor write failure")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "retry one corrected write shape from the target packet if a safe anchor is known")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> naming the missing anchor if the packet anchor no longer matches")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "permission-authorized inspection remains callable when it can establish the missing anchor fact")
 	}
 
 	if exactAnchorHiddenPrewriteTool(input.Constraints, tool, statusCombined) {
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search/shell before first exact-anchor write")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "exact-anchor write capability with the supplied target-packet anchor")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> if no exact write anchor or patch is present")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "permission-authorized inspection remains callable for a fresh request")
 	}
 
 	if textutil.ContainsAny(statusCombined, "repeated", "replayed", "already failed earlier") {
@@ -90,30 +90,16 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		}
 	}
 
-	if strings.Contains(statusCombined, "broad inspection") {
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "additional_broad_workspace_inspection")
-	}
-
-	if strings.Contains(statusCombined, "bootstrap already inspected") && tool == workspace.ToolNameReadFile {
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "duplicate_read_file_on_bootstrapped_target")
-	}
-
 	if textutil.ContainsAny(statusCombined, "completion gate", "final answer rejected") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate")
 	}
 
-	if closureScope != "" {
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "open-ended discovery after readiness without one exact missing claim and one exact probe")
-	}
-
 	if writeReadyPacket {
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "orientation read/search after required edit paths and packet evidence without a named missing fact")
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "task_ledger planning before the first required-path write")
 	}
 
 	if requiredPathsRemaining {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "final answer while required edit paths remain unchanged")
-		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "new orientation read/search before resolving remaining required edit paths")
 	}
 
 	if strings.Contains(statusCombined, "bootstrap already inspected") {
@@ -237,7 +223,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 				}
 
 				if writeReadyPacket {
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "do not take another orientation read just to improve confidence")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "permission-authorized inspection remains callable when it closes a concrete edit-safety gap")
 				} else {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "one narrow range read or exact-text search only if a specific anchor is still missing")
 				}

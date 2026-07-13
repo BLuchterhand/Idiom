@@ -1,18 +1,23 @@
 package lane
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestLaneEventVocabulary(t *testing.T) {
-	for _, eventType := range []EventType{EventStart, EventRunLedger, EventDegraded, EventAtomIntake} {
-		if !KnownEventType(eventType) {
-			t.Fatalf("KnownEventType(%q) = false", eventType)
-		}
-		if got := EventName(eventType); got != EventPrefix+string(eventType) {
-			t.Fatalf("EventName(%q) = %q", eventType, got)
-		}
-	}
+var _ = ginkgo.Describe("Lane event vocabulary", func() {
+	ginkgo.DescribeTable("declared event types",
+		func(eventType EventType) {
+			gomega.Expect(KnownEventType(eventType)).To(gomega.BeTrue())
+			gomega.Expect(EventName(eventType)).To(gomega.Equal(EventPrefix + string(eventType)))
+		},
+		ginkgo.Entry("start", EventStart),
+		ginkgo.Entry("run ledger", EventRunLedger),
+		ginkgo.Entry("degraded", EventDegraded),
+		ginkgo.Entry("atom intake", EventAtomIntake),
+	)
 
-	if KnownEventType(EventType("surprise")) {
-		t.Fatal("KnownEventType accepted an undeclared lane event")
-	}
-}
+	ginkgo.It("rejects undeclared event types", func() {
+		gomega.Expect(KnownEventType(EventType("surprise"))).To(gomega.BeFalse())
+	})
+})

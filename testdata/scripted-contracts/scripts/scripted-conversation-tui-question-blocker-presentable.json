@@ -1,3 +1,6 @@
 [
-  "Question: Can you investigate why resizing the TUI mid-answer leaves the conversation with stale wrapped lines?\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/surfaces/tui/app/update_handlers.go`\n- `internal/surfaces/tui/app/rendering.go`\n\nKey findings:\n- I still need source-body evidence before answering."
+  "Question: Can you investigate why resizing the TUI mid-answer leaves the conversation with stale wrapped lines?\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/app/model_state.go`\n\nKey findings:\n- I still need source-body evidence before answering.",
+  "{\"tool\":\"read_file\",\"path\":\"internal/app/model_state.go\",\"named_gap\":\"inspect the wrapped input height implementation\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/app/model_state_test.go\",\"named_gap\":\"inspect the prompt-column regression expectation\"}",
+  "The stale wrapping risk comes from the input-height calculation using the full input width without subtracting the prompt columns in `internal/app/model_state.go`. The regression in `internal/app/model_state_test.go` expects a nine-character value with a two-column prompt and width ten to occupy two rows, which makes that missing subtraction the repository-backed defect. No files were edited."
 ]

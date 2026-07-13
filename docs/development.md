@@ -43,14 +43,12 @@ are for imposed boundary/interface adapters only and must carry that rationale:
 ## Installer Checks
 
 ```bash
-./scripts/test-install-dependencies.sh --manifest-only
-bash -n scripts/test-install-macos.sh
-python3 -m py_compile scripts/test-post-install-harness.py
-python3 -m py_compile scripts/test-discovery-tools-e2e.py
+make test-system-hermetic
 ```
 
 Run host-specific installer smoke tests only where the target dependency set is
-available.
+available. Use the corresponding `make test-install-*` target so Ginkgo remains
+the assertion entrypoint and reports fixture stdout and stderr on failure.
 
 ## Local Hygiene
 

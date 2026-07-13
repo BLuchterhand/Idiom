@@ -1,85 +1,72 @@
 package writerrouting
 
 import (
-	"testing"
-
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/backends"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestBuildDecisionEffectiveModelPrefersDirectConfigOverRoleAlias(t *testing.T) {
-	cfg := config.Default()
+var _ = Describe("Writer route decisions", func() {
+	It("prefers a directly configured model while retaining role aliases as context", func() {
+		cfg := config.Default()
+		cfg.LlamaServer.Model = "deepseek-v4-flash"
 
-	cfg.LlamaServer.Model = "deepseek-v4-flash"
+		decision := BuildDecision(cfg, DecisionOptions{
+			Mode:        writerroute.ModeReadOnly,
+			Lane:        "main",
+			RoleAliases: map[string]string{backends.RoleClassifier: "deepseek-v4-pro"},
+		})
 
-	decision := BuildDecision(cfg, DecisionOptions{
-		Mode:        writerroute.ModeReadOnly,
-		Lane:        "main",
-		RoleAliases: map[string]string{backends.RoleClassifier: "deepseek-v4-pro"},
+		Expect(decision.EffectiveModel).To(Equal("deepseek-v4-flash"))
+		Expect(decision.RoleAliases).To(HaveKeyWithValue(backends.RoleClassifier, "deepseek-v4-pro"))
 	})
 
-	if decision.EffectiveModel != "deepseek-v4-flash" {
-		t.Fatalf("effective model = %q, want direct configured model", decision.EffectiveModel)
-	}
+	It("falls back to the role alias when no direct model is configured", func() {
+		cfg := config.Default()
+		cfg.LlamaServer.Model = ""
 
-	if decision.RoleAliases[backends.RoleClassifier] != "deepseek-v4-pro" {
-		t.Fatalf("role aliases should remain visible as routing context: %#v", decision.RoleAliases)
-	}
-}
+		decision := BuildDecision(cfg, DecisionOptions{
+			Mode:        writerroute.ModeReadOnly,
+			Lane:        "main",
+			RoleAliases: map[string]string{backends.RoleClassifier: "deepseek-v4-pro"},
+		})
 
-func TestBuildDecisionEffectiveModelUsesAliasWhenNoDirectModelConfigured(t *testing.T) {
-	cfg := config.Default()
-
-	cfg.LlamaServer.Model = ""
-
-	decision := BuildDecision(cfg, DecisionOptions{
-		Mode:        writerroute.ModeReadOnly,
-		Lane:        "main",
-		RoleAliases: map[string]string{backends.RoleClassifier: "deepseek-v4-pro"},
+		Expect(decision.EffectiveModel).To(Equal("deepseek-v4-pro"))
 	})
 
-	if decision.EffectiveModel != "deepseek-v4-pro" {
-		t.Fatalf("effective model = %q, want alias fallback", decision.EffectiveModel)
-	}
-}
+	It("uses the display model for every role when role-specific models are absent", func() {
+		cfg := config.Default()
+		cfg.LlamaServer.Model = "/models/qwen/qwen3.gguf"
+		cfg.LlamaServer.DisplayName = "qwen-display"
 
-func TestBuildDecisionUsesDisplayModelAndClassifierBaseFallback(t *testing.T) {
-	cfg := config.Default()
-	cfg.LlamaServer.Model = "/models/qwen/qwen3.gguf"
-	cfg.LlamaServer.DisplayName = "qwen-display"
+		decision := BuildDecision(cfg, DecisionOptions{Mode: writerroute.ModeReadOnly, Lane: "main"})
 
-	decision := BuildDecision(cfg, DecisionOptions{
-		Mode: writerroute.ModeReadOnly,
-		Lane: "main",
+		Expect(decision.PlannerModel).To(Equal("qwen-display"))
+		Expect(decision.ExecutorModel).To(Equal("qwen-display"))
+		Expect(decision.ClassifierModel).To(Equal("qwen-display"))
+		Expect(decision.EffectiveModel).To(Equal("qwen-display"))
 	})
 
-	if decision.PlannerModel != "qwen-display" || decision.ExecutorModel != "qwen-display" || decision.ClassifierModel != "qwen-display" {
-		t.Fatalf("models = planner %q executor %q classifier %q, want display fallback", decision.PlannerModel, decision.ExecutorModel, decision.ClassifierModel)
-	}
-	if decision.EffectiveModel != "qwen-display" {
-		t.Fatalf("effective model = %q, want display fallback", decision.EffectiveModel)
-	}
-}
+	It("keeps explicit CLI model overrides authoritative", func() {
+		cfg := config.Default()
+		cfg.LlamaServer.Model = "base-model"
+		cfg.Implementer = &config.LlamaServer{Model: "implementer-model"}
+		cfg.RouteClassifier.Model = "classifier-config"
 
-func TestBuildDecisionKeepsExplicitCLIOverridesAuthoritative(t *testing.T) {
-	cfg := config.Default()
-	cfg.LlamaServer.Model = "base-model"
-	cfg.Implementer = &config.LlamaServer{Model: "implementer-model"}
-	cfg.RouteClassifier.Model = "classifier-config"
+		decision := BuildDecision(cfg, DecisionOptions{
+			Mode:            writerroute.ModeAgenticGuarded,
+			Lane:            "implement",
+			PlannerModel:    "planner-override",
+			ExecutorModel:   "executor-override",
+			ClassifierModel: "classifier-override",
+		})
 
-	decision := BuildDecision(cfg, DecisionOptions{
-		Mode:            writerroute.ModeAgenticGuarded,
-		Lane:            "implement",
-		PlannerModel:    "planner-override",
-		ExecutorModel:   "executor-override",
-		ClassifierModel: "classifier-override",
+		Expect(decision.PlannerModel).To(Equal("planner-override"))
+		Expect(decision.ExecutorModel).To(Equal("executor-override"))
+		Expect(decision.ClassifierModel).To(Equal("classifier-override"))
+		Expect(decision.EffectiveModel).To(Equal("executor-override"))
 	})
-
-	if decision.PlannerModel != "planner-override" || decision.ExecutorModel != "executor-override" || decision.ClassifierModel != "classifier-override" {
-		t.Fatalf("explicit overrides not preserved: %#v", decision)
-	}
-	if decision.EffectiveModel != "executor-override" {
-		t.Fatalf("effective model = %q, want executor override", decision.EffectiveModel)
-	}
-}
+})

@@ -11,19 +11,24 @@ import (
 	"idiom/internal/capabilities/workspace"
 )
 
-type planState struct {
-	writeSnapshots        map[int][]planWriteSnapshot
+// planRuntimeState is cloned with a detached prompt turn and projected back
+// as one execution-owned value when that turn completes.
+type planRuntimeState struct {
 	sessionHeadingWritten bool
 	ledgerItems           map[string]workspace.TaskLedgerItem
 	ledgerRenderedIDs     map[string]bool
 	ledgerHits            map[string]map[string]bool
-	cursor                int
-	overlayID             string
-	overlayBody           string
-	autoShown             bool
 	submittedEdits        map[string]planartifact.PlanEdit
-	collapsedHeadings     map[string]bool
-	renderedRows          []planRenderedRow
+}
+
+// planUIState remains exclusively owned by Bubble Tea's Update loop.
+type planUIState struct {
+	cursor            int
+	overlayID         string
+	overlayBody       string
+	autoShown         bool
+	collapsedHeadings map[string]bool
+	renderedRows      []planRenderedRow
 }
 
 type docViewerState struct {
@@ -50,6 +55,7 @@ type sessionsState struct {
 
 type historyState struct {
 	entries            []historyEntry
+	revision           uint64
 	selected           int
 	expanded           bool
 	panelOpen          bool

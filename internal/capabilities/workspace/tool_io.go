@@ -127,6 +127,10 @@ type ToolRequest struct {
 	// at the top level; submit_plan normalizes that legacy shape into the same
 	// persisted artifact contract.
 	PlanArtifact *planartifact.PlanArtifact `json:"plan_artifact,omitempty"`
+
+	// executionSessionIdentity is assigned by Manager.Execute from its immutable
+	// invocation context. It is harness-owned attribution, not model input.
+	executionSessionIdentity executionSessionIdentity
 }
 
 type GoDeclarationMove struct {
@@ -136,10 +140,11 @@ type GoDeclarationMove struct {
 }
 
 type TaskLedgerItem struct {
-	ID       string            `json:"id,omitempty"`
-	Content  string            `json:"content,omitempty"`
-	Status   taskledger.Status `json:"status,omitempty"`
-	Evidence string            `json:"evidence,omitempty"`
+	ID       string             `json:"id,omitempty"`
+	Content  string             `json:"content,omitempty"`
+	Status   taskledger.Status  `json:"status,omitempty"`
+	Evidence string             `json:"evidence,omitempty"`
+	Blocker  *TaskLedgerBlocker `json:"blocker,omitempty"`
 	// Paths lists the workspace-relative files this item plans to touch. The
 	// plan autodoc uses it to attach a completed write to the planned item
 	// instead of adding a duplicate entry under "Unplanned". Empty when the
@@ -161,6 +166,23 @@ type ToolResult struct {
 	Relationships []ToolRelationship         `json:"relationships,omitempty"`
 	PayloadType   string                     `json:"payload_type,omitempty"`
 	Payload       json.RawMessage            `json:"payload,omitempty"`
+
+	pendingSystemSearchGrant *systemSearchAccessGrant
+	mutationCommitReceipt    *MutationCommitReceipt
+	sourceWindows            []WorkspaceSourceWindow
+}
+
+// CommitReceipt returns a defensive copy of rooted workspace commit evidence.
+// ChangedPaths is derived from this receipt for mutation results.
+func (r ToolResult) CommitReceipt() *MutationCommitReceipt {
+	return cloneMutationCommitReceipt(r.mutationCommitReceipt)
+}
+
+// SourceWindows returns a defensive copy of invocation-scoped exact source
+// bodies. These attachments are intentionally absent from JSON result facts,
+// sidecars, telemetry, and durable resume projections.
+func (r ToolResult) SourceWindows() []WorkspaceSourceWindow {
+	return cloneWorkspaceSourceWindows(r.sourceWindows)
 }
 
 type ToolRelationship struct {

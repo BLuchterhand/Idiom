@@ -12,16 +12,18 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	defaultHTTPTimeout = 30 * time.Second
-	maxResponseFrame   = 4 << 20 // 4 MiB per SSE line / single JSON body
-	maxErrorBody       = 4096
-	maxHTTPRedirects   = 10
+	defaultHTTPTimeout  = 30 * time.Second
+	maxResponseFrame    = 4 << 20 // 4 MiB per SSE line / single JSON body
+	maxErrorBody        = 4096
+	maxHTTPRedirects    = 10
+	redactedHeaderValue = "<redacted-header-value>"
 )
 
 // HTTPTransport speaks JSON-RPC 2.0 over HTTP for hosted MCP endpoints.
@@ -34,9 +36,10 @@ const (
 // Use this for hosted servers like https://mcp.exa.ai/mcp. Local stdio
 // servers go through StartStdio.
 type HTTPTransport struct {
-	url     string
-	client  *http.Client
-	headers map[string]string
+	url                   string
+	client                *http.Client
+	headers               map[string]string
+	sensitiveHeaderValues []string
 
 	inbox     chan TransportMessage
 	closed    chan struct{}
@@ -60,6 +63,36 @@ type ownedHTTPConnection struct {
 	onClose   func(*ownedHTTPConnection)
 	closeOnce sync.Once
 	closeErr  error
+}
+
+type redactedHTTPError struct {
+	message string
+	cause   error
+}
+
+func (e *redactedHTTPError) Error() string {
+	return e.message
+}
+
+// Is preserves errors.Is checks without exposing an unredacted cause through
+// errors.Unwrap. The configured header value remains private on every public
+// error formatting surface.
+func (e *redactedHTTPError) Is(target error) bool {
+	return errors.Is(e.cause, target)
+}
+
+type jsonRPCFrameKind uint8
+
+const (
+	jsonRPCFrameResponse jsonRPCFrameKind = iota + 1
+	jsonRPCFrameNotification
+	jsonRPCFrameRequest
+)
+
+type jsonRPCFrameMetadata struct {
+	kind   jsonRPCFrameKind
+	id     int64
+	method string
 }
 
 func (connection *ownedHTTPConnection) Close() error {
@@ -90,21 +123,35 @@ func StartHTTP(rawURL string, headers map[string]string, timeout time.Duration, 
 	}
 
 	cp := make(map[string]string, len(headers))
+	sensitiveValueSet := make(map[string]struct{}, len(headers)*2)
 	for k, v := range headers {
 		cp[k] = v
+		for _, candidate := range []string{v, strings.TrimSpace(v)} {
+			if candidate != "" {
+				sensitiveValueSet[candidate] = struct{}{}
+			}
+		}
 	}
+	sensitiveHeaderValues := make([]string, 0, len(sensitiveValueSet))
+	for value := range sensitiveValueSet {
+		sensitiveHeaderValues = append(sensitiveHeaderValues, value)
+	}
+	sort.Slice(sensitiveHeaderValues, func(i, j int) bool {
+		return len(sensitiveHeaderValues[i]) > len(sensitiveHeaderValues[j])
+	})
 
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	transport := &HTTPTransport{
-		url:         parsed.String(),
-		headers:     cp,
-		inbox:       make(chan TransportMessage, 16),
-		closed:      make(chan struct{}),
-		bodies:      make(map[io.Closer]struct{}),
-		connections: make(map[*ownedHTTPConnection]struct{}),
-		shutdownCtx: shutdownCtx,
-		cancel:      cancel,
-		drained:     make(chan struct{}),
+		url:                   parsed.String(),
+		headers:               cp,
+		sensitiveHeaderValues: sensitiveHeaderValues,
+		inbox:                 make(chan TransportMessage, 16),
+		closed:                make(chan struct{}),
+		bodies:                make(map[io.Closer]struct{}),
+		connections:           make(map[*ownedHTTPConnection]struct{}),
+		shutdownCtx:           shutdownCtx,
+		cancel:                cancel,
+		drained:               make(chan struct{}),
 	}
 	roundTripper := &http.Transport{
 		DialContext:           transport.dialValidated(policy),
@@ -181,7 +228,11 @@ func httpOriginPort(scheme, port string) string {
 // dispatches the response into the inbox. Returns once response headers
 // arrive (and any HTTP error status is surfaced); body parsing happens
 // in a background goroutine.
-func (t *HTTPTransport) Send(ctx context.Context, payload []byte) error {
+func (t *HTTPTransport) Send(ctx context.Context, payload []byte) (sendErr error) {
+	defer func() {
+		sendErr = t.redactError(sendErr)
+	}()
+
 	if !t.beginSend() {
 		return io.ErrClosedPipe
 	}
@@ -225,14 +276,15 @@ func (t *HTTPTransport) Send(ctx context.Context, payload []byte) error {
 
 	if resp.StatusCode >= 400 {
 		defer t.untrackBody(resp.Body)
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		body := t.readErrorBody(resp.Body)
 
 		_ = resp.Body.Close()
 
-		return fmt.Errorf("post %s: http %d: %s", redactURL(t.url), resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("post %s: http %d: %s", redactURL(t.url), resp.StatusCode, body)
 	}
 
 	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	expectedID, expectsResponse := jsonRPCRequestID(payload)
 	switch mt {
 	case "application/json":
 		defer t.untrackBody(resp.Body)
@@ -244,16 +296,15 @@ func (t *HTTPTransport) Send(ctx context.Context, payload []byte) error {
 			return fmt.Errorf("read json body: %w", readErr)
 		}
 
-		return t.pushFrame(ctx, body)
+		return t.dispatchHTTPJSONFrame(ctx, body, expectedID, expectsResponse)
 	case "text/event-stream", "":
-		expectedID, expectsResponse := jsonRPCRequestID(payload)
 		t.wg.Add(1)
 		requestOwnedByStream = true
 
 		go func() {
 			defer stopShutdownCancellation()
 			defer cancelRequest()
-			t.streamSSE(resp.Body, expectedID, expectsResponse)
+			t.streamSSE(requestContext, resp.Body, expectedID, expectsResponse)
 		}()
 
 		return nil
@@ -332,6 +383,112 @@ func readJSONResponseFrame(body io.Reader) ([]byte, error) {
 	return frame, nil
 }
 
+func validateHTTPJSONResponse(frame []byte, expectedID int64) error {
+	metadata, err := classifyJSONRPCFrame(frame)
+	if err != nil {
+		return fmt.Errorf("malformed MCP JSON response: %w", err)
+	}
+	if metadata.kind != jsonRPCFrameResponse {
+		return fmt.Errorf("malformed MCP JSON response: expected a response frame")
+	}
+	if metadata.id != expectedID {
+		return fmt.Errorf("malformed MCP JSON response: response id %d does not match request id %d", metadata.id, expectedID)
+	}
+
+	return nil
+}
+
+func (t *HTTPTransport) dispatchHTTPJSONFrame(ctx context.Context, frame []byte, expectedID int64, expectsResponse bool) error {
+	if expectsResponse {
+		if responseErr := validateHTTPJSONResponse(frame, expectedID); responseErr != nil {
+			t.pushRequestError(expectedID, responseErr)
+			return nil
+		}
+
+		return t.pushFrame(ctx, frame)
+	}
+
+	metadata, err := classifyJSONRPCFrame(frame)
+	if err != nil {
+		// A JSON-RPC notification has no response owner. Some hosted servers
+		// nevertheless return an empty or malformed JSON body; it must not enter
+		// the shared inbox where an embedded ID could claim another pending call.
+		return nil
+	}
+
+	switch metadata.kind {
+	case jsonRPCFrameNotification:
+		return t.pushFrame(ctx, frame)
+	case jsonRPCFrameRequest:
+		return fmt.Errorf("unsupported server request %q in response to notification", metadata.method)
+	case jsonRPCFrameResponse:
+		// Responses to notifications are forbidden by JSON-RPC and have no owning
+		// client call. Drop them instead of demultiplexing solely by their ID.
+		return nil
+	default:
+		return nil
+	}
+}
+
+func classifyJSONRPCFrame(frame []byte) (jsonRPCFrameMetadata, error) {
+	var envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  json.RawMessage `json:"method"`
+		Result  json.RawMessage `json:"result"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(frame, &envelope); err != nil {
+		return jsonRPCFrameMetadata{}, err
+	}
+	if envelope.JSONRPC != "2.0" {
+		return jsonRPCFrameMetadata{}, fmt.Errorf("jsonrpc must be %q", "2.0")
+	}
+
+	hasID := len(envelope.ID) > 0
+	hasMethod := len(envelope.Method) > 0
+	hasResult := len(envelope.Result) > 0
+	hasError := len(envelope.Error) > 0
+	if hasMethod {
+		if hasResult || hasError {
+			return jsonRPCFrameMetadata{}, errors.New("request or notification must not contain result or error")
+		}
+
+		var method string
+		if err := json.Unmarshal(envelope.Method, &method); err != nil || strings.TrimSpace(method) == "" {
+			return jsonRPCFrameMetadata{}, errors.New("request or notification method must be a non-empty string")
+		}
+		if !hasID {
+			return jsonRPCFrameMetadata{kind: jsonRPCFrameNotification, method: method}, nil
+		}
+		if bytes.Equal(bytes.TrimSpace(envelope.ID), []byte("null")) {
+			return jsonRPCFrameMetadata{}, errors.New("request id must not be null")
+		}
+
+		return jsonRPCFrameMetadata{kind: jsonRPCFrameRequest, method: method}, nil
+	}
+
+	if !hasID || bytes.Equal(bytes.TrimSpace(envelope.ID), []byte("null")) {
+		return jsonRPCFrameMetadata{}, errors.New("response id is required")
+	}
+	if hasResult == hasError {
+		return jsonRPCFrameMetadata{}, errors.New("response must contain exactly one of result or error")
+	}
+	if hasError {
+		var responseError rawError
+		if err := json.Unmarshal(envelope.Error, &responseError); err != nil || bytes.Equal(bytes.TrimSpace(envelope.Error), []byte("null")) {
+			return jsonRPCFrameMetadata{}, errors.New("response error must be an object with integer code and string message")
+		}
+	}
+
+	var id int64
+	if err := json.Unmarshal(envelope.ID, &id); err != nil {
+		return jsonRPCFrameMetadata{}, errors.New("response id must match the integer request id")
+	}
+
+	return jsonRPCFrameMetadata{kind: jsonRPCFrameResponse, id: id}, nil
+}
+
 func redactHTTPClientError(err error) error {
 	var urlError *url.Error
 	if !errors.As(err, &urlError) {
@@ -345,6 +502,7 @@ func redactHTTPClientError(err error) error {
 }
 
 func (t *HTTPTransport) pushFrame(ctx context.Context, frame []byte) error {
+	frame = bytes.Clone(t.redactJSONRPCErrorFrame(frame))
 	select {
 	case t.inbox <- TransportMessage{Payload: frame}:
 		return nil
@@ -356,6 +514,7 @@ func (t *HTTPTransport) pushFrame(ctx context.Context, frame []byte) error {
 }
 
 func (t *HTTPTransport) pushRequestError(requestID int64, err error) {
+	err = t.redactError(err)
 	if requestID == 0 || err == nil {
 		return
 	}
@@ -372,7 +531,7 @@ func (t *HTTPTransport) pushRequestError(requestID int64, err error) {
 	}
 }
 
-func (t *HTTPTransport) streamSSE(body io.ReadCloser, expectedID int64, expectsResponse bool) {
+func (t *HTTPTransport) streamSSE(ctx context.Context, body io.ReadCloser, expectedID int64, expectsResponse bool) {
 	defer t.wg.Done()
 	defer t.untrackBody(body)
 	defer body.Close()
@@ -395,14 +554,28 @@ func (t *HTTPTransport) streamSSE(body io.ReadCloser, expectedID int64, expectsR
 			t.pushRequestError(expectedID, fmt.Errorf("read MCP event stream: frame exceeds %d-byte limit", maxResponseFrame))
 			return
 		}
-		if id, ok := jsonRPCRequestID(frame); ok && id == expectedID {
-			matchedResponse = true
+		metadata, err := classifyJSONRPCFrame(frame)
+		if err != nil {
+			t.pushRequestError(expectedID, fmt.Errorf("read MCP event stream: malformed JSON-RPC frame: %w", err))
+			return
 		}
 
-		select {
-		case t.inbox <- TransportMessage{Payload: bytes.Clone(frame)}:
-		case <-t.closed:
+		switch metadata.kind {
+		case jsonRPCFrameNotification:
+			if err := t.pushFrame(ctx, frame); err != nil {
+				return
+			}
+		case jsonRPCFrameRequest:
+			t.pushRequestError(expectedID, fmt.Errorf("read MCP event stream: unsupported server request %q", metadata.method))
 			return
+		case jsonRPCFrameResponse:
+			if !expectsResponse || metadata.id != expectedID || matchedResponse {
+				continue
+			}
+			matchedResponse = true
+			if err := t.pushFrame(ctx, frame); err != nil {
+				return
+			}
 		}
 	}
 
@@ -417,6 +590,96 @@ func (t *HTTPTransport) streamSSE(body io.ReadCloser, expectedID int64, expectsR
 	}
 	if !matchedResponse {
 		t.pushRequestError(expectedID, fmt.Errorf("read MCP event stream: %w", io.ErrUnexpectedEOF))
+	}
+}
+
+func (t *HTTPTransport) redactError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	message := t.redactText(err.Error())
+	if message == err.Error() {
+		return err
+	}
+
+	return &redactedHTTPError{message: message, cause: err}
+}
+
+func (t *HTTPTransport) redactText(text string) string {
+	for _, value := range t.sensitiveHeaderValues {
+		text = strings.ReplaceAll(text, value, redactedHeaderValue)
+	}
+
+	return text
+}
+
+func (t *HTTPTransport) readErrorBody(body io.Reader) string {
+	readLimit := maxErrorBody
+	if len(t.sensitiveHeaderValues) > 0 {
+		// Values are sorted longest-first. Reading one maximum value beyond the
+		// diagnostic limit prevents truncation from exposing a credential prefix.
+		readLimit += len(t.sensitiveHeaderValues[0])
+	}
+	raw, _ := io.ReadAll(io.LimitReader(body, int64(readLimit)))
+	redacted := t.redactText(string(raw))
+	if len(redacted) > maxErrorBody {
+		redacted = redacted[:maxErrorBody]
+	}
+
+	return strings.TrimSpace(redacted)
+}
+
+func (t *HTTPTransport) redactJSONRPCErrorFrame(frame []byte) []byte {
+	if len(t.sensitiveHeaderValues) == 0 {
+		return frame
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(frame, &envelope); err != nil {
+		return frame
+	}
+	errorFrame, ok := envelope["error"]
+	if !ok {
+		return frame
+	}
+
+	var errorValue any
+	decoder := json.NewDecoder(bytes.NewReader(errorFrame))
+	decoder.UseNumber()
+	if err := decoder.Decode(&errorValue); err != nil {
+		return frame
+	}
+	redactedError, err := json.Marshal(t.redactJSONValue(errorValue))
+	if err != nil {
+		return frame
+	}
+	envelope["error"] = redactedError
+	redacted, err := json.Marshal(envelope)
+	if err != nil {
+		return frame
+	}
+
+	return redacted
+}
+
+func (t *HTTPTransport) redactJSONValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return t.redactText(typed)
+	case []any:
+		for index := range typed {
+			typed[index] = t.redactJSONValue(typed[index])
+		}
+		return typed
+	case map[string]any:
+		redacted := make(map[string]any, len(typed))
+		for key, item := range typed {
+			redacted[t.redactText(key)] = t.redactJSONValue(item)
+		}
+		return redacted
+	default:
+		return value
 	}
 }
 

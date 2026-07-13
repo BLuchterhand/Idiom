@@ -1,70 +1,72 @@
 package plan
 
-import "testing"
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
 
-func TestValidateSourceSatisfiedPathCoverageRequiresDeclaredScopeAndEvidence(t *testing.T) {
-	got := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
-		RequiredPaths:        []string{"a.go", "b.go"},
-		SourceSatisfiedPaths: []string{"a.go"},
-		RequireEvidence:      true,
-	})
-	if len(got) != 1 || got[0].Code != "missing_current_state_evidence" || got[0].Path != "a.go" {
-		t.Fatalf("expected missing current-state evidence violation, got %#v", got)
-	}
-
-	got = ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
-		SourceSatisfiedPaths: []string{"a.go"},
-		Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: "harness_observed_source"}},
-		RequireEvidence:      true,
-	})
-	if len(got) != 1 || got[0].Code != "missing_required_scope" {
-		t.Fatalf("expected missing required scope violation, got %#v", got)
-	}
-}
-
-func TestValidateSourceSatisfiedPathCoverageAcceptsCurrentStateSourceEvidence(t *testing.T) {
-	got := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
-		RequiredPaths:        []string{"a.go", "b.go"},
-		SourceSatisfiedPaths: []string{"a.go"},
-		Evidence: []SourceSatisfiedEvidenceRef{
-			{Path: "a.go", Kind: "harness_observed_source"},
-			{Path: "b.go", Kind: "context_packet"},
-		},
-		RequireEvidence: true,
-	})
-	if len(got) != 0 {
-		t.Fatalf("expected current source evidence to satisfy source-satisfied path, got %#v", got)
-	}
-}
-
-func TestValidateSourceSatisfiedPathCoverageRejectsPendingPartialApproval(t *testing.T) {
-	got := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
-		RequiredPaths:        []string{"a.go"},
-		SourceSatisfiedPaths: []string{"a.go"},
-		Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: "harness_observed_source"}},
-		ApprovedPaths:        []string{"b.go"},
-		PendingPaths:         []string{"a.go"},
-		RequireEvidence:      true,
-	})
-	if len(got) != 2 {
-		t.Fatalf("expected pending and outside-approved violations, got %#v", got)
-	}
-
-	if got[0].Code != "pending_approval" || got[1].Code != "outside_approved_scope" {
-		t.Fatalf("unexpected violation ordering/content: %#v", got)
-	}
-}
-
-func TestValidateSourceSatisfiedPathCoverageRejectsNonCanonicalEvidenceKinds(t *testing.T) {
-	for _, kind := range []string{"source", "read_file", "harness_observed_current_state", "verified_current_state", "verified_current_source"} {
-		got := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
-			RequiredPaths:        []string{"a.go"},
+var _ = Describe("Source-satisfied path coverage", func() {
+	It("requires declared scope and current-state evidence", func() {
+		violations := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
+			RequiredPaths:        []string{"a.go", "b.go"},
 			SourceSatisfiedPaths: []string{"a.go"},
-			Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: SourceSatisfiedEvidenceKind(kind)}},
 			RequireEvidence:      true,
 		})
-		if len(got) != 1 || got[0].Code != "missing_current_state_evidence" {
-			t.Fatalf("kind %q should not satisfy source-satisfied evidence, got %#v", kind, got)
-		}
-	}
-}
+		Expect(violations).To(HaveLen(1))
+		Expect(violations[0].Code).To(Equal("missing_current_state_evidence"))
+		Expect(violations[0].Path).To(Equal("a.go"))
+
+		violations = ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
+			SourceSatisfiedPaths: []string{"a.go"},
+			Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: "harness_observed_source"}},
+			RequireEvidence:      true,
+		})
+		Expect(violations).To(HaveLen(1))
+		Expect(violations[0].Code).To(Equal("missing_required_scope"))
+	})
+
+	It("accepts canonical current-state source evidence", func() {
+		violations := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
+			RequiredPaths:        []string{"a.go", "b.go"},
+			SourceSatisfiedPaths: []string{"a.go"},
+			Evidence: []SourceSatisfiedEvidenceRef{
+				{Path: "a.go", Kind: "harness_observed_source"},
+				{Path: "b.go", Kind: "context_packet"},
+			},
+			RequireEvidence: true,
+		})
+		Expect(violations).To(BeEmpty())
+	})
+
+	It("rejects pending paths outside the approved subset", func() {
+		violations := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
+			RequiredPaths:        []string{"a.go"},
+			SourceSatisfiedPaths: []string{"a.go"},
+			Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: "harness_observed_source"}},
+			ApprovedPaths:        []string{"b.go"},
+			PendingPaths:         []string{"a.go"},
+			RequireEvidence:      true,
+		})
+		Expect(violations).To(HaveLen(2))
+		Expect(violations[0].Code).To(Equal("pending_approval"))
+		Expect(violations[1].Code).To(Equal("outside_approved_scope"))
+	})
+
+	DescribeTable("rejects non-canonical evidence kinds",
+		func(kind string) {
+			violations := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
+				RequiredPaths:        []string{"a.go"},
+				SourceSatisfiedPaths: []string{"a.go"},
+				Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: SourceSatisfiedEvidenceKind(kind)}},
+				RequireEvidence:      true,
+			})
+			Expect(violations).To(HaveLen(1))
+			Expect(violations[0].Code).To(Equal("missing_current_state_evidence"))
+		},
+		Entry("generic source", "source"),
+		Entry("read-file tool", "read_file"),
+		Entry("observed current state", "harness_observed_current_state"),
+		Entry("verified current state", "verified_current_state"),
+		Entry("verified current source", "verified_current_source"),
+	)
+})

@@ -49,12 +49,17 @@ func ResolveSessionLogPath(cfg config.Config, id string) string {
 }
 
 func SessionIDFromPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+
 	base := filepath.Base(path)
 	if ext := filepath.Ext(base); ext != "" {
 		base = base[:len(base)-len(ext)]
 	}
 
-	return base
+	return strings.TrimSpace(base)
 }
 
 // ListRecordedSessions returns the recorded sessions in the configured

@@ -1,9 +1,8 @@
 package agent
 
 import (
-	"slices"
-	"strings"
-	"testing"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/runtime/workerruntime"
@@ -17,38 +16,26 @@ func rejectedFinalAnswerAcceptanceForTest(kind turnViolationKind, reason ...turn
 	return rejectFinalAnswerAcceptance(newFinalAnswerAcceptance(), kind, rejectionReason)
 }
 
-func TestTurnObjectiveRelevanceDiagnosticIsAdvisoryOnly(t *testing.T) {
+var _ = ginkgo.It("TurnObjectiveRelevanceDiagnosticIsAdvisoryOnly", func() {
 	diagnostic, ok := turnDiagnosticFromLegacyBlocker(
 		"answer_objective_unmet:citation_mismatch",
 		"objective relevance diagnostic",
 		[]string{"internal/runtime/agent/evidence_readonly.go"},
 	)
-	if !ok {
-		t.Fatal("expected objective relevance blocker to become a diagnostic")
-	}
-	if diagnostic.Kind != turnDiagnosticObjectiveRelevance {
-		t.Fatalf("diagnostic kind = %q, want %q", diagnostic.Kind, turnDiagnosticObjectiveRelevance)
-	}
-	if diagnostic.ReasonCode != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("diagnostic reason code = %q", diagnostic.ReasonCode)
-	}
-	if _, ok := turnViolationFromLegacyBlocker("answer_objective_unmet:citation_mismatch", "objective relevance diagnostic", nil); ok {
-		t.Fatal("objective relevance diagnostic must not become an enforceable violation")
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), "expected objective relevance blocker to become a diagnostic")
+	gomega.Expect(diagnostic.Kind).To(gomega.Equal(turnDiagnosticObjectiveRelevance))
+	gomega.Expect(diagnostic.ReasonCode).To(gomega.Equal(turnReasonCode("answer_objective_unmet:citation_mismatch")))
+	_, violationOK := turnViolationFromLegacyBlocker("answer_objective_unmet:citation_mismatch", "objective relevance diagnostic", nil)
+	gomega.Expect(violationOK).To(gomega.BeFalse(), "objective relevance diagnostic must not become an enforceable violation")
 
 	assessment := turnContractAssessment{}.withDiagnostic(diagnostic)
-	if turnContractAssessmentCapabilities(assessment).Retryable {
-		t.Fatal("objective relevance diagnostic must not be retryable")
-	}
-	if turnContractAssessmentCapabilities(assessment).Recoverable {
-		t.Fatal("objective relevance diagnostic must not be recoverable")
-	}
-	if len(assessment.Violations) > 0 {
-		t.Fatalf("diagnostic-only assessment must not have violations: %#v", assessment)
-	}
-}
+	capabilities := turnContractAssessmentCapabilities(assessment)
+	gomega.Expect(capabilities.Retryable).To(gomega.BeFalse(), "assessment=%#v", assessment)
+	gomega.Expect(capabilities.Recoverable).To(gomega.BeFalse(), "assessment=%#v", assessment)
+	gomega.Expect(assessment.Violations).To(gomega.BeEmpty(), "assessment=%#v", assessment)
+})
 
-func TestTurnViolationCapabilitiesAreCentralized(t *testing.T) {
+var _ = ginkgo.It("TurnViolationCapabilitiesAreCentralized", func() {
 	tests := []struct {
 		kind        turnViolationKind
 		retryable   bool
@@ -80,64 +67,58 @@ func TestTurnViolationCapabilitiesAreCentralized(t *testing.T) {
 		{kind: turnViolationValidationStatusContradictsEvidence, recoverable: true},
 	}
 
-	if len(tests) != len(turnViolationDefinitions) {
-		t.Fatalf("capability matrix covers %d violation kinds, want %d", len(tests), len(turnViolationDefinitions))
-	}
+	gomega.Expect(tests).To(gomega.HaveLen(len(turnViolationDefinitions)), "capability matrix must cover every violation kind")
 	for _, tt := range tests {
 		acceptance := rejectedFinalAnswerAcceptanceForTest(tt.kind)
 		capabilities := turnContractAssessmentCapabilities(acceptance.ContractAssessment)
-		if got := capabilities.Retryable; got != tt.retryable {
-			t.Fatalf("retryable(%q) = %v, want %v", tt.kind, got, tt.retryable)
-		}
-		if got := capabilities.Recoverable; got != tt.recoverable {
-			t.Fatalf("recoverable(%q) = %v, want %v", tt.kind, got, tt.recoverable)
-		}
+		gomega.Expect(capabilities.Retryable).To(gomega.Equal(tt.retryable), "violation kind %q", tt.kind)
+		gomega.Expect(capabilities.Recoverable).To(gomega.Equal(tt.recoverable), "violation kind %q", tt.kind)
 	}
-}
+})
 
-func TestTurnFinalAnswerRetryPolicyOwnsContextAwareRetries(t *testing.T) {
+var _ = ginkgo.It("TurnFinalAnswerRetryPolicyOwnsContextAwareRetries", func() {
 	leakedTemplate := turnFinalAnswerRejectionRetryPolicyForBrief(workerruntime.WorkerRuntimeBrief{
 		Contract:          string(workerruntime.ContractImplementationResult),
 		PermissionProfile: "danger-full-access",
 	}, rejectedFinalAnswerAcceptanceForTest(turnViolationNonAnswerProse, turnReasonLeakedImplementationBlocker))
-	if !leakedTemplate.Retryable || leakedTemplate.RequiresReadOnlyEvidence {
-		t.Fatalf("leaked implementation blocker retry policy = %#v", leakedTemplate)
-	}
+	gomega.Expect(leakedTemplate.Retryable).To(gomega.BeTrue(), "policy=%#v", leakedTemplate)
+	gomega.Expect(leakedTemplate.RequiresReadOnlyEvidence).To(gomega.BeFalse(), "policy=%#v", leakedTemplate)
 
 	directSourceGrounding := turnFinalAnswerRejectionRetryPolicyForBrief(workerruntime.WorkerRuntimeBrief{
 		Contract: string(workerruntime.ContractDirectAnswer),
 	}, rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet))
-	if !directSourceGrounding.Retryable || !directSourceGrounding.RequiresReadOnlyEvidence {
-		t.Fatalf("direct source-grounding retry policy = %#v", directSourceGrounding)
-	}
+	gomega.Expect(directSourceGrounding.Retryable).To(gomega.BeTrue(), "policy=%#v", directSourceGrounding)
+	gomega.Expect(directSourceGrounding.RequiresReadOnlyEvidence).To(gomega.BeTrue(), "policy=%#v", directSourceGrounding)
 
 	architectureNonAnswer := turnFinalAnswerRejectionRetryPolicyForBrief(workerruntime.WorkerRuntimeBrief{
 		Contract: string(workerruntime.ContractArchitecture),
 	}, rejectedFinalAnswerAcceptanceForTest(turnViolationNonAnswerProse, turnReasonAnswerableEvidenceInsufficient))
-	if !architectureNonAnswer.Retryable || !architectureNonAnswer.RequiresReadOnlyEvidence {
-		t.Fatalf("architecture non-answer retry policy = %#v", architectureNonAnswer)
-	}
+	gomega.Expect(architectureNonAnswer.Retryable).To(gomega.BeTrue(), "policy=%#v", architectureNonAnswer)
+	gomega.Expect(architectureNonAnswer.RequiresReadOnlyEvidence).To(gomega.BeTrue(), "policy=%#v", architectureNonAnswer)
 
 	plainNonAnswer := turnFinalAnswerRejectionRetryPolicyForBrief(workerruntime.WorkerRuntimeBrief{
 		Contract: string(workerruntime.ContractDirectAnswer),
 	}, rejectedFinalAnswerAcceptanceForTest(turnViolationNonAnswerProse))
-	if plainNonAnswer.Retryable {
-		t.Fatalf("plain non-answer retry policy should not retry: %#v", plainNonAnswer)
-	}
-}
+	gomega.Expect(plainNonAnswer.Retryable).To(gomega.BeTrue(), "direct answers must return non-answer prose to the model for a fresh authored answer: policy=%#v", plainNonAnswer)
+	gomega.Expect(plainNonAnswer.RequiresReadOnlyEvidence).To(gomega.BeTrue(), "policy=%#v", plainNonAnswer)
 
-func TestRawLegacyBlockerStringDoesNotDriveCapabilities(t *testing.T) {
+	implementationNonAnswer := turnFinalAnswerRejectionRetryPolicyForBrief(workerruntime.WorkerRuntimeBrief{
+		Contract: string(workerruntime.ContractImplementationResult),
+	}, rejectedFinalAnswerAcceptanceForTest(turnViolationNonAnswerProse))
+	gomega.Expect(implementationNonAnswer.Retryable).To(gomega.BeFalse(), "the direct-answer exception must not broaden mutation-lane retries: policy=%#v", implementationNonAnswer)
+})
+
+var _ = ginkgo.It("RawLegacyBlockerStringDoesNotDriveCapabilities", func() {
 	acceptance := finalAnswerAcceptanceWithPolicy(finalAnswerAcceptance{
 		Decision:    finalAnswerAcceptanceRejected,
 		BlockerKind: string(turnViolationSourceGroundingUnmet),
 		Reason:      "source missing",
 	})
-	if turnFinalAnswerAcceptanceRetryable(acceptance) || turnFinalAnswerAcceptanceRecoverable(acceptance) {
-		t.Fatalf("legacy blocker string without typed violation must not drive capabilities: %#v", acceptance)
-	}
-}
+	gomega.Expect(turnFinalAnswerAcceptanceRetryable(acceptance)).To(gomega.BeFalse(), "acceptance=%#v", acceptance)
+	gomega.Expect(turnFinalAnswerAcceptanceRecoverable(acceptance)).To(gomega.BeFalse(), "acceptance=%#v", acceptance)
+})
 
-func TestRawLegacyReasonTextDoesNotDriveContextAwareRetry(t *testing.T) {
+var _ = ginkgo.It("RawLegacyReasonTextDoesNotDriveContextAwareRetry", func() {
 	acceptance := finalAnswerAcceptanceWithPolicy(finalAnswerAcceptance{
 		Decision:    finalAnswerAcceptanceRejected,
 		BlockerKind: string(turnViolationNonAnswerProse),
@@ -148,12 +129,10 @@ func TestRawLegacyReasonTextDoesNotDriveContextAwareRetry(t *testing.T) {
 		Contract:          string(workerruntime.ContractImplementationResult),
 		PermissionProfile: "danger-full-access",
 	}, acceptance)
-	if policy.Retryable {
-		t.Fatalf("legacy reason text without typed violation must not drive retry: %#v", policy)
-	}
-}
+	gomega.Expect(policy.Retryable).To(gomega.BeFalse(), "policy=%#v", policy)
+})
 
-func TestSourceGroundingRejectionContractCarriesTypedPayload(t *testing.T) {
+var _ = ginkgo.It("SourceGroundingRejectionContractCarriesTypedPayload", func() {
 	tests := []struct {
 		name       string
 		assessment sourceGroundingAssessment
@@ -168,59 +147,48 @@ func TestSourceGroundingRejectionContractCarriesTypedPayload(t *testing.T) {
 		},
 		{
 			name:       "missing candidate citation",
-			assessment: sourceGroundingMissingCandidateAssessment([]string{"internal/runtime/agent/implementation_flow.go"}),
+			assessment: sourceGroundingMissingCandidateReferenceAssessment(sourceReferencesForPaths([]string{"internal/runtime/agent/implementation_flow.go"})),
 			kind:       sourceGroundingRejectionMissingCandidate,
 			path:       "internal/runtime/agent/implementation_flow.go",
 		},
 		{
 			name:       "unsupported source detail",
-			assessment: sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/runner_core.go:11456"}),
+			assessment: sourceGroundingUnsupportedDetailReferenceAssessment(sourceReferencesForPaths([]string{"internal/runtime/agent/runner_core.go:11456"})),
 			kind:       sourceGroundingRejectionUnsupportedDetail,
 			path:       "internal/runtime/agent/runner_core.go:11456",
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.By(tt.name, func() {
 			acceptance := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), tt.assessment)
 			result, ok := finalAnswerCompletionGateProjection(acceptance, "", acceptance.Reason)
-			if !ok {
-				t.Fatal("expected completion-gate projection")
-			}
+			gomega.Expect(ok).To(gomega.BeTrue(), "expected completion-gate projection")
 
 			rejection, ok := sourceGroundingAssessmentFromResult(result)
-			if !ok {
-				t.Fatalf("expected typed source-grounding payload on %#v", result)
-			}
-			if rejection.Kind != tt.kind {
-				t.Fatalf("kind = %q, want %q", rejection.Kind, tt.kind)
-			}
-			if !slices.Contains(rejection.Paths, tt.path) {
-				t.Fatalf("paths = %#v, want %q", rejection.Paths, tt.path)
-			}
+			gomega.Expect(ok).To(gomega.BeTrue(), "result=%#v", result)
+			gomega.Expect(rejection.Kind).To(gomega.Equal(tt.kind), "rejection=%#v", rejection)
+			paths := sourceReferencePaths(rejection.References)
+			wantPath := sourceReferenceForPath(tt.path).Path
+			gomega.Expect(paths).To(gomega.ContainElement(wantPath))
 		})
 	}
-}
+})
 
-func TestSourceGroundingRejectionEscalationUsesTypedSignal(t *testing.T) {
+var _ = ginkgo.It("SourceGroundingRejectionEscalationUsesTypedSignal", func() {
 	base := sourceGroundingCandidateOnlyAssessment([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"}).Message()
-	escalated := escalateCompletionGateMessageWithSourceRecovery(base, 1, true, true, 5)
+	escalated := escalateCompletionGateMessageWithSourceRecovery(base, 1, true, true)
 
-	if !strings.Contains(escalated, "[source evidence recovery 2/5]") {
-		t.Fatalf("typed source-grounding retry should use source recovery label:\n%s", escalated)
-	}
-	if strings.Contains(escalated, "use a different tool call") {
-		t.Fatalf("source-grounding retry must not use generic recovery text:\n%s", escalated)
-	}
-}
+	gomega.Expect(escalated).To(gomega.ContainSubstring("[source evidence recovery attempt 2]"))
+	gomega.Expect(escalated).NotTo(gomega.ContainSubstring("use a different tool call"))
+})
 
-func TestTurnUnknownLegacyBlockerDoesNotBecomeTypedViolation(t *testing.T) {
-	if _, ok := turnViolationFromLegacyBlocker("new_semantic_signal", "new signal", nil); ok {
-		t.Fatal("unknown legacy blocker must not become an enforceable typed violation")
-	}
-}
+var _ = ginkgo.It("TurnUnknownLegacyBlockerDoesNotBecomeTypedViolation", func() {
+	_, ok := turnViolationFromLegacyBlocker("new_semantic_signal", "new signal", nil)
+	gomega.Expect(ok).To(gomega.BeFalse(), "unknown legacy blocker must not become an enforceable typed violation")
+})
 
-func TestTurnAssessmentEventFieldsProjectViolationMessagesOnly(t *testing.T) {
+var _ = ginkgo.It("TurnAssessmentEventFieldsProjectViolationMessagesOnly", func() {
 	assessment := turnContractAssessment{
 		Diagnostics: []turnDiagnostic{{
 			Kind:       turnDiagnosticObjectiveRelevance,
@@ -237,83 +205,65 @@ func TestTurnAssessmentEventFieldsProjectViolationMessagesOnly(t *testing.T) {
 	fields := turnContractAssessmentEventFields(assessment)
 	diagnostics := fields["contract_diagnostics"].([]map[string]any)
 	violations := fields["contract_violations"].([]map[string]any)
-	if _, ok := diagnostics[0]["message"]; ok {
-		t.Fatalf("diagnostic event projection must not include display text: %#v", diagnostics[0])
-	}
-	if violations[0]["message"] != "display-only violation text" {
-		t.Fatalf("violation event projection should include exact violation text: %#v", violations[0])
-	}
-}
+	gomega.Expect(diagnostics[0]).NotTo(gomega.HaveKey("message"))
+	gomega.Expect(violations[0]).To(gomega.HaveKeyWithValue("message", "display-only violation text"))
+})
 
-func TestFinalAnswerAcceptanceExposesTypedAssessment(t *testing.T) {
+var _ = ginkgo.It("FinalAnswerAcceptanceExposesTypedAssessment", func() {
 	acceptance := rejectFinalAnswerAcceptanceWithSourceGrounding(finalAnswerAcceptance{
-		EvidencePaths: []string{"internal/runtime/agent/runner_core.go"},
-	}, sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/source_grounding.go"}))
+		EvidencePaths: []string{
+			" internal/runtime/agent/runner_core.go ",
+			"internal/runtime/agent/source_grounding.go",
+			"internal/runtime/agent/runner_core.go",
+			"",
+		},
+	}, sourceGroundingUnsupportedDetailReferenceAssessment(sourceReferencesForPaths([]string{"internal/runtime/agent/source_grounding.go"})))
 
 	violation, ok := turnContractAssessmentPrimaryViolation(acceptance.ContractAssessment)
-	if !ok {
-		t.Fatalf("source grounding rejection should expose enforceable violation: %#v", acceptance.ContractAssessment)
-	}
-	if violation.Kind != turnViolationSourceGroundingUnmet {
-		t.Fatalf("violation kind = %q, want %q", violation.Kind, turnViolationSourceGroundingUnmet)
-	}
-	if violation.PackID != autonomy.ContractPackFinalAnswerAcceptance {
-		t.Fatalf("violation pack = %q, want %q", violation.PackID, autonomy.ContractPackFinalAnswerAcceptance)
-	}
-	if len(violation.Evidence) != 1 || violation.Evidence[0].Path != "internal/runtime/agent/runner_core.go" {
-		t.Fatalf("unexpected evidence refs: %#v", violation.Evidence)
-	}
-}
+	gomega.Expect(ok).To(gomega.BeTrue(), "assessment=%#v", acceptance.ContractAssessment)
+	gomega.Expect(violation.Kind).To(gomega.Equal(turnViolationSourceGroundingUnmet))
+	gomega.Expect(violation.PackID).To(gomega.Equal(autonomy.ContractPackFinalAnswerAcceptance))
+	gomega.Expect(violation.EvidencePaths).To(gomega.Equal([]string{
+		"internal/runtime/agent/runner_core.go",
+		"internal/runtime/agent/source_grounding.go",
+	}))
+})
 
-func TestRejectFinalAnswerAcceptanceNormalizesTypedAssessment(t *testing.T) {
+var _ = ginkgo.It("RejectFinalAnswerAcceptanceNormalizesTypedAssessment", func() {
 	acceptance := rejectFinalAnswerAcceptance(finalAnswerAcceptance{
 		EvidencePaths: []string{"internal/runtime/agent/runner_core.go"},
 	}, turnViolationRequiredEvidenceUnmet, turnReasonRequiredEvidenceUnmet)
 
-	if acceptance.Decision != finalAnswerAcceptanceRejected ||
-		acceptance.PolicyDecision != autonomy.PolicyReject ||
-		acceptance.PackID != autonomy.ContractPackFinalAnswerAcceptance ||
-		acceptance.InvariantID != finalAnswerPolicyInvariantAcceptance {
-		t.Fatalf("reject helper must return normalized policy metadata: %#v", acceptance)
-	}
-	if !acceptance.ContractAssessment.HasViolation(turnViolationRequiredEvidenceUnmet) ||
-		acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
-		t.Fatalf("reject helper must return typed violation only, got %#v", acceptance.ContractAssessment)
-	}
-}
+	gomega.Expect(acceptance.Decision).To(gomega.Equal(finalAnswerAcceptanceRejected), "acceptance=%#v", acceptance)
+	gomega.Expect(acceptance.PolicyDecision).To(gomega.Equal(autonomy.PolicyReject), "acceptance=%#v", acceptance)
+	gomega.Expect(acceptance.PackID).To(gomega.Equal(autonomy.ContractPackFinalAnswerAcceptance), "acceptance=%#v", acceptance)
+	gomega.Expect(acceptance.InvariantID).To(gomega.Equal(finalAnswerPolicyInvariantAcceptance), "acceptance=%#v", acceptance)
+	gomega.Expect(acceptance.ContractAssessment.HasViolation(turnViolationRequiredEvidenceUnmet)).To(gomega.BeTrue(), "assessment=%#v", acceptance.ContractAssessment)
+	gomega.Expect(acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance)).To(gomega.BeFalse(), "assessment=%#v", acceptance.ContractAssessment)
+})
 
-func TestFinalAnswerAcceptancePreservesObjectiveDiagnosticAssessment(t *testing.T) {
+var _ = ginkgo.It("FinalAnswerAcceptancePreservesObjectiveDiagnosticAssessment", func() {
 	acceptance := finalAnswerAcceptanceWithDirectAnswerRelevance(newFinalAnswerAcceptance(), readOnlyDirectAnswerRelevance{
 		BlockerKind:             "answer_objective_unmet:term_mismatch",
 		Reason:                  "objective relevance diagnostic",
 		RelevantSourceBodyPaths: []string{"internal/runtime/agent/evidence_readonly.go"},
 	})
 
-	if len(acceptance.ContractAssessment.Violations) > 0 {
-		t.Fatalf("objective relevance diagnostic must not expose violations: %#v", acceptance.ContractAssessment)
-	}
-	if !acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
-		t.Fatalf("objective relevance diagnostic missing: %#v", acceptance.ContractAssessment)
-	}
-}
+	gomega.Expect(acceptance.ContractAssessment.Violations).To(gomega.BeEmpty(), "assessment=%#v", acceptance.ContractAssessment)
+	gomega.Expect(acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance)).To(gomega.BeTrue(), "assessment=%#v", acceptance.ContractAssessment)
+})
 
-func TestFinalAnswerAcceptanceAcceptedOverrideClearsTypedViolations(t *testing.T) {
-	rejected := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/source_grounding.go"}))
-	if len(rejected.ContractAssessment.Violations) == 0 {
-		t.Fatalf("test setup expected violation: %#v", rejected.ContractAssessment)
-	}
+var _ = ginkgo.It("FinalAnswerAcceptanceAcceptedOverrideClearsTypedViolations", func() {
+	rejected := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), sourceGroundingUnsupportedDetailReferenceAssessment(sourceReferencesForPaths([]string{"internal/runtime/agent/source_grounding.go"})))
+	gomega.Expect(rejected.ContractAssessment.Violations).NotTo(gomega.BeEmpty(), "test setup expected violation")
 
 	accepted := finalAnswerAcceptanceWithTerminalOverride(rejected, finalAnswerAcceptanceAccepted, "", "read_only_terminal_recovery")
-	if len(accepted.ContractAssessment.Violations) > 0 {
-		t.Fatalf("accepted override must clear stale typed violations: %#v", accepted.ContractAssessment)
-	}
-}
+	gomega.Expect(accepted.ContractAssessment.Violations).To(gomega.BeEmpty(), "assessment=%#v", accepted.ContractAssessment)
+})
 
-func TestFinalAnswerAcceptanceRejectedOverrideReplacesTypedViolations(t *testing.T) {
-	rejected := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/source_grounding.go"}))
-	if !rejected.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) {
-		t.Fatalf("test setup expected source-grounding violation: %#v", rejected.ContractAssessment)
-	}
+var _ = ginkgo.It("FinalAnswerAcceptanceRejectedOverrideReplacesTypedViolations", func() {
+	rejected := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), sourceGroundingUnsupportedDetailReferenceAssessment(sourceReferencesForPaths([]string{"internal/runtime/agent/source_grounding.go"})))
+	gomega.Expect(rejected.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet)).To(gomega.BeTrue(), "test setup assessment=%#v", rejected.ContractAssessment)
 
 	transport := finalAnswerAcceptanceWithTerminalOverride(
 		rejected,
@@ -321,9 +271,7 @@ func TestFinalAnswerAcceptanceRejectedOverrideReplacesTypedViolations(t *testing
 		string(turnViolationTransportProtocolOutput),
 		"tool markup",
 	)
-	if transport.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) ||
-		!transport.ContractAssessment.HasViolation(turnViolationTransportProtocolOutput) ||
-		len(transport.ContractAssessment.Violations) != 1 {
-		t.Fatalf("rejected override must replace stale typed violations: %#v", transport.ContractAssessment)
-	}
-}
+	gomega.Expect(transport.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet)).To(gomega.BeFalse(), "assessment=%#v", transport.ContractAssessment)
+	gomega.Expect(transport.ContractAssessment.HasViolation(turnViolationTransportProtocolOutput)).To(gomega.BeTrue(), "assessment=%#v", transport.ContractAssessment)
+	gomega.Expect(transport.ContractAssessment.Violations).To(gomega.HaveLen(1), "assessment=%#v", transport.ContractAssessment)
+})

@@ -30,7 +30,7 @@ func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspac
 		tool = strings.TrimSpace(result.Tool)
 	}
 
-	if len(record.SourceBodyPaths()) > 0 {
+	if len(record.SourceWindowPaths()) > 0 {
 		return outcome
 	}
 

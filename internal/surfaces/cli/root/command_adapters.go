@@ -36,12 +36,12 @@ func adaptArtifactPromptRunner(promptRun cmdruntime.PromptRunner) artifactcmd.Pr
 	}
 }
 
-func featurePlannerDependencies() featureplannercmd.Dependencies {
+func featurePlannerDependencies(promptRun cmdruntime.PromptRunner) featureplannercmd.Dependencies {
 	return featureplannercmd.Dependencies{
 		NewSessionID:            sessionid.New,
 		LocalOpsTelemetryFields: localops.TelemetryFields,
 		RunPlanExecute: func(cfg config.Config, opts coreplanexecute.Options, stdout io.Writer, stderr io.Writer) coreplanexecute.RunResult {
-			return planexecuterunner.Run(cfg, opts, planexecuterunner.Options{}, planexecutecmd.AdaptPromptRunner(cmdruntime.RunPromptOnce), nil, stdout, stderr)
+			return planexecuterunner.Run(cfg, opts, planexecuterunner.Options{}, planexecutecmd.AdaptPromptRunner(promptRun), nil, stdout, stderr)
 		},
 	}
 }

@@ -28,8 +28,6 @@ const (
 	ProductWorkflowSeverityError = "error"
 
 	ProductStatusAuditRemediationAction = "fix product workflow findings, then rerun `idiom product status --effort-root <path>`"
-
-	productStatusMigrationTempSuffix = ".status-migration.tmp"
 )
 
 func ProductWorkflowStatusIsPass(status string) bool {

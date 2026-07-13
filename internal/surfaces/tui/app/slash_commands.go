@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/evidence/transcript"
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
@@ -17,39 +17,65 @@ import (
 
 type slashCommandFunc func(m *Model, raw string, fields []string) bool
 
-var slashCommands = map[string]slashCommandFunc{
-	"/quit":             (*Model).slashQuit,
-	"/exit":             (*Model).slashQuit,
-	"/help":             (*Model).slashHelp,
-	"/clear":            (*Model).slashClear,
-	"/new":              (*Model).slashClear,
-	"/compact":          (*Model).slashCompact,
-	"/save":             (*Model).slashSave,
-	"/copy":             (*Model).slashCopy,
-	"/select":           (*Model).slashSelect,
-	"/context":          (*Model).slashContext,
-	"/workspace":        (*Model).slashWorkspace,
-	"/pwd":              (*Model).slashPwd,
-	"/debuglog":         (*Model).slashDebugLog,
-	"/trace":            (*Model).slashTrace,
-	"/mode":             (*Model).slashMode,
-	"/approve":          (*Model).slashApprove,
-	"/deny":             (*Model).slashDeny,
-	"/undo":             (*Model).slashUndo,
-	"/panel":            (*Model).slashPanel,
-	"/resume":           (*Model).slashResume,
-	"/plan":             (*Model).slashPlan,
-	"/system":           (*Model).slashSystem,
-	"/temp":             (*Model).slashTemp,
-	"/preset":           (*Model).slashPreset,
-	"/server":           (*Model).slashServer,
-	"/profile":          (*Model).slashProfile,
-	"/model":            (*Model).slashModel,
-	"/product-create":   (*Model).slashProductCreate,
-	"/product-status":   (*Model).slashProductStatus,
-	"/product-continue": (*Model).slashProductContinue,
-	"/product-approve":  (*Model).slashProductApprove,
-	"/recover-status":   (*Model).slashRecoverStatus,
+type slashCommandSpec struct {
+	command         string
+	helpUsage       string
+	suggestionUsage string
+	helpOrder       int
+	handler         slashCommandFunc
+}
+
+// slashCommandSpecs is the authority for slash-command dispatch and discovery.
+// Slice order preserves the autocomplete order; helpOrder preserves the
+// established /help presentation order.
+func slashCommandSpecs() []slashCommandSpec {
+	return []slashCommandSpec{
+		{command: "/feature-planner", helpUsage: "<objective>", suggestionUsage: "<objective>", helpOrder: 29, handler: (*Model).slashFeaturePlanner},
+		{command: "/plan-execute", helpUsage: "<objective>", suggestionUsage: "<objective>", helpOrder: 31, handler: (*Model).slashPlanExecute},
+		{command: "/implement", helpUsage: "<objective>", suggestionUsage: "<objective>", helpOrder: 30, handler: (*Model).slashImplement},
+		{command: "/product-create", helpUsage: "[--effort-root <path>]", suggestionUsage: "[--effort-root <path>]", helpOrder: 13, handler: (*Model).slashProductCreate},
+		{command: "/product-status", helpUsage: "[--effort-root <path>]", suggestionUsage: "[--effort-root <path>]", helpOrder: 14, handler: (*Model).slashProductStatus},
+		{command: "/product-continue", helpUsage: "<action> [--effort-root <path>]", suggestionUsage: "<action> [--effort-root <path>]", helpOrder: 15, handler: (*Model).slashProductContinue},
+		{command: "/product-approve", helpUsage: "[--effort-root <path>]", suggestionUsage: "[--effort-root <path>]", helpOrder: 16, handler: (*Model).slashProductApprove},
+		{command: "/recover-status", helpUsage: "[--packet <path>|<path>]", suggestionUsage: "[--packet <path>|<path>]", helpOrder: 17, handler: (*Model).slashRecoverStatus},
+		{command: "/quit", helpOrder: 33, handler: (*Model).slashQuit},
+		{command: "/exit", helpOrder: 34, handler: (*Model).slashQuit},
+		{command: "/help", helpOrder: 35, handler: (*Model).slashHelp},
+		{command: "/clear", helpOrder: 4, handler: (*Model).slashClear},
+		{command: "/new", helpOrder: 5, handler: (*Model).slashClear},
+		{command: "/compact", helpOrder: 6, handler: (*Model).slashCompact},
+		{command: "/save", helpOrder: 1, handler: (*Model).slashSave},
+		{command: "/copy", helpUsage: "[last|all|visible|selected]", suggestionUsage: "[last|all|visible|selected]", helpOrder: 2, handler: (*Model).slashCopy},
+		{command: "/select", helpOrder: 3, handler: (*Model).slashSelect},
+		{command: "/context", helpOrder: 18, handler: (*Model).slashContext},
+		{command: "/workspace", helpOrder: 19, handler: (*Model).slashWorkspace},
+		{command: "/pwd", helpOrder: 20, handler: (*Model).slashPwd},
+		{command: "/resume", helpUsage: "[id]", suggestionUsage: "[id]", helpOrder: 32, handler: (*Model).slashResume},
+		{command: "/debuglog", helpUsage: "[mode redacted|full]", suggestionUsage: "[mode redacted|full]", helpOrder: 21, handler: (*Model).slashDebugLog},
+		{command: "/trace", helpUsage: "[compact|detail]", suggestionUsage: "[compact|detail]", helpOrder: 22, handler: (*Model).slashTrace},
+		{command: "/mode", helpUsage: "[build|plan|general]", suggestionUsage: "[build|plan|general]", helpOrder: 23, handler: (*Model).slashMode},
+		{command: "/approve", helpUsage: "[all]", helpOrder: 24, handler: (*Model).slashApprove},
+		{command: "/deny", helpOrder: 25, handler: (*Model).slashDeny},
+		{command: "/undo", helpOrder: 26, handler: (*Model).slashUndo},
+		{command: "/panel", helpOrder: 27, handler: (*Model).slashPanel},
+		{command: "/plan", helpOrder: 28, handler: (*Model).slashPlan},
+		{command: "/system", helpUsage: "<text>", suggestionUsage: "<prompt>", helpOrder: 7, handler: (*Model).slashSystem},
+		{command: "/temp", helpUsage: "<value>", suggestionUsage: "<value>", helpOrder: 8, handler: (*Model).slashTemp},
+		{command: "/preset", helpUsage: "[list|name]", suggestionUsage: "[list|name]", helpOrder: 9, handler: (*Model).slashPreset},
+		{command: "/server", helpUsage: "<start|stop|restart|status>", suggestionUsage: "<start|stop|restart|status>", helpOrder: 10, handler: (*Model).slashServer},
+		{command: "/profile", helpUsage: "<list|add|remove>", suggestionUsage: "<list|add|remove>", helpOrder: 11, handler: (*Model).slashProfile},
+		{command: "/model", helpOrder: 12, handler: (*Model).slashModel},
+	}
+}
+
+func slashCommandSpecFor(command string) (slashCommandSpec, bool) {
+	for _, spec := range slashCommandSpecs() {
+		if spec.command == command {
+			return spec, true
+		}
+	}
+
+	return slashCommandSpec{}, false
 }
 
 func (m *Model) slashQuit(_ string, _ []string) bool {
@@ -68,12 +94,28 @@ func (m *Model) slashHelp(_ string, _ []string) bool {
 func (m *Model) helpText() string {
 	var b strings.Builder
 
-	b.WriteString("Commands: /save /copy [last|all|visible|selected] /select /clear /new /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve [all] /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help")
+	helpSpecs := slashCommandSpecs()
+	slices.SortFunc(helpSpecs, func(left slashCommandSpec, right slashCommandSpec) int {
+		return left.helpOrder - right.helpOrder
+	})
+
+	commands := make([]string, 0, len(helpSpecs))
+	for _, spec := range helpSpecs {
+		command := spec.command
+		if spec.helpUsage != "" {
+			command += " " + spec.helpUsage
+		}
+
+		commands = append(commands, command)
+	}
+
+	b.WriteString("Commands: ")
+	b.WriteString(strings.Join(commands, " "))
 	b.WriteString("\nNavigation: Ctrl+T cycles panel tabs | Ctrl+Y copies last assistant response | Ctrl+O toggles terminal selection | transcript: PgUp/PgDn or mouse wheel")
 
-	if strings.TrimSpace(m.featurePlannerPhase) != "" {
+	if strings.TrimSpace(string(m.featurePlannerPhase)) != "" {
 		b.WriteString("\nProduct workflow: phase=")
-		b.WriteString(strings.TrimSpace(m.featurePlannerPhase))
+		b.WriteString(strings.TrimSpace(string(m.featurePlannerPhase)))
 
 		if strings.TrimSpace(m.featurePlannerEffortRoot) != "" {
 			b.WriteString(" effort=")
@@ -88,7 +130,9 @@ func (m *Model) helpText() string {
 
 func (m *Model) slashClear(_ string, _ []string) bool {
 	m.messages = nil
+	m.messagesRevision++
 	m.history.entries = nil
+	m.history.revision++
 	m.history.selected = 0
 	m.pinnedFiles = nil
 	m.ClearLastTurnSourceResults()
@@ -170,17 +214,21 @@ func (m *Model) slashDebugLog(_ string, fields []string) bool {
 	case len(fields) == 1 && m.debugLogPath == "":
 		m.status = "Debug conversation logging is unavailable."
 	case len(fields) == 1:
-		m.status = "Debug log: " + m.displayPath(m.debugLogPath) + " | mode: " + textutil.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")
+		mode := m.cfg.Chat.DebugLogMode
+		if mode == "" {
+			mode = runprofile.DebugLogModeRedacted
+		}
+		m.status = "Debug log: " + m.displayPath(m.debugLogPath) + " | mode: " + string(mode)
 	case len(fields) == 3 && fields[1] == "mode":
-		switch fields[2] {
-		case "redacted", "full":
-			m.cfg.Chat.DebugLogMode = fields[2]
+		mode, ok := runprofile.ParseDebugLogMode(fields[2])
+		if ok {
+			m.cfg.Chat.DebugLogMode = mode
 			if m.debugLogger != nil {
-				m.debugLogger.SetMode(transcript.DebugLogMode(fields[2]))
+				m.debugLogger.SetMode(mode)
 			}
 
-			m.status = "Debug log mode set to " + fields[2] + "."
-		default:
+			m.status = "Debug log mode set to " + string(mode) + "."
+		} else {
 			m.status = "Usage: /debuglog [mode redacted|full]"
 		}
 	default:
@@ -217,8 +265,7 @@ func (m *Model) slashMode(_ string, fields []string) bool {
 	case len(fields) == 1:
 		m.status = "Current mode: " + m.modeSummary()
 	case len(fields) == 2:
-		name := strings.ToLower(strings.TrimSpace(fields[1]))
-		mode, ok := modepolicy.ModeByName(name)
+		mode, ok := modepolicy.ModeByName(fields[1])
 
 		if !ok {
 			m.status = "Usage: /mode [build|plan|general]"
@@ -229,7 +276,7 @@ func (m *Model) slashMode(_ string, fields []string) bool {
 		m.invalidateComposedPrompt()
 		m.applyModePermissions(mode)
 
-		m.status = "Agent mode set to " + mode.Name + "."
+		m.status = "Agent mode set to " + string(mode.Name) + "."
 	default:
 		m.status = "Usage: /mode [build|plan|general]"
 	}
@@ -298,11 +345,10 @@ func (m *Model) slashDeny(_ string, _ []string) bool {
 }
 
 func (m *Model) slashUndo(_ string, _ []string) bool {
-	summary, err := m.undoLast()
-	if err != nil {
+	if err := m.startUndo(); err != nil {
 		m.status = "Undo failed: " + err.Error()
 	} else {
-		m.status = summary
+		m.status = "Undoing latest workspace mutation..."
 	}
 
 	return false
@@ -375,7 +421,8 @@ func (m *Model) slashSystem(raw string, _ []string) bool {
 		m.status = "Usage: /system <prompt>"
 	default:
 		m.cfg.Chat.SystemPrompt = prompt
-		if err := m.reloadPromptStack(); err != nil {
+		m.promptConfigurationRevision++
+		if err := m.reloadPromptStackWithProfiles(m.activeProfiles); err != nil {
 			m.setContextError("Prompt context failed: " + err.Error())
 		} else {
 			m.clearContextError()
@@ -450,7 +497,7 @@ func (m *Model) slashServer(_ string, fields []string) bool {
 			state = "up"
 		}
 
-		m.status = fmt.Sprintf("Server %s on %s. Model: %s", state, m.plannerSpec.EndpointBaseURL(), textutil.Fallback(m.activeModelDisplayID(), "unknown"))
+		m.status = fmt.Sprintf("Server %s on %s. Model: %s", state, m.plannerSpec.EndpointBaseURL(), textutil.Fallback(activeModelDisplayID(m.modelDisplayID, m.modelID), "unknown"))
 	default:
 		m.status = "Usage: /server <start|stop|restart|status>"
 	}
@@ -496,6 +543,7 @@ func (m *Model) slashProfile(_ string, fields []string) bool {
 		}
 
 		m.activeProfiles = nextProfiles
+		m.promptConfigurationRevision++
 		m.clearContextError()
 
 		m.status = fmt.Sprintf("Activated profile %q. Context: %s", name, m.contextSummary())
@@ -525,6 +573,7 @@ func (m *Model) slashProfile(_ string, fields []string) bool {
 		}
 
 		m.activeProfiles = nextProfiles
+		m.promptConfigurationRevision++
 		m.clearContextError()
 
 		m.status = fmt.Sprintf("Removed profile %q. Context: %s", name, m.contextSummary())

@@ -1,5 +1,6 @@
 [
   "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm exact ShortLabel source before submit_plan\",\"why_not_answering\":\"required_edit_paths need source-body evidence before submit_plan\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\"}",
   "{\"tool\":\"submit_plan\",\"rationale\":\"Bad first attempt with the wrong file path to exercise required-path coverage recovery.\",\"edits\":[{\"path\":\"README.md\",\"old_text\":\"# Frozen Scripted Contract Repo\",\"new_text\":\"# Frozen Scripted Contract Repo\",\"purpose\":\"wrong path that must be rejected\"}]}",
   "{\"tool\":\"submit_plan\",\"rationale\":\"Use the required path and confirmed current source after the coverage rejection.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\"}]}",
   "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" after the corrected submitted edit.\n- Scope safety: Only internal/labels/labels.go changed, which is inside Allowed Repair Paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."

@@ -69,13 +69,19 @@ func atomForActiveRun(state *featureplanner.FeatureState, run featureplanner.Act
 func findTerminalCompletionForActiveRun(root string, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) (string, error, bool) {
 	for _, sessionID := range progressSessionCandidates(run) {
 		record, completionPath, found, err := coreplanexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
-		if err == nil && found && terminalCompletionForActiveRun(record, run, atom) {
+		if err != nil {
+			return "", fmt.Errorf("load plan-execute terminal completion for session %s: %w", sessionID, err), false
+		}
+		if found && terminalCompletionForActiveRun(record, run, atom) {
 			payload, err := encodeTerminalCompletion(record, completionPath, run)
 			return payload, err, err == nil
 		}
 
 		state, relPath, found, err := coreplanexecute.TryLoadProgressState(root, sessionID)
-		if err == nil && found && terminalProgressForActiveRun(state, run, atom) {
+		if err != nil {
+			return "", fmt.Errorf("load plan-execute progress for session %s: %w", sessionID, err), false
+		}
+		if found && terminalProgressForActiveRun(state, run, atom) {
 			payload, err := encodeProgressCompletion(state, relPath, run)
 			return payload, err, err == nil
 		}

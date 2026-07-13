@@ -7,12 +7,12 @@ import (
 	planexecuteadapter "idiom/internal/workflows/featureplanner/adapters/planexecute"
 )
 
-func (m *Model) reconcileFeaturePlannerActivePlanExecuteRuns(state *featureplanner.FeatureState) []featureplanner.Event {
+func (m *promptExecutionSession) reconcileFeaturePlannerActivePlanExecuteRuns(state *featureplanner.FeatureState) []featureplanner.Event {
 	if m == nil || state == nil {
 		return nil
 	}
 
-	root := strings.TrimSpace(m.projectRoot())
+	root := strings.TrimSpace(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 	if root == "" {
 		root = strings.TrimSpace(m.cfg.Workspace.Root)
 	}

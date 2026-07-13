@@ -490,17 +490,68 @@ func absolutePathStart(value string, index int) bool {
 	}
 
 	prev := value[index-1]
-	if prev == ':' && index+1 < len(value) && value[index+1] == '/' && looksLikeURLScheme(value[:index-1]) {
-		return false
+	if prev == ':' && index+1 < len(value) && value[index+1] == '/' {
+		schemePrefix := value[:index-1]
+		if isFileURLScheme(schemePrefix) {
+			return fileURIHasLocation(value[index:])
+		}
+		if looksLikeURLScheme(schemePrefix) {
+			return false
+		}
 	}
 
 	return strings.ContainsRune(" \t\r\n=:'\"`([{<,;|", rune(prev))
 }
 
+func isFileURLScheme(prefix string) bool {
+	start := strings.LastIndexAny(prefix, " \t\r\n=\"'`([{<,;|")
+	return strings.EqualFold(prefix[start+1:], "file")
+}
+
+func fileURIHasLocation(value string) bool {
+	value = strings.TrimPrefix(value, "//")
+	if value == "" {
+		return false
+	}
+
+	return !strings.ContainsRune(" \t\r\n,;:)]}\"'`<>?#", rune(value[0]))
+}
+
 func looksLikeURLScheme(prefix string) bool {
+	if looksLikeSchemaURLSchemePattern(prefix) {
+		return true
+	}
 	start := strings.LastIndexAny(prefix, " \t\r\n=\"'`([{<,;|")
 	scheme := prefix[start+1:]
+	// file URIs name host-local or UNC filesystem locations. Treat them as
+	// path evidence instead of granting the URL exemption used for remote
+	// resources such as HTTPS endpoints.
+	if strings.EqualFold(scheme, "file") {
+		return false
+	}
+	return validURLScheme(scheme)
+}
 
+func looksLikeSchemaURLSchemePattern(prefix string) bool {
+	const schemePattern = `[A-Za-z][A-Za-z0-9+.-]*`
+
+	start := strings.LastIndexAny(prefix, " \t\r\n=\"'`<{,;|")
+	prefix = prefix[start+1:]
+	prefix = strings.TrimPrefix(prefix, "^")
+	namespace, found := strings.CutSuffix(prefix, schemePattern)
+	if !found {
+		return false
+	}
+	if namespace == "" {
+		return true
+	}
+	if !strings.HasSuffix(namespace, ":") {
+		return false
+	}
+	return validURLScheme(strings.TrimSuffix(namespace, ":"))
+}
+
+func validURLScheme(scheme string) bool {
 	if scheme == "" {
 		return false
 	}

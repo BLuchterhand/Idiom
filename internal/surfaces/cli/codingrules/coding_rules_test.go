@@ -5,85 +5,55 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	rulescontract "idiom/internal/contracts/codingrules"
 )
 
-func TestCheckJSONReportsWrapper(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "wrapper.go", `package sample
+var _ = ginkgo.Describe("Coding rules CLI", func() {
+	const wrapperSource = `package sample
 
 func target(v string) string { return v }
 
 func Wrapper(v string) string {
 	return target(v)
 }
-`)
+`
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	code := RunWithTelemetry([]string{"check", "--project-root", root, "--json"}, &stdout, &stderr, nil)
+	ginkgo.It("reports pass-through wrappers as JSON", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeCodingRulesTestFile(root, "wrapper.go", wrapperSource)
 
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
-	}
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{"check", "--project-root", root, "--json"}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), stderr.String())
 
-	var report rulescontract.Report
-	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
-		t.Fatalf("decode report: %v\n%s", err, stdout.String())
-	}
+		var report rulescontract.Report
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &report)).To(gomega.Succeed())
+		gomega.Expect(report.Findings).To(gomega.HaveLen(1))
+		gomega.Expect(report.Findings[0].RuleID).To(gomega.Equal(rulescontract.RuleNoPassThroughWrapper))
+	})
 
-	if len(report.Findings) != 1 {
-		t.Fatalf("findings = %#v, want one", report.Findings)
-	}
-	if report.Findings[0].RuleID != rulescontract.RuleNoPassThroughWrapper {
-		t.Fatalf("finding = %#v", report.Findings[0])
-	}
-}
+	ginkgo.It("uses the requested fail-on threshold", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeCodingRulesTestFile(root, "wrapper.go", wrapperSource)
 
-func TestCheckFailOnWarning(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "wrapper.go", `package sample
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{"check", "--project-root", root, "--fail-on", "warning"}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(3), stdout.String(), stderr.String())
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("go.no_pass_through_wrapper"))
+	})
 
-func target(v string) string { return v }
+	ginkgo.It("rejects an unknown fail-on threshold", func() {
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{"check", "--project-root", ginkgo.GinkgoT().TempDir(), "--fail-on", "always"}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(2))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("--fail-on"))
+	})
+})
 
-func Wrapper(v string) string {
-	return target(v)
-}
-`)
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	code := RunWithTelemetry([]string{"check", "--project-root", root, "--fail-on", "warning"}, &stdout, &stderr, nil)
-
-	if code != 3 {
-		t.Fatalf("exit code = %d, want 3; stdout = %s stderr = %s", code, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "go.no_pass_through_wrapper") {
-		t.Fatalf("stdout did not include rule ID: %s", stdout.String())
-	}
-}
-
-func TestCheckRejectsUnknownFailOn(t *testing.T) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	code := RunWithTelemetry([]string{"check", "--project-root", t.TempDir(), "--fail-on", "always"}, &stdout, &stderr, nil)
-
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2", code)
-	}
-	if !strings.Contains(stderr.String(), "--fail-on") {
-		t.Fatalf("stderr did not explain fail-on error: %s", stderr.String())
-	}
-}
-
-func writeTestFile(t *testing.T, root string, name string, body string) {
-	t.Helper()
-
-	path := filepath.Join(root, name)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
+func writeCodingRulesTestFile(root, name, body string) {
+	gomega.Expect(os.WriteFile(filepath.Join(root, name), []byte(body), 0o644)).To(gomega.Succeed())
 }

@@ -1,0 +1,9 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"\",\"named_gap\":\"confirm exact required edit target before writing\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"retry the exact required target through the normal read surface\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the save label after correcting the invalid read request\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"refresh the changed target after verification\"}",
+  "Implemented the label change after correcting the invalid empty-path read.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
+]

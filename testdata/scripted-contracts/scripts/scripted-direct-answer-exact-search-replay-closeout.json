@@ -1,6 +1,0 @@
-[
-  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":8}",
-  "{\"tool\":\"search_files\",\"pattern\":\"labels.go\"}",
-  "{\"tool\":\"search_files\",\"pattern\":\"labels.go\"}",
-  "{\"tool\":\"search_files\",\"pattern\":\"labels.go\"}"
-]

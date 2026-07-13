@@ -4,92 +4,167 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"idiom/internal/contracts/toolfacts"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
-	"idiom/internal/repository/discovery"
 )
 
 func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolResult {
 	toolName := strings.TrimSpace(req.Tool)
-	workdir, err := m.pathAccess.ResolveReadWorkdir(req.Workdir)
-	if err != nil {
-		return ToolResult{Tool: toolName, Summary: "Failed to resolve workdir", Error: err.Error()}
-	}
-	requestScope := strings.TrimSpace(req.Path)
-	if info, statErr := os.Stat(workdir); statErr == nil && m.pathAccess.SelectedSystemSearchDirectoryAccess(workdir, info) && (requestScope == "" || requestScope == ".") {
-		return selectedSystemSearchDirectoryDeniedResult(toolName, m.pathAccess.DisplayPath(workdir))
-	}
-
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
 		return ToolResult{Tool: toolName, Summary: "Content search rejected", Error: "pattern is required"}
 	}
-
-	if scope := strings.TrimSpace(req.Path); scope != "" && scope != "." {
-		resolvedScope, err := m.pathAccess.ResolveReadPath(scope, req.Workdir)
+	var matcher *regexp.Regexp
+	if !req.FixedStrings {
+		var err error
+		matcher, err = regexp.Compile(pattern)
 		if err != nil {
-			return ToolResult{Tool: toolName, Summary: "Search scope not found", Output: formatPathSuggestions(m.findPathSuggestions(scope, 5))}
+			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: err.Error()}
 		}
+	}
 
-		if _, err := os.Stat(resolvedScope); err != nil {
-			result := ToolResult{Tool: toolName, Summary: "Search scope not found"}
-			if !os.IsNotExist(err) {
-				result.Summary = "Search scope unavailable"
-				result.Error = err.Error()
+	requestScope := defaultString(req.Path, ".")
+	capability, err := m.pathAccess.openReadCapability(parent, req.executionSessionIdentity, requestScope, req.Workdir)
+	if err != nil {
+		result := ToolResult{Tool: toolName, Summary: "Failed to resolve search scope", Error: err.Error()}
+		if os.IsNotExist(err) {
+			result.Summary = "Search scope not found"
+			result.Error = ""
+			result.Output = formatPathSuggestions(m.findPathSuggestions(requestScope, 5))
+		}
+		return result
+	}
+	defer capability.Close()
+	base := capability.Path()
+	if capability.SelectedDirectoryOnly() {
+		return selectedSystemSearchDirectoryDeniedResult(toolName, m.pathAccess.DisplayPath(base))
+	}
 
-				return result
+	// Hard display cap. Logs show 100+ hits routinely in monorepos, and
+	// the model re-ingests the full result on every subsequent turn.
+	const searchContentDisplayCap = 50
+	type searchContentMatch struct {
+		formatted string
+		display   string
+		factPath  string
+		line      int
+		truncated bool
+		termScore int
+		pathScore int
+		snippet   string
+	}
+
+	matches := make([]searchContentMatch, 0)
+	rankingTerms := searchPatternRankingTerms(pattern)
+	includeLogDirs := searchIntentTargetsLogs(req.Path, pattern, req.Glob)
+	explicitHiddenRoot := searchFilesExplicitHiddenRoot(req.Path)
+	limitReached := false
+	matchLimit := m.cfg.MaxDirectoryEntries
+	if matchLimit < 1 {
+		matchLimit = 1
+	}
+
+	matchFile := func(filePath string, data []byte) {
+		if bytes.IndexByte(data, 0) >= 0 {
+			return
+		}
+		for index, rawLine := range textutil.SplitWorkspaceFileLines(data) {
+			if len(matches) >= matchLimit {
+				limitReached = true
+				return
+			}
+			line := strings.TrimRight(rawLine, "\r\n")
+			matched := strings.Contains(line, pattern)
+			if !req.FixedStrings {
+				matched = matcher.MatchString(line)
+			}
+			if !matched {
+				continue
 			}
 
-			result.Output = formatPathSuggestions(m.findPathSuggestions(scope, 5))
-
-			return result
-		}
-		if info, statErr := os.Stat(resolvedScope); statErr == nil && m.pathAccess.SelectedSystemSearchDirectoryAccess(resolvedScope, info) {
-			return selectedSystemSearchDirectoryDeniedResult(toolName, m.pathAccess.DisplayPath(resolvedScope))
-		}
-
-		req.Path = resolvedScope
-	}
-
-	backend, err := resolveContentSearchBackend()
-	if err != nil {
-		return ToolResult{
-			Tool:    toolName,
-			Summary: "Content search unavailable",
-			Error:   err.Error(),
-		}
-	}
-
-	args := backend.args(req, m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob))
-
-	execResult := m.runCommandResult(parent, commandexec.Spec{Mode: commandexec.ModeArgv, Name: backend.bin, Args: args, Dir: workdir})
-	noMatch := execResult.ExitError && execResult.ExitCode == 1
-	if execResult.Err != nil && !noMatch {
-		output := m.commandDisplayOutput(execResult).Text
-		errMsg := execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))).Error()
-
-		if trimmed := strings.TrimSpace(execResult.Stderr); trimmed != "" {
-			errMsg = fmt.Sprintf("%s: %s", errMsg, trimmed)
-		}
-
-		return ToolResult{
-			Tool:    toolName,
-			Summary: "Content search failed",
-			Output:  output,
-			Error:   errMsg,
+			display := m.pathAccess.DisplayPath(filePath)
+			factPath := ""
+			if rel, ok := m.pathAccess.RelativeWorkspacePath(filePath); ok && rel != "." {
+				factPath = filepath.ToSlash(rel)
+			}
+			lineNumber := index + 1
+			renderedLine := textutil.TruncateBytes(line, searchContentLineCap, lineTruncationMarker)
+			matches = append(matches, searchContentMatch{
+				formatted: fmt.Sprintf("%s %s:%d:%s", m.rememberPath(filePath), display, lineNumber, renderedLine),
+				display:   display,
+				factPath:  factPath,
+				line:      lineNumber,
+				truncated: renderedLine != line,
+				termScore: searchContentTermScore(display, line, rankingTerms),
+				pathScore: searchContentPathPriority(display),
+				snippet:   searchContextSnippetFromData(data, lineNumber, 2),
+			})
 		}
 	}
 
-	if noMatch || strings.TrimSpace(execResult.Stdout) == "" {
+	visit := func(relative string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := parent.Err(); err != nil {
+			return err
+		}
+		entryPath := base
+		if relative != "." {
+			entryPath = filepath.Join(base, filepath.FromSlash(relative))
+		}
+		if entry.IsDir() {
+			if m.shouldSkipSearchEntry(base, entryPath, true, includeLogDirs, explicitHiddenRoot) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if m.shouldSkipSearchEntry(base, entryPath, false, includeLogDirs, explicitHiddenRoot) || !searchContentGlobMatch(req.Glob, relative, entryPath) {
+			return nil
+		}
+		entryInfo, infoErr := entry.Info()
+		if infoErr != nil || !entryInfo.Mode().IsRegular() {
+			return nil
+		}
+		data, _, readErr := capability.ReadFile(relative)
+		if readErr != nil {
+			return readErr
+		}
+		matchFile(entryPath, data)
+		if limitReached {
+			return fs.SkipAll
+		}
+		return nil
+	}
+
+	if capability.Info().IsDir() {
+		rootFS, fsErr := capability.FS()
+		if fsErr != nil {
+			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: fsErr.Error()}
+		}
+		if walkErr := fs.WalkDir(rootFS, ".", visit); walkErr != nil {
+			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: walkErr.Error()}
+		}
+	} else if searchContentGlobMatch(req.Glob, ".", base) {
+		data, readErr := capability.ReadAll()
+		if readErr != nil {
+			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: readErr.Error()}
+		}
+		matchFile(base, data)
+	}
+	if err := capability.Validate(); err != nil {
+		return ToolResult{Tool: toolName, Summary: "Read target changed while searching", Error: err.Error()}
+	}
+
+	if len(matches) == 0 {
 		// Zero-hit enrichment. Common confused-mode: model pastes a
 		// symbol name as a search_content pattern but the actual
 		// definition lives in a file whose *name* contains that term
@@ -118,71 +193,12 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolRes
 		}
 	}
 
-	lines := strings.Split(strings.TrimSpace(execResult.Stdout), "\n")
-	// Hard display cap. Logs show 100+ hits routinely in monorepos, and
-	// the model re-ingests the full result on every subsequent turn.
-	// Capping the rendered view at 50 lets the model scan the top hits,
-	// see the total, and narrow on demand.
-	const searchContentDisplayCap = 50
-
-	type searchContentMatch struct {
-		formatted string
-		display   string
-		factPath  string
-		line      int
-		truncated bool
-		termScore int
-		pathScore int
-	}
-
-	matches := make([]searchContentMatch, 0, len(lines))
 	singlePath := ""
 	singleLine := 0
-	totalMatches := 0
-	rankingTerms := searchPatternRankingTerms(pattern)
-
-	for _, line := range lines {
-		parts := strings.SplitN(line, ":", 3)
-		if len(parts) < 3 {
-			continue
-		}
-
-		totalMatches++
-
-		absPath := filepath.Clean(parts[0])
-		if !filepath.IsAbs(absPath) {
-			absPath = filepath.Clean(filepath.Join(workdir, absPath))
-		}
-		handle := m.rememberPath(absPath)
-		display := m.pathAccess.DisplayPath(absPath)
-		factPath := ""
-		if rel, ok := m.pathAccess.RelativeWorkspacePath(absPath); ok && rel != "." {
-			factPath = filepath.ToSlash(rel)
-		}
-		lineNumber, _ := strconv.Atoi(parts[1])
-		rawLine := strings.TrimRight(parts[2], "\r\n")
-		renderedLine := textutil.TruncateBytes(rawLine, searchContentLineCap, lineTruncationMarker)
-
-		matches = append(matches, searchContentMatch{
-			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], renderedLine),
-			display:   display,
-			factPath:  factPath,
-			line:      lineNumber,
-			truncated: renderedLine != rawLine,
-			termScore: searchContentTermScore(display, parts[2], rankingTerms),
-			pathScore: searchContentPathPriority(display),
-		})
-
-		if len(lines) == 1 {
-			if lineNumber > 0 {
-				singlePath = display
-				singleLine = lineNumber
-			}
-		}
-
-		if totalMatches >= m.cfg.MaxDirectoryEntries {
-			break
-		}
+	totalMatches := len(matches)
+	if totalMatches == 1 {
+		singlePath = matches[0].display
+		singleLine = matches[0].line
 	}
 
 	sort.SliceStable(matches, func(i, j int) bool {
@@ -238,7 +254,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolRes
 
 	if len(formatted) == 1 && singlePath != "" && singleLine > 0 {
 		summary = fmt.Sprintf("Found 1 matching line at %s:%d.", singlePath, singleLine)
-		if snippet := m.searchContextSnippet(filepath.Join(m.cfg.Root, singlePath), singleLine, 2); snippet != "" {
+		if snippet := matches[0].snippet; snippet != "" {
 			formatted = append(formatted, "context:\n"+snippet)
 		}
 	}
@@ -322,28 +338,6 @@ func searchContentPathPriority(path string) int {
 	}
 }
 
-func (m *Manager) defaultSearchExcludeGlobs(path string, pattern string, glob string) []string {
-	if searchPathTargetsSkippedDir(path) {
-		return nil
-	}
-
-	excludes := discovery.RipgrepExcludeGlobs()
-	if searchIntentTargetsLogs(path, pattern, glob) {
-		filtered := excludes[:0]
-		for _, exclude := range excludes {
-			if exclude == "!**/logs/**" {
-				continue
-			}
-
-			filtered = append(filtered, exclude)
-		}
-
-		excludes = filtered
-	}
-
-	return excludes
-}
-
 func searchIntentTargetsLogs(path string, pattern string, glob string) bool {
 	combined := strings.ToLower(strings.TrimSpace(path) + " " + strings.TrimSpace(pattern) + " " + strings.TrimSpace(glob))
 	if strings.Contains(combined, "logs") || strings.Contains(combined, "log/") || strings.Contains(combined, ".log") || strings.Contains(combined, "jsonl") {
@@ -425,26 +419,24 @@ func recursivePathGlobMatch(pattern string, rel string) (bool, error) {
 	return regexp.MatchString(b.String(), rel)
 }
 
-func searchPathTargetsSkippedDir(path string) bool {
-	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-	if cleaned == "" || cleaned == "." {
-		return false
+func searchContentGlobMatch(glob string, relative string, absolute string) bool {
+	glob = filepath.ToSlash(strings.TrimSpace(glob))
+	if glob == "" {
+		return true
 	}
-
-	first := strings.Trim(strings.Split(cleaned, "/")[0], "/")
-	if first == "" || first == "." {
-		return false
+	relative = filepath.ToSlash(filepath.Clean(relative))
+	name := filepath.Base(absolute)
+	if ok, err := path.Match(glob, name); err == nil && ok {
+		return true
 	}
-
-	return discovery.RelTargetsNoisyDir(cleaned) || discovery.ShouldSkipRelFile(cleaned)
+	if ok, err := path.Match(glob, relative); err == nil && ok {
+		return true
+	}
+	ok, err := recursivePathGlobMatch(glob, relative)
+	return err == nil && ok
 }
 
-func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) string {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-
+func searchContextSnippetFromData(content []byte, lineNumber int, radius int) string {
 	spans := lineSpans(string(content))
 	if len(spans) == 0 || lineNumber <= 0 || lineNumber > len(spans) {
 		return ""
@@ -483,12 +475,12 @@ func (m *Manager) FileLineCount(path string) (int, bool) {
 		return 0, false
 	}
 
-	resolved, err := m.pathAccess.ResolvePath(strings.TrimSpace(path), "")
+	capability, err := m.pathAccess.openReadCapability(context.Background(), executionSessionIdentity{}, strings.TrimSpace(path), "")
 	if err != nil {
 		return 0, false
 	}
-
-	data, err := os.ReadFile(resolved)
+	defer capability.Close()
+	data, err := capability.ReadAll()
 	if err != nil {
 		return 0, false
 	}

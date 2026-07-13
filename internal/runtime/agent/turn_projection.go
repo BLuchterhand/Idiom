@@ -32,8 +32,8 @@ func turnDiagnosticEventFields(diagnostic turnDiagnostic) map[string]any {
 	if diagnostic.ReasonCode != "" {
 		fields["reason_code"] = string(diagnostic.ReasonCode)
 	}
-	if paths := turnEvidencePaths(diagnostic.Evidence); len(paths) > 0 {
-		fields["evidence_paths"] = paths
+	if len(diagnostic.EvidencePaths) > 0 {
+		fields["evidence_paths"] = append([]string(nil), diagnostic.EvidencePaths...)
 	}
 	return fields
 }
@@ -58,27 +58,17 @@ func turnViolationEventFields(violation turnViolation) map[string]any {
 		if violation.SourceGrounding.Kind != "" {
 			fields["source_grounding_kind"] = string(violation.SourceGrounding.Kind)
 		}
-		if paths := uniqueSortedRunnerPaths(violation.SourceGrounding.Paths); len(paths) > 0 {
-			fields["source_grounding_paths"] = paths
+		if len(violation.SourceGrounding.References) > 0 {
+			fields["source_grounding_references"] = violation.SourceGrounding.References
+		}
+		if len(violation.SourceGrounding.Resolutions) > 0 {
+			fields["source_grounding_resolutions"] = violation.SourceGrounding.Resolutions
 		}
 	}
-	if paths := turnEvidencePaths(violation.Evidence); len(paths) > 0 {
-		fields["evidence_paths"] = paths
+	if len(violation.EvidencePaths) > 0 {
+		fields["evidence_paths"] = append([]string(nil), violation.EvidencePaths...)
 	}
 	return fields
-}
-
-func turnEvidencePaths(refs []turnEvidenceRef) []string {
-	if len(refs) == 0 {
-		return nil
-	}
-	paths := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		if ref.Path != "" {
-			paths = append(paths, ref.Path)
-		}
-	}
-	return paths
 }
 
 func finalAnswerCompletionGateProjection(acceptance finalAnswerAcceptance, summary string, errorText string) (workspace.ToolResult, bool) {
@@ -90,12 +80,22 @@ func finalAnswerCompletionGateProjection(acceptance finalAnswerAcceptance, summa
 		summary = "Final answer rejected by blocker check"
 	}
 	result := workspace.ToolResult{
-		Tool:    "completion_gate",
+		Tool:    completionGateToolName,
 		Summary: strings.TrimSpace(summary),
 		Error:   strings.TrimSpace(errorText),
 	}
 	if violation.Kind == turnViolationSourceGroundingUnmet {
-		result = annotateSourceGroundingAssessment(result, violation.SourceGrounding)
+		return annotateSourceGroundingAssessment(result, violation.SourceGrounding), true
 	}
-	return result, true
+	invariantID := strings.TrimSpace(violation.InvariantID)
+	if invariantID == "" {
+		invariantID = completionGateInvariantFinalAnswerAcceptance
+	}
+	envelope := newCompletionGateRecoveryEnvelope(
+		invariantID,
+		string(violation.Kind),
+		completionGateViolationContract,
+		nil,
+	)
+	return annotateCompletionGateRecoveryEnvelope(result, envelope), true
 }

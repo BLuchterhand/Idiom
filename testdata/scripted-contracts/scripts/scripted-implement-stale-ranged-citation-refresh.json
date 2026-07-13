@@ -1,0 +1,9 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"inspect the exact source range before editing and citing it\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"understand why the current label was introduced before editing\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the save label before reporting the exact current source range\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "Changed paths:\n- `internal/labels/labels.go`\n\nVerification: source_sanity passed.\n\nEvidence: The `internal/labels/` package contains the label helper. Current source citation: `internal/labels/labels.go:1-5` now defines ShortLabel as returning `Save`.",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"refresh the exact cited range after the mutation\"}",
+  "Changed paths:\n- `internal/labels/labels.go`\n\nVerification: source_sanity passed.\n\nEvidence: The `internal/labels/` package contains the label helper. Current source citation: `internal/labels/labels.go:1-5` now defines ShortLabel as returning `Save`."
+]

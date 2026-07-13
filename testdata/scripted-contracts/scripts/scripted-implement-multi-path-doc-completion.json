@@ -1,0 +1,13 @@
+[
+  "{\"tool\":\"read_file\",\"path\":\"README.md\",\"named_gap\":\"inspect the first required documentation target\"}",
+  "{\"tool\":\"history_range\",\"path\":\"README.md\"}",
+  "{\"tool\":\"read_file\",\"path\":\"AGENTS.md\",\"named_gap\":\"inspect the second required documentation target\"}",
+  "{\"tool\":\"history_range\",\"path\":\"AGENTS.md\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"deterministic Idiom scripted-contract tests\",\"new_text\":\"deterministic isolated Idiom scripted-contract tests\",\"description\":\"describe the fixture as isolated and deterministic\"}",
+  "{\"tool\":\"read_file\",\"path\":\"AGENTS.md\",\"named_gap\":\"refresh the second target after the first mutation\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"AGENTS.md\",\"old_text\":\"intentionally small and stable\",\"new_text\":\"intentionally deterministic and stable\",\"description\":\"keep fixture guidance consistent\"}",
+  "{\"tool\":\"shell\",\"command\":\"go test ./...\"}",
+  "{\"tool\":\"read_file\",\"path\":\"README.md\",\"named_gap\":\"refresh the first changed documentation target\"}",
+  "{\"tool\":\"read_file\",\"path\":\"AGENTS.md\",\"named_gap\":\"refresh the second changed documentation target\"}",
+  "Updated both required documentation paths.\n\nChanged paths:\n- README.md\n- AGENTS.md\n\nVerification: go test ./... passed."
+]

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/term"
+
 	"idiom/internal/platform/config"
 )
 
@@ -113,7 +115,7 @@ func Run(parent context.Context, spec Spec) Result {
 		defer cancel()
 	}
 
-	cmd, err := configuredCommand(ctx, spec)
+	cmd, processTree, err := managedCommand(ctx, spec)
 	if err != nil {
 		return Result{ExitCode: 1, Err: err}
 	}
@@ -130,7 +132,7 @@ func Run(parent context.Context, spec Spec) Result {
 	cmd.Stderr = stderr
 
 	start := time.Now()
-	runErr := cmd.Run()
+	outcome := runManagedCommand(cmd, processTree)
 	duration := time.Since(start)
 	stdoutText, stdoutTruncated := stdout.String()
 	stderrText, stderrTruncated := stderr.String()
@@ -139,7 +141,7 @@ func Run(parent context.Context, spec Spec) Result {
 		stderrTruncated = false
 	}
 
-	result := resultFromRun(ctx, duration, runErr)
+	result := resultFromRun(ctx, duration, outcome)
 	result.Stdout = stdoutText
 	result.Stderr = stderrText
 	result.StdoutTruncated = stdoutTruncated
@@ -160,20 +162,22 @@ func RunForeground(parent context.Context, spec Spec, streams ForegroundIO) Resu
 		defer cancel()
 	}
 
-	cmd, err := foregroundCommand(ctx, spec, streams)
+	cmd, processTree, err := managedForegroundCommand(ctx, spec, streams)
 	if err != nil {
 		return Result{ExitCode: 1, Err: err}
 	}
 
 	start := time.Now()
-	runErr := cmd.Run()
+	outcome := runManagedCommand(cmd, processTree)
 
-	return resultFromRun(ctx, time.Since(start), runErr)
+	return resultFromRun(ctx, time.Since(start), outcome)
 }
 
 // PrepareForegroundCommand builds an exec.Cmd for framework integrations that
 // must own foreground execution themselves, such as terminal handoff. Prefer
-// RunForeground when commandexec can own the full run lifecycle.
+// RunForeground when commandexec can own the full process lifecycle.
+// PrepareForegroundCommand deliberately leaves process-tree and terminal job
+// control to the framework that starts the returned command.
 func PrepareForegroundCommand(parent context.Context, spec Spec, streams ForegroundIO) (*exec.Cmd, error) {
 	if parent == nil {
 		parent = context.Background()
@@ -208,20 +212,48 @@ func foregroundCommand(ctx context.Context, spec Spec, streams ForegroundIO) (*e
 	return cmd, nil
 }
 
-func resultFromRun(ctx context.Context, duration time.Duration, runErr error) Result {
+func managedForegroundCommand(ctx context.Context, spec Spec, streams ForegroundIO) (*exec.Cmd, *managedProcessTree, error) {
+	cmd, err := foregroundCommand(ctx, spec, streams)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	terminalFD := -1
+	if stdin, ok := streams.Stdin.(*os.File); ok && term.IsTerminal(int(stdin.Fd())) {
+		terminalFD = int(stdin.Fd())
+	}
+
+	processTree, err := newManagedProcessTree(cmd, terminalFD)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Cancel = processTree.terminate
+
+	return cmd, processTree, nil
+}
+
+type managedCommandOutcome struct {
+	commandErr   error
+	lifecycleErr error
+}
+
+func resultFromRun(ctx context.Context, duration time.Duration, outcome managedCommandOutcome) Result {
+	resultErr := errors.Join(outcome.commandErr, outcome.lifecycleErr)
 	result := Result{
 		ExitCode: 0,
 		Duration: duration,
-		Err:      runErr,
+		Err:      resultErr,
 	}
 
-	if runErr != nil {
+	if resultErr != nil {
 		result.ExitCode = 1
+	}
+	if outcome.commandErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if errors.As(outcome.commandErr, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 			result.ExitError = true
-		} else if errors.Is(runErr, exec.ErrNotFound) {
+		} else if errors.Is(outcome.commandErr, exec.ErrNotFound) {
 			result.CommandNotFound = true
 		}
 	}
@@ -237,6 +269,7 @@ func resultFromRun(ctx context.Context, duration time.Duration, runErr error) Re
 type Process struct {
 	cmd    *exec.Cmd
 	cancel context.CancelFunc
+	tree   *managedProcessTree
 
 	stdin     io.WriteCloser
 	stdout    io.ReadCloser
@@ -245,7 +278,10 @@ type Process struct {
 
 	waitOnce sync.Once
 	waitErr  error
-	done     chan struct{}
+
+	directWaitErr error
+	lifecycleErr  error
+	done          chan struct{}
 }
 
 // Start launches a streaming child process. commandexec owns command shape,
@@ -267,7 +303,7 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 		ctx, cancel = context.WithTimeout(parent, spec.Timeout)
 	}
 
-	cmd, err := configuredCommand(ctx, spec)
+	cmd, processTree, err := managedCommand(ctx, spec)
 	if err != nil {
 		if cancel != nil {
 			cancel()
@@ -278,6 +314,8 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 
 	stdin, stdout, stderr, resources, err := configureProcessIO(cmd, spec)
 	if err != nil {
+		_ = processTree.abortAttach()
+		_ = processTree.close()
 		if cancel != nil {
 			cancel()
 		}
@@ -286,6 +324,8 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 	}
 
 	if err := cmd.Start(); err != nil {
+		_ = processTree.abortAttach()
+		_ = processTree.close()
 		closeProcessResources(stdin, stdout, resources)
 		if cancel != nil {
 			cancel()
@@ -293,12 +333,31 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 
 		return nil, fmt.Errorf("start %s: %w", cmd.Path, err)
 	}
+	if err := processTree.attach(); err != nil {
+		terminateErr := processTree.terminate()
+		teardownErr := processTree.waitBeforeReap()
+		waitErr := cmd.Wait()
+		closeErr := processTree.close()
+		closeProcessResources(stdin, stdout, resources)
+		if cancel != nil {
+			cancel()
+		}
+
+		return nil, errors.Join(
+			fmt.Errorf("attach managed process tree for %s: %w", cmd.Path, err),
+			terminateErr,
+			teardownErr,
+			waitErr,
+			closeErr,
+		)
+	}
 	closeProcessResources(nil, nil, resources)
 	resources = nil
 
 	process := &Process{
 		cmd:       cmd,
 		cancel:    cancel,
+		tree:      processTree,
 		stdin:     stdin,
 		stdout:    stdout,
 		stderr:    stderr,
@@ -477,8 +536,11 @@ func (p *Process) PID() int {
 // Stop asks a non-streaming process to exit, waits for commandexec cleanup, and
 // falls back to Close when the context expires.
 func (p *Process) Stop(ctx context.Context, graceful os.Signal) error {
-	if p == nil || !p.Alive() {
+	if p == nil {
 		return nil
+	}
+	if !p.Alive() {
+		return p.lifecycleFailure()
 	}
 	if p.stdout != nil || p.stdin != nil {
 		return errors.New("graceful stop requires a non-streaming process")
@@ -499,11 +561,9 @@ func (p *Process) Stop(ctx context.Context, graceful os.Signal) error {
 
 	select {
 	case <-p.Done():
-		return nil
+		return p.lifecycleFailure()
 	case <-ctx.Done():
-		_ = p.Close()
-
-		return ctx.Err()
+		return errors.Join(ctx.Err(), p.Close())
 	}
 }
 
@@ -513,7 +573,11 @@ func (p *Process) wait() error {
 	}
 
 	p.waitOnce.Do(func() {
-		p.waitErr = p.cmd.Wait()
+		teardownErr := p.tree.waitBeforeReap()
+		p.directWaitErr = p.cmd.Wait()
+		closeErr := p.tree.close()
+		p.lifecycleErr = errors.Join(teardownErr, closeErr)
+		p.waitErr = errors.Join(p.directWaitErr, p.lifecycleErr)
 		if p.cancel != nil {
 			p.cancel()
 		}
@@ -526,12 +590,21 @@ func (p *Process) wait() error {
 	return p.waitErr
 }
 
+func (p *Process) lifecycleFailure() error {
+	if p == nil {
+		return nil
+	}
+
+	_ = p.wait()
+	return p.lifecycleErr
+}
+
 func (p *Process) kill() error {
 	if p == nil || p.cmd == nil || p.cmd.Process == nil {
 		return nil
 	}
 
-	if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := p.tree.terminate(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
 
@@ -558,10 +631,10 @@ func (p *Process) Close() error {
 		return nil
 	}
 
-	var firstErr error
+	var closeErrors []error
 	record := func(err error) {
-		if err != nil && firstErr == nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, os.ErrProcessDone) {
-			firstErr = err
+		if err != nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, os.ErrProcessDone) {
+			closeErrors = append(closeErrors, err)
 		}
 	}
 
@@ -573,8 +646,9 @@ func (p *Process) Close() error {
 	}
 	record(p.kill())
 	_ = p.wait()
+	record(p.lifecycleErr)
 
-	return firstErr
+	return errors.Join(closeErrors...)
 }
 
 func configuredCommand(ctx context.Context, spec Spec) (*exec.Cmd, error) {
@@ -590,10 +664,51 @@ func configuredCommand(ctx context.Context, spec Spec) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func EnvWithCanonicalPWD(base []string, dir string, extra []string) []string {
-	env := append([]string(nil), base...)
+func managedCommand(ctx context.Context, spec Spec) (*exec.Cmd, *managedProcessTree, error) {
+	cmd, err := configuredCommand(ctx, spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	processTree, err := newManagedProcessTree(cmd, -1)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Cancel = processTree.terminate
 
-	env = append(env, extra...)
+	return cmd, processTree, nil
+}
+
+func runManagedCommand(cmd *exec.Cmd, processTree *managedProcessTree) managedCommandOutcome {
+	if err := cmd.Start(); err != nil {
+		_ = processTree.abortAttach()
+		closeErr := processTree.close()
+
+		return managedCommandOutcome{commandErr: err, lifecycleErr: closeErr}
+	}
+	if err := processTree.attach(); err != nil {
+		terminateErr := processTree.terminate()
+		teardownErr := processTree.waitBeforeReap()
+		waitErr := cmd.Wait()
+		closeErr := processTree.close()
+
+		return managedCommandOutcome{
+			commandErr:   fmt.Errorf("attach managed process tree for %s: %w", cmd.Path, err),
+			lifecycleErr: errors.Join(terminateErr, teardownErr, waitErr, closeErr),
+		}
+	}
+
+	teardownErr := processTree.waitBeforeReap()
+	waitErr := cmd.Wait()
+	closeErr := processTree.close()
+
+	return managedCommandOutcome{
+		commandErr:   waitErr,
+		lifecycleErr: errors.Join(teardownErr, closeErr),
+	}
+}
+
+func EnvWithCanonicalPWD(base []string, dir string, extra []string) []string {
+	env := envWithOverrides(base, extra)
 	dir = strings.TrimSpace(dir)
 
 	if dir == "" {
@@ -601,6 +716,19 @@ func EnvWithCanonicalPWD(base []string, dir string, extra []string) []string {
 	}
 
 	return setEnvValue(env, "PWD", config.CanonicalizeExistingPath(dir))
+}
+
+func envWithOverrides(base []string, overrides []string) []string {
+	env := append([]string(nil), base...)
+	for _, entry := range overrides {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			env = append(env, entry)
+			continue
+		}
+		env = setEnvValue(env, key, value)
+	}
+	return env
 }
 
 func commandArgv(spec Spec) (string, []string, error) {
@@ -650,9 +778,7 @@ func commandEnv(spec Spec) []string {
 		return EnvWithCanonicalPWD(base, spec.Dir, spec.Env)
 	}
 
-	env := append([]string(nil), base...)
-
-	return append(env, spec.Env...)
+	return envWithOverrides(base, spec.Env)
 }
 
 func setEnvValue(env []string, key string, value string) []string {

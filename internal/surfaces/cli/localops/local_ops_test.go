@@ -8,467 +8,342 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/runtime/localops"
 )
 
-func TestLocalOpsBenchmarkReportsSmokeCapacityReplayBlockers(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 16384, 512)
+var _ = ginkgo.Describe("local ops", func() {
+	ginkgo.It("local ops benchmark reports smoke capacity replay blockers", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 16384, 512)
 
-	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
-		ConfigPath: filepath.Join(root, ".idiom", "config.json"),
-		Profile:    "eval",
-	}, nil, resolveDependencies())
-	if err != nil {
-		t.Fatalf("build local-ops report: %v", err)
-	}
+		report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
+			ConfigPath: filepath.Join(root, ".idiom", "config.json"),
+			Profile:    "eval",
+		}, nil, resolveDependencies())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("build local-ops report: %v", err))
+		gomega.Expect(report.SchemaVersion).To(gomega.Equal(localops.BenchmarkSchemaVersion), fmt.Sprintf("unexpected schema version: %#v", report))
+		gomega.Expect(report.Profiles).To(gomega.HaveLen(1), fmt.Sprintf("expected eval profile report, got %#v", report.Profiles))
+		gomega.Expect(report.Profiles[0].Name).To(gomega.Equal("eval"), fmt.Sprintf("expected eval profile report, got %#v", report.Profiles))
 
-	if report.SchemaVersion != localops.BenchmarkSchemaVersion {
-		t.Fatalf("unexpected schema version: %#v", report)
-	}
+		profile := report.Profiles[0]
+		gomega.Expect(profile.Smoke.Status).To(gomega.Equal("blocked"), fmt.Sprintf("eval smoke should block when backend/queue prerequisites are absent, got %#v", profile.Smoke))
+		gomega.Expect(profile.Capacity.ContextTokens).To(gomega.Equal(16384), fmt.Sprintf("capacity should expose bounded context assumptions, got %#v", profile.Capacity))
+		gomega.Expect(profile.Capacity.MaxOutputTokens).To(gomega.BeNumerically(">", 0), fmt.Sprintf("capacity should expose bounded context assumptions, got %#v", profile.Capacity))
+		gomega.Expect(profile.Capacity.PromptBudgetTokens).NotTo(gomega.BeZero(), fmt.Sprintf("capacity should expose bounded context assumptions, got %#v", profile.Capacity))
+		gomega.Expect(report.Replay.Status).To(gomega.Equal("unsupported"), fmt.Sprintf("missing replay logs should be an explicit unsupported blocker, got %#v", report.Replay))
+		gomega.Expect(report.Replay.Blockers).NotTo(gomega.BeEmpty(), fmt.Sprintf("missing replay logs should be an explicit unsupported blocker, got %#v", report.Replay))
+		gomega.Expect(report.Privacy.MetadataOnly).To(gomega.BeTrue(), fmt.Sprintf("local-ops report must remain metadata-only, got %#v", report.Privacy))
+		gomega.Expect(report.Privacy.RawPromptCaptured).To(gomega.BeFalse(), fmt.Sprintf("local-ops report must remain metadata-only, got %#v", report.Privacy))
+		gomega.Expect(report.Privacy.RawFileBodyCaptured).To(gomega.BeFalse(), fmt.Sprintf("local-ops report must remain metadata-only, got %#v", report.Privacy))
+		gomega.Expect(report.Privacy.SecretCaptureAllowed).To(gomega.BeFalse(), fmt.Sprintf("local-ops report must remain metadata-only, got %#v", report.Privacy))
 
-	if len(report.Profiles) != 1 || report.Profiles[0].Name != "eval" {
-		t.Fatalf("expected eval profile report, got %#v", report.Profiles)
-	}
+		rendered := mustMarshalLocalOpsReport(report)
+		for _, forbidden := range []string{"SECRET", "raw prompt body", "file body"} {
+			gomega.Expect(rendered).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("local-ops report leaked raw content %q in %s", forbidden, rendered))
 
-	profile := report.Profiles[0]
-	if profile.Smoke.Status != "blocked" {
-		t.Fatalf("eval smoke should block when backend/queue prerequisites are absent, got %#v", profile.Smoke)
-	}
-
-	if profile.Capacity.ContextTokens != 16384 || profile.Capacity.MaxOutputTokens <= 0 || profile.Capacity.PromptBudgetTokens == 0 {
-		t.Fatalf("capacity should expose bounded context assumptions, got %#v", profile.Capacity)
-	}
-
-	if report.Replay.Status != "unsupported" || len(report.Replay.Blockers) == 0 {
-		t.Fatalf("missing replay logs should be an explicit unsupported blocker, got %#v", report.Replay)
-	}
-
-	if !report.Privacy.MetadataOnly || report.Privacy.RawPromptCaptured || report.Privacy.RawFileBodyCaptured || report.Privacy.SecretCaptureAllowed {
-		t.Fatalf("local-ops report must remain metadata-only, got %#v", report.Privacy)
-	}
-
-	rendered := mustMarshalLocalOpsReport(t, report)
-	for _, forbidden := range []string{"SECRET", "raw prompt body", "file body"} {
-		if strings.Contains(rendered, forbidden) {
-			t.Fatalf("local-ops report leaked raw content %q in %s", forbidden, rendered)
 		}
-	}
-}
+	})
+	ginkgo.It("local ops benchmark quickstart smoke records p010 activation evidence", func() {
+		parent := ginkgo.GinkgoT().TempDir()
+		root := filepath.Join(parent, "AcmeCustomer-private-workspace")
+		gomega.Expect(os.MkdirAll(filepath.Join(root, "pkg"), 0o755)).To(gomega.Succeed())
 
-func TestLocalOpsBenchmarkQuickstartSmokeRecordsP010ActivationEvidence(t *testing.T) {
-	parent := t.TempDir()
-	root := filepath.Join(parent, "AcmeCustomer-private-workspace")
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 16384, 1024)
+		gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/quickstart\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+		gomega.Expect(os.WriteFile(filepath.Join(root, "pkg", "quickstart.go"), []byte("package pkg\n\nfunc QuickstartValue() string { return \"ok\" }\n"), 0o644)).To(gomega.Succeed())
 
-	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
-		t.Fatalf("stage root: %v", err)
-	}
+		report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
+			ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
+			Profile:           "sidecar",
+			QuickstartSmoke:   true,
+			QuickstartTask:    "localize quickstart smoke value",
+			QuickstartCleanup: "remove-local-state",
+		}, nil, resolveDependencies())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("build local-ops report: %v", err))
+		gomega.Expect(report.Quickstart).NotTo(gomega.BeNil(), fmt.Sprintf("expected quickstart smoke evidence"))
 
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 16384, 1024)
+		smoke := report.Quickstart
+		gomega.Expect(smoke.Status).To(gomega.Equal("pass"), fmt.Sprintf("quickstart smoke should pass in clean fixture, got %#v", smoke))
+		gomega.Expect(smoke.SetupInstallReadiness.Status).To(gomega.Equal("pass"), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.FirstUsefulPacket.PacketID).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.FirstUsefulPacket.IndexID).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.FirstUsefulPacket.Task.TaskID).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.FirstUsefulPacket.Task.RawTaskCaptured).To(gomega.BeFalse(), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.FreshnessCheck.State).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.AuditReport.AuditReportID).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.SuggestedVerification.SuggestedCommands).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck).To(gomega.Equal("pass"), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.FailureReason.Status).To(gomega.Equal("none"), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.DocsGap.Status).To(gomega.Equal("none"), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.PrivacyRedactionStatus.Status).To(gomega.Equal("pass"), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.Cleanup.Status).To(gomega.Equal("pass"), fmt.Sprintf("quickstart smoke missing P0.10 evidence fields: %#v", smoke))
+		gomega.Expect(smoke.TimeToFirstPacketSeconds).To(gomega.BeNumerically(">", 0), fmt.Sprintf("quickstart smoke should expose deterministic duration fields, got first=%v trust=%v", smoke.TimeToFirstPacketSeconds, smoke.TimeToTrustEvidenceSeconds))
+		gomega.Expect(smoke.TimeToTrustEvidenceSeconds).To(gomega.BeNumerically(">=", smoke.TimeToFirstPacketSeconds), fmt.Sprintf("quickstart smoke should expose deterministic duration fields, got first=%v trust=%v", smoke.TimeToFirstPacketSeconds, smoke.TimeToTrustEvidenceSeconds))
 
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/quickstart\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "pkg", "quickstart.go"), []byte("package pkg\n\nfunc QuickstartValue() string { return \"ok\" }\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
-		ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
-		Profile:           "sidecar",
-		QuickstartSmoke:   true,
-		QuickstartTask:    "localize quickstart smoke value",
-		QuickstartCleanup: "remove-local-state",
-	}, nil, resolveDependencies())
-	if err != nil {
-		t.Fatalf("build local-ops report: %v", err)
-	}
-
-	if report.Quickstart == nil {
-		t.Fatalf("expected quickstart smoke evidence")
-	}
-
-	smoke := report.Quickstart
-	if smoke.Status != "pass" {
-		t.Fatalf("quickstart smoke should pass in clean fixture, got %#v", smoke)
-	}
-
-	if smoke.SetupInstallReadiness.Status != "pass" ||
-		smoke.FirstUsefulPacket.PacketID == "" ||
-		smoke.FirstUsefulPacket.IndexID == "" ||
-		smoke.FirstUsefulPacket.Task.TaskID == "" ||
-		smoke.FirstUsefulPacket.Task.RawTaskCaptured ||
-		smoke.FreshnessCheck.State == "" ||
-		smoke.AuditReport.AuditReportID == "" ||
-		len(smoke.SuggestedVerification.SuggestedCommands) == 0 ||
-		smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" ||
-		smoke.FailureReason.Status != "none" ||
-		smoke.DocsGap.Status != "none" ||
-		smoke.PrivacyRedactionStatus.Status != "pass" ||
-		smoke.Cleanup.Status != "pass" {
-
-		t.Fatalf("quickstart smoke missing P0.10 evidence fields: %#v", smoke)
-	}
-
-	if smoke.TimeToFirstPacketSeconds <= 0 || smoke.TimeToTrustEvidenceSeconds < smoke.TimeToFirstPacketSeconds {
-		t.Fatalf("quickstart smoke should expose deterministic duration fields, got first=%v trust=%v", smoke.TimeToFirstPacketSeconds, smoke.TimeToTrustEvidenceSeconds)
-	}
-
-	if _, err := os.Stat(filepath.Join(root, ".idiom", "comprehension")); !os.IsNotExist(err) {
-		t.Fatalf("remove-local-state cleanup should remove comprehension state, stat err=%v", err)
-	}
-
-	rendered := mustMarshalLocalOpsReport(t, report)
-	for _, forbidden := range []string{
-		root,
-		parent,
-		"AcmeCustomer",
-		"private-workspace",
-		"SECRET raw prompt body",
-		"func QuickstartValue",
-	} {
-		if strings.Contains(rendered, forbidden) {
-			t.Fatalf("quickstart smoke leaked forbidden content %q in %s", forbidden, rendered)
+		if _, err := os.Stat(filepath.Join(root, ".idiom", "comprehension")); !os.IsNotExist(err) {
+			ginkgo.Fail(fmt.Sprintf("remove-local-state cleanup should remove comprehension state, stat err=%v", err))
 		}
-	}
-}
 
-func TestLocalOpsBenchmarkQuickstartSmokeRedactsSensitiveTaskEvidence(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 16384, 1024)
+		rendered := mustMarshalLocalOpsReport(report)
+		for _, forbidden := range []string{
+			root,
+			parent,
+			"AcmeCustomer",
+			"private-workspace",
+			"SECRET raw prompt body",
+			"func QuickstartValue",
+		} {
+			gomega.Expect(rendered).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("quickstart smoke leaked forbidden content %q in %s", forbidden, rendered))
 
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/sensitivetask\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc QuickstartSensitiveTaskFixture() string { return \"ok\" }\n"), 0o644); err != nil {
-		t.Fatalf("write main.go: %v", err)
-	}
-
-	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
-		ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
-		Profile:           "sidecar",
-		QuickstartSmoke:   true,
-		QuickstartTask:    "QuickstartSensitiveTaskFixture /workspace/CustomerX-private-repo secret abc123",
-		QuickstartCleanup: "remove-local-state",
-	}, nil, resolveDependencies())
-	if err != nil {
-		t.Fatalf("build local-ops report: %v", err)
-	}
-
-	if report.Quickstart == nil {
-		t.Fatalf("expected quickstart smoke evidence")
-	}
-
-	smoke := report.Quickstart
-	if smoke.Status != "pass" {
-		t.Fatalf("redacted quickstart smoke should pass, got %#v", smoke)
-	}
-
-	if smoke.FirstUsefulPacket.Task.RawTaskCaptured ||
-		smoke.FirstUsefulPacket.Task.TaskID == "" ||
-		smoke.FirstUsefulPacket.Task.EvidenceType != "hash_and_classification" ||
-		smoke.FirstUsefulPacket.Task.RedactionStatus != "redacted" {
-
-		t.Fatalf("quickstart task evidence should be hash/classification only, got %#v", smoke.FirstUsefulPacket.Task)
-	}
-
-	for _, class := range []string{"absolute_path", "secret_marker", "sensitive_identifier"} {
-		if !slices.Contains(smoke.FirstUsefulPacket.Task.ContentClasses, class) {
-			t.Fatalf("task evidence missing content class %q: %#v", class, smoke.FirstUsefulPacket.Task)
 		}
-	}
+	})
+	ginkgo.It("local ops benchmark quickstart smoke redacts sensitive task evidence", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 16384, 1024)
+		gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/sensitivetask\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+		gomega.Expect(os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc QuickstartSensitiveTaskFixture() string { return \"ok\" }\n"), 0o644)).To(gomega.Succeed())
 
-	if smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" ||
-		smoke.ProductEvidenceSafeOutput.RedactionStatus != "redacted" ||
-		smoke.PrivacyRedactionStatus.Status != "pass" ||
-		smoke.PrivacyRedactionStatus.ForbiddenFieldCheck != "pass" ||
-		smoke.PrivacyRedactionStatus.SecretCaptured ||
-		smoke.PrivacyRedactionStatus.PrivatePathCaptured {
+		report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
+			ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
+			Profile:           "sidecar",
+			QuickstartSmoke:   true,
+			QuickstartTask:    "QuickstartSensitiveTaskFixture /workspace/CustomerX-private-repo secret abc123",
+			QuickstartCleanup: "remove-local-state",
+		}, nil, resolveDependencies())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("build local-ops report: %v", err))
+		gomega.Expect(report.Quickstart).NotTo(gomega.BeNil(), fmt.Sprintf("expected quickstart smoke evidence"))
 
-		t.Fatalf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke)
-	}
+		smoke := report.Quickstart
+		gomega.Expect(smoke.Status).To(gomega.Equal("pass"), fmt.Sprintf("redacted quickstart smoke should pass, got %#v", smoke))
+		gomega.Expect(smoke.FirstUsefulPacket.Task.RawTaskCaptured).To(gomega.BeFalse(), fmt.Sprintf("quickstart task evidence should be hash/classification only, got %#v", smoke.FirstUsefulPacket.Task))
+		gomega.Expect(smoke.FirstUsefulPacket.Task.TaskID).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart task evidence should be hash/classification only, got %#v", smoke.FirstUsefulPacket.Task))
+		gomega.Expect(smoke.FirstUsefulPacket.Task.EvidenceType).To(gomega.Equal("hash_and_classification"), fmt.Sprintf("quickstart task evidence should be hash/classification only, got %#v", smoke.FirstUsefulPacket.Task))
+		gomega.Expect(smoke.FirstUsefulPacket.Task.RedactionStatus).To(gomega.Equal("redacted"), fmt.Sprintf("quickstart task evidence should be hash/classification only, got %#v", smoke.FirstUsefulPacket.Task))
 
-	rendered := mustMarshalLocalOpsReport(t, report)
-	for _, forbidden := range []string{"/Users/", "CustomerX", "secret abc123"} {
-		if strings.Contains(rendered, forbidden) {
-			t.Fatalf("quickstart product evidence leaked %q in %s", forbidden, rendered)
+		for _, class := range []string{"absolute_path", "secret_marker", "sensitive_identifier"} {
+			gomega.Expect(slices.Contains(smoke.FirstUsefulPacket.Task.ContentClasses, class)).To(gomega.BeTrue(), fmt.Sprintf("task evidence missing content class %q: %#v", class, smoke.FirstUsefulPacket.Task))
+
 		}
-	}
+		gomega.Expect(smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck).To(gomega.Equal("pass"), fmt.Sprintf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke))
+		gomega.Expect(smoke.ProductEvidenceSafeOutput.RedactionStatus).To(gomega.Equal("redacted"), fmt.Sprintf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke))
+		gomega.Expect(smoke.PrivacyRedactionStatus.Status).To(gomega.Equal("pass"), fmt.Sprintf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke))
+		gomega.Expect(smoke.PrivacyRedactionStatus.ForbiddenFieldCheck).To(gomega.Equal("pass"), fmt.Sprintf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke))
+		gomega.Expect(smoke.PrivacyRedactionStatus.SecretCaptured).To(gomega.BeFalse(), fmt.Sprintf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke))
+		gomega.Expect(smoke.PrivacyRedactionStatus.PrivatePathCaptured).To(gomega.BeFalse(), fmt.Sprintf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke))
 
-	if finding := localops.ForbiddenEvidenceLeak(rendered); finding != "" {
-		t.Fatalf("redacted quickstart evidence should pass forbidden-field scan, got %q in %s", finding, rendered)
-	}
-}
+		rendered := mustMarshalLocalOpsReport(report)
+		for _, forbidden := range []string{"/Users/", "CustomerX", "secret abc123"} {
+			gomega.Expect(rendered).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("quickstart product evidence leaked %q in %s", forbidden, rendered))
 
-func TestLocalOpsForbiddenEvidenceLeakScansValuesWithoutFailingAllowedFieldNames(t *testing.T) {
-	allowed := `{"privacy_redaction_status":{"secret_captured":false,"private_path_captured":false},"redacted_fields":["secret_value"]}`
-	if finding := localops.ForbiddenEvidenceLeak(allowed); finding != "" {
-		t.Fatalf("allowed privacy field names should not fail forbidden scan: %s", finding)
-	}
-
-	for name, body := range map[string]string{
-		"absolute_path":       `{"task":"/workspace/repo"}`,
-		"customer_identifier": `{"task":"CustomerX-private-repo"}`,
-		"secret_value":        `{"task":"secret abc123"}`,
-		"true_secret_flag":    `{"privacy_redaction_status":{"secret_captured":true}}`,
-	} {
-		if finding := localops.ForbiddenEvidenceLeak(body); finding == "" {
-			t.Fatalf("expected forbidden scan to catch %s in %s", name, body)
 		}
-	}
-}
 
-func TestRunLocalOpsBenchmarkQuickstartSmokeJSON(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 4096, 512)
-
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/cliquickstart\n\ngo 1.22\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
-		t.Fatalf("write main.go: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := RunMainWithTelemetry([]string{
-		"benchmark",
-		"--json",
-		"--config", filepath.Join(root, ".idiom", "config.json"),
-		"--profile", "sidecar",
-		"--quickstart-smoke",
-		"--quickstart-cleanup", "remove-smoke-artifacts",
-	}, &stdout, &stderr, nil)
-
-	if code != 0 {
-		t.Fatalf("local-ops quickstart smoke failed code=%d stderr=%s", code, stderr.String())
-	}
-
-	var report localops.BenchmarkReport
-
-	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
-		t.Fatalf("stdout JSON not parseable: %v\n%s", err, stdout.String())
-	}
-
-	if report.Quickstart == nil || report.Quickstart.FirstUsefulPacket.PacketID == "" {
-		t.Fatalf("quickstart smoke JSON missing packet evidence: %#v", report.Quickstart)
-	}
-
-	if report.Quickstart.Cleanup.Status != "pass" || report.Quickstart.Cleanup.RemovedArtifactCount != 1 {
-		t.Fatalf("quickstart smoke should record cleanup evidence: %#v", report.Quickstart.Cleanup)
-	}
-}
-
-func TestLocalOpsBenchmarkSummarizesReplayFixtureWithoutRawPrompt(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 16384, 1024)
-	stageDoctorBackends(t, root)
-
-	logPath := filepath.Join(root, "conversation.jsonl")
-	body := strings.Join([]string{
-		`{"type":"message","role":"user","content":"SECRET raw prompt body"}`,
-		`{"type":"model_call","prompt_tokens":120,"completion_tokens":30}`,
-		`{"type":"tool_result","tool":"read_file","summary":"metadata only"}`,
-		`{"type":"queue_admission","state":"unavailable","degraded":true,"wait_ms":7}`,
-		`{"type":"doctor_readiness_profile","state":"degraded","backend_state":"pass","queue_state":"unavailable","context_budget_state":"pass","route_classifier_state":"degraded","degraded":true}`,
-		`{"type":"turn_summary","stop_reason":"budget_exhausted","duration_ms":2500}`,
-		`{"type":"session_summary","stop_reason":"budget_exhausted","duration_ms":2500}`,
-	}, "\n") + "\n"
-
-	if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
-		t.Fatalf("write replay fixture: %v", err)
-	}
-
-	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
-		ConfigPath: filepath.Join(root, ".idiom", "config.json"),
-		Profile:    "implement",
-		ReplayLog:  logPath,
-	}, nil, resolveDependencies())
-	if err != nil {
-		t.Fatalf("build local-ops report: %v", err)
-	}
-
-	if report.Replay.Status != "pass" || report.Replay.LogCount != 1 {
-		t.Fatalf("expected replay summary pass for fixture, got %#v", report.Replay)
-	}
-
-	if report.Replay.Aggregate == nil || report.Replay.Aggregate.LogCount != 1 {
-		t.Fatalf("replay aggregate missing: %#v", report.Replay.Aggregate)
-	}
-
-	if report.Replay.Signals.QueueDegraded == 0 || report.Replay.Signals.BudgetExhausted == 0 {
-		t.Fatalf("expected replay queue/budget signals, got %#v", report.Replay.Signals)
-	}
-
-	rendered := mustMarshalLocalOpsReport(t, report)
-	for _, forbidden := range []string{"SECRET raw prompt body", "log_path"} {
-		if strings.Contains(rendered, forbidden) {
-			t.Fatalf("replay report leaked %q: %s", forbidden, rendered)
+		if finding := localops.ForbiddenEvidenceLeak(rendered); finding != "" {
+			ginkgo.Fail(fmt.Sprintf("redacted quickstart evidence should pass forbidden-field scan, got %q in %s", finding, rendered))
 		}
-	}
-}
-
-func TestLocalOpsBenchmarkRedactsReplayPathFromErrorsAndTelemetry(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 16384, 1024)
-	stageDoctorBackends(t, root)
-
-	replayPath := filepath.Join(root, "AcmeCustomer-secret-session.jsonl")
-	telemetryDir := t.TempDir()
-	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
-
-	var stdout, stderr bytes.Buffer
-
-	rec, err := telemetry.Open(telemetry.Options{Dir: telemetryDir, Command: "local-ops"})
-	if err != nil {
-		t.Fatalf("open telemetry: %v", err)
-	}
-
-	code := RunMainWithTelemetry([]string{
-		"benchmark",
-		"--json",
-		"--config", filepath.Join(root, ".idiom", "config.json"),
-		"--profile", "implement",
-		"--replay-log", replayPath,
-	}, &stdout, &stderr, rec)
-	if rec != nil {
-		if err := rec.CloseWithFields(code, nil); err != nil {
-			t.Fatalf("close telemetry: %v", err)
+	})
+	ginkgo.It("local ops forbidden evidence leak scans values without failing allowed field names", func() {
+		allowed := `{"privacy_redaction_status":{"secret_captured":false,"private_path_captured":false},"redacted_fields":["secret_value"]}`
+		if finding := localops.ForbiddenEvidenceLeak(allowed); finding != "" {
+			ginkgo.Fail(fmt.Sprintf("allowed privacy field names should not fail forbidden scan: %s", finding))
 		}
-	}
 
-	if code != 0 {
-		t.Fatalf("missing replay log should degrade report, got code=%d stderr=%s", code, stderr.String())
-	}
-
-	var got localops.BenchmarkReport
-
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("stdout JSON not parseable: %v\n%s", err, stdout.String())
-	}
-
-	if got.Replay.Status != "blocked" || got.Replay.LogCount != 0 || len(got.Replay.Blockers) == 0 {
-		t.Fatalf("expected sanitized replay blocker, got %#v", got.Replay)
-	}
-
-	telemetryBody, err := os.ReadFile(onlyTelemetryFile(t, telemetryDir))
-	if err != nil {
-		t.Fatalf("read telemetry: %v", err)
-	}
-
-	combined := strings.Join([]string{stdout.String(), stderr.String(), string(telemetryBody)}, "\n")
-	for _, forbidden := range []string{
-		replayPath,
-		filepath.Base(replayPath),
-		"AcmeCustomer",
-		"secret-session",
-		"open " + root,
-	} {
-		if strings.Contains(combined, forbidden) {
-			t.Fatalf("local-ops replay output leaked %q in %s", forbidden, combined)
+		for name, body := range map[string]string{
+			"absolute_path":       `{"task":"/workspace/repo"}`,
+			"customer_identifier": `{"task":"CustomerX-private-repo"}`,
+			"secret_value":        `{"task":"secret abc123"}`,
+			"true_secret_flag":    `{"privacy_redaction_status":{"secret_captured":true}}`,
+		} {
+			if finding := localops.ForbiddenEvidenceLeak(body); finding == "" {
+				ginkgo.Fail(fmt.Sprintf("expected forbidden scan to catch %s in %s", name, body))
+			}
 		}
-	}
+	})
+	ginkgo.It("run local ops benchmark quickstart smoke json", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 4096, 512)
+		gomega.Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/cliquickstart\n\ngo 1.22\n"), 0o644)).To(gomega.Succeed())
+		gomega.Expect(os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644)).To(gomega.Succeed())
 
-	if !strings.Contains(stdout.String(), "replay_log_unreadable") {
-		t.Fatalf("expected sanitized replay reason code, got %s", stdout.String())
-	}
-}
+		var stdout, stderr bytes.Buffer
 
-func TestRunLocalOpsBenchmarkInvalidProfileExitsTwo(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 4096, 512)
+		code := RunMainWithTelemetry([]string{
+			"benchmark",
+			"--json",
+			"--config", filepath.Join(root, ".idiom", "config.json"),
+			"--profile", "sidecar",
+			"--quickstart-smoke",
+			"--quickstart-cleanup", "remove-smoke-artifacts",
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("local-ops quickstart smoke failed code=%d stderr=%s", code, stderr.String()))
 
-	var stdout, stderr bytes.Buffer
+		var report localops.BenchmarkReport
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &report)).To(gomega.Succeed())
+		gomega.Expect(report.Quickstart).NotTo(gomega.BeNil(), fmt.Sprintf("quickstart smoke JSON missing packet evidence: %#v", report.Quickstart))
+		gomega.Expect(report.Quickstart.FirstUsefulPacket.PacketID).NotTo(gomega.BeEmpty(), fmt.Sprintf("quickstart smoke JSON missing packet evidence: %#v", report.Quickstart))
+		gomega.Expect(report.Quickstart.Cleanup.Status).To(gomega.Equal("pass"), fmt.Sprintf("quickstart smoke should record cleanup evidence: %#v", report.Quickstart.Cleanup))
+		gomega.Expect(report.Quickstart.Cleanup.RemovedArtifactCount).To(gomega.Equal(1), fmt.Sprintf("quickstart smoke should record cleanup evidence: %#v", report.Quickstart.Cleanup))
 
-	code := RunMainWithTelemetry([]string{
-		"benchmark",
-		"--config", filepath.Join(root, ".idiom", "config.json"),
-		"--profile", "nope",
-	}, &stdout, &stderr, nil)
+	})
+	ginkgo.It("local ops benchmark summarizes replay fixture without raw prompt", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 16384, 1024)
+		stageDoctorBackends(root)
 
-	if code != 2 {
-		t.Fatalf("invalid profile must exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
+		logPath := filepath.Join(root, "conversation.jsonl")
+		body := strings.Join([]string{
+			`{"type":"message","role":"user","content":"SECRET raw prompt body"}`,
+			`{"type":"model_call","prompt_tokens":120,"completion_tokens":30}`,
+			`{"type":"tool_result","tool":"read_file","summary":"metadata only"}`,
+			`{"type":"queue_admission","state":"unavailable","degraded":true,"wait_ms":7}`,
+			`{"type":"doctor_readiness_profile","state":"degraded","backend_state":"pass","queue_state":"unavailable","context_budget_state":"pass","route_classifier_state":"degraded","degraded":true}`,
+			`{"type":"turn_summary","stop_reason":"budget_exhausted","duration_ms":2500}`,
+			`{"type":"session_summary","stop_reason":"budget_exhausted","duration_ms":2500}`,
+		}, "\n") + "\n"
+		gomega.Expect(os.WriteFile(logPath, []byte(body), 0o644)).To(gomega.Succeed())
 
-	if !strings.Contains(stderr.String(), "unknown readiness profile") {
-		t.Fatalf("expected profile selection error, got %q", stderr.String())
-	}
-}
+		report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
+			ConfigPath: filepath.Join(root, ".idiom", "config.json"),
+			Profile:    "implement",
+			ReplayLog:  logPath,
+		}, nil, resolveDependencies())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("build local-ops report: %v", err))
+		gomega.Expect(report.Replay.Status).To(gomega.Equal("pass"), fmt.Sprintf("expected replay summary pass for fixture, got %#v", report.Replay))
+		gomega.Expect(report.Replay.LogCount).To(gomega.Equal(1), fmt.Sprintf("expected replay summary pass for fixture, got %#v", report.Replay))
+		gomega.Expect(report.Replay.Aggregate).NotTo(gomega.BeNil(), fmt.Sprintf("replay aggregate missing: %#v", report.Replay.Aggregate))
+		gomega.Expect(report.Replay.Aggregate.LogCount).To(gomega.Equal(1), fmt.Sprintf("replay aggregate missing: %#v", report.Replay.Aggregate))
+		gomega.Expect(report.Replay.Signals.QueueDegraded).NotTo(gomega.BeZero(), fmt.Sprintf("expected replay queue/budget signals, got %#v", report.Replay.Signals))
+		gomega.Expect(report.Replay.Signals.BudgetExhausted).NotTo(gomega.BeZero(), fmt.Sprintf("expected replay queue/budget signals, got %#v", report.Replay.Signals))
 
-func TestRunLocalOpsBenchmarkCommandWritesJSONOutput(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	stageDoctorConfigWithBudget(t, root, 4096, 512)
+		rendered := mustMarshalLocalOpsReport(report)
+		for _, forbidden := range []string{"SECRET raw prompt body", "log_path"} {
+			gomega.Expect(rendered).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("replay report leaked %q: %s", forbidden, rendered))
 
-	outputPath := filepath.Join(root, ".idiom", "local-ops", "report.json")
+		}
+	})
+	ginkgo.It("local ops benchmark redacts replay path from errors and telemetry", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 16384, 1024)
+		stageDoctorBackends(root)
 
-	var stdout, stderr bytes.Buffer
+		replayPath := filepath.Join(root, "AcmeCustomer-secret-session.jsonl")
+		telemetryDir := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().
+			Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
 
-	code := RunMainWithTelemetry([]string{"benchmark", "--json", "--config", filepath.Join(root, ".idiom", "config.json"), "--profile", "implement", "--output", outputPath}, &stdout, &stderr, nil)
+		var stdout, stderr bytes.Buffer
 
-	if code != 0 {
-		t.Fatalf("local-ops benchmark failed code=%d stderr=%s", code, stderr.String())
-	}
+		rec, err := telemetry.Open(telemetry.Options{Dir: telemetryDir, Command: "local-ops"})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("open telemetry: %v", err))
 
-	var got localops.BenchmarkReport
+		code := RunMainWithTelemetry([]string{
+			"benchmark",
+			"--json",
+			"--config", filepath.Join(root, ".idiom", "config.json"),
+			"--profile", "implement",
+			"--replay-log", replayPath,
+		}, &stdout, &stderr, rec)
+		if rec != nil {
+			gomega.Expect(rec.CloseWithFields(code, nil)).To(gomega.Succeed())
 
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("stdout JSON not parseable: %v\n%s", err, stdout.String())
-	}
+		}
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("missing replay log should degrade report, got code=%d stderr=%s", code, stderr.String()))
 
-	if got.Summary.ProfileCount != 1 || got.Profiles[0].Name != "implement" {
-		t.Fatalf("unexpected JSON report: %#v", got)
-	}
+		var got localops.BenchmarkReport
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &got)).To(gomega.Succeed())
+		gomega.Expect(got.Replay.Status).To(gomega.Equal("blocked"), fmt.Sprintf("expected sanitized replay blocker, got %#v", got.Replay))
+		gomega.Expect(got.Replay.LogCount).To(gomega.BeZero(), fmt.Sprintf("expected sanitized replay blocker, got %#v", got.Replay))
+		gomega.Expect(got.Replay.Blockers).NotTo(gomega.BeEmpty(), fmt.Sprintf("expected sanitized replay blocker, got %#v", got.Replay))
 
-	if _, err := os.Stat(outputPath); err != nil {
-		t.Fatalf("expected report output file: %v", err)
-	}
-}
+		telemetryBody, err := os.ReadFile(onlyTelemetryFile(telemetryDir))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read telemetry: %v", err))
 
-func mustMarshalLocalOpsReport(t *testing.T, report localops.BenchmarkReport) string {
-	t.Helper()
+		combined := strings.Join([]string{stdout.String(), stderr.String(), string(telemetryBody)}, "\n")
+		for _, forbidden := range []string{
+			replayPath,
+			filepath.Base(replayPath),
+			"AcmeCustomer",
+			"secret-session",
+			"open " + root,
+		} {
+			gomega.Expect(combined).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("local-ops replay output leaked %q in %s", forbidden, combined))
+
+		}
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("replay_log_unreadable"), fmt.Sprintf("expected sanitized replay reason code, got %s", stdout.String()))
+
+	})
+	ginkgo.It("run local ops benchmark invalid profile exits two", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 4096, 512)
+
+		var stdout, stderr bytes.Buffer
+
+		code := RunMainWithTelemetry([]string{
+			"benchmark",
+			"--config", filepath.Join(root, ".idiom", "config.json"),
+			"--profile", "nope",
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(2), fmt.Sprintf("invalid profile must exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String()))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("unknown readiness profile"), fmt.Sprintf("expected profile selection error, got %q", stderr.String()))
+
+	})
+	ginkgo.It("run local ops benchmark command writes json output", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		ginkgo.GinkgoT().Chdir(root)
+		stageDoctorConfigWithBudget(root, 4096, 512)
+
+		outputPath := filepath.Join(root, ".idiom", "local-ops", "report.json")
+
+		var stdout, stderr bytes.Buffer
+
+		code := RunMainWithTelemetry([]string{"benchmark", "--json", "--config", filepath.Join(root, ".idiom", "config.json"), "--profile", "implement", "--output", outputPath}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("local-ops benchmark failed code=%d stderr=%s", code, stderr.String()))
+
+		var got localops.BenchmarkReport
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &got)).To(gomega.Succeed())
+		gomega.Expect(got.Summary.ProfileCount).To(gomega.Equal(1), fmt.Sprintf("unexpected JSON report: %#v", got))
+		gomega.Expect(got.Profiles).To(gomega.HaveLen(1), fmt.Sprintf("unexpected JSON report: %#v", got))
+		gomega.Expect(got.Profiles[0].Name).To(gomega.Equal("implement"), fmt.Sprintf("unexpected JSON report: %#v", got))
+
+		if _, err := os.Stat(outputPath); err != nil {
+			ginkgo.Fail(fmt.Sprintf("expected report output file: %v", err))
+		}
+	})
+})
+
+func mustMarshalLocalOpsReport(report localops.BenchmarkReport) string {
 
 	body, err := json.Marshal(report)
-	if err != nil {
-		t.Fatalf("marshal report: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal report: %v", err))
 
 	return string(body)
 }
 
-func stageDoctorConfigWithBudget(t *testing.T, root string, ctxSize int, maxTokens int) {
-	t.Helper()
+func stageDoctorConfigWithBudget(root string, ctxSize int, maxTokens int) {
 
 	cfg := filepath.Join(root, ".idiom", "config.json")
-	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
-		t.Fatalf("mkdir config dir: %v", err)
-	}
+	gomega.Expect(os.MkdirAll(filepath.Dir(cfg), 0o755)).To(gomega.Succeed())
 
 	body := fmt.Sprintf(`{
   "workspace": {"root": %q},
   "llama_server": {"ctx_size": %d},
   "chat": {"max_tokens": %d}
 }`, root, ctxSize, maxTokens)
-	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
-		t.Fatalf("stage config: %v", err)
-	}
+	gomega.Expect(os.WriteFile(cfg, []byte(body), 0o644)).To(gomega.Succeed())
+
 }
 
-func stageDoctorBackends(t *testing.T, root string) {
-	t.Helper()
+func stageDoctorBackends(root string) {
 
 	path := filepath.Join(root, ".idiom", "backends.json")
 	body := `{
@@ -487,23 +362,15 @@ func stageDoctorBackends(t *testing.T, root string) {
     }
   }
 }`
+	gomega.Expect(os.WriteFile(path, []byte(body), 0o644)).To(gomega.Succeed())
 
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("stage backends: %v", err)
-	}
 }
 
-func onlyTelemetryFile(t *testing.T, dir string) string {
-	t.Helper()
+func onlyTelemetryFile(dir string) string {
 
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read telemetry dir: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("expected one telemetry file, got %d", len(entries))
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read telemetry dir: %v", err))
+	gomega.Expect(entries).To(gomega.HaveLen(1), fmt.Sprintf("expected one telemetry file, got %d", len(entries)))
 
 	return filepath.Join(dir, entries[0].Name())
 }

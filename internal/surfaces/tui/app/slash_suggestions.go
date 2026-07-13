@@ -16,59 +16,19 @@ type slashSuggestionEntry struct {
 	usage   string // e.g. "<objective>"
 }
 
-// allSlashSuggestions returns every slash command the TUI recognizes,
-// including the three explicit-plan commands handled outside the
-// slashCommands map (/feature-planner, /plan-execute, /implement).
+// allSlashSuggestions returns every slash command in the canonical command
+// spec order.
 func allSlashSuggestions() []slashSuggestionEntry {
-	return []slashSuggestionEntry{
-		// Heavy lane commands (handled explicitly, not in slashCommands map)
-		{"/feature-planner", "<objective>"},
-		{"/plan-execute", "<objective>"},
-		{"/implement", "<objective>"},
-
-		// Product workflow
-		{"/product-status", "[--effort-root <path>]"},
-		{"/product-continue", "<action> [--effort-root <path>]"},
-		{"/product-approve", "[--effort-root <path>]"},
-
-		// Recovery
-		{"/recover-status", "[--packet <path>|<path>]"},
-
-		// Session & chat
-		{"/quit", ""},
-		{"/exit", ""},
-		{"/help", ""},
-		{"/clear", ""},
-		{"/new", ""},
-		{"/compact", ""},
-		{"/save", ""},
-		{"/copy", "[last|all|visible|selected]"},
-		{"/select", ""},
-		{"/context", ""},
-		{"/workspace", ""},
-		{"/pwd", ""},
-		{"/resume", "[id]"},
-
-		// Debug & trace
-		{"/debuglog", "[mode redacted|full]"},
-		{"/trace", "[compact|detail]"},
-
-		// Agent control
-		{"/mode", "[build|plan|general]"},
-		{"/approve", ""},
-		{"/deny", ""},
-		{"/undo", ""},
-		{"/panel", ""},
-		{"/plan", ""},
-		{"/system", "<prompt>"},
-		{"/temp", "<value>"},
-
-		// Configuration
-		{"/preset", "[list|name]"},
-		{"/server", "<start|stop|restart|status>"},
-		{"/profile", "<list|add|remove>"},
-		{"/model", ""},
+	specs := slashCommandSpecs()
+	suggestions := make([]slashSuggestionEntry, 0, len(specs))
+	for _, spec := range specs {
+		suggestions = append(suggestions, slashSuggestionEntry{
+			command: spec.command,
+			usage:   spec.suggestionUsage,
+		})
 	}
+
+	return suggestions
 }
 
 // updateSlashSuggestions reads the current input value and updates the

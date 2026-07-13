@@ -2,18 +2,13 @@ package comprehension
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
-
-	"idiom/internal/platform/jsonl"
 )
 
 // LearningLogEntry is one record in the per-workspace ranker learning log.
@@ -21,6 +16,7 @@ import (
 // hook) leave an auditable trail without coupling them to each other.
 type LearningLogEntry struct {
 	EventID       string                           `json:"event_id,omitempty"`
+	RequestID     string                           `json:"request_id,omitempty"`
 	Timestamp     string                           `json:"timestamp"`
 	Source        string                           `json:"source"`
 	Action        string                           `json:"action"` // boost | penalize | reset | restore | no_op
@@ -75,8 +71,6 @@ type LearningLogVerificationEvidence struct {
 }
 
 const (
-	learningLogFileName = "learning_log.jsonl"
-
 	// LearningLogNotePresent is the only persisted value for a supplied
 	// freeform note. The note body may contain prompts, file bodies, or secrets.
 	LearningLogNotePresent = "note_present"
@@ -120,55 +114,11 @@ var learningLogSensitivePathCompoundTails = map[string]struct{}{
 	"token":       {},
 }
 
-func learningLogPath(root string) string {
-	return filepath.Join(root, ".idiom", learnedWeightsDirSuffix, learningLogFileName)
-}
-
-// AppendLearningLog writes one entry to .idiom/ranker/learning_log.jsonl. The
-// shared log is an audit surface, so every entry is sanitized before it is
-// persisted. Known token fields are allowlisted enums, correlation identifiers
-// are bounded hashes, path/weight fields are reduced to bounded repo-relative
-// evidence, freeform notes are reduced to LearningLogNotePresent, and caller
-// timestamps must parse as RFC3339/RFC3339Nano or they are regenerated.
-func AppendLearningLog(root string, entry LearningLogEntry) error {
-	if strings.TrimSpace(entry.Source) == "" {
-		return errors.New("learning log entry needs a non-empty source")
-	}
-
-	if strings.TrimSpace(entry.Action) == "" {
-		return errors.New("learning log entry needs a non-empty action")
-	}
-
-	entry = sanitizeLearningLogEntry(entry)
-
-	path := learningLogPath(root)
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	encoded, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	if _, err := f.Write(append(encoded, '\n')); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func sanitizeLearningLogEntry(entry LearningLogEntry) LearningLogEntry {
 	suppliedEventID := entry.EventID
 
 	entry.EventID = ""
+	entry.RequestID = sanitizeLearningCorrelationID("request", entry.RequestID)
 	entry.Timestamp = sanitizeLearningLogTimestamp(entry.Timestamp, time.Now().UTC())
 	entry.Source = sanitizeLearningSource(entry.Source)
 	entry.Action = normalizeLearningLogAction(entry.Action)
@@ -661,6 +611,9 @@ func sanitizeLearningCorrelationID(prefix string, value string) string {
 	if clean == "" {
 		return ""
 	}
+	if prefix == "result" && learningGeneratedEventIDPattern.MatchString(clean) {
+		return clean
+	}
 
 	if learningHashedIDPatterns[prefix].MatchString(clean) {
 		return clean
@@ -686,33 +639,19 @@ func normalizeLearningLogToken(value string) string {
 	return clean
 }
 
-// ReadLearningLog returns every entry in the log, oldest first, dropping
-// malformed lines. Missing log returns an empty slice with no error.
-func ReadLearningLog(root string) ([]LearningLogEntry, error) {
-	path := learningLogPath(root)
-
-	var out []LearningLogEntry
-
-	err := jsonl.ScanFile(path, func(raw json.RawMessage) error {
-		var entry LearningLogEntry
-
-		if err := json.Unmarshal(raw, &entry); err != nil {
-			return nil
-		}
-
-		out = append(out, entry)
-
-		return nil
-	})
+// ReadLearningLog recovers any interrupted ranker transaction, then strictly
+// validates and returns every canonical event oldest first.
+func ReadLearningLog(ctx context.Context, root string) ([]LearningLogEntry, error) {
+	store, err := openRankerStateStore(ctx, root)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-
-		return out, err
+		return nil, err
 	}
-
-	return out, nil
+	defer store.Close()
+	if err := store.recoverLocked(); err != nil {
+		return nil, err
+	}
+	_, _, entries, err := store.loadConsistentRankerStateLocked()
+	return entries, err
 }
 
 // LearningLogSummary aggregates the log into the shape the harness audit
@@ -822,4 +761,32 @@ func SummarizeLearningLog(entries []LearningLogEntry) LearningLogSummary {
 	summary.Recent = sorted
 
 	return summary
+}
+
+// AuditSummary returns aggregate ranker state without paths, reasons, request
+// identities, verification commands, or weight snapshots. Audit callers use
+// this projection instead of rebuilding persistence parsing or sanitization.
+func (snapshot RankerStateSnapshot) AuditSummary() LearningLogSummary {
+	summary := SummarizeLearningLog(snapshot.LearningEntries())
+	summary.ReasonCounts = nil
+	summary.AcceptedReasonCounts = nil
+	summary.RejectedReasonCounts = nil
+	if summary.LatestEntry != nil {
+		latest := auditLearningLogEntry(*summary.LatestEntry)
+		summary.LatestEntry = &latest
+	}
+	for index := range summary.Recent {
+		summary.Recent[index] = auditLearningLogEntry(summary.Recent[index])
+	}
+
+	return summary
+}
+
+func auditLearningLogEntry(entry LearningLogEntry) LearningLogEntry {
+	return LearningLogEntry{
+		Timestamp: entry.Timestamp,
+		Source:    entry.Source,
+		Action:    entry.Action,
+		State:     entry.State,
+	}
 }

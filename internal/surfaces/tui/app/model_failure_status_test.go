@@ -2,11 +2,14 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"strings"
-	"testing"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestFormatModelFailureStatusClassifiesRetryableTransport(t *testing.T) {
+var _ = ginkgo.It("format model failure status classifies retryable transport", func() {
 	got := formatModelFailureStatus(errors.New("chat request transport failed: unexpected EOF"))
 	for _, want := range []string{
 		"Chat failed: chat request transport failed: unexpected EOF",
@@ -14,19 +17,13 @@ func TestFormatModelFailureStatusClassifiesRetryableTransport(t *testing.T) {
 		"existing product artifacts were preserved",
 		"retry the same command",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("retryable status missing %q:\n%s", want, got)
-		}
+		gomega.Expect(strings.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("retryable status missing %q:\n%s", want, got))
 	}
-}
+})
 
-func TestFormatModelFailureStatusClassifiesNonRetryable(t *testing.T) {
+var _ = ginkgo.It("format model failure status classifies non retryable", func() {
 	got := formatModelFailureStatus(errors.New("invalid request: malformed JSON schema"))
-	if !strings.Contains(got, "Classification: non-retryable model failure") {
-		t.Fatalf("expected non-retryable status, got %q", got)
-	}
+	gomega.Expect(strings.Contains(got, "Classification: non-retryable model failure")).To(gomega.BeTrue(), fmt.Sprintf("expected non-retryable status, got %q", got))
 
-	if strings.Contains(got, "existing product artifacts were preserved") {
-		t.Fatalf("non-retryable status should not offer blind retry guidance: %s", got)
-	}
-}
+	gomega.Expect(strings.Contains(got, "existing product artifacts were preserved")).To(gomega.BeFalse(), fmt.Sprintf("non-retryable status should not offer blind retry guidance: %s", got))
+})

@@ -1,16 +1,17 @@
 package sidecarvalidation
 
 import (
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
 )
 
-func TestInstallToolsScriptsExposeSidecarOnlyLaunchers(t *testing.T) {
-	root := repoRootForInstallToolTest(t)
+var _ = ginkgo.It("install tools scripts expose sidecar only launchers", func() {
+	root := sidecarValidationRepoRoot()
 
-	unixScript := readInstallToolFile(t, root, "install-tools.sh")
+	unixScript := readInstallToolFile(root, "install-tools.sh")
 	for _, want := range []string{
 		"idiom-tool-bin",
 		"exec \"$DIR/idiom-tool-bin\" tool \"$@\"",
@@ -18,16 +19,12 @@ func TestInstallToolsScriptsExposeSidecarOnlyLaunchers(t *testing.T) {
 		"use the Windows installer",
 		"list --profile discovery",
 	} {
-		if !strings.Contains(unixScript, want) {
-			t.Fatalf("install-tools.sh missing %q", want)
-		}
+		gomega.Expect(unixScript).To(gomega.ContainSubstring(want), fmt.Sprintf("install-tools.sh missing %q", want))
 	}
 
-	if strings.Contains(unixScript, "${INSTALL_DIR}/idiom\"") {
-		t.Fatal("tools installer must not expose the full idiom command name")
-	}
+	gomega.Expect(unixScript).NotTo(gomega.ContainSubstring("${INSTALL_DIR}/idiom\""), fmt.Sprint("tools installer must not expose the full idiom command name"))
 
-	powerShellScript := readInstallToolFile(t, root, "install-tools.ps1")
+	powerShellScript := readInstallToolFile(root, "install-tools.ps1")
 	for _, want := range []string{
 		"install.ps1",
 		`"-Profile", "Tools"`,
@@ -35,34 +32,22 @@ func TestInstallToolsScriptsExposeSidecarOnlyLaunchers(t *testing.T) {
 		"ReleaseUrlBase",
 		"InstallerArgs",
 	} {
-		if !strings.Contains(powerShellScript, want) {
-			t.Fatalf("install-tools.ps1 missing %q", want)
-		}
+		gomega.Expect(powerShellScript).To(gomega.ContainSubstring(want), fmt.Sprintf("install-tools.ps1 missing %q", want))
 	}
 	for _, forbidden := range []string{
 		"Get-FileHash -Algorithm SHA256",
 		"Expand-Archive",
 		"windows_amd64.zip",
 	} {
-		if strings.Contains(powerShellScript, forbidden) {
-			t.Fatalf("install-tools.ps1 should delegate install mechanics, still contains %q", forbidden)
-		}
+		gomega.Expect(powerShellScript).NotTo(gomega.ContainSubstring(forbidden), fmt.Sprintf("install-tools.ps1 should delegate install mechanics, still contains %q", forbidden))
 	}
-}
+})
 
-func repoRootForInstallToolTest(t *testing.T) string {
-	t.Helper()
-
-	return sidecarValidationRepoRoot(t)
-}
-
-func readInstallToolFile(t *testing.T, root string, rel string) string {
-	t.Helper()
+func readInstallToolFile(root string, rel string) string {
+	ginkgo.GinkgoHelper()
 
 	data, err := os.ReadFile(filepath.Join(root, rel))
-	if err != nil {
-		t.Fatalf("read %s: %v", rel, err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read %s: %v", rel, err))
 
 	return string(data)
 }

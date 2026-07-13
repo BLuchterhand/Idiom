@@ -1,9 +1,9 @@
 package productworkflow
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -47,7 +47,17 @@ func (e ProductWorkflowMetricsError) Reason() failures.Reason {
 }
 
 func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error) {
-	wsData, err := readMetricsArtifact(absRoot, WorkflowStateFileName)
+	batch, err := openProductWorkflowMutationLease(absRoot)
+	if err != nil {
+		return ProductWorkflowMetrics{}, metricsArtifactError("recover", filepath.Join("adrs", "index.json"), err)
+	}
+	defer batch.Close()
+
+	return buildProductWorkflowMetricsRoot(batch.root)
+}
+
+func buildProductWorkflowMetricsRoot(root *os.Root) (ProductWorkflowMetrics, error) {
+	wsData, err := readMetricsArtifactRoot(root, WorkflowStateFileName)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -57,7 +67,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", WorkflowStateFileName, err)
 	}
 
-	tddData, err := readMetricsArtifact(absRoot, "tdd.json")
+	tddData, err := readMetricsArtifactRoot(root, "tdd.json")
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -67,7 +77,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", "tdd.json", err)
 	}
 
-	evidenceData, err := readMetricsArtifact(absRoot, filepath.Join("evidence", "evidence.jsonl"))
+	evidenceData, err := readMetricsArtifactRoot(root, filepath.Join("evidence", "evidence.jsonl"))
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -77,7 +87,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", filepath.Join("evidence", "evidence.jsonl"), err)
 	}
 
-	traceData, err := readMetricsArtifact(absRoot, filepath.Join("evidence", "traceability_matrix.json"))
+	traceData, err := readMetricsArtifactRoot(root, filepath.Join("evidence", "traceability_matrix.json"))
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -87,7 +97,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", filepath.Join("evidence", "traceability_matrix.json"), err)
 	}
 
-	ledgerData, err := readMetricsArtifact(absRoot, "implementation_ledger.jsonl")
+	ledgerData, err := readMetricsArtifactRoot(root, "implementation_ledger.jsonl")
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -97,7 +107,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", "implementation_ledger.jsonl", err)
 	}
 
-	prdData, err := readMetricsArtifact(absRoot, "prd.md")
+	prdData, err := readMetricsArtifactRoot(root, "prd.md")
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -107,7 +117,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", "prd.md", err)
 	}
 
-	adrIndexData, err := readMetricsArtifact(absRoot, filepath.Join("adrs", "index.json"))
+	adrIndexData, err := readMetricsArtifactRoot(root, filepath.Join("adrs", "index.json"))
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -150,7 +160,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 		}
 	}
 
-	reportTypeCounts, reportStatusCounts, err := collectReportMetrics(absRoot)
+	reportTypeCounts, reportStatusCounts, err := collectReportMetricsRoot(root)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
@@ -167,7 +177,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	for _, entry := range adrIndex.ADRs {
 		adrRelPath := filepath.Join("adrs", entry.Path)
 
-		adrData, readErr := readMetricsArtifact(absRoot, adrRelPath)
+		adrData, readErr := readMetricsArtifactRoot(root, adrRelPath)
 		if readErr != nil {
 			return ProductWorkflowMetrics{}, readErr
 		}
@@ -213,34 +223,18 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	}, nil
 }
 
-func readMetricsArtifact(absRoot, relPath string) ([]byte, error) {
-	cleanRelPath, ok := cleanMetricsArtifactPath(relPath)
+func readMetricsArtifactRoot(root *os.Root, relPath string) ([]byte, error) {
+	cleanRelPath, ok := cleanEffortRelativePath(relPath)
 	if !ok {
 		return nil, metricsArtifactError("read", relPath, fmt.Errorf("artifact path must be effort-relative and must not contain traversal"))
 	}
 
-	data, err := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(cleanRelPath)))
+	data, err := readEffortArtifactRoot(root, cleanRelPath)
 	if err != nil {
 		return nil, metricsArtifactError("read", cleanRelPath, err)
 	}
 
 	return data, nil
-}
-
-func cleanMetricsArtifactPath(relPath string) (string, bool) {
-	raw := strings.TrimSpace(relPath)
-	normalized := strings.ReplaceAll(filepath.ToSlash(raw), "\\", "/")
-
-	if normalized == "" || filepath.IsAbs(raw) || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
-		return "", false
-	}
-
-	clean := path.Clean(normalized)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", false
-	}
-
-	return clean, true
 }
 
 func metricsArtifactError(op, relPath string, err error) ProductWorkflowMetricsError {
@@ -253,7 +247,7 @@ func metricsArtifactError(op, relPath string, err error) ProductWorkflowMetricsE
 
 func metricsErrorMessage(err error) string {
 	switch {
-	case os.IsNotExist(err):
+	case errors.Is(err, os.ErrNotExist):
 		return "file not found"
 	case os.IsPermission(err):
 		return "permission denied"
@@ -262,11 +256,11 @@ func metricsErrorMessage(err error) string {
 	}
 }
 
-func collectReportMetrics(absRoot string) (map[string]int, map[string]int, error) {
+func collectReportMetricsRoot(root *os.Root) (map[string]int, map[string]int, error) {
 	reportTypeCounts := map[string]int{}
 	reportStatusCounts := map[string]int{}
 
-	entries, err := os.ReadDir(filepath.Join(absRoot, "reports"))
+	entries, err := readEffortArtifactDirectoryRoot(root, "reports")
 	if err != nil {
 		return nil, nil, metricsArtifactError("read", "reports/", err)
 	}
@@ -285,7 +279,7 @@ func collectReportMetrics(absRoot string) (map[string]int, map[string]int, error
 	for _, name := range names {
 		relPath := filepath.Join("reports", name)
 
-		data, readErr := readMetricsArtifact(absRoot, relPath)
+		data, readErr := readMetricsArtifactRoot(root, relPath)
 		if readErr != nil {
 			return nil, nil, readErr
 		}

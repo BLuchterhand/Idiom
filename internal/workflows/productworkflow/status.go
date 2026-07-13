@@ -1,6 +1,7 @@
 package productworkflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/workflows/recoverstatus"
+	workflowrecovery "idiom/internal/workflows/recovery"
 )
 
 type StatusBlocker struct {
@@ -101,6 +103,13 @@ type ProductOperatorArtifact struct {
 	Path string `json:"path"`
 }
 
+type ProductStatusInspection struct {
+	View                 ProductStatusView
+	OperatorView         ProductOperatorStatusView
+	DisplayNextActions   []string
+	WorkflowStateInvalid bool
+}
+
 type ProductRecoveryStatus struct {
 	Status             ProductWorkflowStatus  `json:"status"`
 	PacketPath         string                 `json:"packet_path,omitempty"`
@@ -135,30 +144,59 @@ type ProductRecoveryBlock struct {
 }
 
 func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductStatusView, error) {
-	wsPath := filepath.Join(absRoot, WorkflowStateFileName)
-
-	data, err := os.ReadFile(wsPath)
+	data, err := readEffortArtifact(absRoot, WorkflowStateFileName)
 	if err != nil {
-		blocker := StatusBlocker{
-			Code:    "missing_workflow_state",
-			Message: "workflow_state.json not found",
-		}
-		view := ProductStatusView{
-			AuditStatus:           ProductWorkflowStatusError,
-			EffortRoot:            absRoot,
-			WorkflowID:            workflowstate.WorkflowProductDispatch,
-			WorkflowState:         workflowstate.StateTerminal,
-			WorkflowTerminalState: workflowstate.TerminalStateMissingScope,
-			Blockers:              []StatusBlocker{blocker},
-			Findings:              []StatusBlocker{blocker},
-			OpenObligations:       []string{},
-			NextValidActions:      []string{"restore workflow_state.json under the effort root and rerun product status"},
-			Sections:              []StatusSection{},
-		}
-
-		return view, fmt.Errorf("workflow_state.json: %w", err)
+		return missingProductWorkflowStatus(absRoot, err)
 	}
 
+	return buildProductStatusFromWorkflowData(absRoot, data, lintResult, loadProductRecoveryStatus)
+}
+
+func loadProductStatusRoot(absRoot string, root *os.Root, lintResult *LintSummaryResult) (ProductStatusView, error) {
+	data, err := readEffortArtifactRoot(root, WorkflowStateFileName)
+	if err != nil {
+		return missingProductWorkflowStatus(absRoot, err)
+	}
+
+	return buildProductStatusFromWorkflowData(
+		absRoot,
+		data,
+		lintResult,
+		func(statusRoot string, artifactPaths map[string]string) *ProductRecoveryStatus {
+			return loadProductRecoveryStatusRoot(statusRoot, root, artifactPaths)
+		},
+	)
+}
+
+func missingProductWorkflowStatus(absRoot string, cause error) (ProductStatusView, error) {
+	blocker := StatusBlocker{
+		Code:    "missing_workflow_state",
+		Message: "workflow_state.json not found",
+	}
+	view := ProductStatusView{
+		AuditStatus:           ProductWorkflowStatusError,
+		EffortRoot:            absRoot,
+		WorkflowID:            workflowstate.WorkflowProductDispatch,
+		WorkflowState:         workflowstate.StateTerminal,
+		WorkflowTerminalState: workflowstate.TerminalStateMissingScope,
+		Blockers:              []StatusBlocker{blocker},
+		Findings:              []StatusBlocker{blocker},
+		OpenObligations:       []string{},
+		NextValidActions:      []string{"restore workflow_state.json under the effort root and rerun product status"},
+		Sections:              []StatusSection{},
+	}
+
+	return view, fmt.Errorf("workflow_state.json: %w", cause)
+}
+
+type productRecoveryStatusLoader func(string, map[string]string) *ProductRecoveryStatus
+
+func buildProductStatusFromWorkflowData(
+	absRoot string,
+	data []byte,
+	lintResult *LintSummaryResult,
+	loadRecovery productRecoveryStatusLoader,
+) (ProductStatusView, error) {
 	ws, parseErr := ParseWorkflowStateJSON(data)
 	if parseErr != nil {
 		blocker := StatusBlocker{
@@ -198,7 +236,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 		Blockers:         []StatusBlocker{},
 		Findings:         []StatusBlocker{},
 		Sections:         []StatusSection{},
-		Recovery:         loadProductRecoveryStatus(absRoot, ws.ArtifactPaths),
+		Recovery:         loadRecovery(absRoot, ws.ArtifactPaths),
 	}
 
 	if len(ws.Blockers) > 0 {
@@ -230,6 +268,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 	view.WorkflowID = workflowstate.WorkflowProductDispatch
 	view.WorkflowState, view.WorkflowTerminalState, view.Dispatchable = classifyProductWorkflowProjection(
 		view.StatusBucket,
+		view.CurrentPhase,
 		view.CurrentState,
 		view.AuditStatus,
 		view.FreshnessState,
@@ -280,9 +319,104 @@ func ProductStatusDisplayNextValidActions(view ProductStatusView, workflowStateE
 	return []string{"run `idiom product audit --effort-root <path>` for detailed section findings"}
 }
 
-func classifyProductWorkflowProjection(statusBucket string, currentState string, auditStatus ProductWorkflowStatus, freshnessState string, openObligations []string, blockers []StatusBlocker, nextActions []string) (workflowstate.StateID, workflowstate.TerminalState, bool) {
+type productWorkflowActionAuthority struct {
+	Creation   bool
+	Available  []TransitionAction
+	KnownOwner map[string]string
+	Blockers   []TransitionBlocker
+	Source     string
+	Context    string
+}
+
+func productWorkflowActionAuthorityFor(currentPhase, statusBucket, currentState string) productWorkflowActionAuthority {
+	if phase, ok := creationPhaseFromStored(currentPhase); ok {
+		projection := creationPhaseProjections[phase]
+		authority := productWorkflowActionAuthority{
+			Creation:   true,
+			KnownOwner: make(map[string]string, len(projection.NextValidActions)),
+			Source:     "creation_phase",
+			Context:    fmt.Sprintf("creation phase %q", phase),
+		}
+		if strings.TrimSpace(statusBucket) != projection.StatusBucket {
+			authority.Blockers = append(authority.Blockers, TransitionBlocker{
+				Code:    "invalid_creation_phase_projection",
+				Message: fmt.Sprintf("creation phase %q requires status bucket %q", phase, projection.StatusBucket),
+			})
+		}
+		if strings.TrimSpace(currentState) != projection.CurrentState {
+			authority.Blockers = append(authority.Blockers, TransitionBlocker{
+				Code:    "invalid_creation_phase_projection",
+				Message: fmt.Sprintf("creation phase %q requires current state %q", phase, projection.CurrentState),
+			})
+		}
+		for _, action := range projection.NextValidActions {
+			action = strings.TrimSpace(action)
+			if action == "" {
+				continue
+			}
+			owner := productOperatorActionOwner(action)
+			authority.Available = append(authority.Available, TransitionAction{Action: action, Owner: owner})
+			authority.KnownOwner[action] = owner
+		}
+
+		return authority
+	}
+
+	available, blockers := NextActionsForState(statusBucket, currentState)
+
+	return productWorkflowActionAuthority{
+		Available:  available,
+		KnownOwner: productWorkflowKnownTransitionOwners(statusBucket, currentState),
+		Blockers:   blockers,
+		Source:     "workflow_transition",
+		Context:    fmt.Sprintf("transition table from state %q", strings.TrimSpace(currentState)),
+	}
+}
+
+func (a productWorkflowActionAuthority) hasKnownAction(actions []string) bool {
+	for _, action := range nonEmptyProductStatusActions(actions) {
+		if _, ok := a.KnownOwner[strings.TrimSpace(action)]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (a productWorkflowActionAuthority) creationActionsMatch(actions []string) bool {
+	if !a.Creation {
+		return true
+	}
+	actual := nonEmptyProductStatusActions(actions)
+	if len(actual) != len(a.Available) {
+		return false
+	}
+	for i, action := range a.Available {
+		if strings.TrimSpace(actual[i]) != strings.TrimSpace(action.Action) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (a productWorkflowActionAuthority) invalidActionCode() string {
+	if a.Creation {
+		return "invalid_creation_action"
+	}
+
+	return "invalid_transition_action"
+}
+
+func classifyProductWorkflowProjection(statusBucket string, currentPhase string, currentState string, auditStatus ProductWorkflowStatus, freshnessState string, openObligations []string, blockers []StatusBlocker, nextActions []string) (workflowstate.StateID, workflowstate.TerminalState, bool) {
 	statusBucket = strings.TrimSpace(statusBucket)
+	currentPhase = strings.TrimSpace(currentPhase)
 	currentState = strings.TrimSpace(currentState)
+	actionAuthority := productWorkflowActionAuthorityFor(currentPhase, statusBucket, currentState)
+	creationActionsValid := actionAuthority.creationActionsMatch(nextActions)
+	if actionAuthority.Creation && (len(actionAuthority.Blockers) > 0 || !creationActionsValid) {
+		return workflowstate.StateTerminal, workflowstate.TerminalStateInvalidScope, false
+	}
 
 	if statusBucket == WorkflowStatusBucketClosed && currentState == WorkflowStateClosed {
 		return workflowstate.StateTerminal, workflowstate.TerminalStateComplete, false
@@ -291,11 +425,13 @@ func classifyProductWorkflowProjection(statusBucket string, currentState string,
 		return workflowstate.StateTerminal, workflowstate.TerminalStateInvalidScope, false
 	}
 
-	if len(blockers) == 0 &&
+	hasKnownAction := actionAuthority.hasKnownAction(nextActions)
+	if len(actionAuthority.Blockers) == 0 &&
+		len(blockers) == 0 &&
 		len(openObligations) == 0 &&
 		(auditStatus == "" || auditStatus == ProductWorkflowStatusPass) &&
 		productWorkflowContextFreshnessCurrent(freshnessState) &&
-		productWorkflowHasKnownTransitionAction(statusBucket, currentState, nextActions) {
+		hasKnownAction {
 
 		return workflowstate.StateDispatchable, "", true
 	}
@@ -303,6 +439,12 @@ func classifyProductWorkflowProjection(statusBucket string, currentState string,
 	var codes []string
 	for _, blocker := range blockers {
 		codes = append(codes, blocker.Code)
+	}
+	for _, blocker := range actionAuthority.Blockers {
+		codes = append(codes, blocker.Code)
+	}
+	if !hasKnownAction && len(nonEmptyProductStatusActions(nextActions)) > 0 {
+		codes = append(codes, actionAuthority.invalidActionCode())
 	}
 	if !productWorkflowContextFreshnessCurrent(freshnessState) {
 		codes = append(codes, "stale_context")
@@ -312,6 +454,9 @@ func classifyProductWorkflowProjection(statusBucket string, currentState string,
 	}
 	if auditStatus != "" && auditStatus != ProductWorkflowStatusPass {
 		codes = append(codes, "audit_not_passing")
+	}
+	if actionAuthority.Creation && len(actionAuthority.Blockers) == 0 && hasKnownAction {
+		return workflowstate.StateIntake, "", false
 	}
 
 	return workflowstate.StateTerminal, productWorkflowTerminalStateForBlockers(codes), false
@@ -338,7 +483,7 @@ func productWorkflowTerminalStateForBlockers(codes []string) workflowstate.Termi
 		switch strings.TrimSpace(code) {
 		case "missing_workflow_state":
 			return workflowstate.TerminalStateMissingScope
-		case "invalid_workflow_state", "invalid_state", "invalid_state_bucket", "human_verification_required":
+		case "invalid_workflow_state", "invalid_state", "invalid_state_bucket", "invalid_creation_phase_projection", "invalid_creation_action", "invalid_transition_action", "human_verification_required":
 			return workflowstate.TerminalStateInvalidScope
 		case "stale_context":
 			return workflowstate.TerminalStateStaleNeedsRebase
@@ -352,7 +497,7 @@ func productWorkflowTerminalStateForBlockers(codes []string) workflowstate.Termi
 
 // LoadWorkflowState reads and validates workflow_state.json from an effort root.
 func LoadWorkflowState(absRoot string) (WorkflowState, error) {
-	data, err := os.ReadFile(filepath.Join(absRoot, WorkflowStateFileName))
+	data, err := readEffortArtifact(absRoot, WorkflowStateFileName)
 	if err != nil {
 		return WorkflowState{}, fmt.Errorf("%s: %w", WorkflowStateFileName, err)
 	}
@@ -396,6 +541,47 @@ func LoadCheckedProductStatus(absRoot string) (ProductStatusView, *WorkflowState
 	}
 
 	return view, &workflowState, nil
+}
+
+func loadCheckedProductStatusRoot(absRoot string, root *os.Root) (ProductStatusView, *WorkflowState, error) {
+	if root == nil {
+		return ProductStatusView{}, nil, fmt.Errorf("product workflow status root is not open")
+	}
+	lintSummary := lintEffortFolderRootObserved(absRoot, root, nil)
+	view, statusErr := loadProductStatusRoot(absRoot, root, &lintSummary)
+	if statusErr != nil {
+		return view, nil, statusErr
+	}
+	workflowData, err := readEffortArtifactRoot(root, WorkflowStateFileName)
+	if err != nil {
+		return view, nil, fmt.Errorf("%s: %w", WorkflowStateFileName, err)
+	}
+	workflowState, err := ParseWorkflowStateJSON(workflowData)
+	if err != nil {
+		return view, nil, fmt.Errorf("%s: %w", WorkflowStateFileName, err)
+	}
+	metrics, metricsErr := buildProductWorkflowMetricsRoot(root)
+	if metricsErr != nil {
+		view.AuditStatus = ProductWorkflowStatusFail
+		view.Findings = append(view.Findings, StatusBlocker{Code: "metrics_error", Message: metricsErr.Error()})
+		view.Blockers = append(view.Blockers, StatusBlocker{Code: "metrics_error", Message: metricsErr.Error()})
+		markStatusSectionFailure(&view, "metrics")
+	} else {
+		view.Metrics = &metrics
+	}
+
+	return view, &workflowState, nil
+}
+
+func InspectProductStatus(absRoot string) ProductStatusInspection {
+	view, workflowState, err := LoadCheckedProductStatus(absRoot)
+
+	return ProductStatusInspection{
+		View:                 view,
+		OperatorView:         BuildProductOperatorStatusView(view, workflowState),
+		DisplayNextActions:   ProductStatusDisplayNextValidActions(view, err != nil),
+		WorkflowStateInvalid: err != nil,
+	}
 }
 
 func BuildProductOperatorStatusView(status ProductStatusView, workflowState *WorkflowState) ProductOperatorStatusView {
@@ -450,54 +636,56 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		})
 	}
 
-	if strings.TrimSpace(status.ContextPackID) == "" {
-		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
-			Code:    "missing_context_pack",
-			Message: "attach a context_pack_id before continuing",
-			Source:  "workflow_state.context",
-		})
-	}
-
-	if strings.TrimSpace(status.EffortID) == "" || strings.TrimSpace(status.CurrentState) == "" || strings.TrimSpace(status.StatusBucket) == "" {
-		if !hasOperatorBlockerCode(view.Blockers, "invalid_workflow_state") && !hasOperatorBlockerCode(view.Blockers, "missing_workflow_state") {
+	if workflowState != nil {
+		if strings.TrimSpace(status.ContextPackID) == "" {
 			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
-				Code:    "invalid_workflow_state",
-				Message: "workflow_state.json is not valid enough to continue",
+				Code:    "missing_context_pack",
+				Message: "attach a context_pack_id before continuing",
+				Source:  "workflow_state.context",
+			})
+		}
+
+		if strings.TrimSpace(status.EffortID) == "" || strings.TrimSpace(status.CurrentState) == "" || strings.TrimSpace(status.StatusBucket) == "" {
+			if !hasOperatorBlockerCode(view.Blockers, "invalid_workflow_state") && !hasOperatorBlockerCode(view.Blockers, "missing_workflow_state") {
+				view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+					Code:    "invalid_workflow_state",
+					Message: "workflow_state.json is not valid enough to continue",
+					Source:  "workflow_state",
+				})
+			}
+		}
+
+		if !productWorkflowContextFreshnessCurrent(status.FreshnessState) {
+			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+				Code:    "stale_context",
+				Message: fmt.Sprintf("workflow freshness_state %q is not current", strings.TrimSpace(status.FreshnessState)),
+				Source:  "workflow_state.context",
+			})
+		}
+
+		if status.AuditStatus != "" && status.AuditStatus != ProductWorkflowStatusPass {
+			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+				Code:    "audit_not_passing",
+				Message: fmt.Sprintf("product status audit_status %q blocks continuation dispatch", status.AuditStatus),
+				Source:  "audit",
+			})
+		}
+
+		if len(status.OpenObligations) > 0 {
+			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+				Code:    "open_obligations",
+				Message: fmt.Sprintf("%d open obligations remain", len(status.OpenObligations)),
 				Source:  "workflow_state",
 			})
 		}
-	}
 
-	if !productWorkflowContextFreshnessCurrent(status.FreshnessState) {
-		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
-			Code:    "stale_context",
-			Message: fmt.Sprintf("workflow freshness_state %q is not current", strings.TrimSpace(status.FreshnessState)),
-			Source:  "workflow_state.context",
-		})
-	}
-
-	if status.AuditStatus != "" && status.AuditStatus != ProductWorkflowStatusPass {
-		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
-			Code:    "audit_not_passing",
-			Message: fmt.Sprintf("product status audit_status %q blocks continuation dispatch", status.AuditStatus),
-			Source:  "audit",
-		})
-	}
-
-	if len(status.OpenObligations) > 0 {
-		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
-			Code:    "open_obligations",
-			Message: fmt.Sprintf("%d open obligations remain", len(status.OpenObligations)),
-			Source:  "workflow_state",
-		})
-	}
-
-	if productOperatorRequestsImplementationDispatch(status.NextValidActions) {
-		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
-			Code:    "human_verification_required",
-			Message: "implementation dispatch requires an explicit human verification phase; transition planned work through submit_for_human_verification and approve_for_implementation",
-			Source:  "workflow_transition",
-		})
+		if productOperatorRequestsImplementationDispatch(status.NextValidActions) {
+			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+				Code:    "human_verification_required",
+				Message: "implementation dispatch requires an explicit human verification phase; transition planned work through submit_for_human_verification and approve_for_implementation",
+				Source:  "workflow_transition",
+			})
+		}
 	}
 
 	if status.Recovery != nil {
@@ -518,50 +706,55 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		}
 	}
 
-	transitionActions, transitionBlockers := NextActionsForState(status.StatusBucket, status.CurrentState)
-	for _, blocker := range transitionBlockers {
+	actionAuthority := productWorkflowActionAuthority{}
+	if workflowState != nil {
+		actionAuthority = productWorkflowActionAuthorityFor(status.CurrentPhase, status.StatusBucket, status.CurrentState)
+	}
+	for _, blocker := range actionAuthority.Blockers {
 		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
 			Code:    blocker.Code,
 			Message: blocker.Message,
-			Source:  "workflow_transition",
+			Source:  actionAuthority.Source,
 		})
 	}
 
 	blockerCodes := productOperatorBlockerCodes(view.Blockers)
 	blockingReasons := append([]ProductOperatorBlocker{}, view.Blockers...)
-	dispatchable := len(blockerCodes) == 0 && view.WorkflowState != workflowstate.StateTerminal
+	hasKnownAuthorityAction := workflowState == nil || actionAuthority.hasKnownAction(status.NextValidActions)
+	creationActionsValid := workflowState == nil || actionAuthority.creationActionsMatch(status.NextValidActions)
+	dispatchable := workflowState != nil && len(blockerCodes) == 0 && view.WorkflowState != workflowstate.StateTerminal
 	view.Dispatchable = dispatchable
 	if dispatchable {
 		view.WorkflowState = workflowstate.StateDispatchable
 		view.WorkflowTerminalState = ""
 	} else if view.WorkflowTerminalState == "" {
-		view.WorkflowState = workflowstate.StateTerminal
-		view.WorkflowTerminalState = productWorkflowTerminalStateForBlockers(blockerCodes)
-	}
-	transitionOwners := map[string]string{}
-
-	for _, action := range transitionActions {
-		transitionOwners[action.Action] = action.Owner
-	}
-
-	knownTransitionOwners := productWorkflowKnownTransitionOwners(status.StatusBucket, status.CurrentState)
-	hasKnownTransitionAction := false
-	for _, actionText := range status.NextValidActions {
-		if _, ok := knownTransitionOwners[strings.TrimSpace(actionText)]; ok {
-			hasKnownTransitionAction = true
-			break
+		if actionAuthority.Creation && len(actionAuthority.Blockers) == 0 && creationActionsValid && hasKnownAuthorityAction {
+			view.WorkflowState = workflowstate.StateIntake
+		} else {
+			view.WorkflowState = workflowstate.StateTerminal
+			view.WorkflowTerminalState = productWorkflowTerminalStateForBlockers(blockerCodes)
 		}
 	}
-	if view.WorkflowState != workflowstate.StateTerminal && !hasKnownTransitionAction && len(nonEmptyProductStatusActions(status.NextValidActions)) > 0 {
+	availableActionOwners := map[string]string{}
+
+	for _, action := range actionAuthority.Available {
+		availableActionOwners[action.Action] = action.Owner
+	}
+
+	invalidAuthorityActions := workflowState != nil && (!hasKnownAuthorityAction || (actionAuthority.Creation && !creationActionsValid))
+	if invalidAuthorityActions && (actionAuthority.Creation || len(nonEmptyProductStatusActions(status.NextValidActions)) > 0) {
+		invalidActionCode := actionAuthority.invalidActionCode()
 		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
-			Code:    "invalid_transition_action",
-			Message: fmt.Sprintf("workflow_state.next_valid_actions contains no action allowed by the transition table from state %q", status.CurrentState),
-			Source:  "workflow_transition",
+			Code:    invalidActionCode,
+			Message: fmt.Sprintf("workflow_state.next_valid_actions does not match actions owned by %s", actionAuthority.Context),
+			Source:  actionAuthority.Source,
 		})
-		blockerCodes = append(blockerCodes, "invalid_transition_action")
+		blockerCodes = append(blockerCodes, invalidActionCode)
 		blockingReasons = append(blockingReasons, view.Blockers[len(view.Blockers)-1])
 		dispatchable = false
 		view.Dispatchable = false
+		view.WorkflowState = workflowstate.StateTerminal
+		view.WorkflowTerminalState = workflowstate.TerminalStateInvalidScope
 	}
 
 	for idx, actionText := range status.NextValidActions {
@@ -578,25 +771,26 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 			id = fmt.Sprintf("operator_followup_%d", idx+1)
 		}
 
-		owner := transitionOwners[actionText]
+		owner := availableActionOwners[actionText]
 		if owner == "" {
 			owner = productOperatorActionOwner(actionText)
 		}
 
 		actionBlockerCodes := append([]string{}, blockerCodes...)
 		actionBlockers := append([]ProductOperatorBlocker{}, blockingReasons...)
-		_, transitionActionKnown := transitionOwners[actionText]
-		_, rawTransitionActionKnown := knownTransitionOwners[actionText]
-		if !rawTransitionActionKnown {
-			actionBlockerCodes = append(actionBlockerCodes, "invalid_transition_action")
+		_, actionAvailable := availableActionOwners[actionText]
+		_, actionKnown := actionAuthority.KnownOwner[actionText]
+		if workflowState != nil && !actionKnown {
+			invalidActionCode := actionAuthority.invalidActionCode()
+			actionBlockerCodes = append(actionBlockerCodes, invalidActionCode)
 			actionBlockers = append(actionBlockers, ProductOperatorBlocker{
-				Code:    "invalid_transition_action",
-				Message: fmt.Sprintf("workflow_state.next_valid_actions contains %q, but the transition table does not allow it from state %q", actionText, status.CurrentState),
-				Source:  "workflow_transition",
+				Code:    invalidActionCode,
+				Message: fmt.Sprintf("workflow_state.next_valid_actions contains %q, but %s does not allow it", actionText, actionAuthority.Context),
+				Source:  actionAuthority.Source,
 			})
 		}
 
-		actionDispatchable := dispatchable && transitionActionKnown
+		actionDispatchable := dispatchable && actionAvailable
 		runnableNow := productOperatorActionRunnable(actionText, actionDispatchable)
 
 		view.NextValidActions = append(view.NextValidActions, ProductOperatorAction{
@@ -613,8 +807,8 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		})
 	}
 
-	if len(view.NextValidActions) == 0 {
-		for _, action := range transitionActions {
+	if workflowState != nil && len(view.NextValidActions) == 0 {
+		for _, action := range actionAuthority.Available {
 			view.NextValidActions = append(view.NextValidActions, ProductOperatorAction{
 				Action:       action.Action,
 				ID:           action.Action,
@@ -650,21 +844,6 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 	workflowstate.MustValidateStateProjection(view.WorkflowID, view.WorkflowState, view.WorkflowTerminalState, view.Dispatchable)
 
 	return view
-}
-
-func productWorkflowHasKnownTransitionAction(statusBucket string, currentState string, nextActions []string) bool {
-	knownActions := productWorkflowKnownTransitionOwners(statusBucket, currentState)
-	if len(knownActions) == 0 {
-		return false
-	}
-
-	for _, action := range nonEmptyProductStatusActions(nextActions) {
-		if _, ok := knownActions[action]; ok {
-			return true
-		}
-	}
-
-	return false
 }
 
 func productWorkflowKnownTransitionOwners(statusBucket string, currentState string) map[string]string {
@@ -709,6 +888,210 @@ func markStatusSectionFailure(view *ProductStatusView, name string) {
 		Status:       ProductWorkflowStatusFail,
 		FindingCount: 1,
 	})
+}
+
+func loadProductRecoveryStatusRoot(absRoot string, root *os.Root, artifactPaths map[string]string) *ProductRecoveryStatus {
+	packetPath := firstArtifactPath(artifactPaths, "recovery_packet", "recovery_decomposition_packet")
+	failurePath := firstArtifactPath(artifactPaths, "recovery_failure", "recovery_failure_record")
+	reconciliationPath := firstArtifactPath(artifactPaths, "recovery_reconciliation", "recovery_reconciliation_record")
+	if packetPath == "" && failurePath == "" && reconciliationPath == "" {
+		return nil
+	}
+
+	status := &ProductRecoveryStatus{
+		Status:             ProductWorkflowStatusBlocked,
+		PacketPath:         productRecoveryArtifactDisplayPath(absRoot, packetPath),
+		FailureRecordPath:  productRecoveryArtifactDisplayPath(absRoot, failurePath),
+		ReconciliationPath: productRecoveryArtifactDisplayPath(absRoot, reconciliationPath),
+		Blockers:           []ProductRecoveryBlock{},
+	}
+	if root == nil {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: "invalid_recovery_packet", Message: "recovery artifacts cannot be inspected without an open effort root"})
+
+		return status
+	}
+	if packetPath == "" {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
+			Code:    "missing_recovery_packet",
+			Message: "workflow_state artifact_paths includes recovery metadata without a recovery_packet artifact",
+		})
+
+		return status
+	}
+
+	packetRel, ok := rootedProductRecoveryPath(absRoot, packetPath)
+	if !ok {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: "unsafe_recovery_packet_path", Message: "recovery packet path must stay under the effort root"})
+
+		return status
+	}
+	status.PacketPath = packetRel
+	packetBody, err := readEffortArtifactRoot(root, filepath.FromSlash(packetRel))
+	if err != nil {
+		code := "invalid_recovery_packet"
+		message := "recovery packet could not be inspected"
+		if os.IsNotExist(err) {
+			code = "missing_recovery_packet"
+			message = "recovery packet artifact was not found under the effort root"
+		}
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: code, Message: message})
+
+		return status
+	}
+	var packet recoverycontract.DecompositionPacket
+	if err := json.Unmarshal(packetBody, &packet); err != nil || packet.SchemaVersion != recoverycontract.DecompositionPacketSchemaVersion {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: "invalid_recovery_packet", Message: "recovery packet could not be decoded"})
+
+		return status
+	}
+	if err := workflowrecovery.ValidateDecompositionPacket(packet); err != nil {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: "invalid_recovery_packet", Message: "recovery packet could not be decoded"})
+
+		return status
+	}
+
+	reconciliation, reconciliationRel, found, err := loadProductRecoveryReconciliationRoot(
+		absRoot,
+		root,
+		packetRel,
+		reconciliationPath,
+		packet.FailureID,
+	)
+	if err != nil {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: "invalid_recovery_reconciliation", Message: "recovery reconciliation could not be decoded"})
+
+		return status
+	}
+	var reconciliationRef *recoverycontract.Reconciliation
+	if found {
+		reconciliationRef = &reconciliation
+		status.ReconciliationPath = reconciliationRel
+	} else if strings.TrimSpace(reconciliationPath) != "" {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: "missing_recovery_reconciliation", Message: "recovery reconciliation artifact was not found under the effort root"})
+
+		return status
+	}
+
+	projection := workflowrecovery.ProjectPacketStatus(packet, reconciliationRef)
+	status.Status = productRecoveryStatusFromPacketStatus(projection.Status)
+	status.PacketID = packet.PacketID
+	status.FailureID = packet.FailureID
+	status.FailureClass = string(packet.Failure.Class)
+	status.FailureKind = packet.Failure.Kind
+	status.SourceSessionID = packet.SourceRun.SessionID
+	status.NextValidAction = string(projection.NextAction)
+	status.CandidateAtomCount = len(packet.CandidateAtoms)
+	if reconciliationRef != nil {
+		status.CompletedAtomCount = len(reconciliationRef.CompletedAtoms)
+	}
+	status.RemainingAtomCount = len(projection.CandidateAtoms)
+	status.ResidualWorkCount = len(projection.ResidualWork)
+	status.Gates, status.RequiredTests = productRecoveryPacketRequirements(packet)
+	status.ProductLinks = productRecoveryLinks(packet.ProductLinks)
+	for _, finding := range projection.ReconciliationFindings {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
+			Code:    textutil.FirstNonEmpty(finding.Code, "invalid_recovery_reconciliation"),
+			Message: finding.Message,
+		})
+	}
+	for _, blocker := range projection.Blockers {
+		if blocker = strings.TrimSpace(blocker); blocker != "" {
+			status.Blockers = append(status.Blockers, ProductRecoveryBlock{Code: "recovery_requires_human_action", Message: blocker})
+		}
+	}
+
+	return status
+}
+
+func rootedProductRecoveryPath(absRoot, value string) (string, bool) {
+	_, rel, ok := resolveProductRecoveryArtifactPath(absRoot, value)
+	if !ok {
+		return "", false
+	}
+	clean, ok := normalizedSafeEffortPath(rel)
+	if !ok || clean == "" {
+		return "", false
+	}
+
+	return clean, true
+}
+
+func loadProductRecoveryReconciliationRoot(
+	absRoot string,
+	root *os.Root,
+	packetRel string,
+	configuredPath string,
+	failureID string,
+) (recoverycontract.Reconciliation, string, bool, error) {
+	var candidates []string
+	if strings.TrimSpace(configuredPath) != "" {
+		configuredRel, ok := rootedProductRecoveryPath(absRoot, configuredPath)
+		if !ok {
+			return recoverycontract.Reconciliation{}, "", false, fmt.Errorf("recovery reconciliation path must stay under the effort root")
+		}
+		candidates = append(candidates, configuredRel)
+	} else {
+		candidates = append(candidates,
+			filepath.ToSlash(filepath.Join(filepath.Dir(filepath.FromSlash(packetRel)), "reconciliation.json")),
+			filepath.ToSlash(filepath.Join(".idiom", "recovery", failureID, "reconciliation.json")),
+		)
+	}
+
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		candidate, ok := normalizedSafeEffortPath(candidate)
+		if !ok || candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		body, err := readEffortArtifactRoot(root, filepath.FromSlash(candidate))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return recoverycontract.Reconciliation{}, candidate, false, err
+		}
+		var reconciliation recoverycontract.Reconciliation
+		if err := json.Unmarshal(body, &reconciliation); err != nil {
+			return recoverycontract.Reconciliation{}, candidate, false, err
+		}
+		if reconciliation.SchemaVersion != recoverycontract.ReconciliationSchemaVersion {
+			return recoverycontract.Reconciliation{}, candidate, false, fmt.Errorf("unsupported recovery reconciliation schema %q", reconciliation.SchemaVersion)
+		}
+
+		return reconciliation, candidate, true, nil
+	}
+
+	return recoverycontract.Reconciliation{}, "", false, nil
+}
+
+func productRecoveryPacketRequirements(packet recoverycontract.DecompositionPacket) ([]string, []string) {
+	gateSet := map[string]bool{}
+	testSet := map[string]bool{}
+	for _, atom := range packet.CandidateAtoms {
+		for _, gate := range atom.Gates {
+			if gate = strings.TrimSpace(gate); gate != "" {
+				gateSet[gate] = true
+			}
+		}
+		for _, test := range atom.RequiredTests {
+			if test = strings.TrimSpace(test); test != "" {
+				testSet[test] = true
+			}
+		}
+	}
+	gates := make([]string, 0, len(gateSet))
+	for gate := range gateSet {
+		gates = append(gates, gate)
+	}
+	tests := make([]string, 0, len(testSet))
+	for test := range testSet {
+		tests = append(tests, test)
+	}
+	sort.Strings(gates)
+	sort.Strings(tests)
+
+	return gates, tests
 }
 
 func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) *ProductRecoveryStatus {
@@ -1147,7 +1530,8 @@ func productOperatorActionRunnable(action string, dispatchable bool) bool {
 
 	normalized := strings.ToLower(strings.TrimSpace(action))
 
-	return strings.Contains(normalized, "restore") ||
+	return normalized == "view_status" ||
+		strings.Contains(normalized, "restore") ||
 		strings.Contains(normalized, "fix") ||
 		strings.Contains(normalized, "repair") ||
 		strings.Contains(normalized, "rerun")

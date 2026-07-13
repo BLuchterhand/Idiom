@@ -1,14 +1,17 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
@@ -17,7 +20,8 @@ import (
 	"idiom/internal/workflows/recovery"
 )
 
-func TestSlashProductStatusIncludesRecoveryPacketState(t *testing.T) {
+var _ = ginkgo.It("slash product status includes recovery packet state", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	effortRoot := filepath.Join(root, "test-effort")
 	appProductStatusWriteFile(t, effortRoot, "references/recovery_packet.json", appProductStatusRecoveryPacketJSON(t))
@@ -30,24 +34,16 @@ func TestSlashProductStatusIncludesRecoveryPacketState(t *testing.T) {
 	}
 	quit := model.handleSlashCommand("/product-status --effort-root " + effortRoot)
 
-	if quit {
-		t.Fatal("product status command must not quit the TUI")
-	}
+	gomega.Expect(quit).To(gomega.BeFalse(), fmt.Sprint("product status command must not quit the TUI"))
 
-	if len(model.messages) != 1 {
-		t.Fatalf("expected product status transcript message, got %#v", model.messages)
-	}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(1), fmt.Sprintf("expected product status transcript message, got %#v", model.messages))
 
-	if model.messages[0].Role != "operator" {
-		t.Fatalf("product status output must be harness/operator-authored, got role %q", model.messages[0].Role)
-	}
+	gomega.Expect(model.messages[0].Role).To(gomega.Equal("operator"), fmt.Sprintf("product status output must be harness/operator-authored, got role %q", model.messages[0].Role))
 
 	body := model.messages[0].Content
 
 	statusView, workflowState, statusErr := productworkflow.LoadCheckedProductStatus(effortRoot)
-	if statusErr != nil {
-		t.Fatalf("LoadCheckedProductStatus: %v", statusErr)
-	}
+	gomega.Expect(statusErr).NotTo(gomega.HaveOccurred(), fmt.Sprintf("LoadCheckedProductStatus: %v", statusErr))
 
 	expected := strings.TrimRight(productworkflow.FormatProductOperatorStatusText(
 		filepath.Base(effortRoot),
@@ -56,9 +52,7 @@ func TestSlashProductStatusIncludesRecoveryPacketState(t *testing.T) {
 
 	expected += "\n  tui_command_hint=/recover-status --packet test-effort/references/recovery_packet.json"
 
-	if body != expected {
-		t.Fatalf("slash product status must render the shared operator formatter.\nwant:\n%s\n\ngot:\n%s", expected, body)
-	}
+	gomega.Expect(body).To(gomega.Equal(expected), fmt.Sprintf("slash product status must render the shared operator formatter.\nwant:\n%s\n\ngot:\n%s", expected, body))
 
 	for _, want := range []string{
 		"product operator status: test-effort app-effort",
@@ -69,9 +63,7 @@ func TestSlashProductStatusIncludesRecoveryPacketState(t *testing.T) {
 		"command_hint=idiom recover status --packet references/recovery_packet.json",
 		"tui_command_hint=/recover-status --packet test-effort/references/recovery_packet.json",
 	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected slash product status output to contain %q, got:\n%s", want, body)
-		}
+		gomega.Expect(strings.Contains(body, want)).To(gomega.BeTrue(), fmt.Sprintf("expected slash product status output to contain %q, got:\n%s", want, body))
 	}
 
 	for _, forbidden := range []string{
@@ -79,43 +71,33 @@ func TestSlashProductStatusIncludesRecoveryPacketState(t *testing.T) {
 		"recover reconcile",
 		"recovery_decompose",
 	} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("slash product status must not advertise write-capable recovery action %q:\n%s", forbidden, body)
-		}
+		gomega.Expect(strings.Contains(body, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("slash product status must not advertise write-capable recovery action %q:\n%s", forbidden, body))
 	}
 
-	if !strings.Contains(model.status, "blocker") {
-		t.Fatalf("expected status line to report blockers, got %q", model.status)
-	}
+	gomega.Expect(strings.Contains(model.status, "blocker")).To(gomega.BeTrue(), fmt.Sprintf("expected status line to report blockers, got %q", model.status))
 
-	for _, msg := range model.requestMessages() {
-		if strings.Contains(msg.Content, "product operator status:") {
-			t.Fatalf("operator status output must not be replayed into model context: %#v", model.requestMessages())
-		}
+	for _, msg := range newDetachedPromptExecutionSession(context.Background(), model).requestMessages(context.Background()) {
+		gomega.Expect(strings.Contains(msg.Content, "product operator status:")).To(gomega.BeFalse(), fmt.Sprintf("operator status output must not be replayed into model context: %#v", newDetachedPromptExecutionSession(context.Background(), model).requestMessages(context.Background())))
 	}
-}
+})
 
-func TestSlashProductStatusRequiresEffortRootOutsideEffortDirectory(t *testing.T) {
+var _ = ginkgo.It("slash product status requires effort root outside effort directory", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	model := &Model{
 		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 	}
 	quit := model.handleSlashCommand("/product-status")
 
-	if quit {
-		t.Fatal("product status command must not quit the TUI")
-	}
+	gomega.Expect(quit).To(gomega.BeFalse(), fmt.Sprint("product status command must not quit the TUI"))
 
-	if len(model.messages) != 0 {
-		t.Fatalf("usage failure must not append a transcript message, got %#v", model.messages)
-	}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(0), fmt.Sprintf("usage failure must not append a transcript message, got %#v", model.messages))
 
-	if !strings.Contains(model.status, "usage: /product-status --effort-root <path>") {
-		t.Fatalf("expected explicit usage guidance outside an effort root, got %q", model.status)
-	}
-}
+	gomega.Expect(strings.Contains(model.status, "usage: /product-status --effort-root <path>")).To(gomega.BeTrue(), fmt.Sprintf("expected explicit usage guidance outside an effort root, got %q", model.status))
+})
 
-func TestProductStatusTUIRecoveryHintSuppressesUnsafeRedactedPacketPath(t *testing.T) {
+var _ = ginkgo.It("product status tui recovery hint suppresses unsafe redacted packet path", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	effortRoot := filepath.Join(root, "test-effort")
 	model := &Model{
@@ -125,12 +107,10 @@ func TestProductStatusTUIRecoveryHintSuppressesUnsafeRedactedPacketPath(t *testi
 	hint := model.productStatusTUIRecoveryHint(effortRoot, productworkflow.ProductOperatorStatusView{
 		Recovery: &productworkflow.ProductRecoveryStatus{PacketPath: "outside_effort_root"},
 	})
-	if hint != "" {
-		t.Fatalf("unsafe redacted recovery packet path must not become a TUI handoff hint, got %q", hint)
-	}
-}
+	gomega.Expect(hint).To(gomega.Equal(""), fmt.Sprintf("unsafe redacted recovery packet path must not become a TUI handoff hint, got %q", hint))
+})
 
-func TestRequestMessagesIgnoresOperatorMessagesForHistoryLimit(t *testing.T) {
+var _ = ginkgo.It("request messages ignores operator messages for history limit", func() {
 	model := &Model{
 		cfg: config.Config{Chat: config.Chat{MaxHistory: 2}},
 		messages: []llama.ChatMessage{
@@ -141,17 +121,15 @@ func TestRequestMessagesIgnoresOperatorMessagesForHistoryLimit(t *testing.T) {
 		},
 	}
 
-	messages := model.requestMessages()
-	if len(messages) != 2 {
-		t.Fatalf("expected two payload-eligible messages, got %#v", messages)
-	}
+	messages := newDetachedPromptExecutionSession(context.Background(), model).requestMessages(context.Background())
+	gomega.Expect(len(messages)).To(gomega.Equal(2), fmt.Sprintf("expected two payload-eligible messages, got %#v", messages))
 
-	if messages[0].Content != "first user" || messages[1].Content != "first assistant" {
-		t.Fatalf("operator messages must not consume MaxHistory slots, got %#v", messages)
-	}
-}
+	gomega.Expect(messages[0].Content).To(gomega.Equal("first user"), fmt.Sprintf("operator messages must not consume MaxHistory slots, got %#v", messages))
+	gomega.Expect(messages[1].Content).To(gomega.Equal("first assistant"), fmt.Sprintf("operator messages must not consume MaxHistory slots, got %#v", messages))
+})
 
-func TestSlashProductStatusAuditFailureBlocksDispatch(t *testing.T) {
+var _ = ginkgo.It("slash product status audit failure blocks dispatch", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	effortRoot := filepath.Join(root, "test-effort")
 	appProductStatusWriteFile(t, effortRoot, "workflow_state.json", appProductStatusWorkflowStateJSONNoRecovery())
@@ -162,9 +140,7 @@ func TestSlashProductStatusAuditFailureBlocksDispatch(t *testing.T) {
 	}
 	model.handleSlashCommand("/product-status --effort-root " + effortRoot)
 
-	if len(model.messages) != 1 {
-		t.Fatalf("expected product status transcript message, got %#v", model.messages)
-	}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(1), fmt.Sprintf("expected product status transcript message, got %#v", model.messages))
 
 	body := model.messages[0].Content
 	for _, want := range []string{
@@ -173,13 +149,12 @@ func TestSlashProductStatusAuditFailureBlocksDispatch(t *testing.T) {
 		"- complete [complete] owner=operator dispatchable=false runnable_now=false",
 		"blocked_by=",
 	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected audit-blocked product status output to contain %q, got:\n%s", want, body)
-		}
+		gomega.Expect(strings.Contains(body, want)).To(gomega.BeTrue(), fmt.Sprintf("expected audit-blocked product status output to contain %q, got:\n%s", want, body))
 	}
-}
+})
 
-func TestSlashProductContinueSubmitsHumanVerification(t *testing.T) {
+var _ = ginkgo.It("slash product continue submits human verification", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	effortRoot := appProductContinuationEffort(t, root, "planned", "submit_for_human_verification")
 	model := &Model{
@@ -191,29 +166,24 @@ func TestSlashProductContinueSubmitsHumanVerification(t *testing.T) {
 	model.handleSlashCommand("/product-continue submit_for_human_verification --effort-root " + effortRoot)
 
 	state := appProductStatusReadWorkflowState(t, effortRoot)
-	if state.CurrentState != "human_verification" {
-		t.Fatalf("expected human_verification state, got %q", state.CurrentState)
-	}
+	gomega.Expect(state.CurrentState).To(gomega.Equal("human_verification"), fmt.Sprintf("expected human_verification state, got %q", state.CurrentState))
 
-	if !appProductStatusContains(state.NextValidActions, "approve_for_implementation") {
-		t.Fatalf("expected approve_for_implementation next action, got %#v", state.NextValidActions)
-	}
+	gomega.Expect(appProductStatusContains(state.NextValidActions, "approve_for_implementation")).To(gomega.BeTrue(), fmt.Sprintf("expected approve_for_implementation next action, got %#v", state.NextValidActions))
 
-	if state.StateRevision != 2 || state.LastEventID == "evt-0001" {
-		t.Fatalf("expected revised workflow state, got revision=%d last_event_id=%q", state.StateRevision, state.LastEventID)
-	}
+	gomega.Expect(state.StateRevision).To(gomega.Equal(2), fmt.Sprintf("expected revised workflow state, got revision=%d last_event_id=%q", state.StateRevision, state.LastEventID))
+	gomega.Expect(state.LastEventID).To(gomega.Not(gomega.Equal("evt-0001")), fmt.Sprintf("expected revised workflow state, got revision=%d last_event_id=%q", state.StateRevision, state.LastEventID))
 
 	events := appProductStatusReadFile(t, effortRoot, "events.jsonl")
-	if !strings.Contains(events, `"event":"product_workflow_transition_applied"`) || !strings.Contains(events, `"action":"submit_for_human_verification"`) {
-		t.Fatalf("expected transition event in events.jsonl, got:\n%s", events)
-	}
+	gomega.Expect(events).To(gomega.ContainSubstring(`"event":"product_workflow_transition_applied"`), fmt.Sprintf("expected transition event in events.jsonl, got:\n%s", events))
+	gomega.Expect(events).To(gomega.ContainSubstring(`"action":"submit_for_human_verification"`), fmt.Sprintf("expected transition event in events.jsonl, got:\n%s", events))
 
-	if len(model.messages) != 1 || !strings.Contains(model.messages[0].Content, "product workflow transition: applied") || !strings.Contains(model.messages[0].Content, "approve_for_implementation") {
-		t.Fatalf("expected transition and refreshed status operator message, got %#v", model.messages)
-	}
-}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(1), fmt.Sprintf("expected transition and refreshed status operator message, got %#v", model.messages))
+	gomega.Expect(model.messages[0].Content).To(gomega.ContainSubstring("product workflow transition: applied"), fmt.Sprintf("expected transition and refreshed status operator message, got %#v", model.messages))
+	gomega.Expect(model.messages[0].Content).To(gomega.ContainSubstring("approve_for_implementation"), fmt.Sprintf("expected transition and refreshed status operator message, got %#v", model.messages))
+})
 
-func TestSlashProductApproveAppliesApprovalTransition(t *testing.T) {
+var _ = ginkgo.It("slash product approve applies approval transition", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	effortRoot := appProductContinuationEffort(t, root, "human_verification", "approve_for_implementation")
 	model := &Model{
@@ -225,25 +195,19 @@ func TestSlashProductApproveAppliesApprovalTransition(t *testing.T) {
 	model.handleSlashCommand("/product-approve --effort-root " + effortRoot)
 
 	state := appProductStatusReadWorkflowState(t, effortRoot)
-	if state.CurrentState != "implementing" {
-		t.Fatalf("expected implementing state, got %q", state.CurrentState)
-	}
+	gomega.Expect(state.CurrentState).To(gomega.Equal("implementing"), fmt.Sprintf("expected implementing state, got %q", state.CurrentState))
 
-	if !appProductStatusContains(state.NextValidActions, "submit_for_verification") {
-		t.Fatalf("expected submit_for_verification next action, got %#v", state.NextValidActions)
-	}
+	gomega.Expect(appProductStatusContains(state.NextValidActions, "submit_for_verification")).To(gomega.BeTrue(), fmt.Sprintf("expected submit_for_verification next action, got %#v", state.NextValidActions))
 
 	events := appProductStatusReadFile(t, effortRoot, "events.jsonl")
-	if !strings.Contains(events, `"action":"approve_for_implementation"`) {
-		t.Fatalf("expected approval event in events.jsonl, got:\n%s", events)
-	}
+	gomega.Expect(strings.Contains(events, `"action":"approve_for_implementation"`)).To(gomega.BeTrue(), fmt.Sprintf("expected approval event in events.jsonl, got:\n%s", events))
 
-	if len(model.messages) != 1 || !strings.Contains(model.messages[0].Content, "state: human_verification -> implementing") {
-		t.Fatalf("expected approval transition operator message, got %#v", model.messages)
-	}
-}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(1), fmt.Sprintf("expected approval transition operator message, got %#v", model.messages))
+	gomega.Expect(model.messages[0].Content).To(gomega.ContainSubstring("state: human_verification -> implementing"), fmt.Sprintf("expected approval transition operator message, got %#v", model.messages))
+})
 
-func TestSlashProductContinueBlocksUnlistedActionWithoutMutation(t *testing.T) {
+var _ = ginkgo.It("slash product continue blocks unlisted action without mutation", func() {
+	t := ginkgo.GinkgoT()
 	root := t.TempDir()
 	effortRoot := appProductContinuationEffort(t, root, "planned", "submit_for_human_verification")
 	beforeState := appProductStatusReadFile(t, effortRoot, "workflow_state.json")
@@ -256,41 +220,54 @@ func TestSlashProductContinueBlocksUnlistedActionWithoutMutation(t *testing.T) {
 
 	model.handleSlashCommand("/product-continue approve_for_implementation --effort-root " + effortRoot)
 
-	if got := appProductStatusReadFile(t, effortRoot, "workflow_state.json"); got != beforeState {
-		t.Fatalf("blocked transition mutated workflow_state.json\nbefore:\n%s\n\nafter:\n%s", beforeState, got)
+	{
+		got := appProductStatusReadFile(t, effortRoot, "workflow_state.json")
+		gomega.Expect(got).To(gomega.Equal(beforeState), fmt.Sprintf("blocked transition mutated workflow_state.json\nbefore:\n%s\n\nafter:\n%s", beforeState, got))
 	}
 
-	if got := appProductStatusReadFile(t, effortRoot, "events.jsonl"); got != beforeEvents {
-		t.Fatalf("blocked transition mutated events.jsonl\nbefore:\n%s\n\nafter:\n%s", beforeEvents, got)
+	{
+		got := appProductStatusReadFile(t, effortRoot, "events.jsonl")
+		gomega.Expect(got).To(gomega.Equal(beforeEvents), fmt.Sprintf("blocked transition mutated events.jsonl\nbefore:\n%s\n\nafter:\n%s", beforeEvents, got))
 	}
 
-	if len(model.messages) != 1 || !strings.Contains(model.messages[0].Content, "[action_not_listed]") {
-		t.Fatalf("expected action_not_listed operator blocker, got %#v", model.messages)
-	}
-}
+	gomega.Expect(len(model.messages)).To(gomega.Equal(1), fmt.Sprintf("expected action_not_listed operator blocker, got %#v", model.messages))
+	gomega.Expect(model.messages[0].Content).To(gomega.ContainSubstring("[action_not_listed]"), fmt.Sprintf("expected action_not_listed operator blocker, got %#v", model.messages))
+})
 
-func TestSlashProductContinueRejectsTransitionTempSymlinksWithoutMutation(t *testing.T) {
+var _ = ginkgo.It("slash product continue rejects transition journal symlinks without mutation", func() {
+	t := ginkgo.GinkgoT()
 	for _, tc := range []struct {
-		name    string
-		relTemp string
+		name         string
+		relPath      string
+		createParent bool
+		diagnostic   string
 	}{
-		{name: "workflow temp", relTemp: "workflow_state.json.product-transition.tmp"},
-		{name: "events temp", relTemp: "events.jsonl.product-transition.tmp"},
+		{
+			name:       "transaction directory",
+			relPath:    ".idiom-product-transition-transaction",
+			diagnostic: "product workflow transition transaction path must be a directory and must not be a symlink",
+		},
+		{
+			name:         "transaction manifest",
+			relPath:      ".idiom-product-transition-transaction/manifest.json",
+			createParent: true,
+			diagnostic:   "transition path .idiom-product-transition-transaction/manifest.json must be a regular file and must not be a symlink",
+		},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		ginkgo.By(fmt.Sprint(tc.name), func() {
 			root := t.TempDir()
 			effortRoot := appProductContinuationEffort(t, root, "planned", "submit_for_human_verification")
 			beforeState := appProductStatusReadFile(t, effortRoot, "workflow_state.json")
 			beforeEvents := appProductStatusReadFile(t, effortRoot, "events.jsonl")
-			target := filepath.Join(effortRoot, "transition-temp-target")
+			target := filepath.Join(effortRoot, "transition-journal-symlink-target")
+			linkPath := filepath.Join(effortRoot, filepath.FromSlash(tc.relPath))
+			targetBody := []byte("journal target must remain untouched\n")
 
-			if err := os.WriteFile(target, []byte("target"), 0o644); err != nil {
-				t.Fatalf("write symlink target: %v", err)
+			if tc.createParent {
+				gomega.Expect(os.MkdirAll(filepath.Dir(linkPath), 0o755)).To(gomega.Succeed())
 			}
-
-			if err := os.Symlink(target, filepath.Join(effortRoot, filepath.FromSlash(tc.relTemp))); err != nil {
-				t.Fatalf("create temp symlink: %v", err)
-			}
+			gomega.Expect(os.WriteFile(target, targetBody, 0o644)).To(gomega.Succeed())
+			gomega.Expect(os.Symlink(target, linkPath)).To(gomega.Succeed())
 
 			model := &Model{
 				ready:     true,
@@ -300,52 +277,63 @@ func TestSlashProductContinueRejectsTransitionTempSymlinksWithoutMutation(t *tes
 
 			model.handleSlashCommand("/product-continue submit_for_human_verification --effort-root " + effortRoot)
 
-			if got := appProductStatusReadFile(t, effortRoot, "workflow_state.json"); got != beforeState {
-				t.Fatalf("blocked transition mutated workflow_state.json\nbefore:\n%s\n\nafter:\n%s", beforeState, got)
+			{
+				got := appProductStatusReadFile(t, effortRoot, "workflow_state.json")
+				gomega.Expect(got).To(gomega.Equal(beforeState), fmt.Sprintf("blocked transition mutated workflow_state.json\nbefore:\n%s\n\nafter:\n%s", beforeState, got))
 			}
 
-			if got := appProductStatusReadFile(t, effortRoot, "events.jsonl"); got != beforeEvents {
-				t.Fatalf("blocked transition mutated events.jsonl\nbefore:\n%s\n\nafter:\n%s", beforeEvents, got)
+			{
+				got := appProductStatusReadFile(t, effortRoot, "events.jsonl")
+				gomega.Expect(got).To(gomega.Equal(beforeEvents), fmt.Sprintf("blocked transition mutated events.jsonl\nbefore:\n%s\n\nafter:\n%s", beforeEvents, got))
 			}
 
-			if len(model.messages) != 1 || !strings.Contains(model.messages[0].Content, "transition_write_error") || !strings.Contains(model.messages[0].Content, "must not be a symlink") {
-				t.Fatalf("expected temp symlink transition_write_error, got %#v", model.messages)
+			gomega.Expect(os.ReadFile(target)).To(gomega.Equal(targetBody))
+			linkInfo, err := os.Lstat(linkPath)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(linkInfo.Mode() & os.ModeSymlink).NotTo(gomega.BeZero())
+
+			gomega.Expect(model.messages).To(gomega.HaveLen(1), fmt.Sprintf("expected journal symlink transition_write_error, got %#v", model.messages))
+			for _, want := range []string{
+				"product workflow transition: blocked",
+				"[product_workflow_lock_error] workflow_state.json:",
+				"recover product workflow transition",
+				tc.diagnostic,
+			} {
+				gomega.Expect(model.messages[0].Content).To(gomega.ContainSubstring(want), fmt.Sprintf("expected journal symlink diagnostic %q, got %#v", want, model.messages))
 			}
 		})
 	}
-}
+})
 
-func appProductStatusWriteFile(t *testing.T, dir, relPath, content string) {
-	t.Helper()
+func appProductStatusWriteFile(t ginkgo.FullGinkgoTInterface, dir, relPath, content string) {
+	ginkgo.GinkgoHelper()
 
 	fullPath := filepath.Join(dir, filepath.FromSlash(relPath))
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(fullPath), err)
+	{
+		err := os.MkdirAll(filepath.Dir(fullPath), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir %s: %v", filepath.Dir(fullPath), err))
 	}
 
-	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", fullPath, err)
+	{
+		err := os.WriteFile(fullPath, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write %s: %v", fullPath, err))
 	}
 }
 
-func appProductStatusReadFile(t *testing.T, dir, relPath string) string {
-	t.Helper()
+func appProductStatusReadFile(t ginkgo.FullGinkgoTInterface, dir, relPath string) string {
+	ginkgo.GinkgoHelper()
 
 	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(relPath)))
-	if err != nil {
-		t.Fatalf("read %s: %v", relPath, err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("read %s: %v", relPath, err))
 
 	return string(data)
 }
 
-func appProductStatusReadWorkflowState(t *testing.T, dir string) productworkflow.WorkflowState {
-	t.Helper()
+func appProductStatusReadWorkflowState(t ginkgo.FullGinkgoTInterface, dir string) productworkflow.WorkflowState {
+	ginkgo.GinkgoHelper()
 
 	state, err := productworkflow.ParseWorkflowStateJSON([]byte(appProductStatusReadFile(t, dir, "workflow_state.json")))
-	if err != nil {
-		t.Fatalf("parse workflow_state.json: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("parse workflow_state.json: %v", err))
 
 	return state
 }
@@ -360,8 +348,8 @@ func appProductStatusContains(values []string, want string) bool {
 	return false
 }
 
-func appProductContinuationEffort(t *testing.T, root, state, action string) string {
-	t.Helper()
+func appProductContinuationEffort(t ginkgo.FullGinkgoTInterface, root, state, action string) string {
+	ginkgo.GinkgoHelper()
 
 	effortRoot := filepath.Join(root, "test-effort")
 	appProductStatusWriteFile(t, effortRoot, "workflow_state.json", appProductContinuationWorkflowStateJSON(state, action))
@@ -535,8 +523,8 @@ func appProductStatusWorkflowStateJSONNoRecovery() string {
 	)
 }
 
-func appProductStatusRecoveryPacketJSON(t *testing.T) string {
-	t.Helper()
+func appProductStatusRecoveryPacketJSON(t ginkgo.FullGinkgoTInterface) string {
+	ginkgo.GinkgoHelper()
 
 	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
 		SessionID:         "session-app-product-status",
@@ -547,9 +535,7 @@ func appProductStatusRecoveryPacketJSON(t *testing.T) string {
 		ChangedPaths:      []string{"internal/surfaces/tui/app/product_status.go"},
 		TotalEdits:        1,
 	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("BuildPlanExecuteFailureRecord: %v", err))
 
 	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{
 		Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
@@ -561,14 +547,10 @@ func appProductStatusRecoveryPacketJSON(t *testing.T) string {
 			record.PartialState.TotalEdits,
 		),
 	})
-	if err != nil {
-		t.Fatalf("BuildDecompositionPacket: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("BuildDecompositionPacket: %v", err))
 
 	body, err := json.MarshalIndent(packet, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal recovery packet: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal recovery packet: %v", err))
 
 	return string(body)
 }

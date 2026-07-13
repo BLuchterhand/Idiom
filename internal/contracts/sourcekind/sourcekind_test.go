@@ -1,53 +1,50 @@
 package sourcekind
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestCoversSourceSanity(t *testing.T) {
-	for _, path := range []string{
-		"main.go",
-		"native/sim.cpp",
-		"types/index.d.ts",
-		"scripts/demo.gd",
-		"src/app.tsx",
-	} {
-		if !CoversSourceSanity(path) {
-			t.Fatalf("CoversSourceSanity(%q) = false", path)
-		}
-	}
+var _ = ginkgo.Describe("Source-kind policy", func() {
+	ginkgo.DescribeTable("identifies source files covered by sanity checks",
+		func(path string) {
+			gomega.Expect(CoversSourceSanity(path)).To(gomega.BeTrue())
+		},
+		ginkgo.Entry("Go", "main.go"),
+		ginkgo.Entry("C++", "native/sim.cpp"),
+		ginkgo.Entry("TypeScript declaration", "types/index.d.ts"),
+		ginkgo.Entry("Godot", "scripts/demo.gd"),
+		ginkgo.Entry("TSX", "src/app.tsx"),
+	)
 
-	for _, path := range []string{"README.md", "config.yaml", ""} {
-		if CoversSourceSanity(path) {
-			t.Fatalf("CoversSourceSanity(%q) = true", path)
-		}
-	}
-}
+	ginkgo.DescribeTable("excludes non-source files from sanity checks",
+		func(path string) {
+			gomega.Expect(CoversSourceSanity(path)).To(gomega.BeFalse())
+		},
+		ginkgo.Entry("Markdown", "README.md"),
+		ginkgo.Entry("YAML", "config.yaml"),
+		ginkgo.Entry("empty", ""),
+	)
 
-func TestRequiresConcreteSourceSanityDiagnostics(t *testing.T) {
-	tests := []struct {
-		path string
-		want bool
-	}{
-		{path: "native/sim.c", want: true},
-		{path: "native/sim.cc", want: true},
-		{path: "native/sim.cpp", want: true},
-		{path: "native/sim.cxx", want: true},
-		{path: "native/sim.h", want: true},
-		{path: "native/sim.hh", want: true},
-		{path: "native/sim.hpp", want: true},
-		{path: "native/sim.hxx", want: true},
-		{path: "native/sim.ipp", want: true},
-		{path: "native/sim.inl", want: true},
-		{path: "native/sim.tpp", want: true},
-		{path: "  NATIVE/SIM.CPP  ", want: true},
-		{path: "main.go", want: false},
-		{path: "src/app.ts", want: false},
-		{path: "src/lib.rs", want: false},
-		{path: "", want: false},
-	}
-
-	for _, tc := range tests {
-		if got := RequiresConcreteSourceSanityDiagnostics(tc.path); got != tc.want {
-			t.Fatalf("RequiresConcreteSourceSanityDiagnostics(%q) = %v, want %v", tc.path, got, tc.want)
-		}
-	}
-}
+	ginkgo.DescribeTable("requires concrete diagnostics only for C-family source",
+		func(path string, expected bool) {
+			gomega.Expect(RequiresConcreteSourceSanityDiagnostics(path)).To(gomega.Equal(expected))
+		},
+		ginkgo.Entry("C", "native/sim.c", true),
+		ginkgo.Entry("CC", "native/sim.cc", true),
+		ginkgo.Entry("CPP", "native/sim.cpp", true),
+		ginkgo.Entry("CXX", "native/sim.cxx", true),
+		ginkgo.Entry("H", "native/sim.h", true),
+		ginkgo.Entry("HH", "native/sim.hh", true),
+		ginkgo.Entry("HPP", "native/sim.hpp", true),
+		ginkgo.Entry("HXX", "native/sim.hxx", true),
+		ginkgo.Entry("IPP", "native/sim.ipp", true),
+		ginkgo.Entry("INL", "native/sim.inl", true),
+		ginkgo.Entry("TPP", "native/sim.tpp", true),
+		ginkgo.Entry("normalizes case and whitespace", "  NATIVE/SIM.CPP  ", true),
+		ginkgo.Entry("Go", "main.go", false),
+		ginkgo.Entry("TypeScript", "src/app.ts", false),
+		ginkgo.Entry("Rust", "src/lib.rs", false),
+		ginkgo.Entry("empty", "", false),
+	)
+})

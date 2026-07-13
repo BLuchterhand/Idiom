@@ -1,9 +1,8 @@
 package eval
 
 import (
-	"errors"
+	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -361,7 +360,7 @@ func buildLocalizationCacheFreshnessReport(root string) LocalizationCacheFreshne
 		}
 	}
 
-	stats, err := comprehension.ReadViewStats(root)
+	stats, err := comprehension.ReadViewStats(context.Background(), root)
 	if err != nil {
 		if report.Reason == "" {
 			report.Reason = "context_cache_stats_error"
@@ -394,27 +393,20 @@ func buildLocalizationRankerReport(root string) LocalizationRankerReport {
 
 	report := LocalizationRankerReport{Available: true, State: "available"}
 
-	weights, err := comprehension.LoadLearnedWeights(root)
+	snapshot, err := comprehension.LoadRankerStateSnapshot(context.Background(), root)
 	if err != nil {
 		report.Available = false
 		report.State = "not_available"
-		report.Reason = "ranker_weights_error"
+		report.Reason = "ranker_state_snapshot_error"
 
 		return report
 	}
 
+	weights := snapshot.LearnedWeights()
+	entries := snapshot.LearningEntries()
 	report.WeightCount = len(weights)
-	report.WeightsPresent = report.WeightCount > 0 || localizationPathExistsOnDisk(localizationRankerWeightsPath(root))
-	report.LearningLogPresent = localizationPathExistsOnDisk(localizationLearningLogPath(root))
-
-	entries, err := comprehension.ReadLearningLog(root)
-	if err != nil {
-		report.Available = false
-		report.State = "not_available"
-		report.Reason = "ranker_learning_log_error"
-
-		return report
-	}
+	report.WeightsPresent = snapshot.WeightsMaterialized
+	report.LearningLogPresent = snapshot.LearningLogPublished
 
 	if len(entries) > 0 {
 		summary := localizationLearningSummaryReport(comprehension.SummarizeLearningLog(entries))
@@ -995,17 +987,4 @@ func cloneInt64Map(source map[string]int64) map[string]int64 {
 	}
 
 	return out
-}
-
-func localizationPathExistsOnDisk(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil || !errors.Is(err, os.ErrNotExist)
-}
-
-func localizationRankerWeightsPath(root string) string {
-	return root + string(os.PathSeparator) + ".idiom" + string(os.PathSeparator) + "ranker" + string(os.PathSeparator) + "weights.json"
-}
-
-func localizationLearningLogPath(root string) string {
-	return root + string(os.PathSeparator) + ".idiom" + string(os.PathSeparator) + "ranker" + string(os.PathSeparator) + "learning_log.jsonl"
 }

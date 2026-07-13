@@ -1,130 +1,99 @@
 package toolpolicy
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestMatchShellPatterns(t *testing.T) {
-	rules := map[string][]Rule{
-		"shell": {
-			{Pattern: "rm *", Decision: Ask},
-			{Pattern: "git *", Decision: Allow},
-			{Pattern: "*", Decision: Allow},
+var _ = ginkgo.Describe("Tool policy", func() {
+	ginkgo.DescribeTable("matches command patterns in declaration order",
+		func(command string, want Decision) {
+			rules := map[string][]Rule{"shell": {
+				{Pattern: "rm *", Decision: Ask},
+				{Pattern: "git *", Decision: Allow},
+				{Pattern: "*", Decision: Allow},
+			}}
+			gomega.Expect(Match(commandInput("shell", command), rules)).To(gomega.Equal(want))
 		},
-	}
-	cases := []struct {
-		command string
-		want    Decision
-	}{
-		{"rm -rf /tmp/x", Ask},
-		{"git status", Allow},
-		{"ls -la", Allow},
-	}
+		ginkgo.Entry("destructive command asks", "rm -rf /tmp/x", Ask),
+		ginkgo.Entry("git command allows", "git status", Allow),
+		ginkgo.Entry("fallback allows", "ls -la", Allow),
+	)
 
-	for _, c := range cases {
-		got := Match("shell", Request{Command: c.command}, rules)
-		if got != c.want {
-			t.Fatalf("command=%q want=%s got=%s", c.command, c.want, got)
-		}
-	}
-}
-
-func TestMatchPathPatternsWithRecursiveGlob(t *testing.T) {
-	rules := map[string][]Rule{
-		"edit_file": {
-			{Pattern: "**/secrets/**", Decision: Deny},
-			{Pattern: "**/*.md", Decision: Allow},
-			{Pattern: "*", Decision: Ask},
+	ginkgo.DescribeTable("matches recursive path globs",
+		func(path string, want Decision) {
+			rules := map[string][]Rule{"edit_file": {
+				{Pattern: "**/secrets/**", Decision: Deny},
+				{Pattern: "**/*.md", Decision: Allow},
+				{Pattern: "*", Decision: Ask},
+			}}
+			gomega.Expect(Match(pathInput("edit_file", path), rules)).To(gomega.Equal(want))
 		},
-	}
-	cases := []struct {
-		path string
-		want Decision
-	}{
-		{"README.md", Allow},
-		{"docs/plan.md", Allow},
-		{"app/secrets/keys.json", Deny},
-		{"internal/secrets/token.txt", Deny},
-		{"internal/surfaces/tui/app/app.go", Ask},
-	}
+		ginkgo.Entry("root Markdown", "README.md", Allow),
+		ginkgo.Entry("nested Markdown", "docs/plan.md", Allow),
+		ginkgo.Entry("nested secret JSON", "app/secrets/keys.json", Deny),
+		ginkgo.Entry("nested secret text", "internal/secrets/token.txt", Deny),
+		ginkgo.Entry("ordinary source", "internal/surfaces/tui/app/app.go", Ask),
+	)
 
-	for _, c := range cases {
-		got := Match("edit_file", Request{Path: c.path}, rules)
-		if got != c.want {
-			t.Fatalf("path=%q want=%s got=%s", c.path, c.want, got)
-		}
-	}
-}
+	ginkgo.It("returns none when rules for the tool are absent", func() {
+		gomega.Expect(Match(pathInput("edit_file", "app.go"), nil)).To(gomega.Equal(None))
+		gomega.Expect(Match(pathInput("edit_file", "app.go"), map[string][]Rule{
+			"shell": {{Pattern: "*", Decision: Allow}},
+		})).To(gomega.Equal(None))
+	})
 
-func TestMatchAbsentRulesReturnsNone(t *testing.T) {
-	if got := Match("edit_file", Request{Path: "app.go"}, nil); got != None {
-		t.Fatalf("empty rules should return none, got %s", got)
-	}
-
-	rules := map[string][]Rule{
-		"shell": {{Pattern: "*", Decision: Allow}},
-	}
-	if got := Match("edit_file", Request{Path: "app.go"}, rules); got != None {
-		t.Fatalf("unconfigured tool should return none, got %s", got)
-	}
-}
-
-func TestMatchFirstMatchWins(t *testing.T) {
-	rules := map[string][]Rule{
-		"edit_file": {
+	ginkgo.It("uses first-match semantics for mapped rules", func() {
+		rules := map[string][]Rule{"edit_file": {
 			{Pattern: "internal/surfaces/tui/app/*.go", Decision: Allow},
 			{Pattern: "**/app.go", Decision: Deny},
-		},
-	}
-	got := Match("edit_file", Request{Path: "internal/surfaces/tui/app/app.go"}, rules)
+		}}
+		gomega.Expect(Match(pathInput("edit_file", "internal/surfaces/tui/app/app.go"), rules)).To(gomega.Equal(Allow))
+	})
 
-	if got != Allow {
-		t.Fatalf("first-match-wins broken: got %s", got)
-	}
+	ginkgo.It("uses caller-supplied fallback rule keys only when an exact key is absent", func() {
+		rules := map[string][]Rule{"external:*": {{Pattern: "*", Decision: Ask}}}
+		input := pathInput("external:search", "query")
+		input.FallbackRuleKeys = []string{"external:*"}
+		gomega.Expect(Match(input, rules)).To(gomega.Equal(Ask))
+
+		rules[input.Tool] = []Rule{{Pattern: "*", Decision: Allow}}
+		gomega.Expect(Match(input, rules)).To(gomega.Equal(Allow))
+	})
+
+	ginkgo.DescribeTable("lets a later flat-policy deny override an earlier allow",
+		func(command string) {
+			policy := Policy{Default: Deny, Rules: []Rule{
+				{Tool: "shell", CommandPrefix: "git diff", Decision: Allow},
+				{Tool: "shell", CommandContains: "--output", Decision: Deny},
+			}}
+			result := policy.Decide(Input{Tool: "shell", Command: command})
+			gomega.Expect(result.Decision).To(gomega.Equal(Deny))
+			gomega.Expect(result.Matched).To(gomega.BeTrue())
+			gomega.Expect(result.Rule.CommandContains).To(gomega.Equal("--output"))
+		},
+		ginkgo.Entry("equals form", "git diff --output=/tmp/patch"),
+		ginkgo.Entry("separate argument", "git diff --output /tmp/patch"),
+	)
+
+	ginkgo.It("matches command prefixes only at token boundaries", func() {
+		policy := Policy{Default: Deny, Rules: []Rule{{Tool: "shell", CommandPrefix: "go test", Decision: Allow}}}
+		gomega.Expect(policy.Decide(Input{Tool: "shell", Command: "go test ./..."}).Decision).To(gomega.Equal(Allow))
+		gomega.Expect(policy.Decide(Input{Tool: "shell", Command: "go testdata"}).Decision).To(gomega.Equal(Deny))
+	})
+
+	ginkgo.It("matches path rules against the caller's precomputed target", func() {
+		policy := Policy{Default: Allow, Rules: []Rule{{Tool: "edit_file", PathPattern: "README.md", Decision: Deny}}}
+		result := policy.Decide(Input{Tool: "edit_file", PathTarget: "README.md"})
+		gomega.Expect(result.Decision).To(gomega.Equal(Deny))
+		gomega.Expect(result.Target).To(gomega.Equal("README.md"))
+	})
+})
+
+func commandInput(tool, command string) Input {
+	return Input{Tool: tool, Command: command, PatternTarget: command, PatternKind: PatternCommand}
 }
 
-func TestPolicyDecideLastMatchWins(t *testing.T) {
-	policy := Policy{
-		Default: Deny,
-		Rules: []Rule{
-			{Tool: "shell", CommandPrefix: "git diff", Decision: Allow},
-			{Tool: "shell", CommandContains: "--output", Decision: Deny},
-		},
-	}
-
-	for _, command := range []string{"git diff --output=/tmp/patch", "git diff --output /tmp/patch"} {
-		got := policy.Decide(Request{Tool: "shell", Command: command})
-		if got.Decision != Deny || !got.Matched || got.Rule.CommandContains != "--output" {
-			t.Fatalf("deny tail should override earlier allow for %q, got %#v", command, got)
-		}
-	}
-}
-
-func TestPolicyCommandPrefixMatchesTokenBoundary(t *testing.T) {
-	policy := Policy{
-		Default: Deny,
-		Rules: []Rule{
-			{Tool: "shell", CommandPrefix: "go test", Decision: Allow},
-		},
-	}
-
-	if got := policy.Decide(Request{Tool: "shell", Command: "go test ./..."}); got.Decision != Allow {
-		t.Fatalf("go test command should match prefix, got %#v", got)
-	}
-
-	if got := policy.Decide(Request{Tool: "shell", Command: "go testdata"}); got.Decision != Deny {
-		t.Fatalf("prefix must respect token boundary, got %#v", got)
-	}
-}
-
-func TestPolicyPathPatternUsesRequestTarget(t *testing.T) {
-	policy := Policy{
-		Default: Allow,
-		Rules: []Rule{
-			{Tool: "edit_file", PathPattern: "README.md", Decision: Deny},
-		},
-	}
-
-	got := policy.Decide(Request{Tool: "edit_file", Path: "README.md"})
-	if got.Decision != Deny || got.Target != "README.md" {
-		t.Fatalf("path pattern should match request target, got %#v", got)
-	}
+func pathInput(tool, target string) Input {
+	return Input{Tool: tool, PathTarget: target, PatternTarget: target, PatternKind: PatternPath}
 }

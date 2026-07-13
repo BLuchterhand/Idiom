@@ -1,0 +1,10 @@
+[
+  "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Add File: internal/labels/multi_save_label.go\\n+package labels\\n+\\n+func MultiSaveLabel() string {\\n+\\treturn \\\"Save\\\"\\n+}\\n*** End Patch\",\"description\":\"add the requested save label helper\"}",
+  "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Add File: internal/labels/multi_status_label.go\\n+package labels\\n+\\n+func MultiStatusLabel() string {\\n+\\treturn \\\"Ready\\\"\\n+}\\n*** End Patch\",\"description\":\"add the requested status label helper while verification remains pending\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":40,\"named_gap\":\"confirm the existing label conventions before final verification\",\"why_not_answering\":\"the final changed set still requires source-aware verification\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/multi_save_label.go\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/multi_status_label.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/multi_save_label.go\",\"start_line\":1,\"end_line\":8,\"named_gap\":\"refresh the first changed helper before the final report\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/multi_status_label.go\",\"start_line\":1,\"end_line\":8,\"named_gap\":\"refresh the second changed helper before the final report\"}",
+  "Implemented both label helpers.\n\nChanged paths:\n- internal/labels/multi_save_label.go\n- internal/labels/multi_status_label.go\n\nVerification: Source sanity passed for both changed paths."
+]

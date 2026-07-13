@@ -1,39 +1,32 @@
 package app
 
 import (
-	"testing"
+	"fmt"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
-func TestClassifyTUIRequestDoesNotUseKeywordMutationPreflight(t *testing.T) {
+var _ = ginkgo.It("classify tui request does not use keyword mutation preflight", func() {
 	got := classifyTUIRequest("Implement persistent input history.")
-	if got.Class != tuiRequestClassConversation {
-		t.Fatalf("class = %q, want conversation", got.Class)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal(tuiRequestClassConversation), fmt.Sprintf("class = %q, want conversation", got))
+})
 
-func TestClassifyTUIRequestHonorsReadOnlyConstraint(t *testing.T) {
+var _ = ginkgo.It("classify tui request honors read only constraint", func() {
 	got := classifyTUIRequest("Just explain how we would implement persistent input history; do not edit files.")
-	if got.Class != tuiRequestClassConversation {
-		t.Fatalf("class = %q, want conversation", got.Class)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal(tuiRequestClassConversation), fmt.Sprintf("class = %q, want conversation", got))
+})
 
-func TestClassifyTUIRequestDoesNotUsePlanExecuteKeywordPreflight(t *testing.T) {
+var _ = ginkgo.It("classify tui request does not use plan execute keyword preflight", func() {
 	got := classifyTUIRequest("Send this through plan-execute and implement the atom.")
-	if got.Class != tuiRequestClassConversation {
-		t.Fatalf("class = %q, want conversation", got.Class)
-	}
-}
+	gomega.Expect(got).To(gomega.Equal(tuiRequestClassConversation), fmt.Sprintf("class = %q, want conversation", got))
+})
 
-func TestUpdateTUIRequestStatusDoesNotConfirmKeywordMutation(t *testing.T) {
+var _ = ginkgo.It("update tui request status does not confirm keyword mutation", func() {
 	m := &Model{}
 	m.updateTUIRequestStatus("Implement persistent input history.")
 
-	if len(m.messages) != 0 {
-		t.Fatalf("messages = %d, want no local confirmation messages", len(m.messages))
-	}
+	gomega.Expect(len(m.messages)).To(gomega.Equal(0), fmt.Sprintf("messages = %d, want no local confirmation messages", len(m.messages)))
 
-	if m.status != "Request classified: conversation." {
-		t.Fatalf("status = %q", m.status)
-	}
-}
+	gomega.Expect(m.status).To(gomega.Equal("Request classified: conversation."), fmt.Sprintf("status = %q", m.status))
+})

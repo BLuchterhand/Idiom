@@ -9,160 +9,137 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/platform/config"
 )
 
-func TestToolListIncludesConfiguredMCPWebSearch(t *testing.T) {
-	srv := fakeToolMCPServer(t)
-	defer srv.Close()
+var _ = ginkgo.Describe("toolcmd", func() {
+	ginkgo.It("tool list includes configured mcp web search", func() {
+		srv := fakeToolMCPServer()
+		defer srv.Close()
 
-	cfgPath := writeToolMCPConfig(t, srv.URL)
+		cfgPath := writeToolMCPConfig(srv.URL)
 
-	var stdout, stderr bytes.Buffer
-	code := RunWithTelemetry([]string{"list", "--config", cfgPath}, &stdout, &stderr, nil)
-	if code != 0 {
-		t.Fatalf("tool list exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{"list", "--config", cfgPath}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("tool list exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("mcp:exa/web_search_exa"), fmt.Sprintf("expected configured MCP web search in list, got:\n%s", stdout.String()))
 
-	if !strings.Contains(stdout.String(), "mcp:exa/web_search_exa") {
-		t.Fatalf("expected configured MCP web search in list, got:\n%s", stdout.String())
-	}
-}
+	})
+	ginkgo.It("tool discovery list does not initialize mcp without explicit allow rule", func() {
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			http.Error(w, "mcp should not be contacted for denied discovery list", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
 
-func TestToolDiscoveryListDoesNotInitializeMCPWithoutExplicitAllowRule(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, "mcp should not be contacted for denied discovery list", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+		cfgPath := writeToolMCPConfigWithoutRules(srv.URL)
 
-	cfgPath := writeToolMCPConfigWithoutRules(t, srv.URL)
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{"list", "--config", cfgPath, "--profile", "discovery"}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("tool list exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
 
-	var stdout, stderr bytes.Buffer
-	code := RunWithTelemetry([]string{"list", "--config", cfgPath, "--profile", "discovery"}, &stdout, &stderr, nil)
-	if code != 0 {
-		t.Fatalf("tool list exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("discovery list without MCP allow rules should not initialize MCP, got %d request(s)", got)
-	}
-	if strings.Contains(stdout.String(), "mcp:") {
-		t.Fatalf("discovery list should not advertise denied MCP tools:\n%s", stdout.String())
-	}
-}
+		if got := calls.Load(); got != 0 {
+			ginkgo.Fail(fmt.Sprintf("discovery list without MCP allow rules should not initialize MCP, got %d request(s)", got))
+		}
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("mcp:"), fmt.Sprintf("discovery list should not advertise denied MCP tools:\n%s", stdout.String()))
 
-func TestDirectToolOutputIncludesTimeoutOwner(t *testing.T) {
-	root := t.TempDir()
-	cfg := config.Default()
-	cfg.Workspace.Root = root
-	cfg.Workspace.CWD = root
+	})
+	ginkgo.It("direct tool output includes timeout owner", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		cfg := config.Default()
+		cfg.Workspace.Root = root
+		cfg.Workspace.CWD = root
 
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfgPath := filepath.Join(root, "config.json")
-	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+		data, err := json.Marshal(cfg)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), err)
 
-	var stdout, stderr bytes.Buffer
-	code := RunWithTelemetry([]string{"pwd", "--config", cfgPath}, &stdout, &stderr, nil)
-	if code != 0 {
-		t.Fatalf("tool pwd exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
+		cfgPath := filepath.Join(root, "config.json")
+		gomega.Expect(os.WriteFile(cfgPath, data, 0o644)).To(gomega.Succeed())
 
-	var payload struct {
-		TimeoutOwner string `json:"timeout_owner"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("decode tool output: %v\n%s", err, stdout.String())
-	}
-	if payload.TimeoutOwner != "workspace_tool_timeout_with_cli_margin" {
-		t.Fatalf("timeout_owner = %q, want workspace_tool_timeout_with_cli_margin", payload.TimeoutOwner)
-	}
-}
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{"pwd", "--config", cfgPath}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("tool pwd exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
 
-func TestDirectBuiltInToolDoesNotInitializeConfiguredMCP(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, "mcp should not be contacted", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+		var payload struct {
+			TimeoutOwner string `json:"timeout_owner"`
+		}
+		gomega.Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(gomega.Succeed())
+		gomega.Expect(payload.TimeoutOwner).To(gomega.Equal("workspace_tool_timeout_with_cli_margin"), fmt.Sprintf("timeout_owner = %q, want workspace_tool_timeout_with_cli_margin", payload.TimeoutOwner))
 
-	cfgPath := writeToolMCPConfigWithoutRules(t, srv.URL)
+	})
+	ginkgo.It("direct built in tool does not initialize configured mcp", func() {
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			http.Error(w, "mcp should not be contacted", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
 
-	var stdout, stderr bytes.Buffer
-	code := RunWithTelemetry([]string{"pwd", "--config", cfgPath, "--profile", "discovery"}, &stdout, &stderr, nil)
-	if code != 0 {
-		t.Fatalf("tool pwd exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("built-in direct tool should not initialize MCP servers, got %d request(s)", got)
-	}
-}
+		cfgPath := writeToolMCPConfigWithoutRules(srv.URL)
 
-func TestDiscoveryProfileDeniesConfiguredMCPWithoutExplicitRule(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, "mcp should not be contacted before policy denial", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{"pwd", "--config", cfgPath, "--profile", "discovery"}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("tool pwd exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
 
-	cfgPath := writeToolMCPConfigWithoutRules(t, srv.URL)
+		if got := calls.Load(); got != 0 {
+			ginkgo.Fail(fmt.Sprintf("built-in direct tool should not initialize MCP servers, got %d request(s)", got))
+		}
+	})
+	ginkgo.It("discovery profile denies configured mcp without explicit rule", func() {
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			http.Error(w, "mcp should not be contacted before policy denial", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
 
-	var stdout, stderr bytes.Buffer
-	code := RunWithTelemetry([]string{
-		"mcp:exa/web_search_exa",
-		"--config", cfgPath,
-		"--profile", "discovery",
-		"--input", `{"query":"idiom web search"}`,
-	}, &stdout, &stderr, nil)
-	if code == 0 {
-		t.Fatalf("MCP discovery call without explicit rule should fail stdout=%s stderr=%s", stdout.String(), stderr.String())
-	}
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("denied MCP direct tool should not initialize MCP servers, got %d request(s)", got)
-	}
-	if !strings.Contains(stdout.String(), "profile_denied") {
-		t.Fatalf("stdout should contain profile denial, got:\n%s", stdout.String())
-	}
-}
+		cfgPath := writeToolMCPConfigWithoutRules(srv.URL)
 
-func TestToolDiscoveryProfileExecutesConfiguredMCPWebSearch(t *testing.T) {
-	srv := fakeToolMCPServer(t)
-	defer srv.Close()
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{
+			"mcp:exa/web_search_exa",
+			"--config", cfgPath,
+			"--profile", "discovery",
+			"--input", `{"query":"idiom web search"}`,
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).NotTo(gomega.Equal(0), fmt.Sprintf("MCP discovery call without explicit rule should fail stdout=%s stderr=%s", stdout.String(), stderr.String()))
 
-	cfgPath := writeToolMCPConfig(t, srv.URL)
+		if got := calls.Load(); got != 0 {
+			ginkgo.Fail(fmt.Sprintf("denied MCP direct tool should not initialize MCP servers, got %d request(s)", got))
+		}
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("profile_denied"), fmt.Sprintf("stdout should contain profile denial, got:\n%s", stdout.String()))
 
-	var stdout, stderr bytes.Buffer
-	code := RunWithTelemetry([]string{
-		"mcp:exa/web_search_exa",
-		"--config", cfgPath,
-		"--profile", "discovery",
-		"--input", `{"query":"idiom web search"}`,
-	}, &stdout, &stderr, nil)
-	if code != 0 {
-		t.Fatalf("tool call exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
+	})
+	ginkgo.It("tool discovery profile executes configured mcp web search", func() {
+		srv := fakeToolMCPServer()
+		defer srv.Close()
 
-	if !strings.Contains(stdout.String(), "search result for idiom web search") {
-		t.Fatalf("expected MCP web-search output, got:\n%s", stdout.String())
-	}
-}
+		cfgPath := writeToolMCPConfig(srv.URL)
 
-func fakeToolMCPServer(t *testing.T) *httptest.Server {
-	t.Helper()
+		var stdout, stderr bytes.Buffer
+		code := RunWithTelemetry([]string{
+			"mcp:exa/web_search_exa",
+			"--config", cfgPath,
+			"--profile", "discovery",
+			"--input", `{"query":"idiom web search"}`,
+		}, &stdout, &stderr, nil)
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("tool call exited %d stderr=%s stdout=%s", code, stderr.String(), stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("search result for idiom web search"), fmt.Sprintf("expected MCP web-search output, got:\n%s", stdout.String()))
+
+	})
+})
+
+func fakeToolMCPServer() *httptest.Server {
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer ginkgo.GinkgoRecover()
+
 		body, _ := io.ReadAll(r.Body)
 
 		var req struct {
@@ -171,7 +148,7 @@ func fakeToolMCPServer(t *testing.T) *httptest.Server {
 			Params json.RawMessage `json:"params,omitempty"`
 		}
 		if err := json.Unmarshal(body, &req); err != nil {
-			t.Errorf("fake MCP server: bad JSON-RPC request: %v", err)
+			ginkgo.Fail(fmt.Sprintf("fake MCP server: bad JSON-RPC request: %v", err))
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -214,7 +191,7 @@ func fakeToolMCPServer(t *testing.T) *httptest.Server {
 		case "notifications/initialized":
 			return
 		default:
-			t.Errorf("fake MCP server: unexpected method %q", req.Method)
+			ginkgo.Fail(fmt.Sprintf("fake MCP server: unexpected method %q", req.Method))
 			http.Error(w, "unexpected method", http.StatusBadRequest)
 			return
 		}
@@ -228,10 +205,9 @@ func fakeToolMCPServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-func writeToolMCPConfig(t *testing.T, url string) string {
-	t.Helper()
+func writeToolMCPConfig(url string) string {
 
-	root := t.TempDir()
+	root := ginkgo.GinkgoT().TempDir()
 	cfg := config.Default()
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
@@ -247,21 +223,15 @@ func writeToolMCPConfig(t *testing.T, url string) string {
 
 	path := filepath.Join(root, "config.json")
 	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal config: %v", err)
-	}
-
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal config: %v", err))
+	gomega.Expect(os.WriteFile(path, data, 0o644)).To(gomega.Succeed())
 
 	return path
 }
 
-func writeToolMCPConfigWithoutRules(t *testing.T, url string) string {
-	t.Helper()
+func writeToolMCPConfigWithoutRules(url string) string {
 
-	root := t.TempDir()
+	root := ginkgo.GinkgoT().TempDir()
 	cfg := config.Default()
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
@@ -274,13 +244,8 @@ func writeToolMCPConfigWithoutRules(t *testing.T, url string) string {
 
 	path := filepath.Join(root, "config.json")
 	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal config: %v", err)
-	}
-
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal config: %v", err))
+	gomega.Expect(os.WriteFile(path, data, 0o644)).To(gomega.Succeed())
 
 	return path
 }

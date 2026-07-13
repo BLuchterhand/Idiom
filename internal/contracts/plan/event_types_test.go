@@ -5,154 +5,122 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strings"
-	"testing"
 
 	"idiom/internal/contracts/writerroute"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestPlanExecuteEventNameRoundTrip(t *testing.T) {
-	name := PlanExecuteEventName(PlanExecuteEventVerification)
-	if name != "idiom.plan_execute.verification" {
-		t.Fatalf("PlanExecuteEventName = %q", name)
-	}
+var _ = Describe("Plan-execute event vocabulary", func() {
+	It("round-trips a qualified event name", func() {
+		name := PlanExecuteEventName(PlanExecuteEventVerification)
+		Expect(name).To(Equal("idiom.plan_execute.verification"))
+		eventType, ok := ParsePlanExecuteEventName(name)
+		Expect(ok).To(BeTrue())
+		Expect(eventType).To(Equal(PlanExecuteEventVerification))
+	})
 
-	eventType, ok := ParsePlanExecuteEventName(name)
-	if !ok || eventType != PlanExecuteEventVerification {
-		t.Fatalf("ParsePlanExecuteEventName = %q %v", eventType, ok)
-	}
-}
+	It("round-trips every declared event through every parser", func() {
+		seen := map[PlanExecuteEventType]struct{}{}
+		for _, eventType := range PlanExecuteEventTypes() {
+			Expect(seen).NotTo(HaveKey(eventType))
+			seen[eventType] = struct{}{}
+			Expect(KnownPlanExecuteEventType(eventType)).To(BeTrue())
 
-func TestPlanExecuteEventTypesAllRoundTrip(t *testing.T) {
-	seen := map[PlanExecuteEventType]struct{}{}
-	for _, eventType := range PlanExecuteEventTypes() {
-		if _, ok := seen[eventType]; ok {
-			t.Fatalf("duplicate PlanExecuteEventTypes entry %q", eventType)
+			parsed, ok := ParsePlanExecuteEventName(PlanExecuteEventName(eventType))
+			Expect(ok).To(BeTrue())
+			Expect(parsed).To(Equal(eventType))
+			parsed, ok = ParsePlanExecuteEventType(string(eventType))
+			Expect(ok).To(BeTrue())
+			Expect(parsed).To(Equal(eventType))
+			parsed, ok = ParsePlanExecuteInvalidEventName(PlanExecuteInvalidEventName(eventType))
+			Expect(ok).To(BeTrue())
+			Expect(parsed).To(Equal(eventType))
 		}
-		seen[eventType] = struct{}{}
+	})
 
-		if !KnownPlanExecuteEventType(eventType) {
-			t.Fatalf("KnownPlanExecuteEventType(%q) = false", eventType)
+	It("covers every declared event constant", func() {
+		_, filename, _, ok := runtime.Caller(0)
+		Expect(ok).To(BeTrue())
+		body, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "event_types.go"))
+		Expect(err).NotTo(HaveOccurred())
+		declared := map[PlanExecuteEventType]string{}
+		pattern := regexp.MustCompile(`(?m)(PlanExecuteEvent[A-Za-z0-9]+)\s+PlanExecuteEventType\s*=\s*"([^"]+)"`)
+		for _, match := range pattern.FindAllStringSubmatch(string(body), -1) {
+			declared[PlanExecuteEventType(match[2])] = match[1]
 		}
-		if parsed, ok := ParsePlanExecuteEventName(PlanExecuteEventName(eventType)); !ok || parsed != eventType {
-			t.Fatalf("ParsePlanExecuteEventName(%q) = %q %v", PlanExecuteEventName(eventType), parsed, ok)
+		Expect(declared).NotTo(BeEmpty())
+		known := map[PlanExecuteEventType]struct{}{}
+		for _, eventType := range PlanExecuteEventTypes() {
+			known[eventType] = struct{}{}
 		}
-		if parsed, ok := ParsePlanExecuteEventType(string(eventType)); !ok || parsed != eventType {
-			t.Fatalf("ParsePlanExecuteEventType(%q) = %q %v", eventType, parsed, ok)
+		for eventType := range declared {
+			Expect(known).To(HaveKey(eventType))
 		}
-		if parsed, ok := ParsePlanExecuteInvalidEventName(PlanExecuteInvalidEventName(eventType)); !ok || parsed != eventType {
-			t.Fatalf("ParsePlanExecuteInvalidEventName(%q) = %q %v", PlanExecuteInvalidEventName(eventType), parsed, ok)
-		}
-	}
-}
+	})
 
-func TestPlanExecuteEventTypesCoverDeclaredConstants(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	sourcePath := filepath.Join(filepath.Dir(filename), "event_types.go")
-	body, err := os.ReadFile(sourcePath)
-	if err != nil {
-		t.Fatalf("read %s: %v", sourcePath, err)
-	}
+	DescribeTable("round-trips terminal outcome events",
+		func(eventType PlanExecuteEventType) {
+			parsed, ok := ParsePlanExecuteEventName(PlanExecuteEventName(eventType))
+			Expect(ok).To(BeTrue())
+			Expect(parsed).To(Equal(eventType))
+		},
+		Entry("completed", PlanExecuteEventCompleted),
+		Entry("blocked", PlanExecuteEventBlocked),
+	)
 
-	declared := map[PlanExecuteEventType]string{}
-	declRE := regexp.MustCompile(`(?m)(PlanExecuteEvent[A-Za-z0-9]+)\s+PlanExecuteEventType\s*=\s*"([^"]+)"`)
-	for _, match := range declRE.FindAllStringSubmatch(string(body), -1) {
-		declared[PlanExecuteEventType(match[2])] = match[1]
-	}
-	if len(declared) == 0 {
-		t.Fatal("no PlanExecuteEventType constants found")
-	}
+	DescribeTable("rejects malformed event names",
+		func(name string) {
+			_, ok := ParsePlanExecuteEventName(name)
+			Expect(ok).To(BeFalse())
+		},
+		Entry("empty", ""),
+		Entry("bare", "verification"),
+		Entry("wrong prefix", "idiom.feature_planner.verification"),
+		Entry("prefix only", PlanExecuteEventPrefix),
+		Entry("unknown event", "idiom.plan_execute.typo_event"),
+	)
 
-	known := map[PlanExecuteEventType]struct{}{}
-	for _, eventType := range PlanExecuteEventTypes() {
-		known[eventType] = struct{}{}
-	}
+	DescribeTable("accepts qualified and bare event types",
+		func(name string) {
+			eventType, ok := ParsePlanExecuteEventType(name)
+			Expect(ok).To(BeTrue())
+			Expect(eventType).To(Equal(PlanExecuteEventExecutorEdit))
+		},
+		Entry("qualified", PlanExecuteEventName(PlanExecuteEventExecutorEdit)),
+		Entry("bare", string(PlanExecuteEventExecutorEdit)),
+	)
 
-	var missing []string
-	for eventType, name := range declared {
-		if _, ok := known[eventType]; !ok {
-			missing = append(missing, name+"="+string(eventType))
-		}
-	}
-	if len(missing) > 0 {
-		t.Fatalf("PlanExecuteEventTypes missing declared constants:\n%s", strings.Join(missing, "\n"))
-	}
-}
+	DescribeTable("rejects unknown event types",
+		func(name string) {
+			_, ok := ParsePlanExecuteEventType(name)
+			Expect(ok).To(BeFalse())
+		},
+		Entry("qualified", "idiom.plan_execute.not_real"),
+		Entry("bare", "not_real"),
+	)
 
-func TestPlanExecuteTerminalOutcomeEventNameRoundTrip(t *testing.T) {
-	for _, eventType := range []PlanExecuteEventType{
-		PlanExecuteEventCompleted,
-		PlanExecuteEventBlocked,
-	} {
-		if parsed, ok := ParsePlanExecuteEventName(PlanExecuteEventName(eventType)); !ok || parsed != eventType {
-			t.Fatalf("ParsePlanExecuteEventName(%q) = %q %v", PlanExecuteEventName(eventType), parsed, ok)
-		}
-	}
-}
+	It("round-trips invalid-event names", func() {
+		name := PlanExecuteInvalidEventName(PlanExecuteEventChildTerminal)
+		Expect(name).To(Equal("idiom.plan_execute.child_terminal_invalid"))
+		eventType, ok := ParsePlanExecuteInvalidEventName(name)
+		Expect(ok).To(BeTrue())
+		Expect(eventType).To(Equal(PlanExecuteEventChildTerminal))
+	})
 
-func TestParsePlanExecuteEventNameRejectsMalformedNames(t *testing.T) {
-	for _, name := range []string{
-		"",
-		"verification",
-		"idiom.feature_planner.verification",
-		PlanExecuteEventPrefix,
-		"idiom.plan_execute.typo_event",
-	} {
-		if eventType, ok := ParsePlanExecuteEventName(name); ok {
-			t.Fatalf("ParsePlanExecuteEventName(%q) = %q, true", name, eventType)
-		}
-	}
-}
+	DescribeTable("rejects non-invalid event names",
+		func(name string) {
+			_, ok := ParsePlanExecuteInvalidEventName(name)
+			Expect(ok).To(BeFalse())
+		},
+		Entry("normal event", PlanExecuteEventName(PlanExecuteEventChildTerminal)),
+		Entry("missing event", "idiom.plan_execute._invalid"),
+		Entry("unknown event", "idiom.plan_execute.typo_event_invalid"),
+		Entry("wrong prefix", "idiom.feature_planner.child_terminal_invalid"),
+	)
 
-func TestParsePlanExecuteEventTypeAcceptsQualifiedAndBareNames(t *testing.T) {
-	for _, name := range []string{
-		PlanExecuteEventName(PlanExecuteEventExecutorEdit),
-		string(PlanExecuteEventExecutorEdit),
-	} {
-		eventType, ok := ParsePlanExecuteEventType(name)
-		if !ok || eventType != PlanExecuteEventExecutorEdit {
-			t.Fatalf("ParsePlanExecuteEventType(%q) = %q %v", name, eventType, ok)
-		}
-	}
-
-	if eventType, ok := ParsePlanExecuteEventType("idiom.plan_execute.not_real"); ok {
-		t.Fatalf("ParsePlanExecuteEventType accepted unknown qualified event %q", eventType)
-	}
-	if eventType, ok := ParsePlanExecuteEventType("not_real"); ok {
-		t.Fatalf("ParsePlanExecuteEventType accepted unknown bare event %q", eventType)
-	}
-}
-
-func TestPlanExecuteInvalidEventNameRoundTrip(t *testing.T) {
-	name := PlanExecuteInvalidEventName(PlanExecuteEventChildTerminal)
-	if name != "idiom.plan_execute.child_terminal_invalid" {
-		t.Fatalf("PlanExecuteInvalidEventName = %q", name)
-	}
-
-	eventType, ok := ParsePlanExecuteInvalidEventName(name)
-	if !ok || eventType != PlanExecuteEventChildTerminal {
-		t.Fatalf("ParsePlanExecuteInvalidEventName = %q %v", eventType, ok)
-	}
-}
-
-func TestParsePlanExecuteInvalidEventNameRejectsNonInvalidNames(t *testing.T) {
-	for _, name := range []string{
-		PlanExecuteEventName(PlanExecuteEventChildTerminal),
-		"idiom.plan_execute._invalid",
-		"idiom.plan_execute.typo_event_invalid",
-		"idiom.feature_planner.child_terminal_invalid",
-	} {
-		if eventType, ok := ParsePlanExecuteInvalidEventName(name); ok {
-			t.Fatalf("ParsePlanExecuteInvalidEventName(%q) = %q, true", name, eventType)
-		}
-	}
-}
-
-func TestPlanExecuteWriterRouteEventMatchesWriterRouteContract(t *testing.T) {
-	if string(PlanExecuteEventWriterRouteDecision) != string(writerroute.EventWriterRouteDecision) {
-		t.Fatalf("plan-execute writer route event %q drifted from writerroute contract %q", PlanExecuteEventWriterRouteDecision, writerroute.EventWriterRouteDecision)
-	}
-}
+	It("matches the writer-route contract vocabulary", func() {
+		Expect(string(PlanExecuteEventWriterRouteDecision)).To(Equal(string(writerroute.EventWriterRouteDecision)))
+	})
+})

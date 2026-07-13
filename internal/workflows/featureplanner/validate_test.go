@@ -8,12 +8,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"testing"
 	"time"
 
 	"idiom/internal/contracts/autonomy"
 	featureplannercontract "idiom/internal/contracts/featureplanner"
 	plancontract "idiom/internal/contracts/plan"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 )
 
 const (
@@ -21,36 +23,29 @@ const (
 	validTDDSnapshotDigestTwo = "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 )
 
-func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
+var _ = ginkgo.It("validate plan requires TDD before implementation", func() {
 	plan := validPlan()
 
 	plan.Atoms[0].TestFirst.Commands = nil
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "missing test_first.commands") {
-		t.Fatalf("expected missing TDD command error, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected missing TDD command error, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing test_first.commands"), fmt.Sprintf("expected missing TDD command error, got %v", err))
 
-func TestValidatePlanRequiresTDDArtifactPathsInRequiredEditScope(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan requires TDD artifact paths in required edit scope", func() {
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go"}
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil {
-		t.Fatal("expected demoted TDD test artifact path to reject feature plan")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected demoted TDD test artifact path to reject feature plan"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("internal/labels/labels_test.go"), fmt.Sprintf("validation error should identify demoted TDD test path, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("must be covered by atom.required_edit_paths"), fmt.Sprintf("validation error should identify demoted TDD test path, got %v", err))
 
-	if !strings.Contains(err.Error(), "internal/labels/labels_test.go") ||
-		!strings.Contains(err.Error(), "must be covered by atom.required_edit_paths") {
-
-		t.Fatalf("validation error should identify demoted TDD test path, got %v", err)
-	}
-}
-
-func TestValidatePlanRejectsDemotedImplementationPathsRequiredByPlanAndAtom(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan rejects demoted implementation paths required by plan and atom", func() {
 	plan := validPlan()
 	plan.Summary = "Implement CollapseEvent struct and dispatch helper, integrate into colony_sim_tick.cpp, and add focused unit tests."
 	plan.TopLevelScope.Objective = "Introduce a CollapseEvent helper to encapsulate collapse dispatch logic, reducing coupling in colony_sim_tick.cpp."
@@ -73,22 +68,18 @@ func TestValidatePlanRejectsDemotedImplementationPathsRequiredByPlanAndAtom(t *t
 	plan.Atoms[0].Prompt = "First, check if the work is already satisfied. Otherwise, implement CollapseEvent struct in collapse_event.h and collapse_event.cpp with a static dispatch method, update colony_sim_tick.cpp to use it, and write unit tests in test_collapse_event.cpp."
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil {
-		t.Fatal("expected demoted implementation paths to reject feature plan")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected demoted implementation paths to reject feature plan"))
 
 	for _, want := range []string{
 		`native/src/simulation/world/collapse_event.h`,
 		`native/src/core/colony_sim_tick.cpp`,
 		`required by both top-level success criteria and atom implementation text`,
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestValidatePlanKeepsOptionalAllowedImplementationPathAllowed(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan keeps optional allowed implementation path allowed", func() {
 	plan := validPlan()
 	plan.TopLevelScope.SuccessCriteria = []string{
 		"Primary behavior is implemented in internal/labels/labels.go.",
@@ -97,67 +88,64 @@ func TestValidatePlanKeepsOptionalAllowedImplementationPathAllowed(t *testing.T)
 	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go", "internal/labels/labels_test.go"}
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_extra.go"}
 	plan.Atoms[0].Prompt = "Update internal/labels/labels.go. You may update internal/labels/labels_extra.go if needed."
+	{
 
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
-		t.Fatalf("optional allowed path should remain valid: %v", err)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("optional allowed path should remain valid: %v", err))
 	}
-}
 
-func TestNewStateStoresBoundedPromptSummaryForResume(t *testing.T) {
+})
+var _ = ginkgo.It("new state stores bounded prompt summary for resume", func() {
 	state := NewState("session", "Implement CollapseEvent helper.\n\nKeep it scoped.", "", 3, time.Unix(1, 0).UTC())
-
-	if state.PromptSummary != "Implement CollapseEvent helper. Keep it scoped." {
-		t.Fatalf("PromptSummary = %q", state.PromptSummary)
-	}
+	gomega.Expect(state.PromptSummary).To(gomega.Equal("Implement CollapseEvent helper. Keep it scoped."), fmt.Sprintf("PromptSummary = %q", state.PromptSummary))
 
 	longState := NewState("session", strings.Repeat("x", 2500), "", 3, time.Unix(1, 0).UTC())
-	if len([]rune(longState.PromptSummary)) != 2000 {
-		t.Fatalf("long prompt summary length = %d, want 2000", len([]rune(longState.PromptSummary)))
-	}
-}
+	gomega.Expect(len([]rune(longState.PromptSummary))).To(gomega.Equal(2000), fmt.Sprintf("long prompt summary length = %d, want 2000", len([]rune(longState.PromptSummary))))
 
-func TestValidatePlanAcceptsProductSDDRefs(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan accepts product SDD refs", func() {
 	plan := validProductContextPlan()
+	{
 
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
-		t.Fatalf("product PRD/ADR refs should satisfy the generic SDD contract: %v", err)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("product PRD/ADR refs should satisfy the generic SDD contract: %v", err))
 	}
-}
 
-func TestValidatePlanAcceptsStandaloneAcceptanceIDSDDRefs(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan accepts standalone acceptance IDSDD refs", func() {
 	plan := validPlan()
 	plan.SDDContract.Refs = nil
 	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
 	plan.Atoms[0].SDDRefs = []string{"SDD-COLLAPSE-EVENT-1"}
+	{
 
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
-		t.Fatalf("standalone acceptance ID should satisfy atom sdd_refs: %v", err)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("standalone acceptance ID should satisfy atom sdd_refs: %v", err))
 	}
-}
 
-func TestValidatePlanRejectsUndeclaredAtomSDDRefs(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan rejects undeclared atom SDD refs", func() {
 	plan := validPlan()
 	plan.SDDContract.Refs = nil
 	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
 	plan.Atoms[0].SDDRefs = []string{"REQ-001"}
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "is not declared by sdd_contract") {
-		t.Fatalf("expected undeclared sdd_refs rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected undeclared sdd_refs rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("is not declared by sdd_contract"), fmt.Sprintf("expected undeclared sdd_refs rejection, got %v", err))
 
-func TestValidatePlanRejectsBlankAtomSDDRefs(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan rejects blank atom SDD refs", func() {
 	plan := validPlan()
 	plan.Atoms[0].SDDRefs = []string{""}
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "missing sdd_refs") || !strings.Contains(err.Error(), "must not be blank") {
-		t.Fatalf("expected blank sdd_refs rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected blank sdd_refs rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing sdd_refs"), fmt.Sprintf("expected blank sdd_refs rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("must not be blank"), fmt.Sprintf("expected blank sdd_refs rejection, got %v", err))
 
-func TestValidateDurableStateTreatsSourceSatisfiedAsTerminal(t *testing.T) {
+})
+var _ = ginkgo.It("validate durable state treats source satisfied as terminal", func() {
 	state := NewState("source-satisfied-session", "already done", "", 3, time.Unix(1, 0).UTC())
 
 	state.Status = FeatureStateSourceSatisfied
@@ -165,12 +153,11 @@ func TestValidateDurableStateTreatsSourceSatisfiedAsTerminal(t *testing.T) {
 	state.OpenQuestions = []PlannerQuestion{{ID: "q-1", Status: "open", QuestionSummary: "stale question"}}
 
 	err := ValidateDurableState(state)
-	if err == nil || !strings.Contains(err.Error(), "terminal feature state has open planner questions") {
-		t.Fatalf("source-satisfied state should reject terminal-incompatible open questions, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("source-satisfied state should reject terminal-incompatible open questions, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("terminal feature state has open planner questions"), fmt.Sprintf("source-satisfied state should reject terminal-incompatible open questions, got %v", err))
 
-func TestValidateDurableStateTreatsFailedAndPlanningStuckAsTerminal(t *testing.T) {
+})
+var _ = ginkgo.Describe("validate durable state treats failed and planning stuck as terminal", func() {
 	tests := []struct {
 		name   string
 		status string
@@ -204,23 +191,22 @@ func TestValidateDurableStateTreatsFailedAndPlanningStuckAsTerminal(t *testing.T
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			state := NewState("terminal-session", "terminal state", "", 3, time.Unix(1, 0).UTC())
 			state.Status = tt.status
 			state.PlanningLoop.State = tt.status
 			tt.setup(&state)
 
 			err := ValidateDurableState(state)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("expected terminal invariant %q, got %v", tt.want, err)
-			}
+			gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected terminal invariant %q, got %v", tt.want, err))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring(tt.want), fmt.Sprintf("expected terminal invariant %q, got %v", tt.want, err))
+
 		})
 	}
-}
-
-func TestValidateDurableStateRejectsUnknownActiveRunState(t *testing.T) {
+})
+var _ = ginkgo.Describe("validate durable state rejects unknown active run state", func() {
 	for _, stateName := range []string{"complete", "retry_plan_execute"} {
-		t.Run(stateName, func(t *testing.T) {
+		ginkgo.It(stateName, func() {
 			state := NewState("active-run-state-session", "active run state", "", 3, time.Unix(1, 0).UTC())
 			state.ActiveRuns = []ActiveRun{{
 				RunID:  "run-1",
@@ -229,14 +215,13 @@ func TestValidateDurableStateRejectsUnknownActiveRunState(t *testing.T) {
 			}}
 
 			err := ValidateDurableState(state)
-			if err == nil || !strings.Contains(err.Error(), `active run 0 has unknown state "`+stateName+`"`) {
-				t.Fatalf("expected unknown active run state rejection for %q, got %v", stateName, err)
-			}
+			gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected unknown active run state rejection for %q, got %v", stateName, err))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring(`active run 0 has unknown state "`+stateName+`"`), fmt.Sprintf("expected unknown active run state rejection for %q, got %v", stateName, err))
+
 		})
 	}
-}
-
-func TestValidatePlanProductWorkflowContextRejectsUnknownRefs(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan product workflow context rejects unknown refs", func() {
 	plan := validPlan()
 
 	plan.SDDContract.PRDRequirementRefs = []string{"REQ-404"}
@@ -256,30 +241,27 @@ func TestValidatePlanProductWorkflowContextRejectsUnknownRefs(t *testing.T) {
 	}
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected product context validation error")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected product context validation error"))
 
 	for _, want := range []string{"REQ-404", "TDD-404"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestValidatePlanProductWorkflowContextAllowsPendingTDDVerificationDispatch(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan product workflow context allows pending TDD verification dispatch", func() {
 	plan := validProductContextPlan()
 	brief := validProductWorkflowBrief()
 
 	brief.CoverageGatePassed = false
 	brief.CoverageBlockers = []string{"expected all 1 TDD obligations to have verification evidence"}
+	{
 
-	if err := ValidatePlanProductWorkflowContext(plan, brief, ""); err != nil {
-		t.Fatalf("pending TDD verification evidence should not block implementation dispatch: %v", err)
+		err := ValidatePlanProductWorkflowContext(plan, brief, "")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("pending TDD verification evidence should not block implementation dispatch: %v", err))
 	}
-}
 
-func TestValidatePlanProductWorkflowContextRejectsNonTDDCoverageBlocker(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan product workflow context rejects non TDD coverage blocker", func() {
 	plan := validProductContextPlan()
 	brief := validProductWorkflowBrief()
 
@@ -287,34 +269,25 @@ func TestValidatePlanProductWorkflowContextRejectsNonTDDCoverageBlocker(t *testi
 	brief.CoverageBlockers = []string{"expected EARS requirements to map to evidence"}
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected non-TDD coverage blocker to reject feature plan")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected non-TDD coverage blocker to reject feature plan"))
 
 	for _, want := range []string{"coverage gate is blocked", "expected EARS requirements"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestValidatePlanProductWorkflowContextRejectsStandaloneCoverageDraft(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan product workflow context rejects standalone coverage draft", func() {
 	plan := validProductContextPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	brief := validProductWorkflowBrief()
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected product context to reject standalone behavioral coverage draft")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected product context to reject standalone behavioral coverage draft"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("behavioral_coverage_draft"), fmt.Sprintf("validation error should identify superseded standalone draft, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("superseded by product workflow coverage authority"), fmt.Sprintf("validation error should identify superseded standalone draft, got %v", err))
 
-	if !strings.Contains(err.Error(), "behavioral_coverage_draft") ||
-		!strings.Contains(err.Error(), "superseded by product workflow coverage authority") {
-		t.Fatalf("validation error should identify superseded standalone draft, got %v", err)
-	}
-}
-
-func TestValidatePlanProductWorkflowContextRejectsCompetingCoverageGateResult(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan product workflow context rejects competing coverage gate result", func() {
 	plan := validProductContextPlan()
 	plan.CoverageGateResult = &CoverageGateResult{
 		Status:       "pass",
@@ -325,17 +298,12 @@ func TestValidatePlanProductWorkflowContextRejectsCompetingCoverageGateResult(t 
 	brief := validProductWorkflowBrief()
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected product context to reject planner-supplied coverage gate result")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected product context to reject planner-supplied coverage gate result"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("must consume product workflow coverage authority"), fmt.Sprintf("validation error should identify competing coverage gate result, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("competing coverage_gate_result"), fmt.Sprintf("validation error should identify competing coverage gate result, got %v", err))
 
-	if !strings.Contains(err.Error(), "must consume product workflow coverage authority") ||
-		!strings.Contains(err.Error(), "competing coverage_gate_result") {
-		t.Fatalf("validation error should identify competing coverage gate result, got %v", err)
-	}
-}
-
-func TestValidatePlanProductWorkflowContextRequiresCoverageContractRefWhenBriefProvidesOne(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan product workflow context requires coverage contract ref when brief provides one", func() {
 	plan := validProductContextPlan()
 	plan.CoverageContract = nil
 	brief := validProductWorkflowBrief()
@@ -349,20 +317,17 @@ func TestValidatePlanProductWorkflowContextRequiresCoverageContractRefWhenBriefP
 	}
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected product context to require coverage_contract ref")
-	}
-	if !strings.Contains(err.Error(), "missing coverage_contract ref") {
-		t.Fatalf("validation error should identify missing coverage_contract ref, got %v", err)
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected product context to require coverage_contract ref"))
+	gomega.Expect(strings.Contains(err.Error(), "missing coverage_contract ref")).To(gomega.BeTrue(), fmt.Sprintf("validation error should identify missing coverage_contract ref, got %v", err))
 
 	plan.CoverageContract = brief.CoverageContract
-	if err := ValidatePlanProductWorkflowContext(plan, brief, ""); err != nil {
-		t.Fatalf("matching coverage_contract ref should pass: %v", err)
+	{
+		err := ValidatePlanProductWorkflowContext(plan, brief, "")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("matching coverage_contract ref should pass: %v", err))
 	}
-}
 
-func TestProductBriefRequiresCoverageContractUsesProductWorkflowTiers(t *testing.T) {
+})
+var _ = ginkgo.It("product brief requires coverage contract uses product workflow tiers", func() {
 	tests := []struct {
 		tier string
 		want bool
@@ -381,23 +346,23 @@ func TestProductBriefRequiresCoverageContractUsesProductWorkflowTiers(t *testing
 		brief := validProductWorkflowBrief()
 		brief.CoverageTier = tt.tier
 		brief.CoverageContract = nil
+		{
 
-		if got := productBriefRequiresCoverageContract(brief); got != tt.want {
-			t.Fatalf("productBriefRequiresCoverageContract(%q) = %v, want %v", tt.tier, got, tt.want)
+			got := productBriefRequiresCoverageContract(brief)
+			gomega.Expect(got).To(gomega.Equal(tt.want), fmt.Sprintf("productBriefRequiresCoverageContract(%q) = %v, want %v", tt.tier, got, tt.want))
 		}
-	}
-}
 
-func TestValidatePlanProductWorkflowContextRejectsEmptyCoverageContractAuthorityRef(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan product workflow context rejects empty coverage contract authority ref", func() {
 	plan := validProductContextPlan()
 	plan.CoverageContract = &CoverageContractRef{}
 	brief := validProductWorkflowBrief()
 	brief.CoverageContract = &CoverageContractRef{}
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected empty product workflow coverage_contract authority ref to reject")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected empty product workflow coverage_contract authority ref to reject"))
+
 	for _, want := range []string{
 		"product workflow coverage_contract missing contract_id",
 		"product workflow coverage_contract missing digest",
@@ -406,13 +371,11 @@ func TestValidatePlanProductWorkflowContextRejectsEmptyCoverageContractAuthority
 		"product workflow coverage_contract missing effort_id",
 		"product workflow coverage_contract missing coverage_tier",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestValidatePlanProductWorkflowContextRejectsMismatchedCoverageContractRef(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan product workflow context rejects mismatched coverage contract ref", func() {
 	plan := validProductContextPlan()
 	plan.CoverageContract = &CoverageContractRef{
 		ContractID:   "cov-wrong",
@@ -433,31 +396,24 @@ func TestValidatePlanProductWorkflowContextRejectsMismatchedCoverageContractRef(
 	}
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected mismatched coverage_contract ref to reject")
-	}
-	for _, want := range []string{"coverage_contract.contract_id", "coverage_contract.digest", "coverage_contract.event_id", "coverage_contract.status", "coverage_contract.coverage_tier"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected mismatched coverage_contract ref to reject"))
 
-func TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage(t *testing.T) {
+	for _, want := range []string{"coverage_contract.contract_id", "coverage_contract.digest", "coverage_contract.event_id", "coverage_contract.status", "coverage_contract.coverage_tier"} {
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
+
+	}
+})
+var _ = ginkgo.It("validate plan product workflow context rejects planner authored accepted coverage", func() {
 	plan := validProductContextPlan()
 	plan.AcceptedCoverage = &AcceptedBehavioralCoverage{Authority: "model"}
 	brief := validProductWorkflowBrief()
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected planner-authored accepted coverage to reject")
-	}
-	if !strings.Contains(err.Error(), "accepted_coverage is product workflow authority") {
-		t.Fatalf("expected accepted coverage authority error, got %v", err)
-	}
-}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected planner-authored accepted coverage to reject"))
+	gomega.Expect(strings.Contains(err.Error(), "accepted_coverage is product workflow authority")).To(gomega.BeTrue(), fmt.Sprintf("expected accepted coverage authority error, got %v", err))
 
-func TestValidatePlanProductWorkflowContextRejectsInvalidBriefAcceptedCoverageAuthority(t *testing.T) {
+})
+var _ = ginkgo.Describe("validate plan product workflow context rejects invalid brief accepted coverage authority", func() {
 	tests := []struct {
 		name   string
 		mutate func(*AcceptedBehavioralCoverage)
@@ -494,21 +450,20 @@ func TestValidatePlanProductWorkflowContextRejectsInvalidBriefAcceptedCoverageAu
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			plan := validProductContextPlan()
 			brief := validProductWorkflowBrief()
 			brief.AcceptedCoverage = validAcceptedBehavioralCoverage()
 			tt.mutate(brief.AcceptedCoverage)
 
 			err := ValidatePlanProductWorkflowContext(plan, brief, "")
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("expected brief accepted coverage authority error containing %q, got %v", tt.want, err)
-			}
+			gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected brief accepted coverage authority error containing %q, got %v", tt.want, err))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring(tt.want), fmt.Sprintf("expected brief accepted coverage authority error containing %q, got %v", tt.want, err))
+
 		})
 	}
-}
-
-func TestNormalizePlanProductWorkflowContextStampsAcceptedCoverageAuthority(t *testing.T) {
+})
+var _ = ginkgo.It("normalize plan product workflow context stamps accepted coverage authority", func() {
 	plan := validProductContextPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 
@@ -516,58 +471,47 @@ func TestNormalizePlanProductWorkflowContextStampsAcceptedCoverageAuthority(t *t
 	brief.AcceptedCoverage = validAcceptedBehavioralCoverage()
 
 	normalized := NormalizePlanProductWorkflowContext(plan, brief, "")
-	if normalized.BehavioralCoverageDraft != nil {
-		t.Fatalf("product normalization should clear superseded standalone draft: %+v", normalized.BehavioralCoverageDraft)
-	}
-	if normalized.AcceptedCoverage == nil {
-		t.Fatal("product normalization should stamp accepted coverage from product workflow authority")
-	}
-	if normalized.AcceptedCoverage.Authority != "product_workflow" ||
-		normalized.AcceptedCoverage.Contract.ContractID != "cov-1" ||
-		len(normalized.AcceptedCoverage.Scenarios) != 1 ||
-		normalized.AcceptedCoverage.Scenarios[0].Then[0] != "product behavior is rendered" {
+	gomega.Expect(normalized.BehavioralCoverageDraft).To(gomega.BeNil(), fmt.Sprintf("product normalization should clear superseded standalone draft: %+v", normalized.BehavioralCoverageDraft))
+	gomega.Expect(normalized.AcceptedCoverage).NotTo(gomega.BeNil(), fmt.Sprint("product normalization should stamp accepted coverage from product workflow authority"))
+	gomega.Expect(normalized.AcceptedCoverage.Authority).To(gomega.Equal("product_workflow"), fmt.Sprintf("unexpected accepted coverage stamp: %+v", normalized.AcceptedCoverage))
+	gomega.Expect(normalized.AcceptedCoverage.Contract.ContractID).To(gomega.Equal("cov-1"), fmt.Sprintf("unexpected accepted coverage stamp: %+v", normalized.AcceptedCoverage))
+	gomega.Expect(normalized.AcceptedCoverage.Scenarios).To(gomega.HaveLen(1), fmt.Sprintf("unexpected accepted coverage stamp: %+v", normalized.AcceptedCoverage))
+	gomega.Expect(normalized.AcceptedCoverage.Scenarios[0].Then[0]).To(gomega.Equal("product behavior is rendered"), fmt.Sprintf("unexpected accepted coverage stamp: %+v", normalized.AcceptedCoverage))
 
-		t.Fatalf("unexpected accepted coverage stamp: %+v", normalized.AcceptedCoverage)
-	}
-}
-
-func TestValidatePlanStandaloneWorkspaceContextAllowsProvisionalCoverageDraft(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan standalone workspace context allows provisional coverage draft", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	{
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{}); err != nil {
-		t.Fatalf("standalone context should allow provisional behavioral coverage draft: %v", err)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("standalone context should allow provisional behavioral coverage draft: %v", err))
 	}
-}
 
-func TestValidatePlanStandaloneWorkspaceContextRequiresProvisionalCoverageDraft(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan standalone workspace context requires provisional coverage draft", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = nil
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil {
-		t.Fatal("expected standalone context to require behavioral coverage draft")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected standalone context to require behavioral coverage draft"))
 
 	for _, want := range []string{"behavioral_coverage_draft", "BDD scenarios", "concrete TDD traceability"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestValidatePlanStandaloneWorkspaceContextRequiresSurfaceInventory(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan standalone workspace context requires surface inventory", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	plan.BehavioralCoverageDraft.SurfaceInventory = nil
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil || !strings.Contains(err.Error(), "missing generic behavior surface inventory") {
-		t.Fatalf("expected missing surface inventory to reject standalone coverage draft, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected missing surface inventory to reject standalone coverage draft, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing generic behavior surface inventory"), fmt.Sprintf("expected missing surface inventory to reject standalone coverage draft, got %v", err))
 
-func TestValidatePlanStandaloneWorkspaceContextRejectsInScopeSurfaceWithoutTDDObligation(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan standalone workspace context rejects in scope surface without TDD obligation", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	plan.BehavioralCoverageDraft.SurfaceInventory = []CoverageDraftSurfaceDecision{{
@@ -579,12 +523,11 @@ func TestValidatePlanStandaloneWorkspaceContextRejectsInScopeSurfaceWithoutTDDOb
 	}}
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil || !strings.Contains(err.Error(), "in-scope surface missing tdd_obligations") {
-		t.Fatalf("expected evidence-only in-scope surface to reject standalone coverage draft, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected evidence-only in-scope surface to reject standalone coverage draft, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("in-scope surface missing tdd_obligations"), fmt.Sprintf("expected evidence-only in-scope surface to reject standalone coverage draft, got %v", err))
 
-func TestValidatePlanStandaloneWorkspaceContextRejectsOpenQuestionSurfaceBeforeApproval(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan standalone workspace context rejects open question surface before approval", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	plan.BehavioralCoverageDraft.SurfaceInventory = []CoverageDraftSurfaceDecision{{
@@ -596,12 +539,11 @@ func TestValidatePlanStandaloneWorkspaceContextRejectsOpenQuestionSurfaceBeforeA
 	}}
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil || !strings.Contains(err.Error(), "unresolved open_question status") {
-		t.Fatalf("expected open question surface to block standalone approval, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected open question surface to block standalone approval, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unresolved open_question status"), fmt.Sprintf("expected open question surface to block standalone approval, got %v", err))
 
-func TestValidatePlanStandaloneWorkspaceContextRejectsPlannedSurfaceStatus(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan standalone workspace context rejects planned surface status", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	plan.BehavioralCoverageDraft.SurfaceInventory = []CoverageDraftSurfaceDecision{{
@@ -613,18 +555,19 @@ func TestValidatePlanStandaloneWorkspaceContextRejectsPlannedSurfaceStatus(t *te
 	}}
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil || !strings.Contains(err.Error(), `unsupported status "planned"`) {
-		t.Fatalf("expected planned surface status to reject standalone coverage draft, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected planned surface status to reject standalone coverage draft, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring(`unsupported status "planned"`), fmt.Sprintf("expected planned surface status to reject standalone coverage draft, got %v", err))
 
-func TestParsePlannerOutputNormalizesFlexibleCoverageConcreteData(t *testing.T) {
+})
+var _ = ginkgo.It("parse planner output normalizes flexible coverage concrete data", func() {
 	plan := validPlan()
-	body := mustPlanJSON(t, plan)
+	body := mustPlanJSON(plan)
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		t.Fatalf("decode generated plan: %v", err)
+	{
+		err := json.Unmarshal([]byte(body), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode generated plan: %v", err))
 	}
+
 	draft := payload["behavioral_coverage_draft"].(map[string]any)
 	exampleRules := draft["example_rules"].([]any)
 	firstRule := exampleRules[0].(map[string]any)
@@ -633,25 +576,21 @@ func TestParsePlannerOutputNormalizesFlexibleCoverageConcreteData(t *testing.T) 
 	scenarios := draft["scenarios"].([]any)
 	scenarios[0].(map[string]any)["concrete_data"] = map[string]any{"fixture": []any{"draft.json"}, "count": float64(2)}
 	mutated, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal mutated plan: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal mutated plan: %v", err))
 
 	parsed, err := ParsePlannerOutput(string(mutated))
-	if err != nil {
-		t.Fatalf("ParsePlannerOutput should tolerate flexible concrete_data: %v", err)
-	}
-	exampleData := parsed.Plan.BehavioralCoverageDraft.ExampleRules[0].Examples[0].ConcreteData
-	if exampleData["item_1"] != "label" || exampleData["item_2"] != "short label" {
-		t.Fatalf("array concrete_data not normalized: %#v", exampleData)
-	}
-	scenarioData := parsed.Plan.BehavioralCoverageDraft.Scenarios[0].ConcreteData
-	if scenarioData["fixture"] != `["draft.json"]` || scenarioData["count"] != "2" {
-		t.Fatalf("object concrete_data values not normalized: %#v", scenarioData)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParsePlannerOutput should tolerate flexible concrete_data: %v", err))
 
-func TestValidatePlanStandaloneWorkspaceContextRequiresEveryTDDObligationMappedByCoverageDraft(t *testing.T) {
+	exampleData := parsed.Plan.BehavioralCoverageDraft.ExampleRules[0].Examples[0].ConcreteData
+	gomega.Expect(exampleData["item_1"]).To(gomega.Equal("label"), fmt.Sprintf("array concrete_data not normalized: %#v", exampleData))
+	gomega.Expect(exampleData["item_2"]).To(gomega.Equal("short label"), fmt.Sprintf("array concrete_data not normalized: %#v", exampleData))
+
+	scenarioData := parsed.Plan.BehavioralCoverageDraft.Scenarios[0].ConcreteData
+	gomega.Expect(scenarioData["fixture"]).To(gomega.Equal(`["draft.json"]`), fmt.Sprintf("object concrete_data values not normalized: %#v", scenarioData))
+	gomega.Expect(scenarioData["count"]).To(gomega.Equal("2"), fmt.Sprintf("object concrete_data values not normalized: %#v", scenarioData))
+
+})
+var _ = ginkgo.It("validate plan standalone workspace context requires every TDD obligation mapped by coverage draft", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	plan.TDDContract.Obligations = append(plan.TDDContract.Obligations, TDDObligation{
@@ -662,30 +601,27 @@ func TestValidatePlanStandaloneWorkspaceContextRequiresEveryTDDObligationMappedB
 	})
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil {
-		t.Fatal("expected unmapped TDD obligation to reject standalone coverage draft")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected unmapped TDD obligation to reject standalone coverage draft"))
 
 	for _, want := range []string{
 		`TDD-UNMAPPED`,
 		`behavioral_coverage_draft.scenarios`,
 		`behavioral_coverage_draft.test_obligations`,
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestValidatePlanStandaloneWorkspaceContextAllowsCrossCuttingInvariants(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan standalone workspace context allows cross cutting invariants", func() {
 	plan := validGreenfieldBrainPlanForTest()
+	{
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{}); err != nil {
-		t.Fatalf("cross-cutting invariants should not require one invariant per TDD obligation: %v", err)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("cross-cutting invariants should not require one invariant per TDD obligation: %v", err))
 	}
-}
 
-func TestRunStandaloneRejectsNarrowTDDOnlyPlanBeforeDispatch(t *testing.T) {
+})
+var _ = ginkgo.It("run standalone rejects narrow TDD only plan before dispatch", func() {
 	state := NewState("session", "Plan a greenfield memory MVP.", "", 3, time.Unix(1, 0).UTC())
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = nil
@@ -695,30 +631,23 @@ func TestRunStandaloneRejectsNarrowTDDOnlyPlanBeforeDispatch(t *testing.T) {
 		MaxPlanningIterations: 3,
 		Now:                   time.Unix(2, 0).UTC(),
 	}, func(prompt string, taskFamily string) (string, error) {
-		if !strings.Contains(prompt, "behavioral_coverage_draft") {
-			t.Fatalf("standalone planner prompt must advertise behavioral_coverage_draft contract:\n%s", prompt)
-		}
-		return mustPlanJSON(t, plan), nil
+		gomega.Expect(strings.Contains(prompt, "behavioral_coverage_draft")).To(gomega.BeTrue(), fmt.Sprintf("standalone planner prompt must advertise behavioral_coverage_draft contract:\n%s", prompt))
+
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("narrow TDD-only plan should stop in planning repair, got %s", result.State.Status))
+	gomega.Expect(len(result.State.Atoms)).To(gomega.Equal(0), fmt.Sprintf("narrow TDD-only plan must not compile atoms: %+v", result.State.Atoms))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("expected standalone context blocked event, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected standalone context blocked event, got %+v", result.Events))
+	{
+
+		got := strings.Join(result.State.Blockers, "\n")
+		gomega.Expect(strings.Contains(got, "behavioral_coverage_draft")).To(gomega.BeTrue(), fmt.Sprintf("blocker should name missing behavioral coverage draft, got %q", got))
 	}
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("narrow TDD-only plan should stop in planning repair, got %s", result.State.Status)
-	}
-	if len(result.State.Atoms) != 0 {
-		t.Fatalf("narrow TDD-only plan must not compile atoms: %+v", result.State.Atoms)
-	}
-	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
-		t.Fatalf("expected standalone context blocked event, got %+v", result.Events)
-	}
-	if got := strings.Join(result.State.Blockers, "\n"); !strings.Contains(got, "behavioral_coverage_draft") {
-		t.Fatalf("blocker should name missing behavioral coverage draft, got %q", got)
-	}
-}
-
-func TestValidatePlanStandaloneWorkspaceContextRequiresCompleteProductionReadinessDraftEntries(t *testing.T) {
+})
+var _ = ginkgo.Describe("validate plan standalone workspace context requires complete production readiness draft entries", func() {
 	tests := []struct {
 		name   string
 		mutate func(*BehavioralCoverageDraft)
@@ -783,54 +712,45 @@ func TestValidatePlanStandaloneWorkspaceContextRequiresCompleteProductionReadine
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			plan := validPlan()
 			plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 			tt.mutate(plan.BehavioralCoverageDraft)
 
 			err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("expected standalone draft validation error containing %q, got %v", tt.want, err)
-			}
+			gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected standalone draft validation error containing %q, got %v", tt.want, err))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring(tt.want), fmt.Sprintf("expected standalone draft validation error containing %q, got %v", tt.want, err))
+
 		})
 	}
-}
-
-func TestValidatePlanStandaloneWorkspaceContextUsesCanonicalCoverageContract(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan standalone workspace context uses canonical coverage contract", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	plan.BehavioralCoverageDraft.Invariants[0].PropertyBasedTestRefs = nil
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil {
-		t.Fatal("expected canonical behavioral coverage validation to reject missing property-based test refs")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected canonical behavioral coverage validation to reject missing property-based test refs"))
+
 	for _, want := range []string{
 		"behavioral_coverage_draft violates canonical behavioral coverage contract",
 		"behavioral coverage invariants[0] accepted coverage missing property_based_test_refs",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("expected validation error containing %q, got %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("expected validation error containing %q, got %v", want, err))
 
-func TestValidatePlanStandaloneWorkspaceContextRejectsNonProvisionalCoverageAuthority(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan standalone workspace context rejects non provisional coverage authority", func() {
 	plan := validPlan()
 	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	plan.BehavioralCoverageDraft.Authority = "product_workflow"
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
-	if err == nil {
-		t.Fatal("expected standalone coverage draft with product authority to reject")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected standalone coverage draft with product authority to reject"))
+	gomega.Expect(strings.Contains(err.Error(), "standalone_provisional")).To(gomega.BeTrue(), fmt.Sprintf("validation error should identify provisional authority requirement, got %v", err))
 
-	if !strings.Contains(err.Error(), "standalone_provisional") {
-		t.Fatalf("validation error should identify provisional authority requirement, got %v", err)
-	}
-}
-
-func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
+})
+var _ = ginkgo.It("run rejects product plan with unknown artifact refs", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	plan := validPlan()
 
@@ -844,6 +764,8 @@ func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 	plan.Atoms[0].PlannedTDDSnapshot.ObligationIDs = []string{"TDD-001"}
 
 	brief := &ProductWorkflowBrief{
+		EffortID:           "effort-unknown-ref",
+		TaskID:             "task-unknown-ref",
 		CoverageGatePassed: true,
 		PRDRequirements:    []PRDRequirementBrief{{ID: "REQ-001"}},
 		AcceptedADRIDs:     []string{"ADR-001"},
@@ -852,28 +774,20 @@ func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 	}
 
 	result, err := Run(state, RunOptions{Prompt: "build feature", ProductWorkflowBrief: brief}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
-			t.Fatalf("implementor must not run after product context rejection")
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerPlanner)), fmt.Sprintf("implementor must not run after product context rejection"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair", result.State.Status))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected events: %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.product_context_blocked"), fmt.Sprintf("unexpected events: %+v", result.Events))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
-	}
-
-	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.product_context_blocked" {
-		t.Fatalf("unexpected events: %+v", result.Events)
-	}
-}
-
-func TestRunWithProductContextInvalidatesExistingStandaloneCoverageDraft(t *testing.T) {
+})
+var _ = ginkgo.It("run with product context invalidates existing standalone coverage draft", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	state.Plan = validPlan()
+	state.TaskID = "task-1"
 	state.Plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
 	brief := validProductWorkflowBrief()
 
@@ -883,16 +797,53 @@ func TestRunWithProductContextInvalidatesExistingStandaloneCoverageDraft(t *test
 	}, func(_ string, _ string) (string, error) {
 		return `{"tool":"ask_planner_question","question_summary":"need source context","blocking_claim":"need source context","requested_decision":"provide source context","question_kind":"external_answer_required","authority_required":"accepted_source","required_before":"plan_approval","affected_fields":["source_localization"]}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Plan.BehavioralCoverageDraft).To(gomega.BeNil(), fmt.Sprintf("product context should invalidate existing standalone draft: %+v", result.State.Plan.BehavioralCoverageDraft))
 
-	if result.State.Plan.BehavioralCoverageDraft != nil {
-		t.Fatalf("product context should invalidate existing standalone draft: %+v", result.State.Plan.BehavioralCoverageDraft)
-	}
-}
+})
+var _ = ginkgo.It("run binds fresh product task identity before planner evidence is produced", func() {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	brief := validProductWorkflowBrief()
 
-func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testing.T) {
+	result, err := Run(state, RunOptions{
+		Prompt:               "build feature",
+		ProductWorkflowBrief: &brief,
+	}, func(_ string, _ string) (string, error) {
+		return `{"tool":"ask_planner_question","question_summary":"need source context","blocking_claim":"need source context","requested_decision":"provide source context","question_kind":"external_answer_required","authority_required":"accepted_source","required_before":"plan_approval","affected_fields":["source_localization"]}`, nil
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(result.State.TaskID).To(gomega.Equal(brief.TaskID))
+})
+var _ = ginkgo.It("run rejects a different product task identity within the same effort", func() {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	brief := validProductWorkflowBrief()
+	state.EffortID = brief.EffortID
+	state.TaskID = "other-task"
+
+	_, err := Run(state, RunOptions{Prompt: "build feature", ProductWorkflowBrief: &brief}, func(_ string, _ string) (string, error) {
+		ginkgo.Fail("planner must not run after product task identity diverges")
+
+		return "", nil
+	})
+	gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(
+		`product-bound feature planner state task_id "other-task" does not match product task_id "task-1"`,
+	)))
+})
+var _ = ginkgo.It("run does not transplant a current brief task onto existing verification authority", func() {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	brief := validProductWorkflowBrief()
+	state.EffortID = brief.EffortID
+	state.EffortRoot = "/tmp/existing-effort"
+	state.VerificationClosures = []VerificationClosure{{EventID: "existing-evidence", AtomID: "existing-atom"}}
+
+	_, err := Run(state, RunOptions{Prompt: "build feature", ProductWorkflowBrief: &brief}, func(_ string, _ string) (string, error) {
+		ginkgo.Fail("planner must not run when durable evidence is missing task identity")
+
+		return "", nil
+	})
+	gomega.Expect(err).To(gomega.MatchError("existing product-bound feature planner state is missing durable task_id"))
+})
+var _ = ginkgo.It("normalize product plan removes context only docs from allowed edit scope", func() {
 	plan := validProductContextPlan()
 
 	plan.Atoms[0].AllowedEditPaths = []string{
@@ -909,32 +860,29 @@ func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testi
 	brief.FilesToModify = append(brief.FilesToModify, "internal/labels/labels_extra.go")
 
 	normalized := NormalizePlanProductWorkflowContext(plan, brief, "")
-	if err := ValidatePlanProductWorkflowContext(normalized, brief, ""); err != nil {
-		t.Fatalf("normalized plan should validate: %v", err)
+	{
+		err := ValidatePlanProductWorkflowContext(normalized, brief, "")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("normalized plan should validate: %v", err))
 	}
 
 	allowed := normalized.Atoms[0].AllowedEditPaths
 	for _, forbidden := range []string{"adrs/ADR-draft.md", ".planning/campaign-status.md"} {
-		if containsString(allowed, forbidden) {
-			t.Fatalf("context-only doc %q leaked into allowed edit scope: %#v", forbidden, allowed)
-		}
+		gomega.Expect(containsString(allowed, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("context-only doc %q leaked into allowed edit scope: %#v", forbidden, allowed))
+
 	}
 
 	required := normalized.Atoms[0].RequiredEditPaths
 	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go", "internal/labels/labels_extra.go"} {
-		if !containsString(required, want) {
-			t.Fatalf("Files to modify path %q was not promoted to required scope: %#v", want, required)
-		}
+		gomega.Expect(containsString(required, want)).To(gomega.BeTrue(), fmt.Sprintf("Files to modify path %q was not promoted to required scope: %#v", want, required))
+
 	}
 
 	for _, forbidden := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go", "internal/labels/labels_extra.go"} {
-		if containsString(allowed, forbidden) {
-			t.Fatalf("required edit path %q leaked into allowed scope: %#v", forbidden, allowed)
-		}
-	}
-}
+		gomega.Expect(containsString(allowed, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("required edit path %q leaked into allowed scope: %#v", forbidden, allowed))
 
-func TestValidateProductPlanRejectsContextEvidenceAsEditScope(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate product plan rejects context evidence as edit scope", func() {
 	plan := validProductContextPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go", "internal/context/context.go"}
@@ -945,18 +893,12 @@ func TestValidateProductPlanRejectsContextEvidenceAsEditScope(t *testing.T) {
 	brief.ContextEvidencePaths = []string{"internal/context/context.go"}
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected context evidence path in edit scope to reject product plan")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected context evidence path in edit scope to reject product plan"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("internal/context/context.go"), fmt.Sprintf("validation error should identify context evidence as non-edit scope, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("files_to_modify"), fmt.Sprintf("validation error should identify context evidence as non-edit scope, got %v", err))
 
-	if !strings.Contains(err.Error(), "internal/context/context.go") ||
-		!strings.Contains(err.Error(), "files_to_modify") {
-
-		t.Fatalf("validation error should identify context evidence as non-edit scope, got %v", err)
-	}
-}
-
-func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *testing.T) {
+})
+var _ = ginkgo.It("normalize product plan promotes grounded TDD artifacts to required scope", func() {
 	plan := validProductContextPlan()
 
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
@@ -964,37 +906,33 @@ func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *test
 	brief := validProductWorkflowBrief()
 
 	normalized := NormalizePlanProductWorkflowContext(plan, brief, "")
-	if err := ValidatePlanProductWorkflowContext(normalized, brief, ""); err != nil {
-		t.Fatalf("normalized plan should validate: %v", err)
+	{
+		err := ValidatePlanProductWorkflowContext(normalized, brief, "")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("normalized plan should validate: %v", err))
 	}
 
 	required := normalized.Atoms[0].RequiredEditPaths
 	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
-		if !containsString(required, want) {
-			t.Fatalf("required TDD edit path %q missing from required scope: %#v", want, required)
-		}
+		gomega.Expect(containsString(required, want)).To(gomega.BeTrue(), fmt.Sprintf("required TDD edit path %q missing from required scope: %#v", want, required))
+
 	}
+	gomega.Expect(containsString(normalized.Atoms[0].AllowedEditPaths, "internal/labels/labels_test.go")).To(gomega.BeFalse(), fmt.Sprintf("promoted TDD edit path must not remain optional allowed scope: %#v", normalized.Atoms[0].AllowedEditPaths))
 
-	if containsString(normalized.Atoms[0].AllowedEditPaths, "internal/labels/labels_test.go") {
-		t.Fatalf("promoted TDD edit path must not remain optional allowed scope: %#v", normalized.Atoms[0].AllowedEditPaths)
-	}
-}
+})
+var _ = ginkgo.It("validate product plan uses explicit workspace root for package grounding", func() {
+	root, plan, brief := workspaceRootProductPlanFixture()
+	{
 
-func TestValidateProductPlanUsesExplicitWorkspaceRootForPackageGrounding(t *testing.T) {
-	root, plan, brief := workspaceRootProductPlanFixture(t)
-
-	if err := ValidatePlanProductWorkflowContext(plan, brief, root); err != nil {
-		t.Fatalf("explicit workspace root should ground sibling package scope: %v", err)
+		err := ValidatePlanProductWorkflowContext(plan, brief, root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("explicit workspace root should ground sibling package scope: %v", err))
 	}
 
 	normalized := NormalizePlanProductWorkflowContext(plan, brief, root)
-	if !containsString(normalized.Atoms[0].AllowedEditPaths, "pkg/generated_helper.go") {
-		t.Fatalf("expected sibling package scope to remain allowed, got %#v", normalized.Atoms[0].AllowedEditPaths)
-	}
-}
+	gomega.Expect(containsString(normalized.Atoms[0].AllowedEditPaths, "pkg/generated_helper.go")).To(gomega.BeTrue(), fmt.Sprintf("expected sibling package scope to remain allowed, got %#v", normalized.Atoms[0].AllowedEditPaths))
 
-func TestRunProductPlanUsesWorkspaceRootForPackageGrounding(t *testing.T) {
-	root, plan, brief := workspaceRootProductPlanFixture(t)
+})
+var _ = ginkgo.It("run product plan uses workspace root for package grounding", func() {
+	root, plan, brief := workspaceRootProductPlanFixture()
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	result, err := Run(state, RunOptions{
@@ -1006,23 +944,19 @@ func TestRunProductPlanUsesWorkspaceRootForPackageGrounding(t *testing.T) {
 			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		}
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("state.Status = %q, want complete; blockers=%+v events=%+v", result.State.Status, result.State.Blockers, result.Events))
 
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete; blockers=%+v events=%+v", result.State.Status, result.State.Blockers, result.Events)
-	}
-}
+})
 
-func workspaceRootProductPlanFixture(t *testing.T) (string, FeaturePlan, ProductWorkflowBrief) {
-	t.Helper()
+func workspaceRootProductPlanFixture() (string, FeaturePlan, ProductWorkflowBrief) {
+	ginkgo.GinkgoHelper()
 
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "pkg/feature.go"), "package pkg\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "pkg/feature_test.go"), "package pkg\n")
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "pkg/feature.go"), "package pkg\n")
+	mkdirAndWriteFile(filepath.Join(root, "pkg/feature_test.go"), "package pkg\n")
 
 	plan := validProductContextPlan()
 
@@ -1044,7 +978,7 @@ func workspaceRootProductPlanFixture(t *testing.T) (string, FeaturePlan, Product
 	return root, plan, brief
 }
 
-func TestValidateProductPlanRequiresFilesToModifyCoverageAcrossAtoms(t *testing.T) {
+var _ = ginkgo.It("validate product plan requires files to modify coverage across atoms", func() {
 	plan := validProductContextPlan()
 	second := plan.Atoms[0]
 
@@ -1057,41 +991,33 @@ func TestValidateProductPlanRequiresFilesToModifyCoverageAcrossAtoms(t *testing.
 	brief.FilesToModify = append(brief.FilesToModify, "internal/labels/labels_extra.go")
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected missing Files to modify coverage to reject product plan")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected missing Files to modify coverage to reject product plan"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("internal/labels/labels_extra.go"), fmt.Sprintf("validation error should identify missing required Files to modify coverage, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("atom.required_edit_paths"), fmt.Sprintf("validation error should identify missing required Files to modify coverage, got %v", err))
 
-	if !strings.Contains(err.Error(), "internal/labels/labels_extra.go") ||
-		!strings.Contains(err.Error(), "atom.required_edit_paths") {
-
-		t.Fatalf("validation error should identify missing required Files to modify coverage, got %v", err)
-	}
-}
-
-func TestValidateProductPlanRejectsCommandNotAuthorizedByProductTDD(t *testing.T) {
-	root, plan, brief := workspaceRootProductPlanFixture(t)
+})
+var _ = ginkgo.It("validate product plan rejects command not authorized by product TDD", func() {
+	root, plan, brief := workspaceRootProductPlanFixture()
 
 	plan.Atoms[0].TestFirst.Commands = []string{"cd native && cmake --build . && ctest -R test_fluid_brewery_cascade --output-on-failure"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, root)
-	if err == nil || !strings.Contains(err.Error(), "not one of the source/product TDD commands") {
-		t.Fatalf("expected product TDD command provenance rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected product TDD command provenance rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("not one of the source/product TDD commands"), fmt.Sprintf("expected product TDD command provenance rejection, got %v", err))
 
-func TestValidateProductPlanRejectsTopLevelTDDCommandNotAuthorizedByProductTDD(t *testing.T) {
-	root, plan, brief := workspaceRootProductPlanFixture(t)
+})
+var _ = ginkgo.It("validate product plan rejects top level TDD command not authorized by product TDD", func() {
+	root, plan, brief := workspaceRootProductPlanFixture()
 
 	plan.TDDContract.Obligations[0].Command = "cd native && cmake --build . && ctest -R test_fluid_brewery_cascade --output-on-failure"
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, root)
-	if err == nil || !strings.Contains(err.Error(), "not the source/product TDD command") {
-		t.Fatalf("expected top-level product TDD command provenance rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected top-level product TDD command provenance rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("not the source/product TDD command"), fmt.Sprintf("expected top-level product TDD command provenance rejection, got %v", err))
 
-func TestValidateProductPlanRejectsDemotedFilesToModifyBeforeNormalization(t *testing.T) {
+})
+var _ = ginkgo.It("validate product plan rejects demoted files to modify before normalization", func() {
 	plan := validProductContextPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go"}
@@ -1100,18 +1026,12 @@ func TestValidateProductPlanRejectsDemotedFilesToModifyBeforeNormalization(t *te
 	brief := validProductWorkflowBrief()
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected demoted Files to modify path to reject product plan")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected demoted Files to modify path to reject product plan"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("internal/labels/labels_test.go"), fmt.Sprintf("validation error should identify demoted Files to modify path, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("not omitted or demoted to allowed_edit_paths"), fmt.Sprintf("validation error should identify demoted Files to modify path, got %v", err))
 
-	if !strings.Contains(err.Error(), "internal/labels/labels_test.go") ||
-		!strings.Contains(err.Error(), "not omitted or demoted to allowed_edit_paths") {
-
-		t.Fatalf("validation error should identify demoted Files to modify path, got %v", err)
-	}
-}
-
-func TestValidateProductPlanRejectsFilesToModifyAllowedInAnotherAtom(t *testing.T) {
+})
+var _ = ginkgo.It("validate product plan rejects files to modify allowed in another atom", func() {
 	plan := validProductContextPlan()
 	second := plan.Atoms[0]
 
@@ -1123,34 +1043,24 @@ func TestValidateProductPlanRejectsFilesToModifyAllowedInAnotherAtom(t *testing.
 	brief := validProductWorkflowBrief()
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected Files to modify path in allowed scope to reject product plan")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected Files to modify path in allowed scope to reject product plan"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("internal/labels/labels.go"), fmt.Sprintf("validation error should identify Files to modify allowed-scope demotion, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("must not appear in atom.allowed_edit_paths"), fmt.Sprintf("validation error should identify Files to modify allowed-scope demotion, got %v", err))
 
-	if !strings.Contains(err.Error(), "internal/labels/labels.go") ||
-		!strings.Contains(err.Error(), "must not appear in atom.allowed_edit_paths") {
-
-		t.Fatalf("validation error should identify Files to modify allowed-scope demotion, got %v", err)
-	}
-}
-
-func TestBuildPlannerPromptHidesSubmitShapeWhenProductBriefHasBlockers(t *testing.T) {
+})
+var _ = ginkgo.It("build planner prompt hides submit shape when product brief has blockers", func() {
 	brief := validProductWorkflowBrief()
 
 	brief.Blockers = []string{"implementation-affecting claim lacks resolved evidence"}
 
 	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), &brief)
+	gomega.Expect(prompt).NotTo(gomega.ContainSubstring(`Required submit_feature_plan shape`), fmt.Sprintf("prompt must not advertise submit_feature_plan while product blockers are open:\n%s", prompt))
+	gomega.Expect(prompt).NotTo(gomega.ContainSubstring(`"tool":"submit_feature_plan"`), fmt.Sprintf("prompt must not advertise submit_feature_plan while product blockers are open:\n%s", prompt))
+	gomega.Expect(prompt).To(gomega.ContainSubstring("unresolved blockers"), fmt.Sprintf("prompt should direct blocker repair through planner question:\n%s", prompt))
+	gomega.Expect(prompt).To(gomega.ContainSubstring("ask_planner_question"), fmt.Sprintf("prompt should direct blocker repair through planner question:\n%s", prompt))
 
-	if strings.Contains(prompt, `Required submit_feature_plan shape`) || strings.Contains(prompt, `"tool":"submit_feature_plan"`) {
-		t.Fatalf("prompt must not advertise submit_feature_plan while product blockers are open:\n%s", prompt)
-	}
-
-	if !strings.Contains(prompt, "unresolved blockers") || !strings.Contains(prompt, "ask_planner_question") {
-		t.Fatalf("prompt should direct blocker repair through planner question:\n%s", prompt)
-	}
-}
-
-func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *testing.T) {
+})
+var _ = ginkgo.It("build planner prompt product example uses non authoritative placeholders", func() {
 	brief := validProductWorkflowBrief()
 
 	brief.FilesToModify = []string{"internal/labels/labels.go"}
@@ -1179,28 +1089,17 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 		"context evidence only",
 		"allowed_edit_paths is still edit scope",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("product prompt missing %q:\n%s", want, prompt)
-		}
-	}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("product prompt missing %q:\n%s", want, prompt))
 
-	if strings.Contains(prompt, "internal/example/source.go") {
-		t.Fatalf("product prompt must not contain copyable fake source paths:\n%s", prompt)
 	}
-
-	if strings.Contains(prompt, `"path_test.go"`) {
-		t.Fatalf("product prompt must not contain copyable fake test artifact paths:\n%s", prompt)
-	}
+	gomega.Expect(strings.Contains(prompt, "internal/example/source.go")).To(gomega.BeFalse(), fmt.Sprintf("product prompt must not contain copyable fake source paths:\n%s", prompt))
+	gomega.Expect(strings.Contains(prompt, `"path_test.go"`)).To(gomega.BeFalse(), fmt.Sprintf("product prompt must not contain copyable fake test artifact paths:\n%s", prompt))
 
 	exampleStart := strings.Index(prompt, "Required submit_feature_plan shape:")
-	if exampleStart < 0 {
-		t.Fatalf("product prompt missing submit_feature_plan shape:\n%s", prompt)
-	}
+	gomega.Expect(exampleStart < 0).To(gomega.BeFalse(), fmt.Sprintf("product prompt missing submit_feature_plan shape:\n%s", prompt))
 
 	schemaExample := prompt[exampleStart:]
-	if strings.Contains(schemaExample, "go test ./...") {
-		t.Fatalf("product prompt schema example must not contain language-specific test command placeholders:\n%s", prompt)
-	}
+	gomega.Expect(strings.Contains(schemaExample, "go test ./...")).To(gomega.BeFalse(), fmt.Sprintf("product prompt schema example must not contain language-specific test command placeholders:\n%s", prompt))
 
 	for _, forbidden := range []string{
 		`"snapshot_id":"snap-tdd-`,
@@ -1208,13 +1107,11 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 		`"snapshot_digest":"sha256:..."`,
 		`"snapshot_digest":"sha256:placeholder`,
 	} {
-		if strings.Contains(schemaExample, forbidden) {
-			t.Fatalf("product prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(schemaExample, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("product prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt))
 
-func TestBuildPlannerPromptRendersAcceptedCoverageAsReadOnlyContext(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build planner prompt renders accepted coverage as read only context", func() {
 	brief := validProductWorkflowBrief()
 	brief.AcceptedCoverage = validAcceptedBehavioralCoverage()
 
@@ -1259,29 +1156,22 @@ func TestBuildPlannerPromptRendersAcceptedCoverageAsReadOnlyContext(t *testing.T
 		"VERIFY-1: contract (go test ./internal/workflows/featureplanner)",
 		"Do not include behavioral_coverage_draft or accepted_coverage in product-workflow-backed submissions",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("product prompt missing accepted coverage context %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("product prompt missing accepted coverage context %q:\n%s", want, prompt))
 
-func TestAcceptedCoveragePresentationUsesSharedSectionLabelsAndRows(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("accepted coverage presentation uses shared section labels and rows", func() {
 	coverage := validAcceptedBehavioralCoverage()
 
 	sections := AcceptedCoveragePresentation(coverage)
 	requirements := CoverageRowsBySection(sections, CoverageSectionRequirements)
-	if !slices.Contains(requirements, "REQ-1: When product behavior is requested, the system shall render it. (event-driven)") {
-		t.Fatalf("requirements projection missing accepted fact: %+v", requirements)
-	}
+	gomega.Expect(slices.Contains(requirements, "REQ-1: When product behavior is requested, the system shall render it. (event-driven)")).To(gomega.BeTrue(), fmt.Sprintf("requirements projection missing accepted fact: %+v", requirements))
 
 	scenarios := CoverageRowsBySection(sections, CoverageSectionScenarios)
-	if !slices.Contains(scenarios, "BDD-1: Given product workflow accepted coverage exists / When the plan is rendered / Then product behavior is rendered (concrete data)") {
-		t.Fatalf("scenario projection missing accepted fact: %+v", scenarios)
-	}
+	gomega.Expect(slices.Contains(scenarios, "BDD-1: Given product workflow accepted coverage exists / When the plan is rendered / Then product behavior is rendered (concrete data)")).To(gomega.BeTrue(), fmt.Sprintf("scenario projection missing accepted fact: %+v", scenarios))
+
 	surfaces := CoverageRowsBySection(sections, CoverageSectionSurfaceInventory)
-	if !slices.Contains(surfaces, "SURF-1: domain_logic [in_scope] - accepted product behavior is in scope") {
-		t.Fatalf("surface projection missing accepted fact: %+v", surfaces)
-	}
+	gomega.Expect(slices.Contains(surfaces, "SURF-1: domain_logic [in_scope] - accepted product behavior is in scope")).To(gomega.BeTrue(), fmt.Sprintf("surface projection missing accepted fact: %+v", surfaces))
 
 	labels := make([]string, 0, len(sections))
 	for _, section := range sections {
@@ -1294,13 +1184,11 @@ func TestAcceptedCoveragePresentationUsesSharedSectionLabelsAndRows(t *testing.T
 		CoverageSectionSecurityPrivacyRAGEvals,
 		CoverageSectionVerificationGates,
 	} {
-		if !slices.Contains(labels, want) {
-			t.Fatalf("projection missing shared section label %q in %+v", want, labels)
-		}
-	}
-}
+		gomega.Expect(slices.Contains(labels, want)).To(gomega.BeTrue(), fmt.Sprintf("projection missing shared section label %q in %+v", want, labels))
 
-func TestFeaturePlanCoveragePresentationUsesSharedDraftAndAcceptedRows(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("feature plan coverage presentation uses shared draft and accepted rows", func() {
 	plan := FeaturePlan{
 		TopLevelScope: TopLevelScope{Objective: "render behavior"},
 		BehavioralCoverageDraft: &BehavioralCoverageDraft{
@@ -1336,48 +1224,38 @@ func TestFeaturePlanCoveragePresentationUsesSharedDraftAndAcceptedRows(t *testin
 		"REQ-DRAFT: When a planner drafts coverage, the plan tab shall render it. (event-driven)",
 		"REQ-1: When product behavior is requested, the system shall render it. (event-driven)",
 	} {
-		if !slices.Contains(requirements, want) {
-			t.Fatalf("requirements missing shared row %q in %+v", want, requirements)
-		}
+		gomega.Expect(slices.Contains(requirements, want)).To(gomega.BeTrue(), fmt.Sprintf("requirements missing shared row %q in %+v", want, requirements))
+
 	}
 
 	rules := CoverageRowsBySection(sections, CoverageSectionRulesAndExamples)
-	if !slices.Contains(rules, "Example EX-DRAFT: draft example (concrete data)") {
-		t.Fatalf("rules/examples missing draft example row: %+v", rules)
-	}
+	gomega.Expect(slices.Contains(rules, "Example EX-DRAFT: draft example (concrete data)")).To(gomega.BeTrue(), fmt.Sprintf("rules/examples missing draft example row: %+v", rules))
 
 	scenarios := CoverageRowsBySection(sections, CoverageSectionScenarios)
-	if !slices.Contains(scenarios, "BDD-DRAFT: Given draft coverage exists / When the plan tab renders / Then draft behavior is visible (concrete data)") {
-		t.Fatalf("scenarios missing draft scenario row: %+v", scenarios)
-	}
-	surfaces := CoverageRowsBySection(sections, CoverageSectionSurfaceInventory)
-	if !slices.Contains(surfaces, "SURF-1: domain_logic [in_scope] - accepted product behavior is in scope") {
-		t.Fatalf("accepted surface missing shared row: %+v", surfaces)
-	}
-}
+	gomega.Expect(slices.Contains(scenarios, "BDD-DRAFT: Given draft coverage exists / When the plan tab renders / Then draft behavior is visible (concrete data)")).To(gomega.BeTrue(), fmt.Sprintf("scenarios missing draft scenario row: %+v", scenarios))
 
-func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.T) {
+	surfaces := CoverageRowsBySection(sections, CoverageSectionSurfaceInventory)
+	gomega.Expect(slices.Contains(surfaces, "SURF-1: domain_logic [in_scope] - accepted product behavior is in scope")).To(gomega.BeTrue(), fmt.Sprintf("accepted surface missing shared row: %+v", surfaces))
+
+})
+var _ = ginkgo.It("build planner prompt standalone uses language neutral placeholders", func() {
 	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), nil)
 	schemaStart := strings.Index(prompt, "Required submit_feature_plan shape:")
-	if schemaStart < 0 {
-		t.Fatalf("standalone prompt missing schema section:\n%s", prompt)
-	}
+	gomega.Expect(schemaStart < 0).To(gomega.BeFalse(), fmt.Sprintf("standalone prompt missing schema section:\n%s", prompt))
+
 	schemaEnd := strings.Index(prompt[schemaStart:], "Set tdd_contract.obligations")
-	if schemaEnd < 0 {
-		t.Fatalf("standalone prompt missing post-schema contract text:\n%s", prompt)
-	}
+	gomega.Expect(schemaEnd < 0).To(gomega.BeFalse(), fmt.Sprintf("standalone prompt missing post-schema contract text:\n%s", prompt))
+
 	schemaExample := prompt[schemaStart : schemaStart+schemaEnd]
 
 	for _, forbidden := range []string{"internal/example/source.go", "internal/example/source_test.go", "path_test.go", "go test ./...", "cmake --build", "ctest", "pytest", "make test"} {
-		if strings.Contains(schemaExample, forbidden) {
-			t.Fatalf("standalone schema example must not contain language-specific placeholder %q:\n%s", forbidden, schemaExample)
-		}
+		gomega.Expect(strings.Contains(schemaExample, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("standalone schema example must not contain language-specific placeholder %q:\n%s", forbidden, schemaExample))
+
 	}
 
 	for _, want := range []string{"project/source-file.ext", "project/test-file.ext", "project-specific-test-command", "SDD-ACCEPTANCE-1"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("standalone prompt missing neutral placeholder %q:\n%s", want, prompt)
-		}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("standalone prompt missing neutral placeholder %q:\n%s", want, prompt))
+
 	}
 
 	for _, want := range []string{
@@ -1389,9 +1267,8 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 		"every in-scope surface must map to concrete TDD obligations",
 		"evidence refs may support but not replace those obligations",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("standalone prompt missing schema invariant %q:\n%s", want, prompt)
-		}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("standalone prompt missing schema invariant %q:\n%s", want, prompt))
+
 	}
 
 	for _, forbidden := range []string{
@@ -1400,13 +1277,11 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 		`"snapshot_digest":"sha256:..."`,
 		`"snapshot_digest":"sha256:placeholder`,
 	} {
-		if strings.Contains(prompt, forbidden) {
-			t.Fatalf("standalone prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("standalone prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt))
 
-func TestBuildPlannerPromptIncludesPreviousPlanningBlockers(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build planner prompt includes previous planning blockers", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	state.Status = FeatureStatePlanningRepair
 	state.PlanningLoop.State = FeatureStatePlanningRepair
@@ -1418,13 +1293,11 @@ func TestBuildPlannerPromptIncludesPreviousPlanningBlockers(t *testing.T) {
 		"Previous planner blockers that must be repaired before resubmission",
 		"atom 0 missing sdd_refs",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("repair prompt missing blocker context %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("repair prompt missing blocker context %q:\n%s", want, prompt))
 
-func TestBuildPlannerPromptAdvertisesSourceSatisfiedNoEditGate(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build planner prompt advertises source satisfied no edit gate", func() {
 	prompt := BuildPlannerPrompt(
 		"Please first check whether the existing source already satisfies this. If it is already satisfied, report source-satisfied and do not edit.",
 		NewState("session", "check feature", "", 3, time.Unix(1, 0).UTC()),
@@ -1439,13 +1312,11 @@ func TestBuildPlannerPromptAdvertisesSourceSatisfiedNoEditGate(t *testing.T) {
 		"preserve that gate",
 		"Do not rewrite that request into unconditional implementation work.",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing source-satisfied contract %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("planner prompt missing source-satisfied contract %q:\n%s", want, prompt))
 
-func TestBuildPlannerPromptAdvertisesTypedPlannerQuestionAuthority(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build planner prompt advertises typed planner question authority", func() {
 	prompt := BuildPlannerPrompt(
 		"Implement scoped atom.",
 		NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC()),
@@ -1462,17 +1333,15 @@ func TestBuildPlannerPromptAdvertisesTypedPlannerQuestionAuthority(t *testing.T)
 		`do not label source-evidence or requirements questions as new_file_authorization`,
 		"paths inside requested_decision are explanatory text only and do not grant authority",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing typed planner-question authority contract %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("planner prompt missing typed planner-question authority contract %q:\n%s", want, prompt))
 
-func TestBuildPlannerPromptWithWorkspaceContextListsEstablishedCandidateFiles(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "src", "memory.py"), "class Memory:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_memory.py"), "def test_memory():\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[project]\nname = \"brain\"\n")
+	}
+})
+var _ = ginkgo.It("build planner prompt with workspace context lists established candidate files", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "src", "memory.py"), "class Memory:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_memory.py"), "def test_memory():\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "pyproject.toml"), "[project]\nname = \"brain\"\n")
 
 	prompt := BuildPlannerPromptWithWorkspaceContext(
 		"Update the plan for persistent memory and multi-repo support.",
@@ -1490,14 +1359,12 @@ func TestBuildPlannerPromptWithWorkspaceContextListsEstablishedCandidateFiles(t 
 		"Localize required_edit_paths/test_artifact_paths from these candidates",
 		"propose exact new paths for operator approval instead of asking which existing files to edit",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing workspace context %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("planner prompt missing workspace context %q:\n%s", want, prompt))
 
-func TestBuildPlannerPromptWithWorkspaceContextTellsGreenfieldPlannerToProposePaths(t *testing.T) {
-	root := t.TempDir()
+	}
+})
+var _ = ginkgo.It("build planner prompt with workspace context tells greenfield planner to propose paths", func() {
+	root := ginkgo.GinkgoT().TempDir()
 
 	prompt := BuildPlannerPromptWithWorkspaceContext(
 		"Work out an MVP for an LLM brain.",
@@ -1511,13 +1378,11 @@ func TestBuildPlannerPromptWithWorkspaceContextTellsGreenfieldPlannerToProposePa
 		"propose exact new repo-relative paths in the plan",
 		"do not ask the operator which existing source files should be edited",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing greenfield context %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("planner prompt missing greenfield context %q:\n%s", want, prompt))
 
-func TestBuildPlannerPromptForbidsStandaloneVerificationAndSignatureInvention(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build planner prompt forbids standalone verification and signature invention", func() {
 	prompt := BuildPlannerPrompt(
 		"Implement a source-localized atom.",
 		NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC()),
@@ -1532,13 +1397,11 @@ func TestBuildPlannerPromptForbidsStandaloneVerificationAndSignatureInvention(t 
 		"require exact signature/source verification first",
 		"block on signature mismatch rather than inventing arguments",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing standalone invention guard %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("planner prompt missing standalone invention guard %q:\n%s", want, prompt))
 
-func TestBuildPlannerPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build planner prompt carries accepted source authority constraints", func() {
 	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
 	state.AuthorityDeltas = []PlanAuthorityDelta{{
 		QuestionID:     "q-source",
@@ -1564,13 +1427,11 @@ func TestBuildPlannerPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.
 		"Use only these accepted source facts for helper signatures and source-localized call shapes.",
 		"Remove or generalize any helper/method call in atom prompts that is not explicitly covered here",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing accepted-source constraint %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("planner prompt missing accepted-source constraint %q:\n%s", want, prompt))
 
-func TestBuildImplementorPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build implementor prompt carries accepted source authority constraints", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Use FluidNetworkSystem::find_connected_cistern_with_volume(network_id, water_volume), but do not invent deduction helpers."
 	deltas := []PlanAuthorityDelta{{
@@ -1603,17 +1464,13 @@ func TestBuildImplementorPromptCarriesAcceptedSourceAuthorityConstraints(t *test
 		"signature: EntityID FluidNetworkSystem::find_connected_cistern_with_volume",
 		"Do not invent deduction helpers",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("implementor prompt missing accepted-source constraint %q:\n%s", want, prompt)
-		}
-	}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("implementor prompt missing accepted-source constraint %q:\n%s", want, prompt))
 
-	if strings.Index(prompt, "Accepted source authority constraints:") > strings.Index(prompt, "Atom implementation brief:") {
-		t.Fatalf("accepted-source constraints must precede atom prose:\n%s", prompt)
 	}
-}
+	gomega.Expect(strings.Index(prompt, "Accepted source authority constraints:") > strings.Index(prompt, "Atom implementation brief:")).To(gomega.BeFalse(), fmt.Sprintf("accepted-source constraints must precede atom prose:\n%s", prompt))
 
-func TestFormatStateSummaryShowsTypedAnswerFormatForAcceptedSourceQuestion(t *testing.T) {
+})
+var _ = ginkgo.It("format state summary shows typed answer format for accepted source question", func() {
 	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
 	state.Status = FeatureStatePlanningQuestion
 	state.OpenQuestions = []PlannerQuestion{{
@@ -1630,69 +1487,71 @@ func TestFormatStateSummaryShowsTypedAnswerFormatForAcceptedSourceQuestion(t *te
 		`answer_format: JSON object with answer, answer_source_kind="accepted_source", evidence_refs, and source_facts [{path, symbol, signature}]`,
 		"next: answer_planner_question",
 	} {
-		if !strings.Contains(summary, want) {
-			t.Fatalf("state summary missing typed-answer guidance %q:\n%s", want, summary)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(summary, want)).To(gomega.BeTrue(), fmt.Sprintf("state summary missing typed-answer guidance %q:\n%s", want, summary))
 
-func TestValidatePlanRejectsPromptPathOutsideDeclaredScope(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan rejects prompt path outside declared scope", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Edit internal/labels/labels.go and wire native/src/simulation/machines/machine.cpp for recipe start."
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "native/src/simulation/machines/machine.cpp") || !strings.Contains(err.Error(), "outside required_edit_paths") {
-		t.Fatalf("expected prompt path scope rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected prompt path scope rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("native/src/simulation/machines/machine.cpp"), fmt.Sprintf("expected prompt path scope rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("outside required_edit_paths"), fmt.Sprintf("expected prompt path scope rejection, got %v", err))
 
-func TestValidatePlanAllowsPromptPathDeclaredByVerificationCommand(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan allows prompt path declared by verification command", func() {
 	plan := validPlan()
 	command := "cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"
 	plan.Atoms[0].Prompt = "Verify with: " + command
 	plan.Atoms[0].TestFirst.Commands = []string{command}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{command}
+	{
 
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
-		t.Fatalf("prompt command paths declared by test commands should pass: %v", err)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("prompt command paths declared by test commands should pass: %v", err))
 	}
-}
 
-func TestValidatePlanRejectsGuessedHelperCallWithoutSignatureEvidence(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan rejects guessed helper call without signature evidence", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Call find_connected_cistern_with_volume(eid) before posting fallback water haul."
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") || !strings.Contains(err.Error(), "source-verified signature") {
-		t.Fatalf("expected guessed helper-call rejection, got %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected guessed helper-call rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("find_connected_cistern_with_volume(eid)"), fmt.Sprintf("expected guessed helper-call rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("source-verified signature"), fmt.Sprintf("expected guessed helper-call rejection, got %v", err))
 
 	plan.Atoms[0].Prompt = "Current source evidence: exact signature is EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required). Call it only with verified arguments."
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
-		t.Fatalf("model-authored signature prompt must not self-authorize helper calls, got %v", err)
+	{
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("model-authored signature prompt must not self-authorize helper calls, got %v", err))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("find_connected_cistern_with_volume"), fmt.Sprintf("model-authored signature prompt must not self-authorize helper calls, got %v", err))
 	}
-}
 
-func TestValidatePlanRejectsModelAuthoredSourceVerifiedSignaturesAfterMarker(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan rejects model authored source verified signatures after marker", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Source-verified signatures:\n- MachineSystem::try_consume_inputs(EntityID machine_id, const Recipe& recipe)\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n\nCall find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required)."
+	{
 
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
-		t.Fatalf("model-authored signature marker must not satisfy helper calls, got %v", err)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("model-authored signature marker must not satisfy helper calls, got %v", err))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("find_connected_cistern_with_volume"), fmt.Sprintf("model-authored signature marker must not satisfy helper calls, got %v", err))
 	}
-}
 
-func TestValidatePlanDoesNotLetSignatureMarkerSelfAuthorizeLaterCalls(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan does not let signature marker self authorize later calls", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Source-verified signatures:\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n- Call missing_helper(eid) before posting fallback water haul.\n\nCall missing_helper(eid) before posting fallback water haul."
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
-		t.Fatalf("signature marker must not authorize later prose calls, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("signature marker must not authorize later prose calls, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing_helper(eid)"), fmt.Sprintf("signature marker must not authorize later prose calls, got %v", err))
 
-func TestValidatePlanDoesNotTreatNegatedSignatureMarkerAsAuthority(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan does not treat negated signature marker as authority", func() {
 	for _, prompt := range []string{
 		"No source-verified signature: missing_helper(eid).\nCall missing_helper(eid) before posting fallback water haul.",
 		"unverified signature: missing_helper(eid).\nCall missing_helper(eid) before posting fallback water haul.",
@@ -1704,13 +1563,12 @@ func TestValidatePlanDoesNotTreatNegatedSignatureMarkerAsAuthority(t *testing.T)
 		plan.Atoms[0].Prompt = prompt
 
 		err := validatePlan(plan, plancontract.PlanExecutionContract{})
-		if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
-			t.Fatalf("negated signature marker must not authorize helper calls, got %v for prompt %q", err, prompt)
-		}
-	}
-}
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("negated signature marker must not authorize helper calls, got %v for prompt %q", err, prompt))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing_helper(eid)"), fmt.Sprintf("negated signature marker must not authorize helper calls, got %v for prompt %q", err, prompt))
 
-func TestPromptSignatureDeclarationsDoNotSelfAuthorizeLanguageNeutralSuffixes(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("prompt signature declarations do not self authorize language neutral suffixes", func() {
 	for _, prompt := range []string{
 		"Source-verified signatures:\n- func renderLabel(name string) string\n\nCall renderLabel(name).",
 		"Source-verified signatures:\n- fn helper(x: i32) -> bool\n\nCall helper(x).",
@@ -1718,14 +1576,15 @@ func TestPromptSignatureDeclarationsDoNotSelfAuthorizeLanguageNeutralSuffixes(t 
 	} {
 		plan := validPlan()
 		plan.Atoms[0].Prompt = prompt
+		{
 
-		if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil {
-			t.Fatalf("model-authored language-neutral signature must not authorize call for prompt %q", prompt)
+			err := validatePlan(plan, plancontract.PlanExecutionContract{})
+			gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("model-authored language-neutral signature must not authorize call for prompt %q", prompt))
 		}
-	}
-}
 
-func TestValidatePlanDoesNotTreatBareCallBulletAsSignatureDeclaration(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan does not treat bare call bullet as signature declaration", func() {
 	for _, bullet := range []string{
 		"- missing_helper(eid)",
 		"- missing_helper(eid) before fallback",
@@ -1735,13 +1594,12 @@ func TestValidatePlanDoesNotTreatBareCallBulletAsSignatureDeclaration(t *testing
 		plan.Atoms[0].Prompt = "Source-verified signatures:\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n" + bullet + "\n\nCall missing_helper(eid) before posting fallback water haul."
 
 		err := validatePlan(plan, plancontract.PlanExecutionContract{})
-		if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
-			t.Fatalf("bare call-shaped bullet must not authorize helper calls, got %v for bullet %q", err, bullet)
-		}
-	}
-}
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("bare call-shaped bullet must not authorize helper calls, got %v for bullet %q", err, bullet))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing_helper(eid)"), fmt.Sprintf("bare call-shaped bullet must not authorize helper calls, got %v for bullet %q", err, bullet))
 
-func TestValidatePlanAllowsFieldDescriptorParentheticalsInAtomPrompt(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan allows field descriptor parentheticals in atom prompt", func() {
 	for _, prompt := range []string{
 		"Use the source-verified helper, declared const(in native/src/simulation/economy/fluid_network_system.h), and deduct stored water.",
 		"Deduct the required water from the existing stored volume field(CisternComponent) without editing components.h.",
@@ -1754,14 +1612,15 @@ func TestValidatePlanAllowsFieldDescriptorParentheticalsInAtomPrompt(t *testing.
 		plan.Atoms[0].Prompt = prompt
 		plan.Atoms[0].EvidencePaths = append(plan.Atoms[0].EvidencePaths, "native/src/simulation/economy/fluid_network_system.h")
 		plan.Atoms[0].EvidencePaths = append(plan.Atoms[0].EvidencePaths, "native/src/core/components.h")
+		{
 
-		if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
-			t.Fatalf("field descriptor parenthetical should not require helper signature evidence, got %v for prompt %q", err, prompt)
+			err := validatePlan(plan, plancontract.PlanExecutionContract{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("field descriptor parenthetical should not require helper signature evidence, got %v for prompt %q", err, prompt))
 		}
-	}
-}
 
-func TestValidatePlanStillRejectsInventedDeductionHelper(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan still rejects invented deduction helper", func() {
 	for _, prompt := range []string{
 		"Call deduct_cistern_volume(cistern_id, required_water_volume) after selecting the cistern.",
 		"Call volume(cistern_id) after selecting the cistern.",
@@ -1770,23 +1629,20 @@ func TestValidatePlanStillRejectsInventedDeductionHelper(t *testing.T) {
 		plan.Atoms[0].Prompt = prompt
 
 		err := validatePlan(plan, plancontract.PlanExecutionContract{})
-		if err == nil {
-			t.Fatalf("invented helper should still require signature evidence for prompt %q", prompt)
-		}
-	}
-}
+		gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("invented helper should still require signature evidence for prompt %q", prompt))
 
-func TestValidatePlanRejectsGuessedHelperCallDespiteUnrelatedSourceEvidence(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate plan rejects guessed helper call despite unrelated source evidence", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Current source evidence: labels.go contains render_label(). Then call find_connected_cistern_with_volume(eid) before posting fallback water haul."
 
 	err := validatePlan(plan, plancontract.PlanExecutionContract{})
-	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") {
-		t.Fatalf("expected unrelated source evidence to not authorize guessed helper call, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected unrelated source evidence to not authorize guessed helper call, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("find_connected_cistern_with_volume(eid)"), fmt.Sprintf("expected unrelated source evidence to not authorize guessed helper call, got %v", err))
 
-func TestProductSourceFactRequiresAcceptedSourceAuthority(t *testing.T) {
+})
+var _ = ginkgo.It("product source fact requires accepted source authority", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Call find_connected_cistern_with_volume(eid) before posting fallback water haul."
 	brief := validProductWorkflowBrief()
@@ -1797,26 +1653,22 @@ func TestProductSourceFactRequiresAcceptedSourceAuthority(t *testing.T) {
 	}}
 
 	err := errors.Join(validateAtomPromptVerifiedCalls("atom 0", plan.Atoms[0], newAtomPromptGrounding(plan.Atoms[0], &brief))...)
-	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") {
-		t.Fatalf("source fact without accepted authority should not satisfy helper call, got %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("source fact without accepted authority should not satisfy helper call, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("find_connected_cistern_with_volume(eid)"), fmt.Sprintf("source fact without accepted authority should not satisfy helper call, got %v", err))
 
 	brief.SourceFacts[0].AuthorityRef = "accepted-source:q-1"
-	if err := errors.Join(validateAtomPromptVerifiedCalls("atom 0", plan.Atoms[0], newAtomPromptGrounding(plan.Atoms[0], &brief))...); err != nil {
-		t.Fatalf("accepted source fact should satisfy helper call: %v", err)
+	{
+		err := errors.Join(validateAtomPromptVerifiedCalls("atom 0", plan.Atoms[0], newAtomPromptGrounding(plan.Atoms[0], &brief))...)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("accepted source fact should satisfy helper call: %v", err))
 	}
-}
 
-func TestFeaturePlannerDoesNotTreatFailsRedAsHelperCall(t *testing.T) {
-	if plannerCallNeedsSignatureEvidence("fails", "red") {
-		t.Fatal("plain prose fails(red) must not require source signature evidence")
-	}
-	if !plannerCallNeedsSignatureEvidence("fail", "reason") {
-		t.Fatal("real fail(reason) helper call should still require source signature evidence")
-	}
-}
+})
+var _ = ginkgo.It("feature planner does not treat fails red as helper call", func() {
+	gomega.Expect(plannerCallNeedsSignatureEvidence("fails", "red")).To(gomega.BeFalse(), fmt.Sprint("plain prose fails(red) must not require source signature evidence"))
+	gomega.Expect(plannerCallNeedsSignatureEvidence("fail", "reason")).To(gomega.BeTrue(), fmt.Sprint("real fail(reason) helper call should still require source signature evidence"))
 
-func TestFeaturePlannerDoesNotTreatParentheticalExamplesAsHelperCalls(t *testing.T) {
+})
+var _ = ginkgo.It("feature planner does not treat parenthetical examples as helper calls", func() {
 	for _, tc := range []struct {
 		name string
 		args string
@@ -1825,40 +1677,33 @@ func TestFeaturePlannerDoesNotTreatParentheticalExamplesAsHelperCalls(t *testing
 		{name: "job", args: "i.e., return true without scheduling haul"},
 		{name: "ID", args: "e.g., from machine component"},
 	} {
-		if plannerCallNeedsSignatureEvidence(tc.name, tc.args) {
-			t.Fatalf("%s(%s) prose must not require source signature evidence", tc.name, tc.args)
-		}
-	}
+		gomega.Expect(plannerCallNeedsSignatureEvidence(tc.name, tc.args)).To(gomega.BeFalse(), fmt.Sprintf("%s(%s) prose must not require source signature evidence", tc.name, tc.args))
 
-	if !plannerCallNeedsSignatureEvidence("find_connected_cistern_with_volume", "network_id, volume_required") {
-		t.Fatal("real helper call with concrete args must still require source signature evidence")
 	}
-	if plannerCallNeedsSignatureEvidence("cover:", "1") {
-		t.Fatal("list prose cover:(1) must not require source signature evidence")
-	}
-}
+	gomega.Expect(plannerCallNeedsSignatureEvidence("find_connected_cistern_with_volume", "network_id, volume_required")).To(gomega.BeTrue(), fmt.Sprint("real helper call with concrete args must still require source signature evidence"))
+	gomega.Expect(plannerCallNeedsSignatureEvidence("cover:", "1")).To(gomega.BeFalse(), fmt.Sprint("list prose cover:(1) must not require source signature evidence"))
 
-func TestValidatePlanAllowsParentheticalExamplesInAtomPrompt(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan allows parenthetical examples in atom prompt", func() {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "When recipe needs water(e.g., recipe.requiresWater()), skip the haul job(i.e., return true without scheduling haul) using the machine ID(e.g., from machine component)."
+	{
 
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err != nil {
-		t.Fatalf("parenthetical examples must not be treated as helper calls: %v", err)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("parenthetical examples must not be treated as helper calls: %v", err))
 	}
-}
 
-func TestNormalizePlanPromptDeclarationsPromotesEvidenceOnlyPaths(t *testing.T) {
+})
+var _ = ginkgo.It("normalize plan prompt declarations promotes evidence only paths", func() {
 	plan := validPlan()
 	plan.Atoms[0].EvidencePaths = nil
 	plan.Atoms[0].Prompt = "Evidence-only path (do not edit): native/src/core/components.h"
 
 	normalized := NormalizePlanPromptDeclarations(plan)
-	if !slices.Contains(normalized.Atoms[0].EvidencePaths, "native/src/core/components.h") {
-		t.Fatalf("evidence-only prompt path was not promoted: %+v", normalized.Atoms[0].EvidencePaths)
-	}
-}
+	gomega.Expect(slices.Contains(normalized.Atoms[0].EvidencePaths, "native/src/core/components.h")).To(gomega.BeTrue(), fmt.Sprintf("evidence-only prompt path was not promoted: %+v", normalized.Atoms[0].EvidencePaths))
 
-func TestBuildPlannerPromptRendersSourceFactAnchors(t *testing.T) {
+})
+var _ = ginkgo.It("build planner prompt renders source fact anchors", func() {
 	brief := validProductWorkflowBrief()
 	brief.SourceFacts = []SourceFactBrief{{
 		Path:         "internal/labels/labels.go",
@@ -1868,31 +1713,27 @@ func TestBuildPlannerPromptRendersSourceFactAnchors(t *testing.T) {
 	}}
 
 	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), &brief)
+	gomega.Expect(strings.Contains(prompt, "anchor=func ShortLabel() string")).To(gomega.BeTrue(), fmt.Sprintf("planner prompt must render source fact anchors:\n%s", prompt))
 
-	if !strings.Contains(prompt, "anchor=func ShortLabel() string") {
-		t.Fatalf("planner prompt must render source fact anchors:\n%s", prompt)
-	}
-}
-
-func TestRepoPathsMentionedInTextIgnoresLabelsAndShorthand(t *testing.T) {
+})
+var _ = ginkgo.It("repo paths mentioned in text ignores labels and shorthand", func() {
 	text := "Write/Update MachineSystem using fluid_network_system.h/.cpp, fluid_network_system.h/cpp, native/src/simulation/economy/fluid_network_system.h/cpp, and native/src/core/components.h."
 
 	got := repoPathsMentionedInText(text)
-	if slices.Contains(got, "Write/Update") || slices.Contains(got, "fluid_network_system.h/.cpp") || slices.Contains(got, "fluid_network_system.h/cpp") {
-		t.Fatalf("fake or shorthand paths should be ignored, got %#v", got)
-	}
+	gomega.Expect(got).NotTo(gomega.ContainElement("Write/Update"), fmt.Sprintf("fake or shorthand paths should be ignored, got %#v", got))
+	gomega.Expect(got).NotTo(gomega.ContainElement("fluid_network_system.h/.cpp"), fmt.Sprintf("fake or shorthand paths should be ignored, got %#v", got))
+	gomega.Expect(got).NotTo(gomega.ContainElement("fluid_network_system.h/cpp"), fmt.Sprintf("fake or shorthand paths should be ignored, got %#v", got))
+
 	for _, want := range []string{
 		"native/src/core/components.h",
 		"native/src/simulation/economy/fluid_network_system.h",
 		"native/src/simulation/economy/fluid_network_system.cpp",
 	} {
-		if !slices.Contains(got, want) {
-			t.Fatalf("real repo path should be retained: want %q in %#v", want, got)
-		}
-	}
-}
+		gomega.Expect(slices.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("real repo path should be retained: want %q in %#v", want, got))
 
-func TestValidateAtomPromptPathScopeExpandsQualifiedHeaderSourceShorthand(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("validate atom prompt path scope expands qualified header source shorthand", func() {
 	atom := FeatureAtomPlan{
 		Prompt: "Modify native/src/simulation/economy/fluid_network_system.h/cpp.",
 		RequiredEditPaths: []string{
@@ -1900,49 +1741,46 @@ func TestValidateAtomPromptPathScopeExpandsQualifiedHeaderSourceShorthand(t *tes
 			"native/src/simulation/economy/fluid_network_system.cpp",
 		},
 	}
+	{
 
-	if errs := validateAtomPromptPathScope("atom 0", atom, newAtomPromptGrounding(atom, nil)); len(errs) != 0 {
-		t.Fatalf("scoped shorthand should pass validation, got %v", errs)
+		errs := validateAtomPromptPathScope("atom 0", atom, newAtomPromptGrounding(atom, nil))
+		gomega.Expect(len(errs)).To(gomega.Equal(0), fmt.Sprintf("scoped shorthand should pass validation, got %v", errs))
 	}
 
 	atom.RequiredEditPaths = nil
 	errs := validateAtomPromptPathScope("atom 0", atom, newAtomPromptGrounding(atom, nil))
-	if len(errs) != 2 {
-		t.Fatalf("unscoped shorthand should require both concrete paths, got %v", errs)
-	}
+	gomega.Expect(len(errs)).To(gomega.Equal(2), fmt.Sprintf("unscoped shorthand should require both concrete paths, got %v", errs))
+
 	joined := fmt.Sprint(errs)
 	for _, want := range []string{
 		`native/src/simulation/economy/fluid_network_system.h`,
 		`native/src/simulation/economy/fluid_network_system.cpp`,
 	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("unscoped shorthand error missing %q: %s", want, joined)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(joined, want)).To(gomega.BeTrue(), fmt.Sprintf("unscoped shorthand error missing %q: %s", want, joined))
 
-func TestCommandReferencedWorkspacePathsUsesCommandCWD(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("command referenced workspace paths uses command CWD", func() {
 	command := "cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"
 	got := commandReferencedWorkspacePaths(command)
 
 	for _, want := range []string{"native/tests", "bin/colony_tests", "native/tests/bin/colony_tests"} {
-		if !slices.Contains(got, want) {
-			t.Fatalf("command paths missing %q: %#v", want, got)
-		}
-	}
-}
+		gomega.Expect(slices.Contains(got, want)).To(gomega.BeTrue(), fmt.Sprintf("command paths missing %q: %#v", want, got))
 
-func TestValidateStandaloneWorkspaceUsesAcceptedSourceGroundingForFET33CShape(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void MachineSystem::tick_normal(float dt) {}\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/economy/fluid_network_system.h"), "EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const;\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/economy/fluid_network_system.cpp"), "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const { return INVALID_ENTITY; }\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/core/components.h"), "struct CisternComponent { int32_t stored; };\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "DefaultEnvironment()\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"brewery fluid cascade\") { CHECK(true); }\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\nexit 0\n")
-	if err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755); err != nil {
-		t.Fatalf("chmod colony_tests: %v", err)
+	}
+})
+var _ = ginkgo.It("validate standalone workspace uses accepted source grounding for FET33 c shape", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void MachineSystem::tick_normal(float dt) {}\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/economy/fluid_network_system.h"), "EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const;\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/economy/fluid_network_system.cpp"), "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const { return INVALID_ENTITY; }\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/core/components.h"), "struct CisternComponent { int32_t stored; };\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/SConstruct"), "DefaultEnvironment()\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"brewery fluid cascade\") { CHECK(true); }\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\nexit 0\n")
+	{
+		err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("chmod colony_tests: %v", err))
 	}
 
 	command := "cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"
@@ -1973,63 +1811,57 @@ func TestValidateStandaloneWorkspaceUsesAcceptedSourceGroundingForFET33CShape(t 
 		Revision:       1,
 		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
 	}})
+	{
 
-	if err := validatePlan(plan, plancontract.PlanExecutionContract{}); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(network_id, volume_required)") {
-		t.Fatalf("base plan should require source signature before accepted-source grounding, got %v", err)
+		err := validatePlan(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("base plan should require source signature before accepted-source grounding, got %v", err))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("find_connected_cistern_with_volume(network_id, volume_required)"), fmt.Sprintf("base plan should require source signature before accepted-source grounding, got %v", err))
 	}
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root, Contract: contract}); err != nil {
-		t.Fatalf("accepted source grounding should satisfy standalone workspace context: %v", err)
-	}
-}
+	{
 
-func TestParsePlannerOutputCoercesSingletonRequiredBeforeArray(t *testing.T) {
-	raw := strings.Replace(mustPlanJSON(t, validPlan()), `"required_before":"implementation"`, `"required_before":["implementation"]`, 1)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root, Contract: contract})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("accepted source grounding should satisfy standalone workspace context: %v", err))
+	}
+
+})
+var _ = ginkgo.It("parse planner output coerces singleton required before array", func() {
+	raw := strings.Replace(mustPlanJSON(validPlan()), `"required_before":"implementation"`, `"required_before":["implementation"]`, 1)
 
 	parsed, err := ParsePlannerOutput(raw)
-	if err != nil {
-		t.Fatalf("ParsePlannerOutput returned error: %v", err)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParsePlannerOutput returned error: %v", err))
+	{
+
+		got := parsed.Plan.TDDContract.Obligations[0].RequiredBefore
+		gomega.Expect(got).To(gomega.Equal("implementation"), fmt.Sprintf("RequiredBefore = %q, want implementation", got))
 	}
 
-	if got := parsed.Plan.TDDContract.Obligations[0].RequiredBefore; got != "implementation" {
-		t.Fatalf("RequiredBefore = %q, want implementation", got)
-	}
-}
-
-func TestParsePlannerOutputCoercesScalarAcceptanceString(t *testing.T) {
+})
+var _ = ginkgo.It("parse planner output coerces scalar acceptance string", func() {
 	raw := strings.Replace(
-		mustPlanJSON(t, validPlan()),
+		mustPlanJSON(validPlan()),
 		`"refs":["REQ-1"]`,
 		`"refs":["REQ-1"],"acceptance":"REQ-1 metric: works.; REQ-1 testability: covered."`,
 		1,
 	)
 
 	parsed, err := ParsePlannerOutput(raw)
-	if err != nil {
-		t.Fatalf("ParsePlannerOutput returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParsePlannerOutput returned error: %v", err))
 
 	want := []string{"REQ-1 metric: works.", "REQ-1 testability: covered."}
-	if got := parsed.Plan.SDDContract.Acceptance; !slices.Equal(got, want) {
-		t.Fatalf("Acceptance = %#v, want %#v", got, want)
+	{
+		got := parsed.Plan.SDDContract.Acceptance
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("Acceptance = %#v, want %#v", got, want))
 	}
-}
 
-func TestParsePlannerOutputAcceptsQuestionAlias(t *testing.T) {
+})
+var _ = ginkgo.It("parse planner output accepts question alias", func() {
 	parsed, err := ParsePlannerOutput(`{"tool":"ask_planner_question","question":"Which source paths should be used for the tooltip?"}`)
-	if err != nil {
-		t.Fatalf("ParsePlannerOutput returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParsePlannerOutput returned error: %v", err))
+	gomega.Expect(parsed.Kind).To(gomega.Equal(featureplannercontract.ToolAskPlannerQuestion), fmt.Sprintf("kind = %q, want ask_planner_question", parsed.Kind))
+	gomega.Expect(parsed.Question.QuestionSummary).To(gomega.Equal("Which source paths should be used for the tooltip?"), fmt.Sprintf("question summary not populated from alias: %+v", parsed.Question))
 
-	if parsed.Kind != featureplannercontract.ToolAskPlannerQuestion {
-		t.Fatalf("kind = %q, want ask_planner_question", parsed.Kind)
-	}
-
-	if parsed.Question.QuestionSummary != "Which source paths should be used for the tooltip?" {
-		t.Fatalf("question summary not populated from alias: %+v", parsed.Question)
-	}
-}
-
-func TestValidatePlannerQuestionRejectsPathAuthorityWithoutAffectedPaths(t *testing.T) {
+})
+var _ = ginkgo.It("validate planner question rejects path authority without affected paths", func() {
 	question := PlannerQuestion{
 		ID:                "q-new-file",
 		QuestionSummary:   "Authorize new helper",
@@ -2043,12 +1875,11 @@ func TestValidatePlannerQuestionRejectsPathAuthorityWithoutAffectedPaths(t *test
 	}
 
 	err := ValidatePlannerQuestion(question)
-	if err == nil || !strings.Contains(err.Error(), "path-level authority requires affected_paths") {
-		t.Fatalf("expected affected_paths validation error, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected affected_paths validation error, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("path-level authority requires affected_paths"), fmt.Sprintf("expected affected_paths validation error, got %v", err))
 
-func TestApplyPlannerOutputDemotesUnanchoredPathAuthorityQuestion(t *testing.T) {
+})
+var _ = ginkgo.It("apply planner output demotes unanchored path authority question", func() {
 	state := NewState("session", "work out an MVP", "", 3, time.Unix(1, 0).UTC())
 	parsed, err := ParsePlannerOutput(`{
 		"tool": "ask_planner_question",
@@ -2060,35 +1891,22 @@ func TestApplyPlannerOutputDemotesUnanchoredPathAuthorityQuestion(t *testing.T) 
 		"required_before": "plan_approval",
 		"affected_fields": ["new_file_authorization", "verification_command"]
 	}`)
-	if err != nil {
-		t.Fatalf("ParsePlannerOutput returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParsePlannerOutput returned error: %v", err))
 
 	events := ApplyPlannerOutput(&state, parsed, time.Unix(2, 0).UTC())
-	if state.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", state.Status, state.Blockers)
-	}
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected planner_question_opened event, got %+v", events)
-	}
-	if len(state.Blockers) != 0 {
-		t.Fatalf("unexpected blockers after demotion: %+v", state.Blockers)
-	}
-	if len(state.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", state.OpenQuestions)
-	}
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", state.Status, state.Blockers))
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("expected planner_question_opened event, got %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected planner_question_opened event, got %+v", events))
+	gomega.Expect(len(state.Blockers)).To(gomega.Equal(0), fmt.Sprintf("unexpected blockers after demotion: %+v", state.Blockers))
+	gomega.Expect(len(state.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", state.OpenQuestions))
 
 	question := state.OpenQuestions[0]
-	if containsString(question.AffectedFields, "new_file_authorization") {
-		t.Fatalf("unanchored path authority should not survive intake: %+v", question)
-	}
-	if !containsString(question.AffectedFields, "requirements_scope") ||
-		!containsString(question.AffectedFields, "verification_command") {
-		t.Fatalf("question should remain a requirements question: %+v", question)
-	}
-}
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeFalse(), fmt.Sprintf("unanchored path authority should not survive intake: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "requirements_scope")).To(gomega.BeTrue(), fmt.Sprintf("question should remain a requirements question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "verification_command")).To(gomega.BeTrue(), fmt.Sprintf("question should remain a requirements question: %+v", question))
 
-func TestValidatePlannerQuestionSourceLocalizationIsNotPathAuthority(t *testing.T) {
+})
+var _ = ginkgo.It("validate planner question source localization is not path authority", func() {
 	sourceQuestion := PlannerQuestion{
 		ID:                "q-source",
 		QuestionSummary:   "Provide source-localized scope",
@@ -2100,18 +1918,21 @@ func TestValidatePlannerQuestionSourceLocalizationIsNotPathAuthority(t *testing.
 		Status:            "open",
 		AffectedFields:    []string{"source_localization"},
 	}
+	{
 
-	if err := ValidatePlannerQuestion(sourceQuestion); err != nil {
-		t.Fatalf("source localization should not require affected_paths: %v", err)
+		err := ValidatePlannerQuestion(sourceQuestion)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("source localization should not require affected_paths: %v", err))
 	}
 
 	sourceQuestion.AffectedFields = []string{"new_file_authorization"}
-	if err := ValidatePlannerQuestion(sourceQuestion); err == nil || !strings.Contains(err.Error(), "path-level authority requires affected_paths") {
-		t.Fatalf("new-file authorization should require affected_paths, got %v", err)
+	{
+		err := ValidatePlannerQuestion(sourceQuestion)
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("new-file authorization should require affected_paths, got %v", err))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("path-level authority requires affected_paths"), fmt.Sprintf("new-file authorization should require affected_paths, got %v", err))
 	}
-}
 
-func TestValidatePlannerQuestionRejectsOperatorOwnedSourceFileDiscovery(t *testing.T) {
+})
+var _ = ginkgo.It("validate planner question rejects operator owned source file discovery", func() {
 	question := PlannerQuestion{
 		ID:                "q-source-paths",
 		QuestionSummary:   "What existing source files or test files should be edited?",
@@ -2125,12 +1946,11 @@ func TestValidatePlannerQuestionRejectsOperatorOwnedSourceFileDiscovery(t *testi
 	}
 
 	err := ValidatePlannerQuestion(question)
-	if err == nil || !strings.Contains(err.Error(), "must not ask the operator to discover existing source or test paths") {
-		t.Fatalf("expected source discovery delegation rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected source discovery delegation rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("must not ask the operator to discover existing source or test paths"), fmt.Sprintf("expected source discovery delegation rejection, got %v", err))
 
-func TestApplyPlannerOutputRejectsSourcePathDiscoveryQuestionBeforeChat(t *testing.T) {
+})
+var _ = ginkgo.It("apply planner output rejects source path discovery question before chat", func() {
 	state := NewState("session", "build llm brain", "", 3, time.Unix(1, 0).UTC())
 	parsed, err := ParsePlannerOutput(`{
 		"tool": "ask_planner_question",
@@ -2142,46 +1962,30 @@ func TestApplyPlannerOutputRejectsSourcePathDiscoveryQuestionBeforeChat(t *testi
 		"required_before": "plan_approval",
 		"affected_fields": ["requirements_scope", "source_localization"]
 	}`)
-	if err != nil {
-		t.Fatalf("ParsePlannerOutput returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParsePlannerOutput returned error: %v", err))
 
 	events := ApplyPlannerOutput(&state, parsed, time.Unix(2, 0).UTC())
-	if state.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair", state.Status)
-	}
-	if len(state.OpenQuestions) != 0 {
-		t.Fatalf("invalid source discovery question should not open chat question: %+v", state.OpenQuestions)
-	}
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_rejected" {
-		t.Fatalf("expected planner_question_rejected event, got %+v", events)
-	}
-	if !strings.Contains(strings.Join(state.Blockers, "\n"), "must not ask the operator to discover existing source or test paths") {
-		t.Fatalf("state blockers missing source-discovery rejection: %+v", state.Blockers)
-	}
-}
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair", state.Status))
+	gomega.Expect(len(state.OpenQuestions)).To(gomega.Equal(0), fmt.Sprintf("invalid source discovery question should not open chat question: %+v", state.OpenQuestions))
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("expected planner_question_rejected event, got %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.planner_question_rejected"), fmt.Sprintf("expected planner_question_rejected event, got %+v", events))
+	gomega.Expect(strings.Contains(strings.Join(state.Blockers, "\n"), "must not ask the operator to discover existing source or test paths")).To(gomega.BeTrue(), fmt.Sprintf("state blockers missing source-discovery rejection: %+v", state.Blockers))
 
-func TestParsePlannerOutputAcceptsSourceSatisfiedCloseout(t *testing.T) {
+})
+var _ = ginkgo.It("parse planner output accepts source satisfied closeout", func() {
 	raw := `{"tool":"source_satisfied","summary":"tooltip already shows contributors","reason":"current helper contains the score breakdown","evidence_paths":["scripts/ui/ui_helpers.gd"],"test_paths":["tests/e2e/suites/ui_overhaul_suite.gd"],"anchors":[{"path":"scripts/ui/ui_helpers.gd","text":"Quality contributors:"}]}`
 
 	parsed, err := ParsePlannerOutput(raw)
-	if err != nil {
-		t.Fatalf("ParsePlannerOutput returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParsePlannerOutput returned error: %v", err))
+	gomega.Expect(parsed.Kind).To(gomega.Equal(featureplannercontract.ToolSourceSatisfied), fmt.Sprintf("kind = %q, want source_satisfied", parsed.Kind))
+	gomega.Expect(parsed.SourceSatisfied.Summary).To(gomega.Equal("tooltip already shows contributors"), fmt.Sprintf("unexpected source-satisfied payload: %+v", parsed.SourceSatisfied))
+	gomega.Expect(parsed.SourceSatisfied.EvidencePaths).To(gomega.Equal([]string{"scripts/ui/ui_helpers.gd"}), fmt.Sprintf("unexpected source-satisfied payload: %+v", parsed.SourceSatisfied))
 
-	if parsed.Kind != featureplannercontract.ToolSourceSatisfied {
-		t.Fatalf("kind = %q, want source_satisfied", parsed.Kind)
-	}
-
-	if parsed.SourceSatisfied.Summary != "tooltip already shows contributors" || !slices.Equal(parsed.SourceSatisfied.EvidencePaths, []string{"scripts/ui/ui_helpers.gd"}) {
-		t.Fatalf("unexpected source-satisfied payload: %+v", parsed.SourceSatisfied)
-	}
-}
-
-func TestRunSourceSatisfiedCloseoutSkipsAtomDispatch(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "scripts/ui/ui_helpers.gd"), "func build_item_detail_tooltip():\n\tprint(\"Quality contributors:\")\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
+})
+var _ = ginkgo.It("run source satisfied closeout skips atom dispatch", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "scripts/ui/ui_helpers.gd"), "func build_item_detail_tooltip():\n\tprint(\"Quality contributors:\")\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
 
 	state := NewState("session", "check first", "", 3, time.Unix(1, 0).UTC())
 
@@ -2190,31 +1994,20 @@ func TestRunSourceSatisfiedCloseoutSkipsAtomDispatch(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("source-satisfied planner closeout must not dispatch an atom")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("source-satisfied planner closeout must not dispatch an atom"))
 
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["scripts/ui/ui_helpers.gd"],"test_paths":["tests/e2e/suites/ui_overhaul_suite.gd"],"anchors":[{"path":"scripts/ui/ui_helpers.gd","text":"Quality contributors:"},{"path":"tests/e2e/suites/ui_overhaul_suite.gd","text":"extends RefCounted"}]}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateSourceSatisfied), fmt.Sprintf("state.Status = %q, want source-satisfied; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.State.Atoms).To(gomega.HaveLen(0), fmt.Sprintf("source-satisfied closeout should not create dispatch state: atoms=%+v active=%+v", result.State.Atoms, result.State.ActiveRuns))
+	gomega.Expect(result.State.ActiveRuns).To(gomega.HaveLen(0), fmt.Sprintf("source-satisfied closeout should not create dispatch state: atoms=%+v active=%+v", result.State.Atoms, result.State.ActiveRuns))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("events = %+v, want planner source-satisfied event", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal(featureplannercontract.EventName(featureplannercontract.EventPlannerSourceSatisfied)), fmt.Sprintf("events = %+v, want planner source-satisfied event", result.Events))
 
-	if result.State.Status != FeatureStateSourceSatisfied {
-		t.Fatalf("state.Status = %q, want source-satisfied; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-
-	if len(result.State.Atoms) != 0 || len(result.State.ActiveRuns) != 0 {
-		t.Fatalf("source-satisfied closeout should not create dispatch state: atoms=%+v active=%+v", result.State.Atoms, result.State.ActiveRuns)
-	}
-
-	if len(result.Events) != 1 || result.Events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerSourceSatisfied) {
-		t.Fatalf("events = %+v, want planner source-satisfied event", result.Events)
-	}
-}
-
-func TestRunRejectsSourceSatisfiedMissingWorkspaceEvidence(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run rejects source satisfied missing workspace evidence", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	state := NewState("session", "check first", "", 3, time.Unix(1, 0).UTC())
 
 	result, err := Run(state, RunOptions{
@@ -2222,28 +2015,18 @@ func TestRunRejectsSourceSatisfiedMissingWorkspaceEvidence(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("invalid source-satisfied closeout must not dispatch an atom")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("invalid source-satisfied closeout must not dispatch an atom"))
 
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["missing.gd"],"anchors":[{"path":"missing.gd","text":"Quality contributors:"}]}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair", result.State.Status))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "missing.gd")).To(gomega.BeTrue(), fmt.Sprintf("blocker should name missing evidence path: %+v", result.State.Blockers))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "missing.gd") {
-		t.Fatalf("blocker should name missing evidence path: %+v", result.State.Blockers)
-	}
-}
-
-func TestRunRejectsSourceSatisfiedWithoutAnchors(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "scripts/ui/ui_helpers.gd"), "Quality contributors:\n")
+})
+var _ = ginkgo.It("run rejects source satisfied without anchors", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "scripts/ui/ui_helpers.gd"), "Quality contributors:\n")
 
 	state := NewState("session", "check first", "", 3, time.Unix(1, 0).UTC())
 
@@ -2252,28 +2035,18 @@ func TestRunRejectsSourceSatisfiedWithoutAnchors(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("invalid source-satisfied closeout must not dispatch an atom")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("invalid source-satisfied closeout must not dispatch an atom"))
 
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["scripts/ui/ui_helpers.gd"]}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair", result.State.Status))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "source_satisfied missing anchors")).To(gomega.BeTrue(), fmt.Sprintf("blocker should require anchors: %+v", result.State.Blockers))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "source_satisfied missing anchors") {
-		t.Fatalf("blocker should require anchors: %+v", result.State.Blockers)
-	}
-}
-
-func TestRunRejectsSourceSatisfiedMissingAnchorText(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "scripts/ui/ui_helpers.gd"), "func build_item_detail_tooltip(): pass\n")
+})
+var _ = ginkgo.It("run rejects source satisfied missing anchor text", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "scripts/ui/ui_helpers.gd"), "func build_item_detail_tooltip(): pass\n")
 
 	state := NewState("session", "check first", "", 3, time.Unix(1, 0).UTC())
 
@@ -2282,29 +2055,19 @@ func TestRunRejectsSourceSatisfiedMissingAnchorText(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("invalid source-satisfied closeout must not dispatch an atom")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("invalid source-satisfied closeout must not dispatch an atom"))
 
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["scripts/ui/ui_helpers.gd"],"anchors":[{"path":"scripts/ui/ui_helpers.gd","text":"Quality contributors:"}]}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair", result.State.Status))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "anchor text not found")).To(gomega.BeTrue(), fmt.Sprintf("blocker should require present anchor text: %+v", result.State.Blockers))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "anchor text not found") {
-		t.Fatalf("blocker should require present anchor text: %+v", result.State.Blockers)
-	}
-}
-
-func TestRunPreservesSourceSatisfiedGateInDispatchedAtomPrompt(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "scripts/ui/ui_helpers.gd"), "Quality contributors:\n")
+})
+var _ = ginkgo.It("run preserves source satisfied gate in dispatched atom prompt", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
+	mkdirAndWriteFile(filepath.Join(root, "scripts/ui/ui_helpers.gd"), "Quality contributors:\n")
 
 	plan := validPlan()
 
@@ -2328,28 +2091,19 @@ func TestRunPreservesSourceSatisfiedGateInDispatchedAtomPrompt(t *testing.T) {
 			return testPlanExecuteSourceSatisfiedJSONForPrompt(prompt), nil
 		}
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers))
 
 	for _, want := range []string{"Before editing, verify", "Decision: source-satisfied", "do not edit"} {
-		if !strings.Contains(implementorPrompt, want) {
-			t.Fatalf("implementor prompt missing preserved gate %q:\n%s", want, implementorPrompt)
-		}
-	}
+		gomega.Expect(strings.Contains(implementorPrompt, want)).To(gomega.BeTrue(), fmt.Sprintf("implementor prompt missing preserved gate %q:\n%s", want, implementorPrompt))
 
-	if !strings.Contains(result.State.Atoms[0].Prompt, "Decision: source-satisfied") {
-		t.Fatalf("persisted atom prompt did not preserve source-satisfied gate: %q", result.State.Atoms[0].Prompt)
 	}
-}
+	gomega.Expect(strings.Contains(result.State.Atoms[0].Prompt, "Decision: source-satisfied")).To(gomega.BeTrue(), fmt.Sprintf("persisted atom prompt did not preserve source-satisfied gate: %q", result.State.Atoms[0].Prompt))
 
-func TestValidatePlanProductWorkflowContextRejectsUngroundedTestArtifacts(t *testing.T) {
+})
+var _ = ginkgo.It("validate plan product workflow context rejects ungrounded test artifacts", func() {
 	plan := validProductContextPlan()
 
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"path_test.go"}
@@ -2358,48 +2112,40 @@ func TestValidatePlanProductWorkflowContextRejectsUngroundedTestArtifacts(t *tes
 	brief := validProductWorkflowBrief()
 
 	err := ValidatePlanProductWorkflowContext(plan, brief, "")
-	if err == nil {
-		t.Fatal("expected ungrounded test artifact validation error")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected ungrounded test artifact validation error"))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("test artifact path"), fmt.Sprintf("validation error should identify ungrounded test artifact path, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("path_test.go"), fmt.Sprintf("validation error should identify ungrounded test artifact path, got %v", err))
 
-	if !strings.Contains(err.Error(), "test artifact path") || !strings.Contains(err.Error(), "path_test.go") {
-		t.Fatalf("validation error should identify ungrounded test artifact path, got %v", err)
-	}
-}
-
-func TestValidatePlanStandaloneWorkspaceContextRejectsMissingInventedPaths(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate plan standalone workspace context rejects missing invented paths", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"src/ui/economy_masterwork_tooltip.gd"}
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
 
-	mkdirAndWriteFile(t, filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
 		WorkspaceRoot: root,
 	})
-	if err == nil {
-		t.Fatal("expected missing standalone path validation error")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected missing standalone path validation error"))
 
 	for _, want := range []string{
 		"src/ui/economy_masterwork_tooltip.gd",
 		"missing from the workspace",
 		"not authorized as a new file",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestValidatePlanStandaloneWorkspaceContextAllowsExplicitNewFileAndTestCreation(t *testing.T) {
-	root := t.TempDir()
+	}
+})
+var _ = ginkgo.It("validate plan standalone workspace context allows explicit new file and test creation", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
 
 	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go"}
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
@@ -2416,16 +2162,17 @@ func TestValidatePlanStandaloneWorkspaceContextAllowsExplicitNewFileAndTestCreat
 		Revision:       1,
 		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
 	}})
+	{
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
-		WorkspaceRoot: root,
-		Contract:      contract,
-	}); err != nil {
-		t.Fatalf("typed new-file/test authority should be allowed, got %v", err)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+			WorkspaceRoot: root,
+			Contract:      contract,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("typed new-file/test authority should be allowed, got %v", err))
 	}
-}
 
-func TestCompilePlanAuthorityContractDoesNotAuthorizeNewFileFromPathOnlyDelta(t *testing.T) {
+})
+var _ = ginkgo.It("compile plan authority contract does not authorize new file from path only delta", func() {
 	plan := validPlan()
 	contract := CompilePlanAuthorityContract(plan, []PlanAuthorityDelta{{
 		QuestionID:    "q-new-files",
@@ -2437,16 +2184,13 @@ func TestCompilePlanAuthorityContractDoesNotAuthorizeNewFileFromPathOnlyDelta(t 
 		Revision:      1,
 		CreatedAt:     time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
 	}})
+	gomega.Expect(len(contract.AuthorizedNewFiles)).To(gomega.Equal(0), fmt.Sprintf("path-only authority delta must not authorize new files: %+v", contract.AuthorizedNewFiles))
 
-	if len(contract.AuthorizedNewFiles) != 0 {
-		t.Fatalf("path-only authority delta must not authorize new files: %+v", contract.AuthorizedNewFiles)
-	}
-}
-
-func TestValidatePlanStandaloneWorkspaceContextDoesNotExistenceGateTDDMetadata(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+})
+var _ = ginkgo.It("validate plan standalone workspace context does not existence gate TDD metadata", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
 
 	plan := validPlan()
 
@@ -2454,16 +2198,17 @@ func TestValidatePlanStandaloneWorkspaceContextDoesNotExistenceGateTDDMetadata(t
 	plan.Atoms[0].AllowedEditPaths = nil
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"internal/workflows/productworkflow/coverage_gate_test.go"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"internal/workflows/productworkflow/coverage_gate_test.go"}
+	{
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
-		WorkspaceRoot: root,
-	}); err != nil {
-		t.Fatalf("standalone validation should not require TDD artifact metadata to exist in target workspace: %v", err)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+			WorkspaceRoot: root,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("standalone validation should not require TDD artifact metadata to exist in target workspace: %v", err))
 	}
-}
 
-func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run rejects standalone missing workspace path before dispatch", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"project/scripts/economy/score_breakdown.gd"}
@@ -2471,7 +2216,7 @@ func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
 
-	mkdirAndWriteFile(t, filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
 
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
@@ -2480,35 +2225,20 @@ func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone workspace validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone workspace validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(len(result.State.Atoms)).To(gomega.Equal(0), fmt.Sprintf("invalid standalone plan should not compile atoms: %+v", result.State.Atoms))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("expected standalone context blocked event, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected standalone context blocked event, got %+v", result.Events))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "project/scripts/economy/score_breakdown.gd")).To(gomega.BeTrue(), fmt.Sprintf("blocker should name invented path: %+v", result.State.Blockers))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-
-	if len(result.State.Atoms) != 0 {
-		t.Fatalf("invalid standalone plan should not compile atoms: %+v", result.State.Atoms)
-	}
-
-	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
-		t.Fatalf("expected standalone context blocked event, got %+v", result.Events)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "project/scripts/economy/score_breakdown.gd") {
-		t.Fatalf("blocker should name invented path: %+v", result.State.Blockers)
-	}
-}
-
-func TestRunOpensLocalizationQuestionForPreparedAtomSelectionWithInventedPaths(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run opens localization question for prepared atom selection with invented paths", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Summary = "Implement Atom 1.1: Add CollapseEvent handling to ColonyService with TDD and SDD contracts."
@@ -2530,46 +2260,30 @@ func TestRunOpensLocalizationQuestionForPreparedAtomSelectionWithInventedPaths(t
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone workspace validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone workspace validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected rejected-plan then localization question events, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one localization question, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(2), fmt.Sprintf("expected rejected-plan then localization question events, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected rejected-plan then localization question events, got %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected rejected-plan then localization question events, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one localization question, got %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
-	if question.AuthorityRequired != "accepted_source" || containsString(question.AffectedFields, "new_file_authorization") {
-		t.Fatalf("localization question must not authorize invented files: %+v", question)
-	}
-	if !question.UserFacing {
-		t.Fatalf("explicit source-localization question should be marked user-facing: %+v", question)
-	}
-	if !containsString(question.AffectedFields, "source_localization") {
-		t.Fatalf("localization question missing source_localization field: %+v", question)
-	}
-	if !strings.Contains(question.RequestedDecision, "source-verified atom candidate") ||
-		!strings.Contains(question.RequestedDecision, "src/services/colony_service.py") {
-		t.Fatalf("question should request real source localization and preserve rejected paths diagnostically: %+v", question)
-	}
-}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("accepted_source"), fmt.Sprintf("localization question must not authorize invented files: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeFalse(), fmt.Sprintf("localization question must not authorize invented files: %+v", question))
+	gomega.Expect(question.UserFacing).To(gomega.BeTrue(), fmt.Sprintf("explicit source-localization question should be marked user-facing: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "source_localization")).To(gomega.BeTrue(), fmt.Sprintf("localization question missing source_localization field: %+v", question))
+	gomega.Expect(question.RequestedDecision).To(gomega.ContainSubstring("source-verified atom candidate"), fmt.Sprintf("question should request real source localization and preserve rejected paths diagnostically: %+v", question))
+	gomega.Expect(question.RequestedDecision).To(gomega.ContainSubstring("src/services/colony_service.py"), fmt.Sprintf("question should request real source localization and preserve rejected paths diagnostically: %+v", question))
 
-func TestRunOpensNewFileApprovalQuestionForStandaloneProjectPlanInPartialWorkspace(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/brain\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "README.md"), "# Brain\n")
+})
+var _ = ginkgo.It("run opens new file approval question for standalone project plan in partial workspace", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/brain\n")
+	mkdirAndWriteFile(filepath.Join(root, "README.md"), "# Brain\n")
 
 	plan := validGreenfieldBrainPlanForTest()
 
@@ -2579,50 +2293,33 @@ func TestRunOpensNewFileApprovalQuestionForStandaloneProjectPlanInPartialWorkspa
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone workspace validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone workspace validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected rejected-plan then new-file approval question events, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(2), fmt.Sprintf("expected rejected-plan then new-file approval question events, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected rejected-plan then new-file approval question events, got %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected rejected-plan then new-file approval question events, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
-	if question.AuthorityRequired != "operator_approval" {
-		t.Fatalf("question authority = %q, want operator_approval: %+v", question.AuthorityRequired, question)
-	}
-	if !containsString(question.AffectedFields, "new_file_authorization") {
-		t.Fatalf("question affected fields missing new_file_authorization: %+v", question)
-	}
-	if containsString(question.AffectedFields, "verification_command") {
-		t.Fatalf("new-file approval should not ask the operator to provide model-synthesized verification commands: %+v", question)
-	}
-	for _, want := range []string{"src/brain.py", "tests/test_brain.py"} {
-		if !containsString(question.AffectedPaths, want) {
-			t.Fatalf("question affected paths missing %q: %+v", want, question)
-		}
-	}
-	if strings.Contains(strings.ToLower(question.RequestedDecision), "what existing source files") {
-		t.Fatalf("question must not delegate source discovery to the operator: %+v", question)
-	}
-}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("question authority = %q, want operator_approval: %+v", question.AuthorityRequired, question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeTrue(), fmt.Sprintf("question affected fields missing new_file_authorization: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "verification_command")).To(gomega.BeFalse(), fmt.Sprintf("new-file approval should not ask the operator to provide model-synthesized verification commands: %+v", question))
 
-func TestRunGenericPickOneMVPDoesNotOpenSourceLocalizationQuestion(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/brain\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "README.md"), "# Brain\n")
+	for _, want := range []string{"src/brain.py", "tests/test_brain.py"} {
+		gomega.Expect(containsString(question.AffectedPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("question affected paths missing %q: %+v", want, question))
+
+	}
+	gomega.Expect(strings.Contains(strings.ToLower(question.RequestedDecision), "what existing source files")).To(gomega.BeFalse(), fmt.Sprintf("question must not delegate source discovery to the operator: %+v", question))
+
+})
+var _ = ginkgo.It("run generic pick one MVP does not open source localization question", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/brain\n")
+	mkdirAndWriteFile(filepath.Join(root, "README.md"), "# Brain\n")
 
 	plan := validGreenfieldBrainPlanForTest()
 	prompt := "Pick one MVP direction for this app."
@@ -2633,36 +2330,25 @@ func TestRunGenericPickOneMVPDoesNotOpenSourceLocalizationQuestion(t *testing.T)
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone workspace validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone workspace validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
-	if question.AuthorityRequired != "operator_approval" ||
-		!containsString(question.AffectedFields, "new_file_authorization") ||
-		containsString(question.AffectedFields, "source_localization") {
-		t.Fatalf("generic MVP selection should request operator approval, not source localization: %+v", question)
-	}
-}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("generic MVP selection should request operator approval, not source localization: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeTrue(), fmt.Sprintf("generic MVP selection should request operator approval, not source localization: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "source_localization")).To(gomega.BeFalse(), fmt.Sprintf("generic MVP selection should request operator approval, not source localization: %+v", question))
 
-func TestRunRetriesModelRepairableStandaloneValidationAndAcceptsCorrectedPlan(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+})
+var _ = ginkgo.It("run retries model repairable standalone validation and accepts corrected plan", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
 
 	rejectedPlan := runningExampleExistingPathPlanForTest()
 	correctedPlan := runningExampleExistingPathPlanForTest()
@@ -2680,37 +2366,25 @@ func TestRunRetriesModelRepairableStandaloneValidationAndAcceptsCorrectedPlan(t 
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			plannerPrompts = append(plannerPrompts, prompt)
 			if len(plannerPrompts) == 1 {
-				return mustPlanJSON(t, rejectedPlan), nil
+				return mustPlanJSON(rejectedPlan), nil
 			}
-			return mustPlanJSON(t, correctedPlan), nil
+			return mustPlanJSON(correctedPlan), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			return testPlanExecuteCompletedJSONForPlanWithSourceSanity(correctedPlan, prompt), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(len(plannerPrompts)).To(gomega.Equal(2), fmt.Sprintf("planner calls = %d, want rejected plan + corrected plan", len(plannerPrompts)))
+	gomega.Expect(plannerPrompts[1]).To(gomega.ContainSubstring("Previous planner blockers that must be repaired before resubmission"), fmt.Sprintf("retry prompt missing rejected-plan blocker context:\n%s", plannerPrompts[1]))
+	gomega.Expect(plannerPrompts[1]).To(gomega.ContainSubstring("behavioral_coverage_draft"), fmt.Sprintf("retry prompt missing rejected-plan blocker context:\n%s", plannerPrompts[1]))
+	gomega.Expect(len(result.State.RejectedPlanCandidates)).To(gomega.Equal(1), fmt.Sprintf("expected one rejected candidate, got %+v", result.State.RejectedPlanCandidates))
+	gomega.Expect(len(result.State.Blockers)).To(gomega.Equal(0), fmt.Sprintf("corrected plan should clear stale planner blockers: %+v", result.State.Blockers))
 
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(plannerPrompts) != 2 {
-		t.Fatalf("planner calls = %d, want rejected plan + corrected plan", len(plannerPrompts))
-	}
-	if !strings.Contains(plannerPrompts[1], "Previous planner blockers that must be repaired before resubmission") ||
-		!strings.Contains(plannerPrompts[1], "behavioral_coverage_draft") {
-		t.Fatalf("retry prompt missing rejected-plan blocker context:\n%s", plannerPrompts[1])
-	}
-	if len(result.State.RejectedPlanCandidates) != 1 {
-		t.Fatalf("expected one rejected candidate, got %+v", result.State.RejectedPlanCandidates)
-	}
-	if len(result.State.Blockers) != 0 {
-		t.Fatalf("corrected plan should clear stale planner blockers: %+v", result.State.Blockers)
-	}
 	var eventTypes []string
 	for _, event := range result.Events {
 		eventTypes = append(eventTypes, event.Type)
@@ -2720,16 +2394,14 @@ func TestRunRetriesModelRepairableStandaloneValidationAndAcceptsCorrectedPlan(t 
 		"idiom.feature_planner.standalone_context_repair_retry",
 		"idiom.feature_planner.plan_accepted",
 	} {
-		if !slices.Contains(eventTypes, want) {
-			t.Fatalf("missing event %q in %+v", want, eventTypes)
-		}
-	}
-}
+		gomega.Expect(slices.Contains(eventTypes, want)).To(gomega.BeTrue(), fmt.Sprintf("missing event %q in %+v", want, eventTypes))
 
-func TestClassifyStandaloneValidationRepairMixedCoverageAndPytestOpensOperatorQuestion(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	}
+})
+var _ = ginkgo.It("classify standalone validation repair mixed coverage and pytest opens operator question", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
 
 	plan := runningExampleExistingPathPlanForTest()
 
@@ -2739,43 +2411,30 @@ func TestClassifyStandaloneValidationRepairMixedCoverageAndPytestOpensOperatorQu
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("verification authority must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("verification authority must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected rejected-plan then verification question events, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(2), fmt.Sprintf("expected rejected-plan then verification question events, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected rejected-plan then verification question events, got %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected rejected-plan then verification question events, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
-	if question.AuthorityRequired != "operator_approval" ||
-		!containsString(question.AffectedFields, "verification_command") ||
-		containsString(question.AffectedFields, "new_file_authorization") ||
-		containsString(question.AffectedFields, "source_localization") {
-		t.Fatalf("unexpected verification command question: %+v", question)
-	}
-	if !strings.Contains(question.RequestedDecision, "pytest tests/test_query_handler.py") {
-		t.Fatalf("verification question should preserve rejected command candidate: %+v", question)
-	}
-}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("unexpected verification command question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "verification_command")).To(gomega.BeTrue(), fmt.Sprintf("unexpected verification command question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeFalse(), fmt.Sprintf("unexpected verification command question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "source_localization")).To(gomega.BeFalse(), fmt.Sprintf("unexpected verification command question: %+v", question))
+	gomega.Expect(strings.Contains(question.RequestedDecision, "pytest tests/test_query_handler.py")).To(gomega.BeTrue(), fmt.Sprintf("verification question should preserve rejected command candidate: %+v", question))
 
-func TestClassifyStandaloneValidationRepairMixedCoverageAndSourceSignatureRetriesForGenericRequest(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+})
+var _ = ginkgo.It("classify standalone validation repair mixed coverage and source signature retries for generic request", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
 
 	plan := runningExampleExistingPathPlanForTest()
 	plan.Atoms[0].Prompt = "Call create_memory(content) from llm_brain/query_handler.py before dispatch."
@@ -2787,42 +2446,32 @@ func TestClassifyStandaloneValidationRepairMixedCoverageAndSourceSignatureRetrie
 		MaxPlanningIterations: 2,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("source-signature repair must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("source-signature repair must block before dispatch"))
+
 		plannerCalls++
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningStuck), fmt.Sprintf("state.Status = %q, want planning-stuck; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(plannerCalls).To(gomega.Equal(2), fmt.Sprintf("planner calls = %d, want retry until budget", plannerCalls))
 
-	if result.State.Status != FeatureStatePlanningStuck {
-		t.Fatalf("state.Status = %q, want planning-stuck; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if plannerCalls != 2 {
-		t.Fatalf("planner calls = %d, want retry until budget", plannerCalls)
-	}
 	var blockedEvents int
 	for _, event := range result.Events {
 		if event.Type == "idiom.feature_planner.standalone_context_blocked" {
 			blockedEvents++
 		}
 	}
-	if blockedEvents != 2 || result.Events[len(result.Events)-1].Type != "idiom.feature_planner.planning_stuck" {
-		t.Fatalf("expected two rejected plans then planning_stuck, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 0 {
-		t.Fatalf("generic source-signature repair must not ask the operator for accepted source facts: %+v", result.State.OpenQuestions)
-	}
-}
+	gomega.Expect(blockedEvents).To(gomega.Equal(2), fmt.Sprintf("expected two rejected plans then planning_stuck, got %+v", result.Events))
+	gomega.Expect(result.Events[len(result.Events)-1].Type).To(gomega.Equal("idiom.feature_planner.planning_stuck"), fmt.Sprintf("expected two rejected plans then planning_stuck, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(0), fmt.Sprintf("generic source-signature repair must not ask the operator for accepted source facts: %+v", result.State.OpenQuestions))
 
-func TestRunDoesNotRetryPartiallyClassifiedStandaloneValidation(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+})
+var _ = ginkgo.It("run does not retry partially classified standalone validation", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
 
 	plan := runningExampleExistingPathPlanForTest()
 	plan.BehavioralCoverageDraft = nil
@@ -2836,32 +2485,23 @@ func TestRunDoesNotRetryPartiallyClassifiedStandaloneValidation(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("partially classified standalone validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("partially classified standalone validation must block before dispatch"))
+
 		plannerCalls++
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(plannerCalls).To(gomega.Equal(1), fmt.Sprintf("planner calls = %d, want no retry for partially classified validation", plannerCalls))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("expected only standalone context rejection, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected only standalone context rejection, got %+v", result.Events))
 
-	if plannerCalls != 1 {
-		t.Fatalf("planner calls = %d, want no retry for partially classified validation", plannerCalls)
-	}
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
-		t.Fatalf("expected only standalone context rejection, got %+v", result.Events)
-	}
-}
-
-func TestRunPreservesRetryEventsWhenNextPlannerOutputIsMalformed(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+})
+var _ = ginkgo.It("run preserves retry events when next planner output is malformed", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
 
 	rejectedPlan := runningExampleExistingPathPlanForTest()
 	state := NewState("session", "Plan an LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
@@ -2873,32 +2513,29 @@ func TestRunPreservesRetryEventsWhenNextPlannerOutputIsMalformed(t *testing.T) {
 	}, func(_ string, taskFamily string) (string, error) {
 		plannerCalls++
 		if plannerCalls == 1 {
-			return mustPlanJSON(t, rejectedPlan), nil
+			return mustPlanJSON(rejectedPlan), nil
 		}
 		return "not json", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateMalformedOutput), fmt.Sprintf("state.Status = %q, want malformed-output", result.State.Status))
 
-	if result.State.Status != FeatureStateMalformedOutput {
-		t.Fatalf("state.Status = %q, want malformed-output", result.State.Status)
-	}
 	wantEvents := []string{
 		"idiom.feature_planner.standalone_context_blocked",
 		"idiom.feature_planner.standalone_context_repair_retry",
 		"idiom.feature_planner.malformed_structured_output",
 	}
-	if got := featurePlannerEventTypesForTest(result.Events); !slices.Equal(got, wantEvents) {
-		t.Fatalf("event trail = %#v, want %#v", got, wantEvents)
+	{
+		got := featurePlannerEventTypesForTest(result.Events)
+		gomega.Expect(slices.Equal(got, wantEvents)).To(gomega.BeTrue(), fmt.Sprintf("event trail = %#v, want %#v", got, wantEvents))
 	}
-}
 
-func TestRunPreservesRetryEventsWhenNextPlanViolatesLockedContract(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+})
+var _ = ginkgo.It("run preserves retry events when next plan violates locked contract", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
 
 	lockedPlan := runningExampleExistingPathPlanForTest()
 	rejectedPlan := runningExampleExistingPathPlanForTest()
@@ -2915,31 +2552,28 @@ func TestRunPreservesRetryEventsWhenNextPlanViolatesLockedContract(t *testing.T)
 	}, func(_ string, taskFamily string) (string, error) {
 		plannerCalls++
 		if plannerCalls == 1 {
-			return mustPlanJSON(t, rejectedPlan), nil
+			return mustPlanJSON(rejectedPlan), nil
 		}
-		return mustPlanJSON(t, contractRejectedPlan), nil
+		return mustPlanJSON(contractRejectedPlan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
 	wantEvents := []string{
 		"idiom.feature_planner.standalone_context_blocked",
 		"idiom.feature_planner.standalone_context_repair_retry",
 		"idiom.feature_planner.plan_contract_blocked",
 	}
-	if got := featurePlannerEventTypesForTest(result.Events); !slices.Equal(got, wantEvents) {
-		t.Fatalf("event trail = %#v, want %#v", got, wantEvents)
+	{
+		got := featurePlannerEventTypesForTest(result.Events)
+		gomega.Expect(slices.Equal(got, wantEvents)).To(gomega.BeTrue(), fmt.Sprintf("event trail = %#v, want %#v", got, wantEvents))
 	}
-}
 
-func TestClassifyStandaloneValidationRepairPrefersVerificationCommandForGenericRequest(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+})
+var _ = ginkgo.It("classify standalone validation repair prefers verification command for generic request", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
 
 	plan := runningExampleExistingPathPlanForTest()
 	plan.Atoms[0].Prompt = "Call create_memory(content) from llm_brain/query_handler.py before dispatch."
@@ -2950,28 +2584,22 @@ func TestClassifyStandaloneValidationRepairPrefersVerificationCommandForGenericR
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("verification authority must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("verification authority must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
 
 	question := result.State.OpenQuestions[0]
-	if question.AuthorityRequired != "operator_approval" ||
-		!containsString(question.AffectedFields, "verification_command") ||
-		containsString(question.AffectedFields, "source_localization") {
-		t.Fatalf("generic mixed repair should ask for operator verification command first: %+v", question)
-	}
-}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("generic mixed repair should ask for operator verification command first: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "verification_command")).To(gomega.BeTrue(), fmt.Sprintf("generic mixed repair should ask for operator verification command first: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "source_localization")).To(gomega.BeFalse(), fmt.Sprintf("generic mixed repair should ask for operator verification command first: %+v", question))
 
-func TestStandaloneUnverifiedHelperCallOpensAcceptedSourceQuestion(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n")
+})
+var _ = ginkgo.It("standalone unverified helper call opens accepted source question", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n")
 
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Use accepted source localization: call find_connected_cistern_with_volume(network_id, volume_required) from internal/labels/labels.go before dispatch."
@@ -2983,45 +2611,31 @@ func TestStandaloneUnverifiedHelperCallOpensAcceptedSourceQuestion(t *testing.T)
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone source-signature validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone source-signature validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected rejected-plan then source question events, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(2), fmt.Sprintf("expected rejected-plan then source question events, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected rejected-plan then source question events, got %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected rejected-plan then source question events, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
-	if question.AuthorityRequired != "accepted_source" || !containsString(question.AffectedFields, "source_localization") {
-		t.Fatalf("signature question must request accepted source localization: %+v", question)
-	}
-	if !question.UserFacing {
-		t.Fatalf("explicit source-signature question should be marked user-facing: %+v", question)
-	}
-	if !strings.Contains(question.RequestedDecision, "exact current helper signatures") {
-		t.Fatalf("question should request source-verified signatures: %+v", question)
-	}
-}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("accepted_source"), fmt.Sprintf("signature question must request accepted source localization: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "source_localization")).To(gomega.BeTrue(), fmt.Sprintf("signature question must request accepted source localization: %+v", question))
+	gomega.Expect(question.UserFacing).To(gomega.BeTrue(), fmt.Sprintf("explicit source-signature question should be marked user-facing: %+v", question))
+	gomega.Expect(strings.Contains(question.RequestedDecision, "exact current helper signatures")).To(gomega.BeTrue(), fmt.Sprintf("question should request source-verified signatures: %+v", question))
 
-func TestValidateStandaloneWorkspaceRejectsInventedCMakeVerificationCommand(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects invented c make verification command", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/storage/stockpile_system.cpp"), "void scan() {}\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/storage/stockpile_system.cpp"), "void scan() {}\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/SConstruct"), "# scons project\n")
 
 	plan.Atoms[0].RequiredEditPaths = []string{
 		"native/src/simulation/storage/stockpile_system.cpp",
@@ -3033,54 +2647,55 @@ func TestValidateStandaloneWorkspaceRejectsInventedCMakeVerificationCommand(t *t
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "no CMake project evidence") {
-		t.Fatalf("expected invented CMake command rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected invented CMake command rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("no CMake project evidence"), fmt.Sprintf("expected invented CMake command rejection, got %v", err))
 
-func TestValidateStandaloneWorkspaceRejectsUnsupportedVerificationCommandFamily(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects unsupported verification command family", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
 
 	plan.Atoms[0].TestFirst.Commands = []string{"custom-test-runner ./internal/labels"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
-		t.Fatalf("expected unsupported command family rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected unsupported command family rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unsupported command family"), fmt.Sprintf("expected unsupported command family rejection, got %v", err))
 
-func TestValidateStandaloneWorkspaceAcceptsRepoBackedSConsVerificationCommand(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace accepts repo backed s cons verification command", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+	mkdirAndWriteFile(filepath.Join(root, "SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
 
 	plan.Atoms[0].TestFirst.Commands = []string{"scons tests=yes target=template_debug"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	{
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root}); err != nil {
-		t.Fatalf("repo-backed scons command should pass: %v", err)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("repo-backed scons command should pass: %v", err))
 	}
-}
 
-func TestValidateStandaloneWorkspaceAcceptsRepoBackedSConsAndLocalTestBinary(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace accepts repo backed s cons and local test binary", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
-	if err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755); err != nil {
-		t.Fatalf("chmod fixture binary: %v", err)
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	{
+		err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("chmod fixture binary: %v", err))
 	}
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
 
 	plan.Atoms[0].RequiredEditPaths = []string{
 		"native/src/simulation/machines/machine.cpp",
@@ -3090,43 +2705,20 @@ func TestValidateStandaloneWorkspaceAcceptsRepoBackedSConsAndLocalTestBinary(t *
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	{
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root}); err != nil {
-		t.Fatalf("repo-backed scons plus local test binary command should pass: %v", err)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("repo-backed scons plus local test binary command should pass: %v", err))
 	}
-}
 
-func TestValidateStandaloneWorkspaceRejectsMissingLocalTestBinary(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects missing local test binary", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
-
-	plan.Atoms[0].RequiredEditPaths = []string{
-		"native/src/simulation/machines/machine.cpp",
-		"native/tests/test_fluid_brewery_cascade.cpp",
-	}
-	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
-	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
-	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
-	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
-
-	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
-		t.Fatalf("expected missing local test binary rejection, got %v", err)
-	}
-}
-
-func TestValidateStandaloneWorkspaceRejectsNonExecutableLocalCommandPath(t *testing.T) {
-	root := t.TempDir()
-	plan := validPlan()
-
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
 
 	plan.Atoms[0].RequiredEditPaths = []string{
 		"native/src/simulation/machines/machine.cpp",
@@ -3138,22 +2730,70 @@ func TestValidateStandaloneWorkspaceRejectsNonExecutableLocalCommandPath(t *test
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
-		t.Fatalf("expected non-executable local command rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected missing local test binary rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unsupported command family"), fmt.Sprintf("expected missing local test binary rejection, got %v", err))
 
-func TestValidateStandaloneWorkspaceAcceptsExecutableDotSlashLocalCommandPath(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects non executable local command path", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
-	if err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755); err != nil {
-		t.Fatalf("chmod fixture binary: %v", err)
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
 	}
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected non-executable local command rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unsupported command family"), fmt.Sprintf("expected non-executable local command rejection, got %v", err))
+
+})
+var _ = ginkgo.It("validate standalone workspace accepts executable dot slash local command path", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	{
+		err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("chmod fixture binary: %v", err))
+	}
+
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && ./bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	{
+
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("executable ./ local command should pass: %v", err))
+	}
+
+})
+var _ = ginkgo.It("validate standalone workspace rejects non executable dot slash local command path", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
 
 	plan.Atoms[0].RequiredEditPaths = []string{
 		"native/src/simulation/machines/machine.cpp",
@@ -3164,106 +2804,79 @@ func TestValidateStandaloneWorkspaceAcceptsExecutableDotSlashLocalCommandPath(t 
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root}); err != nil {
-		t.Fatalf("executable ./ local command should pass: %v", err)
-	}
-}
-
-func TestValidateStandaloneWorkspaceRejectsNonExecutableDotSlashLocalCommandPath(t *testing.T) {
-	root := t.TempDir()
-	plan := validPlan()
-
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
-
-	plan.Atoms[0].RequiredEditPaths = []string{
-		"native/src/simulation/machines/machine.cpp",
-		"native/tests/test_fluid_brewery_cascade.cpp",
-	}
-	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && ./bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
-	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
-	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
-	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
-
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "missing or non-executable local command") {
-		t.Fatalf("expected non-executable ./ local command rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected non-executable ./ local command rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("missing or non-executable local command"), fmt.Sprintf("expected non-executable ./ local command rejection, got %v", err))
 
-func TestValidateStandaloneWorkspaceRejectsInvalidCommandDirectory(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects invalid command directory", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+	mkdirAndWriteFile(filepath.Join(root, "SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
 
 	plan.Atoms[0].TestFirst.Commands = []string{"cd ../outside && scons -j10"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "invalid workspace directory") {
-		t.Fatalf("expected invalid cd rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected invalid cd rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("invalid workspace directory"), fmt.Sprintf("expected invalid cd rejection, got %v", err))
 
-func TestValidateStandaloneWorkspaceRejectsAbsoluteLocalCommandPath(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects absolute local command path", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "SConstruct"), "# scons project\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+	mkdirAndWriteFile(filepath.Join(root, "SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
 
 	plan.Atoms[0].TestFirst.Commands = []string{"/tmp/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
-		t.Fatalf("expected absolute command path rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected absolute command path rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("unsupported command family"), fmt.Sprintf("expected absolute command path rejection, got %v", err))
 
-func TestValidateStandaloneWorkspaceRejectsSkippedCommentOnlyRedConfirmedTest(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects skipped comment only red confirmed test", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), `package labels
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels_test.go"), `package labels
 
 // Tests are SKIP-marked pending FET 3.3c.
 // TODO: assert cistern decrement.
 `)
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "comment-only") || !strings.Contains(err.Error(), "red-confirmed") {
-		t.Fatalf("expected skipped/comment-only red-confirmed test rejection, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected skipped/comment-only red-confirmed test rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("comment-only"), fmt.Sprintf("expected skipped/comment-only red-confirmed test rejection, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("red-confirmed"), fmt.Sprintf("expected skipped/comment-only red-confirmed test rejection, got %v", err))
 
-func TestValidateStandaloneWorkspaceIgnoresAssertionTokensInComments(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace ignores assertion tokens in comments", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), `package labels
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(filepath.Join(root, "internal/labels/labels_test.go"), `package labels
 
 // add t.Fatal here when this is implemented
 `)
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "comment-only") {
-		t.Fatalf("expected comment assertion token to be ignored, got %v", err)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected comment assertion token to be ignored, got %v", err))
+	gomega.Expect(err.Error()).To(gomega.ContainSubstring("comment-only"), fmt.Sprintf("expected comment assertion token to be ignored, got %v", err))
 
-func TestRunDoesNotTreatOrdinaryCandidateFeatureAsLocalizationRepair(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run does not treat ordinary candidate feature as localization repair", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Summary = "Add candidate scoring"
@@ -3281,34 +2894,27 @@ func TestRunDoesNotTreatOrdinaryCandidateFeatureAsLocalizationRepair(t *testing.
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone workspace validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone workspace validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("expected standalone context blocked only, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected standalone context blocked only, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(0), fmt.Sprintf("ordinary candidate feature must not open localization question: %+v", result.State.OpenQuestions))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
+})
+var _ = ginkgo.It("run greenfield skeleton opens operator question without leaking diagnostic summary", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	{
+		err := os.MkdirAll(filepath.Join(root, ".planning"), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .planning: %v", err))
 	}
-	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
-		t.Fatalf("expected standalone context blocked only, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 0 {
-		t.Fatalf("ordinary candidate feature must not open localization question: %+v", result.State.OpenQuestions)
-	}
-}
+	{
 
-func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSummary(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".planning"), 0o755); err != nil {
-		t.Fatalf("mkdir .planning: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".planning", "previous-session.md"), []byte("# Feature Planner Candidate\n"), 0o644); err != nil {
-		t.Fatalf("write prior plan tab artifact: %v", err)
+		err := os.WriteFile(filepath.Join(root, ".planning", "previous-session.md"), []byte("# Feature Planner Candidate\n"), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write prior plan tab artifact: %v", err))
 	}
 
 	plan := validPlan()
@@ -3331,36 +2937,23 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("greenfield authority must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("greenfield authority must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected rejected-plan then question events, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(2), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
-	if question.QuestionSummary != "Approve or revise greenfield project scope" ||
-		question.AuthorityRequired != "operator_approval" ||
-		!containsString(question.AffectedFields, "new_file_authorization") ||
-		!containsString(question.AffectedPaths, "src/brain_core/types.py") {
-		t.Fatalf("unexpected greenfield authority question: %+v", question)
-	}
-	if containsString(question.AffectedFields, "verification_command") {
-		t.Fatalf("greenfield approval should not ask the operator to provide model-synthesized verification commands: %+v", question)
-	}
+	gomega.Expect(question.QuestionSummary).To(gomega.Equal("Approve or revise greenfield project scope"), fmt.Sprintf("unexpected greenfield authority question: %+v", question))
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("unexpected greenfield authority question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeTrue(), fmt.Sprintf("unexpected greenfield authority question: %+v", question))
+	gomega.Expect(containsString(question.AffectedPaths, "src/brain_core/types.py")).To(gomega.BeTrue(), fmt.Sprintf("unexpected greenfield authority question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "verification_command")).To(gomega.BeFalse(), fmt.Sprintf("greenfield approval should not ask the operator to provide model-synthesized verification commands: %+v", question))
 
 	summary := FormatStateSummary(result.State, ".idiom/feature-planner/session/state.json")
 	for _, forbidden := range []string{
@@ -3369,9 +2962,8 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 		"has no pytest project evidence",
 		"__init__.py(empty)",
 	} {
-		if strings.Contains(summary, forbidden) {
-			t.Fatalf("operator summary leaked internal diagnostic %q:\n%s", forbidden, summary)
-		}
+		gomega.Expect(strings.Contains(summary, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("operator summary leaked internal diagnostic %q:\n%s", forbidden, summary))
+
 	}
 	for _, want := range []string{
 		"feature-planner: planning-question-open",
@@ -3380,14 +2972,12 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 		"how_to_continue: reply with approval",
 		"blockers: blocked by open planner question",
 	} {
-		if !strings.Contains(summary, want) {
-			t.Fatalf("operator summary missing %q:\n%s", want, summary)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(summary, want)).To(gomega.BeTrue(), fmt.Sprintf("operator summary missing %q:\n%s", want, summary))
 
-func TestRunGreenfieldMVPProjectOpensOperatorQuestionWithoutLeakingRepair(t *testing.T) {
-	root := t.TempDir()
+	}
+})
+var _ = ginkgo.It("run greenfield MVP project opens operator question without leaking repair", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.FeatureID = "llm-brain-mvp"
@@ -3408,39 +2998,25 @@ func TestRunGreenfieldMVPProjectOpensOperatorQuestionWithoutLeakingRepair(t *tes
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("greenfield MVP authority must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("greenfield MVP authority must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected rejected-plan then question events, got %+v", result.Events)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.Events).To(gomega.HaveLen(2), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
 	for _, want := range []string{"src/brain/knowledge_store.py", "tests/test_knowledge_store.py"} {
-		if !containsString(question.AffectedPaths, want) {
-			t.Fatalf("question missing affected path %q: %+v", want, question)
-		}
+		gomega.Expect(containsString(question.AffectedPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("question missing affected path %q: %+v", want, question))
+
 	}
-	if question.AuthorityRequired != "operator_approval" ||
-		!containsString(question.AffectedFields, "new_file_authorization") {
-		t.Fatalf("unexpected greenfield MVP authority question: %+v", question)
-	}
-	if containsString(question.AffectedFields, "verification_command") {
-		t.Fatalf("greenfield MVP approval should not ask the operator to provide model-synthesized verification commands: %+v", question)
-	}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("unexpected greenfield MVP authority question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeTrue(), fmt.Sprintf("unexpected greenfield MVP authority question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "verification_command")).To(gomega.BeFalse(), fmt.Sprintf("greenfield MVP approval should not ask the operator to provide model-synthesized verification commands: %+v", question))
 
 	summary := FormatStateSummary(result.State, ".idiom/feature-planner/session/state.json")
 	for _, forbidden := range []string{
@@ -3449,23 +3025,20 @@ func TestRunGreenfieldMVPProjectOpensOperatorQuestionWithoutLeakingRepair(t *tes
 		"retrieve_similar(",
 		"missing standalone new-file authorization",
 	} {
-		if strings.Contains(summary, forbidden) {
-			t.Fatalf("operator summary leaked repair diagnostic %q:\n%s", forbidden, summary)
-		}
+		gomega.Expect(strings.Contains(summary, forbidden)).To(gomega.BeFalse(), fmt.Sprintf("operator summary leaked repair diagnostic %q:\n%s", forbidden, summary))
+
 	}
 	for _, want := range []string{
 		"feature-planner: planning-question-open",
 		"question: Approve or revise greenfield project scope",
 		"blocked by open planner question",
 	} {
-		if !strings.Contains(summary, want) {
-			t.Fatalf("operator summary missing %q:\n%s", want, summary)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(summary, want)).To(gomega.BeTrue(), fmt.Sprintf("operator summary missing %q:\n%s", want, summary))
 
-func TestRunPrefersExplicitNewFileAuthorizationOverLocalizationQuestion(t *testing.T) {
-	root := t.TempDir()
+	}
+})
+var _ = ginkgo.It("run prefers explicit new file authorization over localization question", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{
@@ -3477,7 +3050,7 @@ func TestRunPrefersExplicitNewFileAuthorizationOverLocalizationQuestion(t *testi
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
 
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/core/colony_sim_tick.cpp"), "// tick\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/core/colony_sim_tick.cpp"), "// tick\n")
 
 	state := NewState("session", "pick a prepared atom", "", 3, time.Unix(1, 0).UTC())
 	prompt := "Pick one prepared next-atom candidate. If any required new source or test file is missing, ask me for explicit product-owner authorization with the exact affected paths before dispatching implementation."
@@ -3487,33 +3060,22 @@ func TestRunPrefersExplicitNewFileAuthorizationOverLocalizationQuestion(t *testi
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone workspace validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone workspace validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
 	question := result.State.OpenQuestions[0]
-	if question.AuthorityRequired != "operator_approval" || !containsString(question.AffectedFields, "new_file_authorization") {
-		t.Fatalf("explicit new-file prompt should keep new-file authorization precedence: %+v", question)
-	}
-	if containsString(question.AffectedFields, "source_localization") {
-		t.Fatalf("explicit new-file prompt should not become localization question: %+v", question)
-	}
-}
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("explicit new-file prompt should keep new-file authorization precedence: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeTrue(), fmt.Sprintf("explicit new-file prompt should keep new-file authorization precedence: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "source_localization")).To(gomega.BeFalse(), fmt.Sprintf("explicit new-file prompt should not become localization question: %+v", question))
 
-func TestRunOpensQuestionForExplicitMissingNewFileAuthorizationPrompt(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run opens question for explicit missing new file authorization prompt", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{
@@ -3525,7 +3087,7 @@ func TestRunOpensQuestionForExplicitMissingNewFileAuthorizationPrompt(t *testing
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
 
-	mkdirAndWriteFile(t, filepath.Join(root, "native/src/core/colony_sim_tick.cpp"), "// tick\n")
+	mkdirAndWriteFile(filepath.Join(root, "native/src/core/colony_sim_tick.cpp"), "// tick\n")
 
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
@@ -3534,47 +3096,29 @@ func TestRunOpensQuestionForExplicitMissingNewFileAuthorizationPrompt(t *testing
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("standalone workspace validation must block before dispatch")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("standalone workspace validation must block before dispatch"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(len(result.State.Atoms)).To(gomega.Equal(0), fmt.Sprintf("invalid standalone plan should not compile atoms: %+v", result.State.Atoms))
+	gomega.Expect(result.Events).To(gomega.HaveLen(2), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.standalone_context_blocked"), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.planner_question_opened"), fmt.Sprintf("expected rejected-plan then question events, got %+v", result.Events))
+	gomega.Expect(len(result.State.RejectedPlanCandidates)).To(gomega.Equal(1), fmt.Sprintf("expected rejected plan candidate, got %+v", result.State.RejectedPlanCandidates))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("expected one open question, got %+v", result.State.OpenQuestions))
 
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-
-	if len(result.State.Atoms) != 0 {
-		t.Fatalf("invalid standalone plan should not compile atoms: %+v", result.State.Atoms)
-	}
-
-	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
-		t.Fatalf("expected rejected-plan then question events, got %+v", result.Events)
-	}
-
-	if len(result.State.RejectedPlanCandidates) != 1 {
-		t.Fatalf("expected rejected plan candidate, got %+v", result.State.RejectedPlanCandidates)
-	}
-
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
-	}
 	question := result.State.OpenQuestions[0]
-	if question.Status != "open" || question.AuthorityRequired != "operator_approval" || !containsString(question.AffectedFields, "new_file_authorization") {
-		t.Fatalf("unexpected authorization question: %+v", question)
-	}
-	if !containsString(question.AffectedPaths, "native/src/simulation/world/collapse_event.cpp") ||
-		!containsString(question.AffectedPaths, "native/tests/test_collapse_event.cpp") ||
-		containsString(question.AffectedPaths, "native/src/core/colony_sim_tick.cpp") {
-		t.Fatalf("question should request exact missing path authorization only: %+v", question)
-	}
-}
+	gomega.Expect(question.Status).To(gomega.Equal("open"), fmt.Sprintf("unexpected authorization question: %+v", question))
+	gomega.Expect(question.AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("unexpected authorization question: %+v", question))
+	gomega.Expect(containsString(question.AffectedFields, "new_file_authorization")).To(gomega.BeTrue(), fmt.Sprintf("unexpected authorization question: %+v", question))
+	gomega.Expect(containsString(question.AffectedPaths, "native/src/simulation/world/collapse_event.cpp")).To(gomega.BeTrue(), fmt.Sprintf("question should request exact missing path authorization only: %+v", question))
+	gomega.Expect(containsString(question.AffectedPaths, "native/tests/test_collapse_event.cpp")).To(gomega.BeTrue(), fmt.Sprintf("question should request exact missing path authorization only: %+v", question))
+	gomega.Expect(containsString(question.AffectedPaths, "native/src/core/colony_sim_tick.cpp")).To(gomega.BeFalse(), fmt.Sprintf("question should request exact missing path authorization only: %+v", question))
 
-func TestAnswerOpenQuestionClearsAuthorizedNewFileBlockers(t *testing.T) {
+})
+var _ = ginkgo.It("answer open question clears authorized new file blockers", func() {
 	blocker := "atom 0 edit path \"native/src/simulation/world/collapse_event.cpp\" is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths: missing standalone new-file authorization\natom 0 edit path \"native/tests/test_collapse_event.cpp\" is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths: missing standalone new-file authorization\nmissing new-file authorization for: native/src/simulation/world/collapse_event.cpp, native/tests/test_collapse_event.cpp"
 	other := "nested plan-execute reported failure details: planner_blocked"
 	state := FeatureState{
@@ -3599,18 +3143,15 @@ func TestAnswerOpenQuestionClearsAuthorizedNewFileBlockers(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "Approved. You may create native/src/simulation/world/collapse_event.cpp and native/tests/test_collapse_event.cpp.")
-	if len(events) != 1 || events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered) {
-		t.Fatalf("unexpected answer events: %+v", events)
-	}
-	if slices.Contains(state.Blockers, blocker) || slices.Contains(state.Atoms[0].Blockers, blocker) {
-		t.Fatalf("authorized new-file blocker should be cleared, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers)
-	}
-	if !slices.Contains(state.Blockers, other) || !slices.Contains(state.Atoms[0].Blockers, other) {
-		t.Fatalf("unrelated blockers should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers)
-	}
-}
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected answer events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal(featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered)), fmt.Sprintf("unexpected answer events: %+v", events))
+	gomega.Expect(state.Blockers).NotTo(gomega.ContainElement(blocker), fmt.Sprintf("authorized new-file blocker should be cleared, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(state.Atoms[0].Blockers).NotTo(gomega.ContainElement(blocker), fmt.Sprintf("authorized new-file blocker should be cleared, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(state.Blockers).To(gomega.ContainElement(other), fmt.Sprintf("unrelated blockers should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(state.Atoms[0].Blockers).To(gomega.ContainElement(other), fmt.Sprintf("unrelated blockers should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers))
 
-func TestAnswerOpenQuestionDenialDoesNotClearNewFileBlockers(t *testing.T) {
+})
+var _ = ginkgo.It("answer open question denial does not clear new file blockers", func() {
 	blocker := "missing new-file authorization for: native/src/simulation/world/collapse_event.cpp, native/tests/test_collapse_event.cpp"
 	state := FeatureState{
 		SessionID: "feature-session",
@@ -3634,18 +3175,14 @@ func TestAnswerOpenQuestionDenialDoesNotClearNewFileBlockers(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "No, do not create native/src/simulation/world/collapse_event.cpp or native/tests/test_collapse_event.cpp.")
-	if len(events) != 1 || events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered) {
-		t.Fatalf("unexpected answer events: %+v", events)
-	}
-	if !slices.Contains(state.Blockers, blocker) || !slices.Contains(state.Atoms[0].Blockers, blocker) {
-		t.Fatalf("denied new-file blocker should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers)
-	}
-	if deltaAuthorizesNewFile(state.AuthorityDeltas[0]) {
-		t.Fatalf("denial answer must not compile as new-file authorization: %+v", state.AuthorityDeltas[0])
-	}
-}
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected answer events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal(featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered)), fmt.Sprintf("unexpected answer events: %+v", events))
+	gomega.Expect(state.Blockers).To(gomega.ContainElement(blocker), fmt.Sprintf("denied new-file blocker should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(state.Atoms[0].Blockers).To(gomega.ContainElement(blocker), fmt.Sprintf("denied new-file blocker should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(deltaAuthorizesNewFile(state.AuthorityDeltas[0])).To(gomega.BeFalse(), fmt.Sprintf("denial answer must not compile as new-file authorization: %+v", state.AuthorityDeltas[0]))
 
-func TestAnswerOpenQuestionTreatsBlankStatusAsOpen(t *testing.T) {
+})
+var _ = ginkgo.It("answer open question treats blank status as open", func() {
 	state := FeatureState{
 		SessionID: "feature-session",
 		Status:    FeatureStatePlanningQuestion,
@@ -3661,15 +3198,12 @@ func TestAnswerOpenQuestionTreatsBlankStatusAsOpen(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "Approved. You may create src/brain.py.")
-	if len(events) != 1 || events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered) {
-		t.Fatalf("blank-status question should be answerable, got events=%+v state=%+v", events, state)
-	}
-	if state.OpenQuestions[0].Status != "answered" {
-		t.Fatalf("question status = %q, want answered", state.OpenQuestions[0].Status)
-	}
-}
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("blank-status question should be answerable, got events=%+v state=%+v", events, state))
+	gomega.Expect(events[0].Type).To(gomega.Equal(featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered)), fmt.Sprintf("blank-status question should be answerable, got events=%+v state=%+v", events, state))
+	gomega.Expect(state.OpenQuestions[0].Status).To(gomega.Equal("answered"), fmt.Sprintf("question status = %q, want answered", state.OpenQuestions[0].Status))
 
-func TestNewFileAuthorizationDenialPhrasesWinOverApprovalWords(t *testing.T) {
+})
+var _ = ginkgo.It("new file authorization denial phrases win over approval words", func() {
 	base := PlanAuthorityDelta{
 		QuestionID:     "q-001",
 		AuthorityKind:  "operator_approval",
@@ -3689,19 +3223,16 @@ func TestNewFileAuthorizationDenialPhrasesWinOverApprovalWords(t *testing.T) {
 	} {
 		delta := base
 		delta.Actual = actual
-		if deltaAuthorizesNewFile(delta) {
-			t.Fatalf("denial phrase compiled as authorization: %q", actual)
-		}
+		gomega.Expect(deltaAuthorizesNewFile(delta)).To(gomega.BeFalse(), fmt.Sprintf("denial phrase compiled as authorization: %q", actual))
+
 	}
 
 	approved := base
 	approved.Actual = "Approved. You may create exactly native/src/simulation/world/collapse_event.cpp."
-	if !deltaAuthorizesNewFile(approved) {
-		t.Fatalf("explicit approval should compile as new-file authorization")
-	}
-}
+	gomega.Expect(deltaAuthorizesNewFile(approved)).To(gomega.BeTrue(), fmt.Sprintf("explicit approval should compile as new-file authorization"))
 
-func TestNewFileAuthorizationRevisionPhrasesDoNotAuthorizeOriginalPaths(t *testing.T) {
+})
+var _ = ginkgo.It("new file authorization revision phrases do not authorize original paths", func() {
 	base := PlanAuthorityDelta{
 		QuestionID:     "q-001",
 		AuthorityKind:  "operator_approval",
@@ -3719,20 +3250,17 @@ func TestNewFileAuthorizationRevisionPhrasesDoNotAuthorizeOriginalPaths(t *testi
 	} {
 		delta := base
 		delta.Actual = actual
-		if deltaAuthorizesNewFile(delta) {
-			t.Fatalf("revision answer compiled as new-file authorization: %q", actual)
-		}
+		gomega.Expect(deltaAuthorizesNewFile(delta)).To(gomega.BeFalse(), fmt.Sprintf("revision answer compiled as new-file authorization: %q", actual))
+
 	}
 
 	approved := base
 	approved.Actual = "Approved. Use Python with pytest. Create src/brain.py and tests/test_brain.py."
-	if !deltaAuthorizesNewFile(approved) {
-		t.Fatalf("approval with project setup should still authorize listed new files")
-	}
-}
+	gomega.Expect(deltaAuthorizesNewFile(approved)).To(gomega.BeTrue(), fmt.Sprintf("approval with project setup should still authorize listed new files"))
 
-func TestApplyImplementorOutputPreservesRecoveryPacketForMissingPathFailure(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output preserves recovery packet for missing path failure", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{
 		"tool":"plan_execute_completed",
@@ -3748,11 +3276,8 @@ func TestApplyImplementorOutputPreservesRecoveryPacketForMissingPathFailure(t *t
 		"progress_path":".idiom/plan-execute/sessions/pe.json"
 	}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing_edit_path_without_new_file_authorization")
-
-	if !containsString(state.OpenRecoveryPackets, ".idiom/recovery/packets/failure-123.json") {
-		t.Fatalf("recovery packet path was not retained: %+v", state.OpenRecoveryPackets)
-	}
+	assertRejectedPlanExecuteCompletion(state, atom, events, "missing_edit_path_without_new_file_authorization")
+	gomega.Expect(containsString(state.OpenRecoveryPackets, ".idiom/recovery/packets/failure-123.json")).To(gomega.BeTrue(), fmt.Sprintf("recovery packet path was not retained: %+v", state.OpenRecoveryPackets))
 
 	fields := events[0].Fields
 	for key, want := range map[string]any{
@@ -3761,13 +3286,14 @@ func TestApplyImplementorOutputPreservesRecoveryPacketForMissingPathFailure(t *t
 		"packet_path":       ".idiom/recovery/packets/failure-123.json",
 		"next_valid_action": "review_decomposition",
 	} {
-		if got := fields[key]; got != want {
-			t.Fatalf("event field %s = %#v, want %#v; fields=%+v", key, got, want, fields)
+		{
+			got := fields[key]
+			gomega.Expect(got).To(gomega.Equal(want), fmt.Sprintf("event field %s = %#v, want %#v; fields=%+v", key, got, want, fields))
 		}
-	}
-}
 
-func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build planner prompt advertises flat submit feature plan schema", func() {
 	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), nil)
 
 	for _, want := range []string{
@@ -3787,46 +3313,31 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 		`"tdd_contract"`,
 		`"planned_tdd_snapshot"`,
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing %q:\n%s", want, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("planner prompt missing %q:\n%s", want, prompt))
 
-func TestRunOpensNormalizedPlannerQuestionFromQuestionAlias(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("run opens normalized planner question from question alias", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	result, err := Run(state, RunOptions{Prompt: "build feature", MaxPlanningIterations: 3}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
-			t.Fatalf("task family = %q, want planner", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerPlanner)), fmt.Sprintf("task family = %q, want planner", taskFamily))
 
 		return `{"tool":"ask_planner_question","question":"Please provide tooltip source paths."}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("open questions = %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("open questions = %+v", result.State.OpenQuestions))
 
 	question := result.State.OpenQuestions[0]
-	if question.QuestionSummary != "Please provide tooltip source paths." ||
-		question.BlockingClaim == "" ||
-		question.RequestedDecision == "" ||
-		question.AuthorityRequired == "" ||
-		question.RequiredBefore == "" {
+	gomega.Expect(question.QuestionSummary).To(gomega.Equal("Please provide tooltip source paths."), fmt.Sprintf("question was not normalized: %+v", question))
+	gomega.Expect(question.BlockingClaim).NotTo(gomega.Equal(""), fmt.Sprintf("question was not normalized: %+v", question))
+	gomega.Expect(question.RequestedDecision).NotTo(gomega.Equal(""), fmt.Sprintf("question was not normalized: %+v", question))
+	gomega.Expect(question.AuthorityRequired).NotTo(gomega.Equal(""), fmt.Sprintf("question was not normalized: %+v", question))
+	gomega.Expect(question.RequiredBefore).NotTo(gomega.Equal(""), fmt.Sprintf("question was not normalized: %+v", question))
 
-		t.Fatalf("question was not normalized: %+v", question)
-	}
-}
-
-func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
+})
+var _ = ginkgo.It("build implementor prompt rejects unsupported edit test claims", func() {
 	plan := validPlan()
 
 	plan.Atoms[0].Prompt = "Use exact old_text/new_text anchors from the atom brief."
@@ -3844,22 +3355,19 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 		`Atom implementation brief:`,
 		`Use exact old_text/new_text anchors from the atom brief.`,
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("implementor prompt missing %q:\n%s", want, prompt)
-		}
+		gomega.Expect(strings.Contains(prompt, want)).To(gomega.BeTrue(), fmt.Sprintf("implementor prompt missing %q:\n%s", want, prompt))
+
 	}
 
 	for _, stale := range []string{
 		`"tool":"question_for_planner"`,
 		`You may answer with JSON`,
 	} {
-		if strings.Contains(prompt, stale) {
-			t.Fatalf("implementor prompt retained feature-planner terminal surface %q:\n%s", stale, prompt)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(prompt, stale)).To(gomega.BeFalse(), fmt.Sprintf("implementor prompt retained feature-planner terminal surface %q:\n%s", stale, prompt))
 
-func TestBuildImplementorPromptCarriesTypedPlanNewFileAuthority(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("build implementor prompt carries typed plan new file authority", func() {
 	plan := validPlan()
 	contract := CompilePlanAuthorityContract(plan, []PlanAuthorityDelta{{
 		QuestionID:     "q-new-file",
@@ -3873,78 +3381,55 @@ func TestBuildImplementorPromptCarriesTypedPlanNewFileAuthority(t *testing.T) {
 		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
 	}})
 	prompt := BuildImplementorPromptFromContract(FeatureAtomState{FeatureAtomPlan: plan.Atoms[0]}, plan, contract)
+	gomega.Expect(strings.Contains(prompt, "Typed plan execution contract:")).To(gomega.BeTrue(), fmt.Sprintf("implementor prompt missing typed plan execution contract:\n%s", prompt))
+	{
 
-	if !strings.Contains(prompt, "Typed plan execution contract:") {
-		t.Fatalf("implementor prompt missing typed plan execution contract:\n%s", prompt)
+		got := plancontract.AuthorizedNewFilePathsFromPrompt(prompt)
+		gomega.Expect(slices.Equal(got, []string{"pkg/new_helper.go"})).To(gomega.BeTrue(), fmt.Sprintf("authorized new files = %#v", got))
 	}
 
-	if got := plancontract.AuthorizedNewFilePathsFromPrompt(prompt); !slices.Equal(got, []string{"pkg/new_helper.go"}) {
-		t.Fatalf("authorized new files = %#v", got)
-	}
-}
-
-func TestApplyPlannerOutputAcceptsPlanAndQueuesAtoms(t *testing.T) {
+})
+var _ = ginkgo.It("apply planner output accepts plan and queues atoms", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	parsed := ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}
 
 	events := ApplyPlannerOutput(&state, parsed, time.Unix(2, 0).UTC())
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateDispatching), fmt.Sprintf("state.Status = %q, want dispatching", state.Status))
+	gomega.Expect(state.Atoms).To(gomega.HaveLen(1), fmt.Sprintf("unexpected atoms: %+v", state.Atoms))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateQueued), fmt.Sprintf("unexpected atoms: %+v", state.Atoms))
+	gomega.Expect(events).To(gomega.HaveLen(6), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.plan_accepted"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[4].Type).To(gomega.Equal("idiom.feature_planner.tdd_pre_execution_checked"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[len(events)-1].Type).To(gomega.Equal("idiom.feature_planner.dispatch_ready"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(state.TDDPreExecutionEvidence).To(gomega.HaveLen(1), fmt.Sprintf("expected pre-dispatch TDD evidence ledger, got %+v", state.TDDPreExecutionEvidence))
+	gomega.Expect(state.TDDPreExecutionEvidence[0].EventID).To(gomega.Equal("evt-tdd-1"), fmt.Sprintf("expected pre-dispatch TDD evidence ledger, got %+v", state.TDDPreExecutionEvidence))
 
-	if state.Status != FeatureStateDispatching {
-		t.Fatalf("state.Status = %q, want dispatching", state.Status)
-	}
-
-	if len(state.Atoms) != 1 || state.Atoms[0].State != AtomStateQueued {
-		t.Fatalf("unexpected atoms: %+v", state.Atoms)
-	}
-
-	if len(events) != 6 || events[0].Type != "idiom.feature_planner.plan_accepted" || events[4].Type != "idiom.feature_planner.tdd_pre_execution_checked" || events[len(events)-1].Type != "idiom.feature_planner.dispatch_ready" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if len(state.TDDPreExecutionEvidence) != 1 || state.TDDPreExecutionEvidence[0].EventID != "evt-tdd-1" {
-		t.Fatalf("expected pre-dispatch TDD evidence ledger, got %+v", state.TDDPreExecutionEvidence)
-	}
-}
-
-func TestApplyPlannerOutputStampsTDDSnapshotIdentity(t *testing.T) {
+})
+var _ = ginkgo.It("apply planner output stamps TDD snapshot identity", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	plan := validPlan()
 	plan.Atoms[0].PlannedTDDSnapshot.SnapshotID = "model-authored-snapshot"
 	plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
 	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
-	if len(events) == 0 || state.Status != FeatureStateDispatching {
-		t.Fatalf("expected accepted plan, status=%q events=%+v blockers=%v", state.Status, events, state.Blockers)
-	}
+	gomega.Expect(events).NotTo(gomega.HaveLen(0), fmt.Sprintf("expected accepted plan, status=%q events=%+v blockers=%v", state.Status, events, state.Blockers))
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateDispatching), fmt.Sprintf("expected accepted plan, status=%q events=%+v blockers=%v", state.Status, events, state.Blockers))
 
 	gotSnapshot := state.Plan.Atoms[0].PlannedTDDSnapshot
-	if gotSnapshot.SnapshotID == "model-authored-snapshot" {
-		t.Fatal("model-authored snapshot_id was not replaced by harness stamp")
-	}
+	gomega.Expect(gotSnapshot.SnapshotID).NotTo(gomega.Equal("model-authored-snapshot"), fmt.Sprint("model-authored snapshot_id was not replaced by harness stamp"))
+	gomega.Expect(gotSnapshot.SnapshotDigest).NotTo(gomega.Equal("sha256:1111111111111111111111111111111111111111111111111111111111111111"), fmt.Sprint("model-authored snapshot_digest was not replaced by harness stamp"))
+	gomega.Expect(strings.HasPrefix(gotSnapshot.SnapshotID, "tdd-snap-session-atom-1")).To(gomega.BeTrue(), fmt.Sprintf("snapshot_id = %q, want harness-stamped session/atom id", gotSnapshot.SnapshotID))
+	{
 
-	if gotSnapshot.SnapshotDigest == "sha256:1111111111111111111111111111111111111111111111111111111111111111" {
-		t.Fatal("model-authored snapshot_digest was not replaced by harness stamp")
+		reason := invalidPlannedTDDSnapshotDigestReason(gotSnapshot.SnapshotDigest)
+		gomega.Expect(reason).To(gomega.Equal(""), fmt.Sprintf("harness snapshot_digest invalid: %s (%q)", reason, gotSnapshot.SnapshotDigest))
 	}
+	gomega.Expect(len(state.TDDPreExecutionEvidence)).To(gomega.Equal(1), fmt.Sprintf("expected one TDD evidence row, got %+v", state.TDDPreExecutionEvidence))
+	gomega.Expect(state.TDDPreExecutionEvidence[0].SnapshotID).To(gomega.Equal(gotSnapshot.SnapshotID), fmt.Sprintf("evidence did not use harness-stamped snapshot identity, evidence=%+v snapshot=%+v", state.TDDPreExecutionEvidence[0], gotSnapshot))
+	gomega.Expect(state.TDDPreExecutionEvidence[0].SnapshotDigest).To(gomega.Equal(gotSnapshot.SnapshotDigest), fmt.Sprintf("evidence did not use harness-stamped snapshot identity, evidence=%+v snapshot=%+v", state.TDDPreExecutionEvidence[0], gotSnapshot))
 
-	if !strings.HasPrefix(gotSnapshot.SnapshotID, "tdd-snap-session-atom-1") {
-		t.Fatalf("snapshot_id = %q, want harness-stamped session/atom id", gotSnapshot.SnapshotID)
-	}
-
-	if reason := invalidPlannedTDDSnapshotDigestReason(gotSnapshot.SnapshotDigest); reason != "" {
-		t.Fatalf("harness snapshot_digest invalid: %s (%q)", reason, gotSnapshot.SnapshotDigest)
-	}
-
-	if len(state.TDDPreExecutionEvidence) != 1 {
-		t.Fatalf("expected one TDD evidence row, got %+v", state.TDDPreExecutionEvidence)
-	}
-
-	if state.TDDPreExecutionEvidence[0].SnapshotID != gotSnapshot.SnapshotID ||
-		state.TDDPreExecutionEvidence[0].SnapshotDigest != gotSnapshot.SnapshotDigest {
-		t.Fatalf("evidence did not use harness-stamped snapshot identity, evidence=%+v snapshot=%+v", state.TDDPreExecutionEvidence[0], gotSnapshot)
-	}
-}
-
-func TestComputePlannedTDDSnapshotDigestIsDeterministic(t *testing.T) {
+})
+var _ = ginkgo.It("compute planned TDD snapshot digest is deterministic", func() {
 	first := PlannedTDDSnapshot{
 		ObligationIDs:                []string{"TDD-2", "TDD-1"},
 		TestCommands:                 []string{"go test ./b", "go test ./a"},
@@ -3966,16 +3451,15 @@ func TestComputePlannedTDDSnapshotDigestIsDeterministic(t *testing.T) {
 	second.SnapshotDigest = "sha256:" + strings.Repeat("2", 64)
 
 	got := computePlannedTDDSnapshotDigest(first)
-	if got != computePlannedTDDSnapshotDigest(second) {
-		t.Fatalf("digest should be stable across list order and snapshot identity fields")
+	gomega.Expect(got).To(gomega.Equal(computePlannedTDDSnapshotDigest(second)), fmt.Sprintf("digest should be stable across list order and snapshot identity fields"))
+	{
+
+		reason := invalidPlannedTDDSnapshotDigestReason(got)
+		gomega.Expect(reason).To(gomega.Equal(""), fmt.Sprintf("digest is not valid sha256 format: %s (%q)", reason, got))
 	}
 
-	if reason := invalidPlannedTDDSnapshotDigestReason(got); reason != "" {
-		t.Fatalf("digest is not valid sha256 format: %s (%q)", reason, got)
-	}
-}
-
-func TestApplyPlannerOutputInvalidDurablePlanDoesNotReplaceCommittedPlan(t *testing.T) {
+})
+var _ = ginkgo.It("apply planner output invalid durable plan does not replace committed plan", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	accepted := validPlan()
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: accepted}, time.Unix(2, 0).UTC())
@@ -3985,17 +3469,12 @@ func TestApplyPlannerOutputInvalidDurablePlanDoesNotReplaceCommittedPlan(t *test
 	invalid.Atoms[0].ID = "invalid-candidate"
 	invalid.Atoms[0].TestFirst.Commands = nil
 	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: invalid}, time.Unix(3, 0).UTC())
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("expected blocked event, got %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.tdd_pre_execution_blocked"), fmt.Sprintf("expected blocked event, got %+v", events))
+	gomega.Expect(state.Plan.Atoms[0].ID).To(gomega.Equal(committedID), fmt.Sprintf("invalid candidate replaced committed plan: got atom %q want %q", state.Plan.Atoms[0].ID, committedID))
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.tdd_pre_execution_blocked" {
-		t.Fatalf("expected blocked event, got %+v", events)
-	}
-
-	if state.Plan.Atoms[0].ID != committedID {
-		t.Fatalf("invalid candidate replaced committed plan: got atom %q want %q", state.Plan.Atoms[0].ID, committedID)
-	}
-}
-
-func TestApplyPlannerOutputUsesAcceptedSourceAuthorityForDurablePromptCalls(t *testing.T) {
+})
+var _ = ginkgo.It("apply planner output uses accepted source authority for durable prompt calls", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	state.AuthorityDeltas = []PlanAuthorityDelta{{
 		QuestionID:     "q-001",
@@ -4018,15 +3497,13 @@ func TestApplyPlannerOutputUsesAcceptedSourceAuthorityForDurablePromptCalls(t *t
 	plan.Atoms[0].Prompt = "Use FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) before posting fallback water haul."
 
 	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(3, 0).UTC())
-	if len(events) == 1 && events[0].Type == "idiom.feature_planner.tdd_pre_execution_blocked" {
-		t.Fatalf("durable validation ignored accepted source authority: %+v", events[0])
+	if len(events) == 1 {
+		gomega.Expect(events[0].Type).NotTo(gomega.Equal("idiom.feature_planner.tdd_pre_execution_blocked"), fmt.Sprintf("durable validation ignored accepted source authority: %+v", events))
 	}
-	if state.Status != FeatureStateDispatching {
-		t.Fatalf("status = %q, want dispatching; events=%+v blockers=%+v", state.Status, events, state.Blockers)
-	}
-}
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateDispatching), fmt.Sprintf("status = %q, want dispatching; events=%+v blockers=%+v", state.Status, events, state.Blockers))
 
-func TestPlanContractAuthorityDeltasCarryTypedSourceFacts(t *testing.T) {
+})
+var _ = ginkgo.It("plan contract authority deltas carry typed source facts", func() {
 	deltas := []PlanAuthorityDelta{{
 		QuestionID:     "q-001",
 		AuthorityKind:  "accepted_source",
@@ -4044,22 +3521,16 @@ func TestPlanContractAuthorityDeltasCarryTypedSourceFacts(t *testing.T) {
 	}}
 
 	contractDeltas := planContractAuthorityDeltas(deltas)
-	if len(contractDeltas) != 1 {
-		t.Fatalf("contract deltas = %+v, want one", contractDeltas)
-	}
-	facts := contractDeltas[0].SourceFacts
-	if len(facts) != 1 {
-		t.Fatalf("source facts were not carried into contract: %+v", contractDeltas[0])
-	}
-	if facts[0].Path != "native/src/simulation/economy/fluid_network_system.h" {
-		t.Fatalf("source fact path = %q, want normalized path", facts[0].Path)
-	}
-	if facts[0].Signature == "" || !strings.Contains(facts[0].Signature, "find_connected_cistern_with_volume") {
-		t.Fatalf("source fact signature missing: %+v", facts[0])
-	}
-}
+	gomega.Expect(len(contractDeltas)).To(gomega.Equal(1), fmt.Sprintf("contract deltas = %+v, want one", contractDeltas))
 
-func TestApplyPlannerOutputRejectsDemotedImplementationScopeBeforeDispatch(t *testing.T) {
+	facts := contractDeltas[0].SourceFacts
+	gomega.Expect(len(facts)).To(gomega.Equal(1), fmt.Sprintf("source facts were not carried into contract: %+v", contractDeltas[0]))
+	gomega.Expect(facts[0].Path).To(gomega.Equal("native/src/simulation/economy/fluid_network_system.h"), fmt.Sprintf("source fact path = %q, want normalized path", facts[0].Path))
+	gomega.Expect(facts[0].Signature).NotTo(gomega.Equal(""), fmt.Sprintf("source fact signature missing: %+v", facts[0]))
+	gomega.Expect(facts[0].Signature).To(gomega.ContainSubstring("find_connected_cistern_with_volume"), fmt.Sprintf("source fact signature missing: %+v", facts[0]))
+
+})
+var _ = ginkgo.It("apply planner output rejects demoted implementation scope before dispatch", func() {
 	state := NewState("session", "build collapse event helper", "", 1, time.Unix(1, 0).UTC())
 	plan := validPlan()
 	plan.Summary = "Implement CollapseEvent struct and dispatch helper, integrate into colony_sim_tick.cpp, and add focused unit tests."
@@ -4080,16 +3551,13 @@ func TestApplyPlannerOutputRejectsDemotedImplementationScopeBeforeDispatch(t *te
 	plan.Atoms[0].Prompt = "Implement collapse_event.h declarations and update colony_sim_tick.cpp to use CollapseEvent::dispatch."
 
 	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.tdd_pre_execution_blocked" {
-		t.Fatalf("expected durable plan rejection, got status=%s events=%+v", state.Status, events)
-	}
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("expected durable plan rejection, got status=%s events=%+v", state.Status, events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.tdd_pre_execution_blocked"), fmt.Sprintf("expected durable plan rejection, got status=%s events=%+v", state.Status, events))
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("invalid demoted scope must not queue atoms, status=%s atoms=%+v", state.Status, state.Atoms))
+	gomega.Expect(state.Atoms).To(gomega.HaveLen(0), fmt.Sprintf("invalid demoted scope must not queue atoms, status=%s atoms=%+v", state.Status, state.Atoms))
 
-	if state.Status != FeatureStatePlanningRepair || len(state.Atoms) != 0 {
-		t.Fatalf("invalid demoted scope must not queue atoms, status=%s atoms=%+v", state.Status, state.Atoms)
-	}
-}
-
-func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
+})
+var _ = ginkgo.It("run dispatches atom after accepted TDD plan", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	calls := 0
 
@@ -4098,37 +3566,24 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, validPlan()), nil
+			return mustPlanJSON(validPlan()), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(calls).To(gomega.Equal(2), fmt.Sprintf("calls = %d, want planner + implementor", calls))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("state.Status = %q, want complete", result.State.Status))
+	gomega.Expect(result.Events).To(gomega.HaveLen(9), fmt.Sprintf("events = %+v, want plan review sequence, dispatch, complete", result.Events))
+	gomega.Expect(result.Events[len(result.Events)-1].Type).To(gomega.Equal("idiom.feature_planner.release_ready"), fmt.Sprintf("events = %+v, want plan review sequence, dispatch, complete", result.Events))
+	gomega.Expect(len(result.State.ActiveRuns)).To(gomega.Equal(0), fmt.Sprintf("active runs should be folded after terminal atom: %+v", result.State.ActiveRuns))
 
-	if calls != 2 {
-		t.Fatalf("calls = %d, want planner + implementor", calls)
-	}
-
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete", result.State.Status)
-	}
-
-	if len(result.Events) != 9 || result.Events[len(result.Events)-1].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("events = %+v, want plan review sequence, dispatch, complete", result.Events)
-	}
-
-	if len(result.State.ActiveRuns) != 0 {
-		t.Fatalf("active runs should be folded after terminal atom: %+v", result.State.ActiveRuns)
-	}
-}
-
-func TestNewFileAuthorizationApprovalIgnoresBlockingClaimNoProjectFiles(t *testing.T) {
+})
+var _ = ginkgo.It("new file authorization approval ignores blocking claim no project files", func() {
 	delta := PlanAuthorityDelta{
 		QuestionID:     "q-001",
 		AuthorityKind:  "operator_approval",
@@ -4137,14 +3592,11 @@ func TestNewFileAuthorizationApprovalIgnoresBlockingClaimNoProjectFiles(t *testi
 		Expected:       "The workspace has no project files, so the standalone feature planner cannot infer new files safely.",
 		Actual:         "Approved. Use Python with pytest. Create src/brain.py and tests/test_brain.py.",
 	}
+	gomega.Expect(deltaAuthorizesNewFile(delta)).To(gomega.BeTrue(), fmt.Sprintf("operator approval should authorize new files even when the blocking claim says no project files: %+v", delta))
 
-	if !deltaAuthorizesNewFile(delta) {
-		t.Fatalf("operator approval should authorize new files even when the blocking claim says no project files: %+v", delta)
-	}
-}
-
-func TestValidateStandaloneWorkspaceAcceptsGreenfieldPlannerVerificationCommandFromApprovedNewFiles(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace accepts greenfield planner verification command from approved new files", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validGreenfieldBrainPlanForTest()
 	deltas := []PlanAuthorityDelta{{
 		QuestionID:     "q-001",
@@ -4158,21 +3610,22 @@ func TestValidateStandaloneWorkspaceAcceptsGreenfieldPlannerVerificationCommandF
 		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
 	}}
 	contract := StampPlanAuthorityContract(&plan, deltas)
+	{
 
-	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
-		WorkspaceRoot:   root,
-		Contract:        contract,
-		AuthorityDeltas: deltas,
-	}); err != nil {
-		t.Fatalf("approved greenfield new files should authorize planner-synthesized pytest command for those files: %v", err)
+		err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+			WorkspaceRoot:   root,
+			Contract:        contract,
+			AuthorityDeltas: deltas,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("approved greenfield new files should authorize planner-synthesized pytest command for those files: %v", err))
 	}
-}
 
-func TestValidateStandaloneWorkspaceRejectsVerificationCommandFamilyApproval(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("validate standalone workspace rejects verification command family approval", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := runningExampleExistingPathPlanForTest()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
 
 	deltas := []PlanAuthorityDelta{{
 		QuestionID:     "q-001",
@@ -4192,16 +3645,16 @@ func TestValidateStandaloneWorkspaceRejectsVerificationCommandFamilyApproval(t *
 		Contract:        contract,
 		AuthorityDeltas: deltas,
 	})
-	if err == nil {
-		t.Fatal("verification command family approval must not authorize exact rejected command")
-	}
-	if issues := StandaloneValidationIssues(err); !standaloneValidationHasIssueKind(issues, "verification_command_unverified") {
-		t.Fatalf("expected typed verification issue, got err=%v issues=%+v", err, issues)
-	}
-}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("verification command family approval must not authorize exact rejected command"))
+	{
 
-func TestValidateStandaloneWorkspaceRejectsGreenfieldVerificationCommandOutsideApprovedNewFiles(t *testing.T) {
-	root := t.TempDir()
+		issues := StandaloneValidationIssues(err)
+		gomega.Expect(standaloneValidationHasIssueKind(issues, "verification_command_unverified")).To(gomega.BeTrue(), fmt.Sprintf("expected typed verification issue, got err=%v issues=%+v", err, issues))
+	}
+
+})
+var _ = ginkgo.It("validate standalone workspace rejects greenfield verification command outside approved new files", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validGreenfieldBrainPlanForTest()
 	plan.Atoms[0].TestFirst.Commands = []string{"pytest tests/test_other.py"}
 	plan.Atoms[0].RequiredTests = []string{"pytest tests/test_other.py"}
@@ -4225,19 +3678,19 @@ func TestValidateStandaloneWorkspaceRejectsGreenfieldVerificationCommandOutsideA
 		Contract:        contract,
 		AuthorityDeltas: deltas,
 	})
-	if err == nil {
-		t.Fatal("new-file approval must not authorize verification commands for unrelated test paths")
-	}
-	if issues := StandaloneValidationIssues(err); !standaloneValidationHasIssueKind(issues, "verification_command_unverified") {
-		t.Fatalf("expected typed verification issue, got err=%v issues=%+v", err, issues)
-	}
-}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("new-file approval must not authorize verification commands for unrelated test paths"))
+	{
 
-func TestValidateStandaloneWorkspaceRejectsRevisionMentionOfExactVerificationCommand(t *testing.T) {
-	root := t.TempDir()
+		issues := StandaloneValidationIssues(err)
+		gomega.Expect(standaloneValidationHasIssueKind(issues, "verification_command_unverified")).To(gomega.BeTrue(), fmt.Sprintf("expected typed verification issue, got err=%v issues=%+v", err, issues))
+	}
+
+})
+var _ = ginkgo.It("validate standalone workspace rejects revision mention of exact verification command", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := runningExampleExistingPathPlanForTest()
-	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
-	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
 
 	deltas := []PlanAuthorityDelta{{
 		QuestionID:     "q-001",
@@ -4257,71 +3710,55 @@ func TestValidateStandaloneWorkspaceRejectsRevisionMentionOfExactVerificationCom
 		Contract:        contract,
 		AuthorityDeltas: deltas,
 	})
-	if err == nil {
-		t.Fatal("revision mention of exact rejected command must not authorize stale candidate")
-	}
-	if issues := StandaloneValidationIssues(err); !standaloneValidationHasIssueKind(issues, "verification_command_unverified") {
-		t.Fatalf("expected typed verification issue, got err=%v issues=%+v", err, issues)
-	}
-}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("revision mention of exact rejected command must not authorize stale candidate"))
+	{
 
-func TestGreenfieldPromptClassifiersAllowAPIDefinitionsAndTDDProse(t *testing.T) {
-	if plannerCallNeedsSignatureEvidence("initially", "red") {
-		t.Fatal("TDD status prose initially(red) must not require source signature evidence")
+		issues := StandaloneValidationIssues(err)
+		gomega.Expect(standaloneValidationHasIssueKind(issues, "verification_command_unverified")).To(gomega.BeTrue(), fmt.Sprintf("expected typed verification issue, got err=%v issues=%+v", err, issues))
 	}
+
+})
+var _ = ginkgo.It("greenfield prompt classifiers allow API definitions and TDD prose", func() {
+	gomega.Expect(plannerCallNeedsSignatureEvidence("initially", "red")).To(gomega.BeFalse(), fmt.Sprint("TDD status prose initially(red) must not require source signature evidence"))
 
 	grounding := newAtomPromptGrounding(FeatureAtomPlan{}, nil)
 	grounding.addAuthorizedNewFile("llm_brain/working_memory.py")
 	prompt := "implement the WorkingMemory class in llm_brain/working_memory.py with methods store(step_id: str, output: str) and retrieve(step_id: str) -> str"
 	storeStart := strings.Index(prompt, "store(")
-	if storeStart < 0 {
-		t.Fatalf("test prompt missing store call: %s", prompt)
-	}
-	if !plannerCallIsNewAPIDefinition(prompt, storeStart, "store(step_id: str, output: str)", grounding) {
-		t.Fatalf("authorized greenfield method definition should not require existing-source signature proof")
-	}
+	gomega.Expect(storeStart < 0).To(gomega.BeFalse(), fmt.Sprintf("test prompt missing store call: %s", prompt))
+	gomega.Expect(plannerCallIsNewAPIDefinition(prompt, storeStart, "store(step_id: str, output: str)", grounding)).To(gomega.BeTrue(), fmt.Sprintf("authorized greenfield method definition should not require existing-source signature proof"))
 
 	registerPrompt := "Add a register_tool(name, description, parameters, func) method for tool/function calling."
 	registerStart := strings.Index(registerPrompt, "register_tool(")
-	if registerStart < 0 || !plannerCallIsNewAPIDefinition(registerPrompt, registerStart, "register_tool(name, description, parameters, func)", grounding) {
-		t.Fatalf("authorized greenfield add-method prompt should not require existing-source signature proof")
-	}
+	gomega.Expect(registerStart).NotTo(gomega.BeNumerically("<", 0), fmt.Sprintf("authorized greenfield add-method prompt should not require existing-source signature proof"))
+	gomega.Expect(plannerCallIsNewAPIDefinition(registerPrompt, registerStart, "register_tool(name, description, parameters, func)", grounding)).To(gomega.BeTrue(), fmt.Sprintf("authorized greenfield add-method prompt should not require existing-source signature proof"))
 
 	existingGrounding := newAtomPromptGrounding(FeatureAtomPlan{
 		RequiredEditPaths: []string{"llm_brain/query_handler.py"},
 	}, nil)
 	existingPrompt := "Implement memory storage and retrieval in llm_brain/query_handler.py. Add methods: create_memory(content) -> MemoryEntry."
 	createStart := strings.Index(existingPrompt, "create_memory(")
-	if createStart < 0 || !plannerCallIsNewAPIDefinition(existingPrompt, createStart, "create_memory(content)", existingGrounding) {
-		t.Fatalf("explicit existing-file add-method prompt should be treated as new API definition")
-	}
+	gomega.Expect(createStart).NotTo(gomega.BeNumerically("<", 0), fmt.Sprintf("explicit existing-file add-method prompt should be treated as new API definition"))
+	gomega.Expect(plannerCallIsNewAPIDefinition(existingPrompt, createStart, "create_memory(content)", existingGrounding)).To(gomega.BeTrue(), fmt.Sprintf("explicit existing-file add-method prompt should be treated as new API definition"))
 
 	evidenceOnlyGrounding := newAtomPromptGrounding(FeatureAtomPlan{
 		EvidencePaths: []string{"llm_brain/query_handler.py"},
 	}, nil)
 	callPrompt := "Use accepted source localization from llm_brain/query_handler.py, then call create_memory(content) before dispatch."
 	callStart := strings.Index(callPrompt, "create_memory(")
-	if callStart < 0 {
-		t.Fatalf("test prompt missing helper call: %s", callPrompt)
-	}
-	if plannerCallIsNewAPIDefinition(callPrompt, callStart, "create_memory(content)", evidenceOnlyGrounding) {
-		t.Fatalf("evidence-only scope must not exempt existing helper call from source signature proof")
-	}
+	gomega.Expect(callStart < 0).To(gomega.BeFalse(), fmt.Sprintf("test prompt missing helper call: %s", callPrompt))
+	gomega.Expect(plannerCallIsNewAPIDefinition(callPrompt, callStart, "create_memory(content)", evidenceOnlyGrounding)).To(gomega.BeFalse(), fmt.Sprintf("evidence-only scope must not exempt existing helper call from source signature proof"))
 
 	grounding.addAuthorizedNewFile("llm_brain/providers/base.py")
-	if !grounding.pathIsDeclaredDirectory("llm_brain/providers") {
-		t.Fatal("directory mention should be in scope when declared files are inside it")
-	}
+	gomega.Expect(grounding.pathIsDeclaredDirectory("llm_brain/providers")).To(gomega.BeTrue(), fmt.Sprint("directory mention should be in scope when declared files are inside it"))
 
 	paths := repoPathsMentionedInText("parse <tool>calculator</tool><input>2+2</input> as example data for tool/function calling")
-	if len(paths) != 0 {
-		t.Fatalf("XML-like examples and slash-separated prose alternatives should not be treated as repo paths: %#v", paths)
-	}
-}
+	gomega.Expect(len(paths)).To(gomega.Equal(0), fmt.Sprintf("XML-like examples and slash-separated prose alternatives should not be treated as repo paths: %#v", paths))
 
-func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+})
+var _ = ginkgo.It("run uses answered planner question for standalone new file authorization", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
@@ -4357,35 +3794,22 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, plan), nil
+			return mustPlanJSON(plan), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			implementorPrompt = prompt
 			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if calls != 2 {
-		t.Fatalf("calls = %d, want planner + implementor", calls)
-	}
-
-	if result.State.Status == FeatureStatePlanningRepair {
-		t.Fatalf("answered operator authorization should satisfy missing new-file validation, blockers=%+v", result.State.Blockers)
-	}
-
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-
-	if len(result.State.OpenQuestions) != 1 || result.State.OpenQuestions[0].Status != "answered" {
-		t.Fatalf("expected question to be answered, got %+v", result.State.OpenQuestions)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(calls).To(gomega.Equal(2), fmt.Sprintf("calls = %d, want planner + implementor", calls))
+	gomega.Expect(result.State.Status).NotTo(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("answered operator authorization should satisfy missing new-file validation, blockers=%+v", result.State.Blockers))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers))
+	gomega.Expect(result.State.OpenQuestions).To(gomega.HaveLen(1), fmt.Sprintf("expected question to be answered, got %+v", result.State.OpenQuestions))
+	gomega.Expect(result.State.OpenQuestions[0].Status).To(gomega.Equal("answered"), fmt.Sprintf("expected question to be answered, got %+v", result.State.OpenQuestions))
 
 	var derived *PlanAuthorityDelta
 	for i := range result.State.AuthorityDeltas {
@@ -4394,24 +3818,20 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 			break
 		}
 	}
-	if derived == nil {
-		t.Fatalf("expected typed planner-question authority delta, got %+v", result.State.AuthorityDeltas)
-	}
+	gomega.Expect(derived).NotTo(gomega.BeNil(), fmt.Sprintf("expected typed planner-question authority delta, got %+v", result.State.AuthorityDeltas))
 
 	want := []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
-	if !slices.Equal(derived.AffectedPaths, want) {
-		t.Fatalf("derived affected paths = %#v, want %#v", derived.AffectedPaths, want)
-	}
-	if !slices.Equal(derived.AffectedFields, []string{"new_file_authorization"}) {
-		t.Fatalf("derived affected fields = %#v, want new_file_authorization", derived.AffectedFields)
-	}
-	if got := plancontract.AuthorizedNewFilePathsFromPrompt(implementorPrompt); !slices.Equal(got, want) {
-		t.Fatalf("authorized new files = %#v, want %#v", got, want)
-	}
-}
+	gomega.Expect(slices.Equal(derived.AffectedPaths, want)).To(gomega.BeTrue(), fmt.Sprintf("derived affected paths = %#v, want %#v", derived.AffectedPaths, want))
+	gomega.Expect(slices.Equal(derived.AffectedFields, []string{"new_file_authorization"})).To(gomega.BeTrue(), fmt.Sprintf("derived affected fields = %#v, want new_file_authorization", derived.AffectedFields))
+	{
 
-func TestRunRevalidatesApprovedRejectedGreenfieldCandidateWithoutPlannerDrift(t *testing.T) {
-	root := t.TempDir()
+		got := plancontract.AuthorizedNewFilePathsFromPrompt(implementorPrompt)
+		gomega.Expect(slices.Equal(got, want)).To(gomega.BeTrue(), fmt.Sprintf("authorized new files = %#v, want %#v", got, want))
+	}
+
+})
+var _ = ginkgo.It("run revalidates approved rejected greenfield candidate without planner drift", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validGreenfieldBrainPlanForTest()
 
 	state := NewState("session", "Can you work out an MVP to an effective \"llm brain\" sort of project?", "", 3, time.Unix(1, 0).UTC())
@@ -4445,32 +3865,25 @@ func TestRunRevalidatesApprovedRejectedGreenfieldCandidateWithoutPlannerDrift(t 
 		Now:                   time.Unix(2, 0).UTC(),
 	}, func(prompt string, taskFamily string) (string, error) {
 		calls = append(calls, taskFamily)
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerPlanner) {
-			t.Fatalf("approved rejected candidate should be revalidated before planner regeneration; prompt:\n%s", prompt)
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerPlanner)), fmt.Sprintf("approved rejected candidate should be revalidated before planner regeneration; prompt:\n%s", prompt))
+
 		return testPlanExecuteCompletedJSONForPlanWithSourceSanity(plan, prompt), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers))
+	{
 
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+		got := result.State.Plan.TopLevelScope.Objective
+		gomega.Expect(got).To(gomega.Equal(plan.TopLevelScope.Objective), fmt.Sprintf("approved candidate drifted objective = %q, want %q", got, plan.TopLevelScope.Objective))
 	}
-	if got := result.State.Plan.TopLevelScope.Objective; got != plan.TopLevelScope.Objective {
-		t.Fatalf("approved candidate drifted objective = %q, want %q", got, plan.TopLevelScope.Objective)
-	}
-	if !slices.Equal(calls, []string{string(autonomy.TaskFamilyFeaturePlannerImplementor)}) {
-		t.Fatalf("calls = %#v, want only implementor dispatch", calls)
-	}
-	if len(result.Events) == 0 || result.Events[1].Type != "idiom.feature_planner.rejected_candidate_revalidated" {
-		t.Fatalf("missing candidate revalidation event: %+v", result.Events)
-	}
-}
+	gomega.Expect(slices.Equal(calls, []string{string(autonomy.TaskFamilyFeaturePlannerImplementor)})).To(gomega.BeTrue(), fmt.Sprintf("calls = %#v, want only implementor dispatch", calls))
+	gomega.Expect(result.Events).NotTo(gomega.HaveLen(0), fmt.Sprintf("missing candidate revalidation event: %+v", result.Events))
+	gomega.Expect(result.Events[1].Type).To(gomega.Equal("idiom.feature_planner.rejected_candidate_revalidated"), fmt.Sprintf("missing candidate revalidation event: %+v", result.Events))
 
-func TestRunUsesAnsweredNewFileAuthorizationWithStandaloneAcceptanceID(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+})
+var _ = ginkgo.It("run uses answered new file authorization with standalone acceptance ID", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
 	plan := validPlan()
 
 	plan.SDDContract.Refs = nil
@@ -4491,27 +3904,22 @@ func TestRunUsesAnsweredNewFileAuthorizationWithStandaloneAcceptanceID(t *testin
 	}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, plan), nil
+			return mustPlanJSON(plan), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			return testPlanExecuteCompletedJSONForPlanAndPrompt(plan, prompt), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers))
 
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
-	}
-}
-
-func TestRunRecordsRejectedCandidateForMissingSDDRefsAfterAuthorization(t *testing.T) {
-	root := t.TempDir()
-	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+})
+var _ = ginkgo.It("run records rejected candidate for missing SDD refs after authorization", func() {
+	root := ginkgo.GinkgoT().TempDir()
+	mkdirAndWriteFile(filepath.Join(root, "go.mod"), "module example.com/test\n")
 	plan := validPlan()
 
 	plan.SDDContract.Refs = nil
@@ -4530,35 +3938,24 @@ func TestRunRecordsRejectedCandidateForMissingSDDRefsAfterAuthorization(t *testi
 		MaxPlanningIterations: 3,
 		Now:                   time.Unix(2, 0).UTC(),
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatal("invalid plan must not dispatch implementor")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprint("invalid plan must not dispatch implementor"))
 
-		return mustPlanJSON(t, plan), nil
+		return mustPlanJSON(plan), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
-	}
-	if len(result.State.RejectedPlanCandidates) != 1 {
-		t.Fatalf("rejected candidates = %+v, want one", result.State.RejectedPlanCandidates)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning-repair", result.State.Status))
+	gomega.Expect(len(result.State.RejectedPlanCandidates)).To(gomega.Equal(1), fmt.Sprintf("rejected candidates = %+v, want one", result.State.RejectedPlanCandidates))
 
 	rejected := result.State.RejectedPlanCandidates[0]
-	if rejected.Plan.Atoms[0].ID != plan.Atoms[0].ID || rejected.PlanHash == "" {
-		t.Fatalf("rejected candidate did not preserve submitted plan/hash: %+v", rejected)
-	}
-	if !strings.Contains(rejected.Diagnostic, "missing sdd_refs") {
-		t.Fatalf("diagnostic should name missing sdd_refs: %+v", rejected)
-	}
+	gomega.Expect(rejected.Plan.Atoms[0].ID).To(gomega.Equal(plan.Atoms[0].ID), fmt.Sprintf("rejected candidate did not preserve submitted plan/hash: %+v", rejected))
+	gomega.Expect(rejected.PlanHash).NotTo(gomega.Equal(""), fmt.Sprintf("rejected candidate did not preserve submitted plan/hash: %+v", rejected))
+	gomega.Expect(strings.Contains(rejected.Diagnostic, "missing sdd_refs")).To(gomega.BeTrue(), fmt.Sprintf("diagnostic should name missing sdd_refs: %+v", rejected))
+
 	lastEvent := result.Events[len(result.Events)-1]
-	if lastEvent.Type != "idiom.feature_planner.tdd_pre_execution_blocked" || lastEvent.Fields["rejected_plan_sha256"] == "" {
-		t.Fatalf("event should include rejected plan hash fields: %+v", result.Events)
-	}
-}
+	gomega.Expect(lastEvent.Type).To(gomega.Equal("idiom.feature_planner.tdd_pre_execution_blocked"), fmt.Sprintf("event should include rejected plan hash fields: %+v", result.Events))
+	gomega.Expect(lastEvent.Fields["rejected_plan_sha256"]).NotTo(gomega.Equal(""), fmt.Sprintf("event should include rejected plan hash fields: %+v", result.Events))
+
+})
 
 func newQuestionStateForNewFiles(paths []string) FeatureState {
 	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
@@ -4578,8 +3975,8 @@ func newQuestionStateForNewFiles(paths []string) FeatureState {
 	return state
 }
 
-func TestRunDoesNotCompileRequestedDecisionPathsAsNewFileAuthorization(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("run does not compile requested decision paths as new file authorization", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
@@ -4608,34 +4005,25 @@ func TestRunDoesNotCompileRequestedDecisionPathsAsNewFileAuthorization(t *testin
 	}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, plan), nil
+			return mustPlanJSON(plan), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
-		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning_repair", result.State.Status))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file")).To(gomega.BeTrue(), fmt.Sprintf("expected new-file authorization blocker, got %+v", result.State.Blockers))
 
 	for _, delta := range result.State.AuthorityDeltas {
-		if len(delta.AffectedPaths) > 0 || slices.Contains(delta.AffectedFields, "new_file_authorization") {
-			t.Fatalf("requested_decision prose must not mint typed path authority, got %+v", result.State.AuthorityDeltas)
-		}
-	}
-}
+		gomega.Expect(len(delta.AffectedPaths)).NotTo(gomega.BeNumerically(">", 0), fmt.Sprintf("requested_decision prose must not mint typed path authority, got %+v", result.State.AuthorityDeltas))
+		gomega.Expect(delta.AffectedFields).NotTo(gomega.ContainElement("new_file_authorization"), fmt.Sprintf("requested_decision prose must not mint typed path authority, got %+v", result.State.AuthorityDeltas))
 
-func TestRunDoesNotCompileGenericResumeAnswerAsNewFileAuthorization(t *testing.T) {
-	root := t.TempDir()
+	}
+})
+var _ = ginkgo.It("run does not compile generic resume answer as new file authorization", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"project/scripts/economy/score_breakdown.gd"}
@@ -4663,34 +4051,25 @@ func TestRunDoesNotCompileGenericResumeAnswerAsNewFileAuthorization(t *testing.T
 	}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, plan), nil
+			return mustPlanJSON(plan), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
-		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning_repair", result.State.Status))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file")).To(gomega.BeTrue(), fmt.Sprintf("expected new-file authorization blocker, got %+v", result.State.Blockers))
 
 	for _, delta := range result.State.AuthorityDeltas {
-		if slices.Contains(delta.AffectedFields, "new_file_authorization") || len(delta.AffectedPaths) > 0 {
-			t.Fatalf("generic resume answer must not mint path-level new-file authority, got %+v", result.State.AuthorityDeltas)
-		}
-	}
-}
+		gomega.Expect(delta.AffectedFields).NotTo(gomega.ContainElement("new_file_authorization"), fmt.Sprintf("generic resume answer must not mint path-level new-file authority, got %+v", result.State.AuthorityDeltas))
+		gomega.Expect(len(delta.AffectedPaths)).NotTo(gomega.BeNumerically(">", 0), fmt.Sprintf("generic resume answer must not mint path-level new-file authority, got %+v", result.State.AuthorityDeltas))
 
-func TestRunRejectsExplicitOperatorPromptForStandaloneNewFileAuthorization(t *testing.T) {
-	root := t.TempDir()
+	}
+})
+var _ = ginkgo.It("run rejects explicit operator prompt for standalone new file authorization", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"}
@@ -4707,32 +4086,21 @@ func TestRunRejectsExplicitOperatorPromptForStandaloneNewFileAuthorization(t *te
 	}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, plan), nil
+			return mustPlanJSON(plan), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning_repair", result.State.Status))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file")).To(gomega.BeTrue(), fmt.Sprintf("expected new-file authorization blocker, got %+v", result.State.Blockers))
+	gomega.Expect(len(result.State.AuthorityDeltas)).To(gomega.Equal(0), fmt.Sprintf("operator prompt prose must not mint new-file authority, got %+v", result.State.AuthorityDeltas))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
-		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
-	}
-
-	if len(result.State.AuthorityDeltas) != 0 {
-		t.Fatalf("operator prompt prose must not mint new-file authority, got %+v", result.State.AuthorityDeltas)
-	}
-}
-
-func TestRunRejectsGenericAddPromptForStandaloneImplementationNewFile(t *testing.T) {
-	root := t.TempDir()
+})
+var _ = ginkgo.It("run rejects generic add prompt for standalone implementation new file", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"project/scripts/economy/score_breakdown.gd"}
@@ -4748,66 +4116,49 @@ func TestRunRejectsGenericAddPromptForStandaloneImplementationNewFile(t *testing
 	}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, plan), nil
+			return mustPlanJSON(plan), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningRepair), fmt.Sprintf("state.Status = %q, want planning_repair", result.State.Status))
+	gomega.Expect(strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file")).To(gomega.BeTrue(), fmt.Sprintf("expected new-file authorization blocker, got %+v", result.State.Blockers))
+	gomega.Expect(len(result.State.AuthorityDeltas)).To(gomega.Equal(0), fmt.Sprintf("generic add prompt must not mint new-file authority, got %+v", result.State.AuthorityDeltas))
 
-	if result.State.Status != FeatureStatePlanningRepair {
-		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
-	}
-
-	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
-		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
-	}
-
-	if len(result.State.AuthorityDeltas) != 0 {
-		t.Fatalf("generic add prompt must not mint new-file authority, got %+v", result.State.AuthorityDeltas)
-	}
-}
-
-func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch records plan execute lane family", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprintf("task family = %q, want feature_planner_implementor callback", taskFamily))
 
 		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
-
-	if len(events) != 3 || events[2].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("events = %+v, want dispatch, complete, release-ready", events)
-	}
+	gomega.Expect(events).To(gomega.HaveLen(3), fmt.Sprintf("events = %+v, want dispatch, complete, release-ready", events))
+	gomega.Expect(events[2].Type).To(gomega.Equal("idiom.feature_planner.release_ready"), fmt.Sprintf("events = %+v, want dispatch, complete, release-ready", events))
 
 	dispatch := events[0]
-	if dispatch.Type != "idiom.feature_planner.atom_dispatched" || len(dispatch.ActiveRunDeltas) != 1 {
-		t.Fatalf("unexpected dispatch event: %+v", dispatch)
-	}
-
-	if dispatch.ActiveRunDeltas[0].LaneFamily != "plan-execute" {
-		t.Fatalf("lane family = %q, want plan-execute", dispatch.ActiveRunDeltas[0].LaneFamily)
-	}
+	gomega.Expect(dispatch.Type).To(gomega.Equal("idiom.feature_planner.atom_dispatched"), fmt.Sprintf("unexpected dispatch event: %+v", dispatch))
+	gomega.Expect(dispatch.ActiveRunDeltas).To(gomega.HaveLen(1), fmt.Sprintf("unexpected dispatch event: %+v", dispatch))
+	gomega.Expect(dispatch.ActiveRunDeltas[0].LaneFamily).To(gomega.Equal("plan-execute"), fmt.Sprintf("lane family = %q, want plan-execute", dispatch.ActiveRunDeltas[0].LaneFamily))
 
 	complete := events[1]
-	if got := fmt.Sprint(complete.Fields["lane_family"]); got != "plan-execute" {
-		t.Fatalf("completion lane family = %q, want plan-execute; event=%+v", got, complete)
+	{
+		got := fmt.Sprint(complete.Fields["lane_family"])
+		gomega.Expect(got).To(gomega.Equal("plan-execute"), fmt.Sprintf("completion lane family = %q, want plan-execute; event=%+v", got, complete))
+	}
+	{
+
+		got := fmt.Sprint(complete.Fields["nested_status"])
+		gomega.Expect(got).To(gomega.Equal("completed"), fmt.Sprintf("nested status = %q, want completed; event=%+v", got, complete))
 	}
 
-	if got := fmt.Sprint(complete.Fields["nested_status"]); got != "completed" {
-		t.Fatalf("nested status = %q, want completed; event=%+v", got, complete)
-	}
-}
-
-func TestDispatchUsesPlanExecuteSafeRunIDForUnsafeAtomID(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch uses plan execute safe run ID for unsafe atom ID", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	plan := validPlan()
 
@@ -4820,109 +4171,66 @@ func TestDispatchUsesPlanExecuteSafeRunIDForUnsafeAtomID(t *testing.T) {
 		prompt = gotPrompt
 		return testPlanExecuteCompletedJSONForPrompt(gotPrompt), nil
 	})
-
-	if len(events) != 3 || events[2].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("events = %+v, want dispatch, complete, release-ready", events)
-	}
+	gomega.Expect(events).To(gomega.HaveLen(3), fmt.Sprintf("events = %+v, want dispatch, complete, release-ready", events))
+	gomega.Expect(events[2].Type).To(gomega.Equal("idiom.feature_planner.release_ready"), fmt.Sprintf("events = %+v, want dispatch, complete, release-ready", events))
 
 	runID := events[0].ActiveRunDeltas[0].LaneSessionID
-	if runID == "" || strings.ContainsAny(runID, "/.") {
-		t.Fatalf("run id = %q, want session-safe id", runID)
-	}
+	gomega.Expect(runID).NotTo(gomega.Equal(""), fmt.Sprintf("run id = %q, want session-safe id", runID))
+	gomega.Expect(strings.ContainsAny(runID, "/.")).To(gomega.BeFalse(), fmt.Sprintf("run id = %q, want session-safe id", runID))
+	gomega.Expect(strings.Contains(prompt, "Plan-execute session id: "+runID)).To(gomega.BeTrue(), fmt.Sprintf("implementor prompt missing bound session id %q:\n%s", runID, prompt))
+	gomega.Expect(state.Atoms[0].LastRunID).To(gomega.Equal(runID), fmt.Sprintf("atom LastRunID = %q, want %q", state.Atoms[0].LastRunID, runID))
 
-	if !strings.Contains(prompt, "Plan-execute session id: "+runID) {
-		t.Fatalf("implementor prompt missing bound session id %q:\n%s", runID, prompt)
-	}
-
-	if state.Atoms[0].LastRunID != runID {
-		t.Fatalf("atom LastRunID = %q, want %q", state.Atoms[0].LastRunID, runID)
-	}
-}
-
-func TestDispatchRejectsRawSourceSatisfiedWithoutTypedPlanExecuteEvidence(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch rejects raw source satisfied without typed plan execute evidence", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprintf("task family = %q, want feature_planner_implementor callback", taskFamily))
 
 		return "Decision: source-satisfied\n- internal/feature.go: already implemented.", nil
 	})
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("state.Status = %q, want recovery-open; events=%+v", state.Status, events))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("atom state = %q, want recovery-open", state.Atoms[0].State))
+	gomega.Expect(events).To(gomega.HaveLen(2), fmt.Sprintf("events = %+v, want dispatch then unverified completion rejection", events))
+	gomega.Expect(events[1].Type).To(gomega.Equal("idiom.feature_planner.unverified_completion_rejected"), fmt.Sprintf("events = %+v, want dispatch then unverified completion rejection", events))
+	gomega.Expect(state.Atoms[0].Blockers).NotTo(gomega.HaveLen(0), fmt.Sprintf("missing typed plan-execute evidence blocker: %+v", state.Atoms[0].Blockers))
+	gomega.Expect(state.Atoms[0].Blockers[0]).To(gomega.ContainSubstring("typed \"plan_execute_completed\""), fmt.Sprintf("missing typed plan-execute evidence blocker: %+v", state.Atoms[0].Blockers))
 
-	if state.Status != FeatureStateRecoveryOpen {
-		t.Fatalf("state.Status = %q, want recovery-open; events=%+v", state.Status, events)
-	}
-
-	if state.Atoms[0].State != AtomStateRecoveryOpen {
-		t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
-	}
-
-	if len(events) != 2 || events[1].Type != "idiom.feature_planner.unverified_completion_rejected" {
-		t.Fatalf("events = %+v, want dispatch then unverified completion rejection", events)
-	}
-
-	if len(state.Atoms[0].Blockers) == 0 || !strings.Contains(state.Atoms[0].Blockers[0], "typed \"plan_execute_completed\"") {
-		t.Fatalf("missing typed plan-execute evidence blocker: %+v", state.Atoms[0].Blockers)
-	}
-}
-
-func TestDispatchRejectsRawProseWithoutTypedPlanExecuteEvidence(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch rejects raw prose without typed plan execute evidence", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprintf("task family = %q, want feature_planner_implementor callback", taskFamily))
 
 		return "Implemented atom.", nil
 	})
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("state.Status = %q, want recovery-open; events=%+v", state.Status, events))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("atom state = %q, want recovery-open", state.Atoms[0].State))
+	gomega.Expect(events).To(gomega.HaveLen(2), fmt.Sprintf("events = %+v, want dispatch then unverified completion rejection", events))
+	gomega.Expect(events[1].Type).To(gomega.Equal("idiom.feature_planner.unverified_completion_rejected"), fmt.Sprintf("events = %+v, want dispatch then unverified completion rejection", events))
+	gomega.Expect(state.Atoms[0].Blockers).NotTo(gomega.HaveLen(0), fmt.Sprintf("missing typed plan-execute evidence blocker: %+v", state.Atoms[0].Blockers))
+	gomega.Expect(state.Atoms[0].Blockers[0]).To(gomega.ContainSubstring("raw text without typed \"plan_execute_completed\""), fmt.Sprintf("missing typed plan-execute evidence blocker: %+v", state.Atoms[0].Blockers))
 
-	if state.Status != FeatureStateRecoveryOpen {
-		t.Fatalf("state.Status = %q, want recovery-open; events=%+v", state.Status, events)
-	}
-
-	if state.Atoms[0].State != AtomStateRecoveryOpen {
-		t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
-	}
-
-	if len(events) != 2 || events[1].Type != "idiom.feature_planner.unverified_completion_rejected" {
-		t.Fatalf("events = %+v, want dispatch then unverified completion rejection", events)
-	}
-
-	if len(state.Atoms[0].Blockers) == 0 || !strings.Contains(state.Atoms[0].Blockers[0], "raw text without typed \"plan_execute_completed\"") {
-		t.Fatalf("missing typed plan-execute evidence blocker: %+v", state.Atoms[0].Blockers)
-	}
-}
-
-func TestDispatchRejectsUnsupportedImplementorJSONTool(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch rejects unsupported implementor JSON tool", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprintf("task family = %q, want feature_planner_implementor callback", taskFamily))
 
 		return `{"tool":"plan_execute_complete","summary":"atom implemented"}`, nil
 	})
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("state.Status = %q, want recovery-open; events=%+v", state.Status, events))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("atom state = %q, want recovery-open", state.Atoms[0].State))
+	gomega.Expect(state.Atoms[0].Blockers).NotTo(gomega.HaveLen(0), fmt.Sprintf("missing unsupported-tool blocker: %+v", state.Atoms[0].Blockers))
+	gomega.Expect(state.Atoms[0].Blockers[0]).To(gomega.ContainSubstring("unsupported completion tool"), fmt.Sprintf("missing unsupported-tool blocker: %+v", state.Atoms[0].Blockers))
 
-	if state.Status != FeatureStateRecoveryOpen {
-		t.Fatalf("state.Status = %q, want recovery-open; events=%+v", state.Status, events)
-	}
-
-	if state.Atoms[0].State != AtomStateRecoveryOpen {
-		t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
-	}
-
-	if len(state.Atoms[0].Blockers) == 0 || !strings.Contains(state.Atoms[0].Blockers[0], "unsupported completion tool") {
-		t.Fatalf("missing unsupported-tool blocker: %+v", state.Atoms[0].Blockers)
-	}
-}
-
-func TestDispatchRejectsMalformedOrEmptyImplementorJSON(t *testing.T) {
+})
+var _ = ginkgo.Describe("dispatch rejects malformed or empty implementor JSON", func() {
 	tests := []struct {
 		name string
 		raw  string
@@ -4935,34 +4243,24 @@ func TestDispatchRejectsMalformedOrEmptyImplementorJSON(t *testing.T) {
 		{name: "empty tool question-shaped", raw: `{"question_summary":"blocked","blocking_claim":"needs decision"}`, want: "JSON without a supported tool"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 			ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 			events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-				if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-					t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
-				}
+				gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprintf("task family = %q, want feature_planner_implementor callback", taskFamily))
 
 				return tt.raw, nil
 			})
+			gomega.Expect(state.Status).To(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("state.Status = %q, want recovery-open; events=%+v", state.Status, events))
+			gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("atom state = %q, want recovery-open", state.Atoms[0].State))
+			gomega.Expect(state.Atoms[0].Blockers).NotTo(gomega.HaveLen(0), fmt.Sprintf("missing blocker %q: %+v", tt.want, state.Atoms[0].Blockers))
+			gomega.Expect(state.Atoms[0].Blockers[0]).To(gomega.ContainSubstring(tt.want), fmt.Sprintf("missing blocker %q: %+v", tt.want, state.Atoms[0].Blockers))
 
-			if state.Status != FeatureStateRecoveryOpen {
-				t.Fatalf("state.Status = %q, want recovery-open; events=%+v", state.Status, events)
-			}
-
-			if state.Atoms[0].State != AtomStateRecoveryOpen {
-				t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
-			}
-
-			if len(state.Atoms[0].Blockers) == 0 || !strings.Contains(state.Atoms[0].Blockers[0], tt.want) {
-				t.Fatalf("missing blocker %q: %+v", tt.want, state.Atoms[0].Blockers)
-			}
 		})
 	}
-}
-
-func TestDispatchStopsAfterBlockedAtomWithoutSyntheticSiblingRuns(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch stops after blocked atom without synthetic sibling runs", func() {
 	plan := validPlan()
 	second := plan.Atoms[0]
 
@@ -4982,35 +4280,25 @@ func TestDispatchStopsAfterBlockedAtomWithoutSyntheticSiblingRuns(t *testing.T) 
 	var implementorCalls int
 
 	events := DispatchReadyAtoms(&state, 5, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprintf("task family = %q, want feature_planner_implementor callback", taskFamily))
 
 		implementorCalls++
 
 		return `{"tool":"question_for_planner","question_summary":"first atom blocked","blocking_claim":"needs product decision"}`, nil
 	})
-
-	if implementorCalls != 1 {
-		t.Fatalf("expected dispatch to stop after first blocked child, got %d calls", implementorCalls)
-	}
-
-	if state.Atoms[0].State != AtomStateQuestionForPlanner {
-		t.Fatalf("first atom state = %q, want question-for-planner", state.Atoms[0].State)
-	}
-
-	if state.Atoms[1].State != AtomStateQueued {
-		t.Fatalf("sibling atom should remain queued, got %q", state.Atoms[1].State)
-	}
+	gomega.Expect(implementorCalls).To(gomega.Equal(1), fmt.Sprintf("expected dispatch to stop after first blocked child, got %d calls", implementorCalls))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateQuestionForPlanner), fmt.Sprintf("first atom state = %q, want question-for-planner", state.Atoms[0].State))
+	gomega.Expect(state.Atoms[1].State).To(gomega.Equal(AtomStateQueued), fmt.Sprintf("sibling atom should remain queued, got %q", state.Atoms[1].State))
 
 	for _, event := range events {
-		if event.AtomID == "atom-2" && event.Type == "idiom.feature_planner.atom_dispatched" {
-			t.Fatalf("sibling atom must not be synthetically dispatched after blocker: %+v", events)
-		}
-	}
-}
+		gomega.Expect(event).NotTo(gomega.And(
+			gomega.HaveField("AtomID", "atom-2"),
+			gomega.HaveField("Type", "idiom.feature_planner.atom_dispatched"),
+		), fmt.Sprintf("sibling atom must not be synthetically dispatched after blocker: %+v", events))
 
-func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("dispatch stops after pre dispatch TDD blocker", func() {
 	plan := validPlan()
 	second := plan.Atoms[0]
 
@@ -5035,58 +4323,37 @@ func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
 		implementorCalls++
 		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
-
-	if implementorCalls != 0 {
-		t.Fatalf("implementor must not run after pre-dispatch TDD blocker, got %d call(s)", implementorCalls)
-	}
-
-	if state.Atoms[0].State != AtomStateBlockedMissingTDD {
-		t.Fatalf("first atom state = %q, want blocked-missing-tdd", state.Atoms[0].State)
-	}
-
-	if state.Atoms[1].State != AtomStateQueued {
-		t.Fatalf("sibling atom should remain queued, got %q", state.Atoms[1].State)
-	}
+	gomega.Expect(implementorCalls).To(gomega.Equal(0), fmt.Sprintf("implementor must not run after pre-dispatch TDD blocker, got %d call(s)", implementorCalls))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateBlockedMissingTDD), fmt.Sprintf("first atom state = %q, want blocked-missing-tdd", state.Atoms[0].State))
+	gomega.Expect(state.Atoms[1].State).To(gomega.Equal(AtomStateQueued), fmt.Sprintf("sibling atom should remain queued, got %q", state.Atoms[1].State))
 
 	for _, event := range events {
-		if event.AtomID == "atom-2" && event.Type == "idiom.feature_planner.atom_dispatched" {
-			t.Fatalf("sibling atom must not dispatch after pre-dispatch blocker: %+v", events)
-		}
-	}
-}
+		gomega.Expect(event).NotTo(gomega.And(
+			gomega.HaveField("AtomID", "atom-2"),
+			gomega.HaveField("Type", "idiom.feature_planner.atom_dispatched"),
+		), fmt.Sprintf("sibling atom must not dispatch after pre-dispatch blocker: %+v", events))
 
-func TestDispatchDoesNotCompletePlanExecuteQuestion(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("dispatch does not complete plan execute question", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerImplementor)), fmt.Sprintf("task family = %q, want feature_planner_implementor callback", taskFamily))
 
 		return `{"tool":"question_for_planner","lane_family":"plan-execute","question_summary":"Plan-execute could not produce a plan artifact.","blocking_claim":"plan-execute did not complete the atom implementation contract"}`, nil
 	})
-
-	if state.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want planning-question-open; events=%+v", state.Status, events)
-	}
-
-	if len(state.OpenQuestions) != 1 {
-		t.Fatalf("open questions = %+v", state.OpenQuestions)
-	}
-
-	if state.Atoms[0].State != AtomStateQuestionForPlanner {
-		t.Fatalf("atom state = %q, want question-for-planner", state.Atoms[0].State)
-	}
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want planning-question-open; events=%+v", state.Status, events))
+	gomega.Expect(len(state.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("open questions = %+v", state.OpenQuestions))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateQuestionForPlanner), fmt.Sprintf("atom state = %q, want question-for-planner", state.Atoms[0].State))
 
 	for _, event := range events {
-		if event.Type == "idiom.feature_planner.atom_completed" {
-			t.Fatalf("blocked plan-execute output must not complete atom: %+v", events)
-		}
-	}
-}
+		gomega.Expect(event.Type).NotTo(gomega.Equal("idiom.feature_planner.atom_completed"), fmt.Sprintf("blocked plan-execute output must not complete atom: %+v", events))
 
-func TestApplyImplementorOutputQuestionPrefixOpensPlannerQuestion(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("apply implementor output question prefix opens planner question", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
@@ -5097,17 +4364,13 @@ func TestApplyImplementorOutputQuestionPrefixOpensPlannerQuestion(t *testing.T) 
 	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, State: ActiveRunStateRunning}}
 
 	events := ApplyImplementorOutput(&state, atom, "<<QUESTION>>: Plan-execute could not produce a plan artifact.")
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("question prefix should open planner question, state=%q atom=%q events=%+v", state.Status, atom.State, events))
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateQuestionForPlanner), fmt.Sprintf("question prefix should open planner question, state=%q atom=%q events=%+v", state.Status, atom.State, events))
+	gomega.Expect(state.OpenQuestions).To(gomega.HaveLen(1), fmt.Sprintf("unexpected open questions: %+v", state.OpenQuestions))
+	gomega.Expect(state.OpenQuestions[0].QuestionSummary).To(gomega.ContainSubstring("Plan-execute"), fmt.Sprintf("unexpected open questions: %+v", state.OpenQuestions))
 
-	if state.Status != FeatureStatePlanningQuestion || atom.State != AtomStateQuestionForPlanner {
-		t.Fatalf("question prefix should open planner question, state=%q atom=%q events=%+v", state.Status, atom.State, events)
-	}
-
-	if len(state.OpenQuestions) != 1 || !strings.Contains(state.OpenQuestions[0].QuestionSummary, "Plan-execute") {
-		t.Fatalf("unexpected open questions: %+v", state.OpenQuestions)
-	}
-}
-
-func TestDispatchBlocksWhenTDDEvidenceLedgerIsMissing(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch blocks when TDD evidence ledger is missing", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	state.Plan = validPlan()
@@ -5118,25 +4381,17 @@ func TestDispatchBlocksWhenTDDEvidenceLedgerIsMissing(t *testing.T) {
 	}}
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, _ string) (string, error) {
-		t.Fatal("implementor must not run without harness-owned TDD evidence")
+		ginkgo.Fail(fmt.Sprint("implementor must not run without harness-owned TDD evidence"))
 
 		return "", nil
 	})
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateBlockedMissingTDD), fmt.Sprintf("atom state = %q, want blocked missing TDD", state.Atoms[0].State))
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.tdd_pre_execution_blocked"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(containsString(state.Blockers, "tdd_pre_execution_evidence.evt-tdd-1")).To(gomega.BeTrue(), fmt.Sprintf("missing ledger blocker not recorded: %+v", state.Blockers))
 
-	if state.Atoms[0].State != AtomStateBlockedMissingTDD {
-		t.Fatalf("atom state = %q, want blocked missing TDD", state.Atoms[0].State)
-	}
-
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.tdd_pre_execution_blocked" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if !containsString(state.Blockers, "tdd_pre_execution_evidence.evt-tdd-1") {
-		t.Fatalf("missing ledger blocker not recorded: %+v", state.Blockers)
-	}
-}
-
-func TestDispatchWaitsForAtomDependencies(t *testing.T) {
+})
+var _ = ginkgo.It("dispatch waits for atom dependencies", func() {
 	plan := validPlan()
 	dependent := plan.Atoms[0]
 
@@ -5169,33 +4424,24 @@ func TestDispatchWaitsForAtomDependencies(t *testing.T) {
 		prompts = append(prompts, prompt)
 		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
+	gomega.Expect(prompts).To(gomega.HaveLen(1), fmt.Sprintf("expected only dependency atom to dispatch first, prompts=%#v", prompts))
+	gomega.Expect(prompts[0]).To(gomega.ContainSubstring(`"id": "atom-base"`), fmt.Sprintf("expected only dependency atom to dispatch first, prompts=%#v", prompts))
+	gomega.Expect(state.Atoms[0].State).To(gomega.Equal(AtomStateQueued), fmt.Sprintf("dependent atom should remain queued until dependency completes: %+v", state.Atoms[0]))
+	gomega.Expect(state.Atoms[1].State).To(gomega.Equal(AtomStateComplete), fmt.Sprintf("base atom should complete: %+v events=%+v", state.Atoms[1], events))
 
-	if len(prompts) != 1 || !strings.Contains(prompts[0], `"id": "atom-base"`) {
-		t.Fatalf("expected only dependency atom to dispatch first, prompts=%#v", prompts)
-	}
-
-	if state.Atoms[0].State != AtomStateQueued {
-		t.Fatalf("dependent atom should remain queued until dependency completes: %+v", state.Atoms[0])
-	}
-
-	if state.Atoms[1].State != AtomStateComplete {
-		t.Fatalf("base atom should complete: %+v events=%+v", state.Atoms[1], events)
-	}
-}
-
-func TestValidateDurablePlanRejectsInvalidDependencies(t *testing.T) {
-	t.Run("unknown", func(t *testing.T) {
+})
+var _ = ginkgo.Describe("validate durable plan rejects invalid dependencies", func() {
+	ginkgo.It("unknown", func() {
 		plan := validPlan()
 
 		plan.Atoms[0].Dependencies = []string{"missing"}
 
 		err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
-		if err == nil || !strings.Contains(err.Error(), "unknown atom") {
-			t.Fatalf("expected unknown dependency error, got %v", err)
-		}
-	})
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected unknown dependency error, got %v", err))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("unknown atom"), fmt.Sprintf("expected unknown dependency error, got %v", err))
 
-	t.Run("cycle", func(t *testing.T) {
+	})
+	ginkgo.It("cycle", func() {
 		plan := validPlan()
 		second := plan.Atoms[0]
 
@@ -5211,23 +4457,23 @@ func TestValidateDurablePlanRejectsInvalidDependencies(t *testing.T) {
 		plan.Atoms = append(plan.Atoms, second)
 
 		err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
-		if err == nil || !strings.Contains(err.Error(), "dependency cycle") {
-			t.Fatalf("expected dependency cycle error, got %v", err)
-		}
-	})
-}
+		gomega.Expect(err).NotTo(gomega.BeNil(), fmt.Sprintf("expected dependency cycle error, got %v", err))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("dependency cycle"), fmt.Sprintf("expected dependency cycle error, got %v", err))
 
-func TestValidateDurablePlanAcceptsFullSHA256TDDSnapshotDigest(t *testing.T) {
+	})
+})
+var _ = ginkgo.It("validate durable plan accepts full SHA256 TDD snapshot digest", func() {
 	plan := validPlan()
 
 	plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = "sha256:" + strings.Repeat("a", 64)
+	{
 
-	if err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{}); err != nil {
-		t.Fatalf("valid lowercase SHA-256 TDD snapshot digest should validate: %v", err)
+		err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("valid lowercase SHA-256 TDD snapshot digest should validate: %v", err))
 	}
-}
 
-func TestValidateDurablePlanRejectsPlaceholderTDDSnapshotValues(t *testing.T) {
+})
+var _ = ginkgo.Describe("validate durable plan rejects placeholder TDD snapshot values", func() {
 	tests := []struct {
 		name     string
 		snapshot PlannedTDDSnapshot
@@ -5284,75 +4530,54 @@ func TestValidateDurablePlanRejectsPlaceholderTDDSnapshotValues(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		ginkgo.It(tt.name, func() {
 			plan := validPlan()
 
 			plan.Atoms[0].PlannedTDDSnapshot.SnapshotID = tt.snapshot.SnapshotID
 			plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = tt.snapshot.SnapshotDigest
 
 			err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
-			if err == nil {
-				t.Fatal("expected placeholder TDD snapshot validation error")
-			}
+			gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected placeholder TDD snapshot validation error"))
 
 			for _, want := range tt.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("validation error missing %q: %v", want, err)
-				}
+				gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
+
 			}
 		})
 	}
-}
-
-func TestValidateDurablePlanRejectsMismatchedTDDSnapshotEventID(t *testing.T) {
+})
+var _ = ginkgo.It("validate durable plan rejects mismatched TDD snapshot event ID", func() {
 	plan := validPlan()
 
 	plan.Atoms[0].PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-missing"
 
 	err := ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
-	if err == nil {
-		t.Fatal("expected mismatched TDD snapshot event validation error")
-	}
+	gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprint("expected mismatched TDD snapshot event validation error"))
 
 	for _, want := range []string{"mismatched durable pre-dispatch TDD fields", "planned_tdd_snapshot.created_before_dispatch_event_id"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("validation error missing %q: %v", want, err)
-		}
-	}
-}
+		gomega.Expect(strings.Contains(err.Error(), want)).To(gomega.BeTrue(), fmt.Sprintf("validation error missing %q: %v", want, err))
 
-func TestRunKeepsImplementorQuestionAsPlannerRepairState(t *testing.T) {
+	}
+})
+var _ = ginkgo.It("run keeps implementor question as planner repair state", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	result, err := Run(state, RunOptions{Prompt: "build feature", MaxPlanningIterations: 3}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerPlanner) {
-			return mustPlanJSON(t, validPlan()), nil
+			return mustPlanJSON(validPlan()), nil
 		}
 
 		return `{"tool":"question_for_planner","question_summary":"Which label text should win?","blocking_claim":"ambiguous target"}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("state.Status = %q, want question-open", result.State.Status))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(1), fmt.Sprintf("open questions = %+v", result.State.OpenQuestions))
+	gomega.Expect(result.State.Atoms[0].State).To(gomega.Equal(AtomStateQuestionForPlanner), fmt.Sprintf("atom state = %q", result.State.Atoms[0].State))
+	gomega.Expect(result.State.OpenQuestions[0].QuestionKind).NotTo(gomega.Equal(""), fmt.Sprintf("planner question was not normalized: %+v", result.State.OpenQuestions[0]))
+	gomega.Expect(result.State.OpenQuestions[0].AuthorityRequired).NotTo(gomega.Equal(""), fmt.Sprintf("planner question was not normalized: %+v", result.State.OpenQuestions[0]))
 
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("state.Status = %q, want question-open", result.State.Status)
-	}
-
-	if len(result.State.OpenQuestions) != 1 {
-		t.Fatalf("open questions = %+v", result.State.OpenQuestions)
-	}
-
-	if result.State.Atoms[0].State != AtomStateQuestionForPlanner {
-		t.Fatalf("atom state = %q", result.State.Atoms[0].State)
-	}
-
-	if result.State.OpenQuestions[0].QuestionKind == "" || result.State.OpenQuestions[0].AuthorityRequired == "" {
-		t.Fatalf("planner question was not normalized: %+v", result.State.OpenQuestions[0])
-	}
-}
-
-func TestImplementorAtomJSONDoesNotOpenPlannerQuestionOrComplete(t *testing.T) {
+})
+var _ = ginkgo.It("implementor atom JSON does not open planner question or complete", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
@@ -5368,30 +4593,17 @@ func TestImplementorAtomJSONDoesNotOpenPlannerQuestionOrComplete(t *testing.T) {
 	}}
 
 	raw, err := json.Marshal(atom.FeatureAtomPlan)
-	if err != nil {
-		t.Fatalf("marshal atom: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal atom: %v", err))
 
 	events := ApplyImplementorOutput(&state, atom, string(raw))
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("atom state = %q, want recovery-open; events=%+v", atom.State, events))
+	gomega.Expect(len(state.OpenQuestions)).To(gomega.Equal(0), fmt.Sprintf("atom JSON should not open planner question: %+v", state.OpenQuestions))
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.unverified_completion_rejected"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(containsString(state.Continuation.CompletedAtoms, atom.ID)).To(gomega.BeFalse(), fmt.Sprintf("atom JSON echo must not complete the atom: %+v", state.Continuation))
 
-	if atom.State != AtomStateRecoveryOpen {
-		t.Fatalf("atom state = %q, want recovery-open; events=%+v", atom.State, events)
-	}
-
-	if len(state.OpenQuestions) != 0 {
-		t.Fatalf("atom JSON should not open planner question: %+v", state.OpenQuestions)
-	}
-
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.unverified_completion_rejected" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
-		t.Fatalf("atom JSON echo must not complete the atom: %+v", state.Continuation)
-	}
-}
-
-func TestApplyImplementorOutputRejectsUnobservedEditAndTestClaims(t *testing.T) {
+})
+var _ = ginkgo.It("apply implementor output rejects unobserved edit and test claims", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
@@ -5415,50 +4627,33 @@ func TestApplyImplementorOutputRejectsUnobservedEditAndTestClaims(t *testing.T) 
 
 **Verification**
 - go test ./internal/labels/... passed locally`)
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("atom state = %q, want recovery-open; events=%+v", atom.State, events))
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("feature status = %q, want recovery-open", state.Status))
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.unverified_completion_rejected"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(len(state.ActiveRuns)).To(gomega.Equal(0), fmt.Sprintf("active run should be folded after rejected completion: %+v", state.ActiveRuns))
+	gomega.Expect(containsString(state.Continuation.CompletedAtoms, atom.ID)).To(gomega.BeFalse(), fmt.Sprintf("rejected atom must not be recorded complete: %+v", state.Continuation))
+	gomega.Expect(containsString(state.Continuation.BlockedAtoms, atom.ID)).To(gomega.BeTrue(), fmt.Sprintf("rejected atom should be resumable as blocked: %+v", state.Continuation))
 
-	if atom.State != AtomStateRecoveryOpen {
-		t.Fatalf("atom state = %q, want recovery-open; events=%+v", atom.State, events)
-	}
-
-	if state.Status != FeatureStateRecoveryOpen {
-		t.Fatalf("feature status = %q, want recovery-open", state.Status)
-	}
-
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.unverified_completion_rejected" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if len(state.ActiveRuns) != 0 {
-		t.Fatalf("active run should be folded after rejected completion: %+v", state.ActiveRuns)
-	}
-
-	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
-		t.Fatalf("rejected atom must not be recorded complete: %+v", state.Continuation)
-	}
-
-	if !containsString(state.Continuation.BlockedAtoms, atom.ID) {
-		t.Fatalf("rejected atom should be resumable as blocked: %+v", state.Continuation)
-	}
-}
-
-func TestApplyImplementorOutputRejectsMissingObservedVerificationCommands(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects missing observed verification commands", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtom(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtom(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
+
 	delete(payload, "verification_commands")
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(trustPlanExecuteCompletionForTest(payload)))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing observed verification command")
-	if state.ReleaseReadiness.Status == "ready" {
-		t.Fatalf("missing observed verification commands must not become release-ready: %+v", state.ReleaseReadiness)
-	}
-}
+	assertRejectedPlanExecuteCompletion(state, atom, events, "missing observed verification command")
+	gomega.Expect(state.ReleaseReadiness.Status).NotTo(gomega.Equal(ReleaseReadinessStatusReady), fmt.Sprintf("missing observed verification commands must not become release-ready: %+v", state.ReleaseReadiness))
 
-func TestObservedVerificationCommandsUseCanonicalEvidenceKey(t *testing.T) {
+})
+var _ = ginkgo.It("observed verification commands use canonical evidence key", func() {
 	atom := plancontract.AtomExecutionContract{
 		RequiredTests: []plancontract.RequiredTest{{Command: "python -m pytest tests/test_brain.py"}},
 		TDDObligations: []plancontract.TDDObligation{{
@@ -5470,13 +4665,14 @@ func TestObservedVerificationCommandsUseCanonicalEvidenceKey(t *testing.T) {
 			Argv: []string{"python", "-m", "pytest", "tests/test_brain.py"},
 		}},
 	}
+	{
 
-	if missing := missingObservedVerificationCommands(atom, completion); len(missing) > 0 {
-		t.Fatalf("canonical argv evidence should satisfy required command, missing %+v", missing)
+		missing := missingObservedVerificationCommands(atom, completion)
+		gomega.Expect(len(missing) > 0).To(gomega.BeFalse(), fmt.Sprintf("canonical argv evidence should satisfy required command, missing %+v", missing))
 	}
-}
 
-func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T) {
+})
+var _ = ginkgo.It("apply implementor output accepts observed plan execute completion", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
@@ -5496,73 +4692,64 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 	}}
 
 	events := ApplyImplementorOutput(&state, atom, testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom))
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateComplete), fmt.Sprintf("atom state = %q, want complete; blockers=%+v", atom.State, atom.Blockers))
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("feature state = %q, want complete", state.Status))
+	gomega.Expect(events).To(gomega.HaveLen(2), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.atom_completed"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[1].Type).To(gomega.Equal("idiom.feature_planner.release_ready"), fmt.Sprintf("unexpected events: %+v", events))
+	{
 
-	if atom.State != AtomStateComplete {
-		t.Fatalf("atom state = %q, want complete; blockers=%+v", atom.State, atom.Blockers)
+		got := fmt.Sprint(events[0].Fields["progress_path"])
+		gomega.Expect(got).To(gomega.Equal(".idiom/plan-execute/session/state.json"), fmt.Sprintf("progress_path = %q, want delegated plan-execute path", got))
 	}
+	{
 
-	if state.Status != FeatureStateComplete {
-		t.Fatalf("feature state = %q, want complete", state.Status)
+		got := fmt.Sprint(events[0].Fields["nested_review_status"])
+		gomega.Expect(got).To(gomega.Equal("skipped"), fmt.Sprintf("nested review status = %q, want skipped", got))
 	}
+	{
 
-	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("unexpected events: %+v", events)
+		got := events[0].Fields["review_repair_skipped"]
+		gomega.Expect(got).To(gomega.Equal(true), fmt.Sprintf("review_repair_skipped = %v, want true", got))
 	}
+	gomega.Expect(len(state.VerificationClosures)).To(gomega.Equal(1), fmt.Sprintf("verification closures = %+v, want one closure", state.VerificationClosures))
 
-	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/session/state.json" {
-		t.Fatalf("progress_path = %q, want delegated plan-execute path", got)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["nested_review_status"]); got != "skipped" {
-		t.Fatalf("nested review status = %q, want skipped", got)
-	}
-
-	if got := events[0].Fields["review_repair_skipped"]; got != true {
-		t.Fatalf("review_repair_skipped = %v, want true", got)
-	}
-
-	if len(state.VerificationClosures) != 1 {
-		t.Fatalf("verification closures = %+v, want one closure", state.VerificationClosures)
-	}
 	closure := state.VerificationClosures[0]
-	if closure.PlanArtifactID != state.Plan.Artifact.ArtifactID ||
-		closure.PlanDigest != state.Plan.Artifact.Digest ||
-		closure.ApprovalEventID != state.Plan.Approval.EventID {
-		t.Fatalf("closure not bound to approved plan artifact: closure=%+v artifact=%+v approval=%+v", closure, state.Plan.Artifact, state.Plan.Approval)
-	}
-	if closure.Status != "passed" {
-		t.Fatalf("closure status = %q, want passed", closure.Status)
-	}
-	if len(closure.TDDCommandResults) == 0 {
-		t.Fatalf("closure missing TDD command results: %+v", closure)
-	}
-	if len(closure.Verification) == 0 {
-		t.Fatalf("closure missing typed verification checks: %+v", closure)
-	}
-	if got := fmt.Sprint(events[0].Fields[featureplannercontract.EventFieldVerificationClosureEventID]); got != closure.EventID {
-		t.Fatalf("event closure id = %q, want %q", got, closure.EventID)
-	}
-	if state.ReleaseReadiness.Status != "ready" ||
-		state.ReleaseReadiness.PlanArtifactID != state.Plan.Artifact.ArtifactID ||
-		state.ReleaseReadiness.PlanDigest != state.Plan.Artifact.Digest ||
-		state.ReleaseReadiness.ApprovalEventID != state.Plan.Approval.EventID ||
-		!containsString(state.ReleaseReadiness.VerificationClosureEventIDs, closure.EventID) {
-		t.Fatalf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness)
-	}
-	if got := fmt.Sprint(events[1].Fields[featureplannercontract.EventFieldReleaseStatus]); got != "ready" {
-		t.Fatalf("release event status = %q, want ready; fields=%+v", got, events[1].Fields)
-	}
-	if got := fmt.Sprint(events[1].Fields[featureplannercontract.EventFieldPlanDigest]); got != state.Plan.Artifact.Digest {
-		t.Fatalf("release event digest = %q, want %q", got, state.Plan.Artifact.Digest)
-	}
-}
+	gomega.Expect(closure.PlanArtifactID).To(gomega.Equal(state.Plan.Artifact.ArtifactID), fmt.Sprintf("closure not bound to approved plan artifact: closure=%+v artifact=%+v approval=%+v", closure, state.Plan.Artifact, state.Plan.Approval))
+	gomega.Expect(closure.PlanDigest).To(gomega.Equal(state.Plan.Artifact.Digest), fmt.Sprintf("closure not bound to approved plan artifact: closure=%+v artifact=%+v approval=%+v", closure, state.Plan.Artifact, state.Plan.Approval))
+	gomega.Expect(closure.ApprovalEventID).To(gomega.Equal(state.Plan.Approval.EventID), fmt.Sprintf("closure not bound to approved plan artifact: closure=%+v artifact=%+v approval=%+v", closure, state.Plan.Artifact, state.Plan.Approval))
+	gomega.Expect(closure.Status).To(gomega.Equal(VerificationClosureStatusPassed), fmt.Sprintf("closure status = %q, want passed", closure.Status))
+	gomega.Expect(len(closure.TDDCommandResults)).NotTo(gomega.Equal(0), fmt.Sprintf("closure missing TDD command results: %+v", closure))
+	gomega.Expect(len(closure.Verification)).NotTo(gomega.Equal(0), fmt.Sprintf("closure missing typed verification checks: %+v", closure))
+	{
 
-func TestApplyImplementorOutputRejectsNonzeroPlanExecuteExitCode(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+		got := fmt.Sprint(events[0].Fields[featureplannercontract.EventFieldVerificationClosureEventID])
+		gomega.Expect(got).To(gomega.Equal(closure.EventID), fmt.Sprintf("event closure id = %q, want %q", got, closure.EventID))
+	}
+	gomega.Expect(state.ReleaseReadiness.Status).To(gomega.Equal(ReleaseReadinessStatusReady), fmt.Sprintf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness))
+	gomega.Expect(state.ReleaseReadiness.PlanArtifactID).To(gomega.Equal(state.Plan.Artifact.ArtifactID), fmt.Sprintf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness))
+	gomega.Expect(state.ReleaseReadiness.PlanDigest).To(gomega.Equal(state.Plan.Artifact.Digest), fmt.Sprintf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness))
+	gomega.Expect(state.ReleaseReadiness.ApprovalEventID).To(gomega.Equal(state.Plan.Approval.EventID), fmt.Sprintf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness))
+	gomega.Expect(containsString(state.ReleaseReadiness.VerificationClosureEventIDs, closure.EventID)).To(gomega.BeTrue(), fmt.Sprintf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness))
+	{
+
+		got := fmt.Sprint(events[1].Fields[featureplannercontract.EventFieldReleaseStatus])
+		gomega.Expect(got).To(gomega.Equal("ready"), fmt.Sprintf("release event status = %q, want ready; fields=%+v", got, events[1].Fields))
+	}
+	{
+
+		got := fmt.Sprint(events[1].Fields[featureplannercontract.EventFieldPlanDigest])
+		gomega.Expect(got).To(gomega.Equal(state.Plan.Artifact.Digest), fmt.Sprintf("release event digest = %q, want %q", got, state.Plan.Artifact.Digest))
+	}
+
+})
+var _ = ginkgo.It("apply implementor output rejects nonzero plan execute exit code", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	payload["exit_code"] = 1
@@ -5570,15 +4757,15 @@ func TestApplyImplementorOutputRejectsNonzeroPlanExecuteExitCode(t *testing.T) {
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported non-zero exit code")
-}
-
-func TestApplyImplementorOutputRejectsScopeOnlyPlanExecuteCompletion(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute reported non-zero exit code")
+})
+var _ = ginkgo.It("apply implementor output rejects scope only plan execute completion", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	payload["scope_contract_id"] = "child-local-scope"
@@ -5590,15 +4777,15 @@ func TestApplyImplementorOutputRejectsScopeOnlyPlanExecuteCompletion(t *testing.
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion is not correlated to the active plan contract snapshot")
-}
-
-func TestApplyImplementorOutputRejectsIdentitylessPlanExecuteCompletion(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "plan-execute terminal completion is not correlated to the active plan contract snapshot")
+})
+var _ = ginkgo.It("apply implementor output rejects identityless plan execute completion", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	delete(payload, "contract_id")
@@ -5610,15 +4797,15 @@ func TestApplyImplementorOutputRejectsIdentitylessPlanExecuteCompletion(t *testi
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion is not correlated to the active plan contract snapshot")
-}
-
-func TestApplyImplementorOutputRejectsConflictingParentPlanExecuteIdentity(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "plan-execute terminal completion is not correlated to the active plan contract snapshot")
+})
+var _ = ginkgo.It("apply implementor output rejects conflicting parent plan execute identity", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	payload["contract_id"] = "wrong-parent-contract"
@@ -5626,34 +4813,32 @@ func TestApplyImplementorOutputRejectsConflictingParentPlanExecuteIdentity(t *te
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion conflicts with the active plan contract snapshot")
-}
-
-func TestApplyImplementorOutputRejectsSkippedReviewCompletionMissingSourceSanity(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "plan-execute terminal completion conflicts with the active plan contract snapshot")
+})
+var _ = ginkgo.It("apply implementor output rejects skipped review completion missing source sanity", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	delete(payload, "source_sanity")
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal validation failed")
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute terminal validation failed")
+	gomega.Expect(strings.Contains(events[0].Message, "source_sanity_missing:internal/labels/labels.go")).To(gomega.BeTrue(), fmt.Sprintf("rejection did not name missing source_sanity: %+v", events[0]))
 
-	if !strings.Contains(events[0].Message, "source_sanity_missing:internal/labels/labels.go") {
-		t.Fatalf("rejection did not name missing source_sanity: %+v", events[0])
-	}
-}
-
-func TestApplyImplementorOutputAcceptsLegacyContractHashAsSnapshotAlias(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output accepts legacy contract hash as snapshot alias", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	delete(payload, "snapshot_hash")
@@ -5662,26 +4847,26 @@ func TestApplyImplementorOutputAcceptsLegacyContractHashAsSnapshotAlias(t *testi
 	trustPlanExecuteCompletionForTest(payload)
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateComplete), fmt.Sprintf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events))
+	{
 
-	if atom.State != AtomStateComplete {
-		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+		got := fmt.Sprint(events[0].Fields["snapshot_hash"])
+		gomega.Expect(got).To(gomega.Equal(atom.RuntimeEnvelope.ProtocolHash), fmt.Sprintf("snapshot_hash = %q, want legacy contract_hash normalized to active snapshot; fields=%+v", got, events[0].Fields))
+	}
+	{
+
+		_, ok := events[0].Fields["contract_hash"]
+		gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("contract_hash should not remain a parallel authority field; fields=%+v", events[0].Fields))
 	}
 
-	if got := fmt.Sprint(events[0].Fields["snapshot_hash"]); got != atom.RuntimeEnvelope.ProtocolHash {
-		t.Fatalf("snapshot_hash = %q, want legacy contract_hash normalized to active snapshot; fields=%+v", got, events[0].Fields)
-	}
-
-	if _, ok := events[0].Fields["contract_hash"]; ok {
-		t.Fatalf("contract_hash should not remain a parallel authority field; fields=%+v", events[0].Fields)
-	}
-}
-
-func TestApplyImplementorOutputRejectsConflictingLegacyContractHashAlias(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects conflicting legacy contract hash alias", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	payload["snapshot_hash"] = atom.RuntimeEnvelope.ProtocolHash
@@ -5689,53 +4874,49 @@ func TestApplyImplementorOutputRejectsConflictingLegacyContractHashAlias(t *test
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion conflicts with the active plan contract snapshot")
-}
-
-func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "plan-execute terminal completion conflicts with the active plan contract snapshot")
+})
+var _ = ginkgo.It("apply implementor output accepts nested plan execute completion status", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, testNestedPlanExecuteCompletedJSONForAtom(*atom))
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateComplete), fmt.Sprintf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events))
+	gomega.Expect(events).To(gomega.HaveLen(2), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.atom_completed"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[1].Type).To(gomega.Equal("idiom.feature_planner.release_ready"), fmt.Sprintf("unexpected events: %+v", events))
+	{
 
-	if atom.State != AtomStateComplete {
-		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+		got := fmt.Sprint(events[0].Fields["nested_status"])
+		gomega.Expect(got).To(gomega.Equal("completed"), fmt.Sprintf("nested status = %q, want completed; fields=%+v", got, events[0].Fields))
+	}
+	{
+
+		got := fmt.Sprint(events[0].Fields["nested_phase"])
+		gomega.Expect(got).To(gomega.Equal("review_repair"), fmt.Sprintf("nested phase = %q, want review_repair; fields=%+v", got, events[0].Fields))
 	}
 
-	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "completed" {
-		t.Fatalf("nested status = %q, want completed; fields=%+v", got, events[0].Fields)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["nested_phase"]); got != "review_repair" {
-		t.Fatalf("nested phase = %q, want review_repair; fields=%+v", got, events[0].Fields)
-	}
-}
-
-func TestApplyImplementorOutputRejectsNestedNonzeroPlanExecuteExitCode(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects nested nonzero plan execute exit code", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	nested, ok := payload["plan_execute"].(map[string]any)
-	if !ok {
-		t.Fatalf("payload missing nested plan_execute: %+v", payload)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("payload missing nested plan_execute: %+v", payload))
+
 	nested["exit_code"] = 1
 	trustPlanExecuteCompletionForTest(nested)
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported non-zero exit code")
-}
-
-func TestApplyImplementorOutputRejectsMissingAcceptanceEvidenceIDs(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute reported non-zero exit code")
+})
+var _ = ginkgo.It("apply implementor output rejects missing acceptance evidence i ds", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
 
 	_ = json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload)
@@ -5745,11 +4926,10 @@ func TestApplyImplementorOutputRejectsMissingAcceptanceEvidenceIDs(t *testing.T)
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing acceptance_evidence_ids")
-}
-
-func TestApplyImplementorOutputRejectsUntrustedAcceptanceEvidenceIDs(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "missing acceptance_evidence_ids")
+})
+var _ = ginkgo.It("apply implementor output rejects untrusted acceptance evidence i ds", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
 
 	_ = json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload)
@@ -5761,33 +4941,33 @@ func TestApplyImplementorOutputRejectsUntrustedAcceptanceEvidenceIDs(t *testing.
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "acceptance_evidence_ids are not backed by trusted plan-execute terminal evidence")
-}
-
-func TestApplyImplementorOutputUsesNestedPlanExecuteCompletionDecisionClass(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "acceptance_evidence_ids are not backed by trusted plan-execute terminal evidence")
+})
+var _ = ginkgo.It("apply implementor output uses nested plan execute completion decision class", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","plan_execute":{"lane_family":"plan-execute","status":"completed","terminal_class":"recovery_required","outcome":"review_degraded","phase":"review_repair","review_status":"degraded","progress_path":".idiom/plan-execute/session/state.json"}}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal class requires recovery")
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute terminal class requires recovery")
+	{
 
-	if got := fmt.Sprint(events[0].Fields["terminal_class"]); got != "recovery_required" {
-		t.Fatalf("terminal_class = %q, want recovery_required; fields=%+v", got, events[0].Fields)
+		got := fmt.Sprint(events[0].Fields["terminal_class"])
+		gomega.Expect(got).To(gomega.Equal("recovery_required"), fmt.Sprintf("terminal_class = %q, want recovery_required; fields=%+v", got, events[0].Fields))
 	}
-}
 
-func TestApplyImplementorOutputRejectsInvalidNestedPlanExecuteTerminalRecord(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects invalid nested plan execute terminal record", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
+	{
 
-	if err := json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		err := json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("decode payload: %v", err))
 	}
 
 	nested, ok := payload["plan_execute"].(map[string]any)
-	if !ok {
-		t.Fatalf("payload missing nested plan_execute: %+v", payload)
-	}
+	gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("payload missing nested plan_execute: %+v", payload))
+
 	nested["terminal_class"] = string(plancontract.PlanExecuteTerminalClassSuccess)
 	nested["status"] = "not-a-plan-execute-status"
 	nested["phase"] = "not-a-plan-execute-phase"
@@ -5795,37 +4975,41 @@ func TestApplyImplementorOutputRejectsInvalidNestedPlanExecuteTerminalRecord(t *
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal record invalid")
-}
-
-func TestApplyImplementorOutputPreservesPlanExecuteSourceSatisfiedAtomState(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute terminal record invalid")
+})
+var _ = ginkgo.It("apply implementor output preserves plan execute source satisfied atom state", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, testPlanExecuteSourceSatisfiedJSONForAtom(*atom))
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateSourceSatisfied), fmt.Sprintf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events))
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("feature state = %q, want complete", state.Status))
+	gomega.Expect(events).To(gomega.HaveLen(2), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.atom_source_satisfied"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[1].Type).To(gomega.Equal("idiom.feature_planner.release_ready"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(state.VerificationClosures).To(gomega.HaveLen(1))
+	expectedEvidence := make([]plancontract.SourceSatisfiedEvidenceRef, 0, len(atom.RequiredEditPaths))
+	for _, path := range atom.RequiredEditPaths {
+		expectedEvidence = append(expectedEvidence, plancontract.SourceSatisfiedEvidenceRef{
+			Path: path,
+			Kind: plancontract.SourceSatisfiedEvidenceKindHarnessObservedSource,
+		})
+	}
+	gomega.Expect(state.VerificationClosures[0].SourceSatisfiedEvidence).To(gomega.Equal(expectedEvidence))
+	gomega.Expect(ValidateDurableState(state)).To(gomega.Succeed())
+	{
 
-	if atom.State != AtomStateSourceSatisfied {
-		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+		got := fmt.Sprint(events[0].Fields["outcome"])
+		gomega.Expect(got).To(gomega.Equal("source_satisfied"), fmt.Sprintf("outcome = %q, want source_satisfied; fields=%+v", got, events[0].Fields))
+	}
+	{
+
+		got := events[0].AtomTo
+		gomega.Expect(got).To(gomega.Equal(AtomStateSourceSatisfied), fmt.Sprintf("event AtomTo = %q, want source-satisfied", got))
 	}
 
-	if state.Status != FeatureStateComplete {
-		t.Fatalf("feature state = %q, want complete", state.Status)
-	}
-
-	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" || events[1].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["outcome"]); got != "source_satisfied" {
-		t.Fatalf("outcome = %q, want source_satisfied; fields=%+v", got, events[0].Fields)
-	}
-
-	if got := events[0].AtomTo; got != AtomStateSourceSatisfied {
-		t.Fatalf("event AtomTo = %q, want source-satisfied", got)
-	}
-}
-
-func TestApplyImplementorOutputRejectsPathOnlyPlanExecuteSourceSatisfied(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects path only plan execute source satisfied", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
 
 	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
@@ -5833,11 +5017,10 @@ func TestApplyImplementorOutputRejectsPathOnlyPlanExecuteSourceSatisfied(t *test
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion missing typed source_satisfied_evidence refs")
-}
-
-func TestApplyImplementorOutputRejectsSourceSatisfiedWithChangedPaths(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "source-satisfied completion missing typed source_satisfied_evidence refs")
+})
+var _ = ginkgo.It("apply implementor output rejects source satisfied with changed paths", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
 
 	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
@@ -5845,11 +5028,10 @@ func TestApplyImplementorOutputRejectsSourceSatisfiedWithChangedPaths(t *testing
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion must not include changed_paths")
-}
-
-func TestApplyImplementorOutputRejectsSourceSatisfiedWithFailedTerminalEvidence(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "source-satisfied completion must not include changed_paths")
+})
+var _ = ginkgo.It("apply implementor output rejects source satisfied with failed terminal evidence", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
 
 	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
@@ -5862,14 +5044,12 @@ func TestApplyImplementorOutputRejectsSourceSatisfiedWithFailedTerminalEvidence(
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal validation failed")
-	if !strings.Contains(events[0].Message, "source_sanity_failed:"+atom.RequiredEditPaths[0]) {
-		t.Fatalf("rejection did not name failed source_sanity path: %+v", events[0])
-	}
-}
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute terminal validation failed")
+	gomega.Expect(strings.Contains(events[0].Message, "source_sanity_failed:"+atom.RequiredEditPaths[0])).To(gomega.BeTrue(), fmt.Sprintf("rejection did not name failed source_sanity path: %+v", events[0]))
 
-func TestApplyImplementorOutputRejectsOutOfScopeSourceSatisfiedPath(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects out of scope source satisfied path", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
 
 	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
@@ -5878,11 +5058,10 @@ func TestApplyImplementorOutputRejectsOutOfScopeSourceSatisfiedPath(t *testing.T
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion includes paths outside required edit scope")
-}
-
-func TestApplyImplementorOutputRejectsSourceSatisfiedWithoutRequiredScope(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "source-satisfied completion includes paths outside required edit scope")
+})
+var _ = ginkgo.It("apply implementor output rejects source satisfied without required scope", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	state.Plan.Atoms[0].RequiredEditPaths = nil
 	state.Plan.Atoms[0].AllowedEditPaths = []string{"pkg/allowed.go"}
@@ -5901,11 +5080,10 @@ func TestApplyImplementorOutputRejectsSourceSatisfiedWithoutRequiredScope(t *tes
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion missing required edit scope")
-}
-
-func TestApplyImplementorOutputRejectsUnsupportedSourceSatisfiedEvidenceKind(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "source-satisfied completion missing required edit scope")
+})
+var _ = ginkgo.It("apply implementor output rejects unsupported source satisfied evidence kind", func() {
+	state, atom := implementingAtomForCompletionTest()
 	payload := map[string]any{}
 
 	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
@@ -5913,122 +5091,115 @@ func TestApplyImplementorOutputRejectsUnsupportedSourceSatisfiedEvidenceKind(t *
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion missing typed source_satisfied_evidence refs")
-}
-
-func TestApplyImplementorOutputAcceptsOutcomeOnlySourceSatisfiedCompletion(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+	assertRejectedPlanExecuteCompletion(state, atom, events, "source-satisfied completion missing typed source_satisfied_evidence refs")
+})
+var _ = ginkgo.It("apply implementor output accepts outcome only source satisfied completion", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, testPlanExecuteOutcomeOnlySourceSatisfiedJSONForAtom(*atom))
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateSourceSatisfied), fmt.Sprintf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events))
+	gomega.Expect(events).To(gomega.HaveLen(2), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.atom_source_satisfied"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[1].Type).To(gomega.Equal("idiom.feature_planner.release_ready"), fmt.Sprintf("unexpected events: %+v", events))
+	{
 
-	if atom.State != AtomStateSourceSatisfied {
-		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+		got := fmt.Sprint(events[0].Fields["nested_status"])
+		gomega.Expect(got).To(gomega.Equal("source-satisfied"), fmt.Sprintf("nested_status = %q, want source-satisfied; fields=%+v", got, events[0].Fields))
 	}
 
-	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" || events[1].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "source-satisfied" {
-		t.Fatalf("nested_status = %q, want source-satisfied; fields=%+v", got, events[0].Fields)
-	}
-}
-
-func TestApplyImplementorOutputRejectsPlanExecuteCompletionWithoutNestedStatus(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects plan execute completion without nested status", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","progress_path":".idiom/plan-execute/session/state.json","summary":"nested output without typed status"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing required nested plan-execute status")
+	assertRejectedPlanExecuteCompletion(state, atom, events, "missing required nested plan-execute status")
+	{
 
-	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "" {
-		t.Fatalf("nested_status = %q, want empty observable field", got)
+		got := fmt.Sprint(events[0].Fields["nested_status"])
+		gomega.Expect(got).To(gomega.Equal(""), fmt.Sprintf("nested_status = %q, want empty observable field", got))
 	}
-}
 
-func TestApplyImplementorOutputRejectsDegradedPlanExecuteReview(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects degraded plan execute review", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"degraded","phase":"review_repair","review_status":"degraded","progress_path":".idiom/plan-execute/session/state.json","summary":"review repair degraded"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute status is not success-shaped")
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute status is not success-shaped")
+	{
 
-	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "degraded" {
-		t.Fatalf("nested_status = %q, want degraded", got)
+		got := fmt.Sprint(events[0].Fields["nested_status"])
+		gomega.Expect(got).To(gomega.Equal("degraded"), fmt.Sprintf("nested_status = %q, want degraded", got))
+	}
+	{
+
+		got := fmt.Sprint(events[0].Fields["nested_review_status"])
+		gomega.Expect(got).To(gomega.Equal("degraded"), fmt.Sprintf("nested_review_status = %q, want degraded", got))
 	}
 
-	if got := fmt.Sprint(events[0].Fields["nested_review_status"]); got != "degraded" {
-		t.Fatalf("nested_review_status = %q, want degraded", got)
-	}
-}
-
-func TestApplyImplementorOutputRejectsPlanExecuteModelError(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects plan execute model error", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"review_repair","review_status":"review_model_error","failure_kind":"review_model_error","failure_reason":"model returned malformed review"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, `nested plan-execute terminal record invalid: invalid plan-execute terminal completion review status "review_model_error": review_model_error - model returned malformed review`)
+	assertRejectedPlanExecuteCompletion(state, atom, events, `nested plan-execute terminal record invalid: invalid plan-execute terminal completion review status "review_model_error": review_model_error - model returned malformed review`)
+	{
 
-	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "review_model_error" {
-		t.Fatalf("nested_failure_kind = %q, want review_model_error", got)
+		got := fmt.Sprint(events[0].Fields["nested_failure_kind"])
+		gomega.Expect(got).To(gomega.Equal("review_model_error"), fmt.Sprintf("nested_failure_kind = %q, want review_model_error", got))
 	}
+	gomega.Expect(containsString(state.Continuation.CompletedAtoms, atom.ID)).To(gomega.BeFalse(), fmt.Sprintf("model-error nested completion must not record completed atom: %+v", state.Continuation))
 
-	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
-		t.Fatalf("model-error nested completion must not record completed atom: %+v", state.Continuation)
-	}
-}
-
-func TestApplyImplementorOutputPromotesNestedPlanExecuteFailureDetailToBlocker(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output promotes nested plan execute failure detail to blocker", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: target.txt source evidence unavailable","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details: planner_blocked - <<QUESTION>>: target.txt source evidence unavailable")
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute reported failure details: planner_blocked - <<QUESTION>>: target.txt source evidence unavailable")
+	gomega.Expect(atom.Blockers).NotTo(gomega.HaveLen(0), fmt.Sprintf("atom blocker should preserve nested failure detail, blockers=%+v", atom.Blockers))
+	gomega.Expect(atom.Blockers[0]).To(gomega.ContainSubstring("target.txt source evidence unavailable"), fmt.Sprintf("atom blocker should preserve nested failure detail, blockers=%+v", atom.Blockers))
+	{
 
-	if len(atom.Blockers) == 0 || !strings.Contains(atom.Blockers[0], "target.txt source evidence unavailable") {
-		t.Fatalf("atom blocker should preserve nested failure detail, blockers=%+v", atom.Blockers)
+		got := fmt.Sprint(events[0].Fields["nested_failure_kind"])
+		gomega.Expect(got).To(gomega.Equal("planner_blocked"), fmt.Sprintf("nested_failure_kind = %q, want planner_blocked", got))
+	}
+	{
+
+		got := fmt.Sprint(events[0].Fields["progress_path"])
+		gomega.Expect(got).To(gomega.Equal(".idiom/plan-execute/sessions/pe.json"), fmt.Sprintf("progress_path = %q, want child progress state", got))
 	}
 
-	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "planner_blocked" {
-		t.Fatalf("nested_failure_kind = %q, want planner_blocked", got)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/sessions/pe.json" {
-		t.Fatalf("progress_path = %q, want child progress state", got)
-	}
-}
-
-func TestApplyImplementorOutputPreservesPlanExecuteRetryNextAction(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output preserves plan execute retry next action", func() {
+	state, atom := implementingAtomForCompletionTest()
 	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, LaneSessionID: "atom-1-run-1", State: ActiveRunStateRunning}}
 	atom.LastRunID = "atom-1-run-1"
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("retryable plan-execute completion should become retry-pending event, got state=%s atom=%s events=%+v", state.Status, atom.State, events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.plan_execute_retry_pending"), fmt.Sprintf("retryable plan-execute completion should become retry-pending event, got state=%s atom=%s events=%+v", state.Status, atom.State, events))
+	gomega.Expect(state.Status).NotTo(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("retryable plan-execute completion must not open product recovery: state=%s atom=%s", state.Status, atom.State))
+	gomega.Expect(atom.State).NotTo(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("retryable plan-execute completion must not open product recovery: state=%s atom=%s", state.Status, atom.State))
+	gomega.Expect(state.Continuation.ResumeAction).To(gomega.Equal("retry_plan_execute"), fmt.Sprintf("continuation = %+v, want retry_plan_execute for %s", state.Continuation, atom.ID))
+	gomega.Expect(state.Continuation.ResumeAtomID).To(gomega.Equal(atom.ID), fmt.Sprintf("continuation = %+v, want retry_plan_execute for %s", state.Continuation, atom.ID))
+	gomega.Expect(len(state.ActiveRuns)).To(gomega.Equal(0), fmt.Sprintf("failed active run should be folded so durable reconciliation does not replay it: %+v", state.ActiveRuns))
+	{
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.plan_execute_retry_pending" {
-		t.Fatalf("retryable plan-execute completion should become retry-pending event, got state=%s atom=%s events=%+v", state.Status, atom.State, events)
+		got := fmt.Sprint(events[0].Fields["next_valid_action"])
+		gomega.Expect(got).To(gomega.Equal("retry_plan_execute"), fmt.Sprintf("next_valid_action = %q, want retry_plan_execute; fields=%+v", got, events[0].Fields))
 	}
-	if state.Status == FeatureStateRecoveryOpen || atom.State == AtomStateRecoveryOpen {
-		t.Fatalf("retryable plan-execute completion must not open product recovery: state=%s atom=%s", state.Status, atom.State)
-	}
-	if state.Continuation.ResumeAction != "retry_plan_execute" || state.Continuation.ResumeAtomID != atom.ID {
-		t.Fatalf("continuation = %+v, want retry_plan_execute for %s", state.Continuation, atom.ID)
-	}
-	if len(state.ActiveRuns) != 0 {
-		t.Fatalf("failed active run should be folded so durable reconciliation does not replay it: %+v", state.ActiveRuns)
+	{
+
+		got := fmt.Sprint(events[0].Fields["nested_failure_kind"])
+		gomega.Expect(got).To(gomega.Equal("planner_blocked"), fmt.Sprintf("nested_failure_kind = %q, want planner_blocked", got))
 	}
 
-	if got := fmt.Sprint(events[0].Fields["next_valid_action"]); got != "retry_plan_execute" {
-		t.Fatalf("next_valid_action = %q, want retry_plan_execute; fields=%+v", got, events[0].Fields)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "planner_blocked" {
-		t.Fatalf("nested_failure_kind = %q, want planner_blocked", got)
-	}
-}
-
-func TestRunResumesPlanExecuteRetryPendingAtom(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("run resumes plan execute retry pending atom", ginkgo.Label("development-scenario", "integration", "contract"), func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
 
@@ -6040,57 +5211,51 @@ func TestRunResumesPlanExecuteRetryPendingAtom(t *testing.T) {
 
 		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: still refreshing","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe-retry.json"}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if !slices.Equal(taskFamilies, []string{string(autonomy.TaskFamilyFeaturePlannerImplementor)}) {
-		t.Fatalf("task families = %#v, want only implementor retry dispatch", taskFamilies)
-	}
-	if len(prompts) != 1 || !strings.Contains(prompts[0], atom.ID) {
-		t.Fatalf("retry dispatch should rebuild implementor prompt for atom %s, got %#v", atom.ID, prompts)
-	}
-	if len(result.Events) < 2 || result.Events[0].Type != "idiom.feature_planner.plan_execute_retry_resumed" {
-		t.Fatalf("events should start with retry resume then dispatch, got %+v", result.Events)
-	}
-	if result.State.Continuation.ResumeAction != "retry_plan_execute" || result.State.Continuation.ResumeAtomID != atom.ID {
-		t.Fatalf("retry failure should remain retry-pending after resumed attempt, continuation=%+v", result.State.Continuation)
-	}
-}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(slices.Equal(taskFamilies, []string{string(autonomy.TaskFamilyFeaturePlannerImplementor)})).To(gomega.BeTrue(), fmt.Sprintf("task families = %#v, want only implementor retry dispatch", taskFamilies))
+	gomega.Expect(prompts).To(gomega.HaveLen(1), fmt.Sprintf("retry dispatch should rebuild implementor prompt for atom %s, got %#v", atom.ID, prompts))
+	gomega.Expect(prompts[0]).To(gomega.ContainSubstring(atom.ID), fmt.Sprintf("retry dispatch should rebuild implementor prompt for atom %s, got %#v", atom.ID, prompts))
+	gomega.Expect(len(result.Events)).NotTo(gomega.BeNumerically("<", 2), fmt.Sprintf("events should start with retry resume then dispatch, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.plan_execute_retry_resumed"), fmt.Sprintf("events should start with retry resume then dispatch, got %+v", result.Events))
+	gomega.Expect(result.State.Continuation.ResumeAction).To(gomega.Equal("retry_plan_execute"), fmt.Sprintf("retry failure should remain retry-pending after resumed attempt, continuation=%+v", result.State.Continuation))
+	gomega.Expect(result.State.Continuation.ResumeAtomID).To(gomega.Equal(atom.ID), fmt.Sprintf("retry failure should remain retry-pending after resumed attempt, continuation=%+v", result.State.Continuation))
 
-func TestApplyImplementorOutputPrefersNestedReviewRepairFailureOverPlanningFallback(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output prefers nested review repair failure over planning fallback", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact","progress_path":".idiom/plan-execute/sessions/fallback.json","plan_execute":{"lane_family":"plan-execute","status":"blocked","phase":"review_repair","review_status":"blocked","failure_kind":"review_repair_blocked","failure_reason":"review repair remained blocked","progress_path":".idiom/plan-execute/sessions/active.json"}}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details: review_repair_blocked - review repair remained blocked")
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute reported failure details: review_repair_blocked - review repair remained blocked")
+	{
 
-	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "review_repair_blocked" {
-		t.Fatalf("nested_failure_kind = %q, want review_repair_blocked; fields=%+v", got, events[0].Fields)
+		got := fmt.Sprint(events[0].Fields["nested_failure_kind"])
+		gomega.Expect(got).To(gomega.Equal("review_repair_blocked"), fmt.Sprintf("nested_failure_kind = %q, want review_repair_blocked; fields=%+v", got, events[0].Fields))
 	}
+	{
 
-	if got := fmt.Sprint(events[0].Fields["nested_phase"]); got != "review_repair" {
-		t.Fatalf("nested_phase = %q, want review_repair; fields=%+v", got, events[0].Fields)
+		got := fmt.Sprint(events[0].Fields["nested_phase"])
+		gomega.Expect(got).To(gomega.Equal("review_repair"), fmt.Sprintf("nested_phase = %q, want review_repair; fields=%+v", got, events[0].Fields))
 	}
+	{
 
-	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
-		t.Fatalf("progress_path = %q, want active progress state; fields=%+v", got, events[0].Fields)
+		got := fmt.Sprint(events[0].Fields["progress_path"])
+		gomega.Expect(got).To(gomega.Equal(".idiom/plan-execute/sessions/active.json"), fmt.Sprintf("progress_path = %q, want active progress state; fields=%+v", got, events[0].Fields))
 	}
+	gomega.Expect(events[0].Message).NotTo(gomega.ContainSubstring("plan_artifact_missing"), fmt.Sprintf("stale planning fallback leaked into rejection message: %q", events[0].Message))
+	gomega.Expect(events[0].Message).NotTo(gomega.ContainSubstring("planning/no plan artifact"), fmt.Sprintf("stale planning fallback leaked into rejection message: %q", events[0].Message))
 
-	if strings.Contains(events[0].Message, "plan_artifact_missing") || strings.Contains(events[0].Message, "planning/no plan artifact") {
-		t.Fatalf("stale planning fallback leaked into rejection message: %q", events[0].Message)
-	}
-}
-
-func TestApplyImplementorOutputRejectsImplicitSkippedReview(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+})
+var _ = ginkgo.It("apply implementor output rejects implicit skipped review", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"complete","review_status":"skipped"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute skipped review is not explicitly marked by design")
-}
+	assertRejectedPlanExecuteCompletion(state, atom, events, "nested plan-execute skipped review is not explicitly marked by design")
+})
 
-func implementingAtomForCompletionTest(t *testing.T) (FeatureState, *FeatureAtomState) {
-	t.Helper()
+func implementingAtomForCompletionTest() (FeatureState, *FeatureAtomState) {
+	ginkgo.GinkgoHelper()
 
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
@@ -6123,40 +5288,21 @@ func stampCompletionTestAtomRuntime(state *FeatureState, atom *FeatureAtomState)
 	return atom.RuntimeEnvelope.ContractID, atom.RuntimeEnvelope.ProtocolHash
 }
 
-func assertRejectedPlanExecuteCompletion(t *testing.T, state FeatureState, atom *FeatureAtomState, events []Event, wantMessage string) {
-	t.Helper()
+func assertRejectedPlanExecuteCompletion(state FeatureState, atom *FeatureAtomState, events []Event, wantMessage string) {
+	ginkgo.GinkgoHelper()
+	gomega.Expect(atom.State).To(gomega.Equal(AtomStateRecoveryOpen), fmt.Sprintf("atom state = %q, want recovery-open; events=%+v", atom.State, events))
+	gomega.Expect(state.Status).To(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("feature state = %q, want recovery-open", state.Status))
+	gomega.Expect(events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(events[0].Type).To(gomega.Equal("idiom.feature_planner.plan_execute_completion_rejected"), fmt.Sprintf("unexpected events: %+v", events))
+	gomega.Expect(strings.Contains(events[0].Message, wantMessage)).To(gomega.BeTrue(), fmt.Sprintf("message = %q, want %q", events[0].Message, wantMessage))
+	gomega.Expect(len(state.ActiveRuns)).To(gomega.Equal(0), fmt.Sprintf("active run should be folded after rejected completion: %+v", state.ActiveRuns))
+	gomega.Expect(containsString(state.Continuation.CompletedAtoms, atom.ID)).To(gomega.BeFalse(), fmt.Sprintf("rejected atom must not be recorded complete: %+v", state.Continuation))
+	gomega.Expect(containsString(state.Continuation.BlockedAtoms, atom.ID)).To(gomega.BeTrue(), fmt.Sprintf("rejected atom should be blocked: %+v", state.Continuation))
 
-	if atom.State != AtomStateRecoveryOpen {
-		t.Fatalf("atom state = %q, want recovery-open; events=%+v", atom.State, events)
-	}
-
-	if state.Status != FeatureStateRecoveryOpen {
-		t.Fatalf("feature state = %q, want recovery-open", state.Status)
-	}
-
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.plan_execute_completion_rejected" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
-
-	if !strings.Contains(events[0].Message, wantMessage) {
-		t.Fatalf("message = %q, want %q", events[0].Message, wantMessage)
-	}
-
-	if len(state.ActiveRuns) != 0 {
-		t.Fatalf("active run should be folded after rejected completion: %+v", state.ActiveRuns)
-	}
-
-	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
-		t.Fatalf("rejected atom must not be recorded complete: %+v", state.Continuation)
-	}
-
-	if !containsString(state.Continuation.BlockedAtoms, atom.ID) {
-		t.Fatalf("rejected atom should be blocked: %+v", state.Continuation)
-	}
 }
 
-func TestRunReconcilesActiveRunsBeforeResumeActiveRun(t *testing.T) {
-	state, atom := implementingAtomForCompletionTest(t)
+var _ = ginkgo.It("run reconciles active runs before resume active run", func() {
+	state, atom := implementingAtomForCompletionTest()
 
 	result, err := Run(state, RunOptions{
 		Prompt:                "resume",
@@ -6165,62 +5311,36 @@ func TestRunReconcilesActiveRunsBeforeResumeActiveRun(t *testing.T) {
 			return ApplyImplementorOutput(state, &state.Atoms[0], `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: target.txt source evidence unavailable","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
 		},
 	}, func(_ string, taskFamily string) (string, error) {
-		t.Fatalf("runner should not be called after active-run reconciliation, taskFamily=%s", taskFamily)
+		ginkgo.Fail(fmt.Sprintf("runner should not be called after active-run reconciliation, taskFamily=%s", taskFamily))
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateRecoveryOpen), fmt.Sprintf("feature state = %q, want recovery-open", result.State.Status))
+	gomega.Expect(len(result.State.ActiveRuns)).To(gomega.Equal(0), fmt.Sprintf("active run should be folded by reconciliation: %+v", result.State.ActiveRuns))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("expected reconciled terminal event, got %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.plan_execute_completion_rejected"), fmt.Sprintf("expected reconciled terminal event, got %+v", result.Events))
+	gomega.Expect(containsString(result.State.Continuation.BlockedAtoms, atom.ID)).To(gomega.BeTrue(), fmt.Sprintf("atom should be blocked after reconciliation: %+v", result.State.Continuation))
 
-	if result.State.Status != FeatureStateRecoveryOpen {
-		t.Fatalf("feature state = %q, want recovery-open", result.State.Status)
-	}
-
-	if len(result.State.ActiveRuns) != 0 {
-		t.Fatalf("active run should be folded by reconciliation: %+v", result.State.ActiveRuns)
-	}
-
-	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.plan_execute_completion_rejected" {
-		t.Fatalf("expected reconciled terminal event, got %+v", result.Events)
-	}
-
-	if !containsString(result.State.Continuation.BlockedAtoms, atom.ID) {
-		t.Fatalf("atom should be blocked after reconciliation: %+v", result.State.Continuation)
-	}
-}
-
-func TestRunResumesDispatchingStateWithoutReplacingPlan(t *testing.T) {
+})
+var _ = ginkgo.It("run resumes dispatching state without replacing plan", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
-
-	if len(events) == 0 {
-		t.Fatal("expected initial plan events")
-	}
+	gomega.Expect(len(events)).NotTo(gomega.Equal(0), fmt.Sprint("expected initial plan events"))
 
 	state.Atoms[0].State = AtomStateQueued
 
 	result, err := Run(state, RunOptions{Prompt: "resume", MaxPlanningIterations: 3}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerPlanner) {
-			t.Fatal("resume from dispatching must not ask planner for a fresh plan")
-		}
+		gomega.Expect(taskFamily).NotTo(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerPlanner)), fmt.Sprint("resume from dispatching must not ask planner for a fresh plan"))
 
 		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStateComplete), fmt.Sprintf("status = %q, want complete", result.State.Status))
+	gomega.Expect(result.State.Plan.Summary).To(gomega.Equal("Add feature"), fmt.Sprintf("plan was replaced: %+v", result.State.Plan))
 
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("status = %q, want complete", result.State.Status)
-	}
-
-	if result.State.Plan.Summary != "Add feature" {
-		t.Fatalf("plan was replaced: %+v", result.State.Plan)
-	}
-}
-
-func TestRunRejectsPlainAnswerForNonOperatorQuestion(t *testing.T) {
+})
+var _ = ginkgo.It("run rejects plain answer for non operator question", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	state.Status = FeatureStatePlanningQuestion
@@ -6241,24 +5361,17 @@ func TestRunRejectsPlainAnswerForNonOperatorQuestion(t *testing.T) {
 	}}
 
 	result, err := Run(state, RunOptions{Prompt: "Just do it", ResumeAnswer: "Just do it"}, func(_ string, _ string) (string, error) {
-		t.Fatal("plain answer without required authority must not continue to planner")
+		ginkgo.Fail(fmt.Sprint("plain answer without required authority must not continue to planner"))
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("status = %q, want planning question", result.State.Status))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected events: %+v", result.Events))
+	gomega.Expect(result.Events[0].Type).To(gomega.Equal("idiom.feature_planner.planner_question_answer_rejected"), fmt.Sprintf("unexpected events: %+v", result.Events))
 
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("status = %q, want planning question", result.State.Status)
-	}
-
-	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.planner_question_answer_rejected" {
-		t.Fatalf("unexpected events: %+v", result.Events)
-	}
-}
-
-func TestRunPlanRevisionSupersedesRequiredAuthorityQuestion(t *testing.T) {
+})
+var _ = ginkgo.It("run plan revision supersedes required authority question", ginkgo.Label("development-scenario", "integration", "contract"), func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	state.Status = FeatureStatePlanningQuestion
@@ -6285,54 +5398,41 @@ func TestRunPlanRevisionSupersedesRequiredAuthorityQuestion(t *testing.T) {
 		ResumeAnswer:       revision,
 		ResumePlanRevision: true,
 	}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
-			t.Fatalf("unexpected task family %q", taskFamily)
-		}
+		gomega.Expect(taskFamily).To(gomega.Equal(string(autonomy.TaskFamilyFeaturePlannerPlanner)), fmt.Sprintf("unexpected task family %q", taskFamily))
+
 		plannerPrompt = prompt
 		return `{"tool":"ask_planner_question","question_summary":"Confirm persistent memory and multi-repo plan additions","blocking_claim":"The operator asked to revise the plan, so the revised MVP boundary needs confirmation before approval.","requested_decision":"Confirm the plan should add persistent memory storage, repository-scoped namespaces, and explicit multi-repo isolation tests.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["llm_brain/query_handler.py","tests/test_query_handler.py"],"affected_fields":["requirements_scope","test_obligations"]}`, nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(plannerPrompt).To(gomega.ContainSubstring("Operator plan revision instruction:"), fmt.Sprintf("planner prompt did not include revision instruction:\n%s", plannerPrompt))
+	gomega.Expect(plannerPrompt).To(gomega.ContainSubstring(revision), fmt.Sprintf("planner prompt did not include revision instruction:\n%s", plannerPrompt))
+	gomega.Expect(len(result.State.OpenQuestions)).To(gomega.Equal(2), fmt.Sprintf("expected old question plus revised planner question, got %+v", result.State.OpenQuestions))
 
-	if !strings.Contains(plannerPrompt, "Operator plan revision instruction:") || !strings.Contains(plannerPrompt, revision) {
-		t.Fatalf("planner prompt did not include revision instruction:\n%s", plannerPrompt)
-	}
-	if len(result.State.OpenQuestions) != 2 {
-		t.Fatalf("expected old question plus revised planner question, got %+v", result.State.OpenQuestions)
-	}
 	oldQuestion := result.State.OpenQuestions[0]
-	if oldQuestion.Status != "answered" || oldQuestion.Answer != revision || oldQuestion.AnswerSourceKind != "plan_revision" {
-		t.Fatalf("old authority question was not superseded as a plan revision: %+v", oldQuestion)
-	}
-	if len(result.State.AuthorityDeltas) != 0 {
-		t.Fatalf("plan revision must not mint accepted-source authority: %+v", result.State.AuthorityDeltas)
-	}
-	if containsString(result.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
-		t.Fatalf("superseded question blocker should be cleared: %+v", result.State.Blockers)
-	}
-	if !containsString(result.State.Blockers, `atom 0 prompt includes concrete helper call "BuildThing(arg)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`) {
-		t.Fatalf("source-fact blocker should remain until source facts or a revised plan resolves it: %+v", result.State.Blockers)
-	}
-	if result.State.OpenQuestions[1].Status != "open" || result.State.OpenQuestions[1].AuthorityRequired != "operator_approval" {
-		t.Fatalf("revised planner question was not opened: %+v", result.State.OpenQuestions[1])
-	}
+	gomega.Expect(oldQuestion.Status).To(gomega.Equal("answered"), fmt.Sprintf("old authority question was not superseded as a plan revision: %+v", oldQuestion))
+	gomega.Expect(oldQuestion.Answer).To(gomega.Equal(revision), fmt.Sprintf("old authority question was not superseded as a plan revision: %+v", oldQuestion))
+	gomega.Expect(oldQuestion.AnswerSourceKind).To(gomega.Equal("plan_revision"), fmt.Sprintf("old authority question was not superseded as a plan revision: %+v", oldQuestion))
+	gomega.Expect(len(result.State.AuthorityDeltas)).To(gomega.Equal(0), fmt.Sprintf("plan revision must not mint accepted-source authority: %+v", result.State.AuthorityDeltas))
+	gomega.Expect(containsString(result.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`)).To(gomega.BeFalse(), fmt.Sprintf("superseded question blocker should be cleared: %+v", result.State.Blockers))
+	gomega.Expect(containsString(result.State.Blockers, `atom 0 prompt includes concrete helper call "BuildThing(arg)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`)).To(gomega.BeTrue(), fmt.Sprintf("source-fact blocker should remain until source facts or a revised plan resolves it: %+v", result.State.Blockers))
+	gomega.Expect(result.State.OpenQuestions[1].Status).To(gomega.Equal("open"), fmt.Sprintf("revised planner question was not opened: %+v", result.State.OpenQuestions[1]))
+	gomega.Expect(result.State.OpenQuestions[1].AuthorityRequired).To(gomega.Equal("operator_approval"), fmt.Sprintf("revised planner question was not opened: %+v", result.State.OpenQuestions[1]))
 
 	var sawSuperseded bool
 	for _, event := range result.Events {
 		if event.Type == featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionSupersededByRevision) {
 			sawSuperseded = true
-			if _, ok := event.Fields["revision"]; ok {
-				t.Fatalf("supersession event should not include raw operator revision text: %+v", event.Fields)
+			{
+				_, ok := event.Fields["revision"]
+				gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("supersession event should not include raw operator revision text: %+v", event.Fields))
 			}
+
 		}
 	}
-	if !sawSuperseded {
-		t.Fatalf("missing supersession event: %+v", result.Events)
-	}
-}
+	gomega.Expect(sawSuperseded).To(gomega.BeTrue(), fmt.Sprintf("missing supersession event: %+v", result.Events))
 
-func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
+})
+var _ = ginkgo.It("run accepts typed answer for required authority", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	state.Status = FeatureStatePlanningQuestion
@@ -6357,31 +5457,24 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, validPlan()), nil
+			return mustPlanJSON(validPlan()), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			implementorPrompt = prompt
 			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.OpenQuestions[0].AnswerSourceKind).To(gomega.Equal("accepted_source"), fmt.Sprintf("typed authority was not recorded: %+v", result.State.OpenQuestions[0]))
+	gomega.Expect(result.State.OpenQuestions[0].EvidenceRefs).To(gomega.HaveLen(1), fmt.Sprintf("typed authority was not recorded: %+v", result.State.OpenQuestions[0]))
+	gomega.Expect(containsString(result.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`)).To(gomega.BeFalse(), fmt.Sprintf("accepted typed answer should clear stale question blocker: %+v", result.State.Blockers))
 
-	if result.State.OpenQuestions[0].AnswerSourceKind != "accepted_source" || len(result.State.OpenQuestions[0].EvidenceRefs) != 1 {
-		t.Fatalf("typed authority was not recorded: %+v", result.State.OpenQuestions[0])
-	}
-
-	if containsString(result.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
-		t.Fatalf("accepted typed answer should clear stale question blocker: %+v", result.State.Blockers)
-	}
 	for _, blocker := range result.State.Blockers {
-		if strings.Contains(blocker, "BuildThing") {
-			t.Fatalf("accepted source facts should clear covered source signature blocker: %+v", result.State.Blockers)
-		}
+		gomega.Expect(strings.Contains(blocker, "BuildThing")).To(gomega.BeFalse(), fmt.Sprintf("accepted source facts should clear covered source signature blocker: %+v", result.State.Blockers))
+
 	}
 
 	for _, want := range []string{
@@ -6389,17 +5482,13 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 		"These constraints are authoritative over the atom prose.",
 		"signature: Result BuildThing(Input arg)",
 	} {
-		if !strings.Contains(implementorPrompt, want) {
-			t.Fatalf("live implementor prompt missing accepted-source constraint %q:\n%s", want, implementorPrompt)
-		}
-	}
+		gomega.Expect(strings.Contains(implementorPrompt, want)).To(gomega.BeTrue(), fmt.Sprintf("live implementor prompt missing accepted-source constraint %q:\n%s", want, implementorPrompt))
 
-	if result.State.Status == FeatureStatePlanningQuestion {
-		t.Fatalf("typed answer should allow planning to continue")
 	}
-}
+	gomega.Expect(result.State.Status).NotTo(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("typed answer should allow planning to continue"))
 
-func TestClearAnsweredAcceptedSourceBlockersPreservesUncoveredHelperCalls(t *testing.T) {
+})
+var _ = ginkgo.It("clear answered accepted source blockers preserves uncovered helper calls", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	covered := `atom 0 prompt includes concrete helper call "BuildThing(arg)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`
 	uncovered := `atom 0 prompt includes concrete helper call "OtherHelper(x)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`
@@ -6423,19 +5512,15 @@ func TestClearAnsweredAcceptedSourceBlockersPreservesUncoveredHelperCalls(t *tes
 	}
 
 	clearAnsweredAcceptedSourceBlockers(&state, delta)
+	gomega.Expect(containsString(state.Blockers, covered)).To(gomega.BeFalse(), fmt.Sprintf("covered source signature blocker should be cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(containsString(state.Atoms[0].Blockers, covered)).To(gomega.BeFalse(), fmt.Sprintf("covered source signature blocker should be cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(containsString(state.Blockers, uncovered)).To(gomega.BeTrue(), fmt.Sprintf("uncovered source signature blocker should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(containsString(state.Atoms[0].Blockers, uncovered)).To(gomega.BeTrue(), fmt.Sprintf("uncovered source signature blocker should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(containsString(state.Blockers, "unrelated blocker")).To(gomega.BeTrue(), fmt.Sprintf("unrelated blockers should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(containsString(state.Atoms[0].Blockers, "atom unrelated blocker")).To(gomega.BeTrue(), fmt.Sprintf("unrelated blockers should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
 
-	if containsString(state.Blockers, covered) || containsString(state.Atoms[0].Blockers, covered) {
-		t.Fatalf("covered source signature blocker should be cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
-	}
-	if !containsString(state.Blockers, uncovered) || !containsString(state.Atoms[0].Blockers, uncovered) {
-		t.Fatalf("uncovered source signature blocker should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
-	}
-	if !containsString(state.Blockers, "unrelated blocker") || !containsString(state.Atoms[0].Blockers, "atom unrelated blocker") {
-		t.Fatalf("unrelated blockers should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
-	}
-}
-
-func TestRunRejectsAcceptedSourceTypedAnswerWithoutSourceFacts(t *testing.T) {
+})
+var _ = ginkgo.It("run rejects accepted source typed answer without source facts", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	state.Status = FeatureStatePlanningQuestion
@@ -6454,26 +5539,18 @@ func TestRunRejectsAcceptedSourceTypedAnswerWithoutSourceFacts(t *testing.T) {
 	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","evidence_refs":["docs/feature.md#acceptance"]}`
 
 	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(_ string, _ string) (string, error) {
-		t.Fatal("accepted_source answer without source_facts must not continue to planner")
+		ginkgo.Fail(fmt.Sprint("accepted_source answer without source_facts must not continue to planner"))
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("status = %q, want planning question", result.State.Status))
+	gomega.Expect(len(result.State.AuthorityDeltas)).To(gomega.Equal(0), fmt.Sprintf("missing source_facts must not mint authority deltas: %+v", result.State.AuthorityDeltas))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected rejection event: %+v", result.Events))
+	gomega.Expect(result.Events[0].Message).To(gomega.ContainSubstring(`missing source_facts`), fmt.Sprintf("unexpected rejection event: %+v", result.Events))
 
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("status = %q, want planning question", result.State.Status)
-	}
-	if len(result.State.AuthorityDeltas) != 0 {
-		t.Fatalf("missing source_facts must not mint authority deltas: %+v", result.State.AuthorityDeltas)
-	}
-	if len(result.Events) != 1 || !strings.Contains(result.Events[0].Message, `missing source_facts`) {
-		t.Fatalf("unexpected rejection event: %+v", result.Events)
-	}
-}
-
-func TestRunRejectsTypedAnswerWithMismatchedAuthorityKind(t *testing.T) {
+})
+var _ = ginkgo.It("run rejects typed answer with mismatched authority kind", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	state.Status = FeatureStatePlanningQuestion
@@ -6492,26 +5569,18 @@ func TestRunRejectsTypedAnswerWithMismatchedAuthorityKind(t *testing.T) {
 	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","authority_kind":"operator_approval","evidence_refs":["docs/feature.md#acceptance"]}`
 
 	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(_ string, _ string) (string, error) {
-		t.Fatal("mismatched authority_kind must not continue to planner")
+		ginkgo.Fail(fmt.Sprint("mismatched authority_kind must not continue to planner"))
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.Status).To(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("status = %q, want planning question", result.State.Status))
+	gomega.Expect(len(result.State.AuthorityDeltas)).To(gomega.Equal(0), fmt.Sprintf("mismatched authority_kind must not mint authority deltas: %+v", result.State.AuthorityDeltas))
+	gomega.Expect(result.Events).To(gomega.HaveLen(1), fmt.Sprintf("unexpected rejection event: %+v", result.Events))
+	gomega.Expect(result.Events[0].Message).To(gomega.ContainSubstring(`requires authority_kind "accepted_source"`), fmt.Sprintf("unexpected rejection event: %+v", result.Events))
 
-	if result.State.Status != FeatureStatePlanningQuestion {
-		t.Fatalf("status = %q, want planning question", result.State.Status)
-	}
-	if len(result.State.AuthorityDeltas) != 0 {
-		t.Fatalf("mismatched authority_kind must not mint authority deltas: %+v", result.State.AuthorityDeltas)
-	}
-	if len(result.Events) != 1 || !strings.Contains(result.Events[0].Message, `requires authority_kind "accepted_source"`) {
-		t.Fatalf("unexpected rejection event: %+v", result.Events)
-	}
-}
-
-func TestClearAnsweredPlannerQuestionBlockersPreservesUnrelatedBlockers(t *testing.T) {
+})
+var _ = ginkgo.It("clear answered planner question blockers preserves unrelated blockers", func() {
 	state := FeatureState{
 		Blockers: []string{
 			`planner question "q-source" requires typed accepted_source authority answer`,
@@ -6527,25 +5596,20 @@ func TestClearAnsweredPlannerQuestionBlockersPreservesUnrelatedBlockers(t *testi
 	}
 
 	clearAnsweredPlannerQuestionBlockers(&state, "q-source")
+	gomega.Expect(containsString(state.Blockers, `planner question "q-source" requires typed accepted_source authority answer`)).To(gomega.BeFalse(), fmt.Sprintf("answered question blocker was not cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
+	gomega.Expect(containsString(state.Atoms[0].Blockers, `planner question "q-source" requires typed accepted_source authority answer`)).To(gomega.BeFalse(), fmt.Sprintf("answered question blocker was not cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers))
 
-	if containsString(state.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) ||
-		containsString(state.Atoms[0].Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
-		t.Fatalf("answered question blocker was not cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
-	}
 	for _, want := range []string{
 		`planner question "q-other" requires typed accepted_source authority answer`,
 		"unrelated blocker remains",
 	} {
-		if !containsString(state.Blockers, want) {
-			t.Fatalf("unrelated state blocker %q should remain: %+v", want, state.Blockers)
-		}
-	}
-	if !containsString(state.Atoms[0].Blockers, "atom blocker remains") {
-		t.Fatalf("unrelated atom blocker should remain: %+v", state.Atoms[0].Blockers)
-	}
-}
+		gomega.Expect(containsString(state.Blockers, want)).To(gomega.BeTrue(), fmt.Sprintf("unrelated state blocker %q should remain: %+v", want, state.Blockers))
 
-func TestRunAcceptsTypedAnswerForAtomLocalEvidenceQuestion(t *testing.T) {
+	}
+	gomega.Expect(containsString(state.Atoms[0].Blockers, "atom blocker remains")).To(gomega.BeTrue(), fmt.Sprintf("unrelated atom blocker should remain: %+v", state.Atoms[0].Blockers))
+
+})
+var _ = ginkgo.It("run accepts typed answer for atom local evidence question", func() {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 
 	state.Status = FeatureStatePlanningQuestion
@@ -6566,27 +5630,21 @@ func TestRunAcceptsTypedAnswerForAtomLocalEvidenceQuestion(t *testing.T) {
 	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
-			return mustPlanJSON(t, validPlan()), nil
+			return mustPlanJSON(validPlan()), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
-			t.Fatalf("unexpected task family %q", taskFamily)
+			ginkgo.Fail(fmt.Sprintf("unexpected task family %q", taskFamily))
 		}
 
 		return "", nil
 	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Run returned error: %v", err))
+	gomega.Expect(result.State.OpenQuestions[0].AnswerSourceKind).To(gomega.Equal("atom_local_evidence"), fmt.Sprintf("typed atom-local evidence was not recorded: %+v", result.State.OpenQuestions[0]))
+	gomega.Expect(result.State.OpenQuestions[0].EvidenceRefs).To(gomega.HaveLen(1), fmt.Sprintf("typed atom-local evidence was not recorded: %+v", result.State.OpenQuestions[0]))
+	gomega.Expect(result.State.Status).NotTo(gomega.Equal(FeatureStatePlanningQuestion), fmt.Sprintf("typed atom-local evidence answer should allow planning to continue"))
 
-	if result.State.OpenQuestions[0].AnswerSourceKind != "atom_local_evidence" || len(result.State.OpenQuestions[0].EvidenceRefs) != 1 {
-		t.Fatalf("typed atom-local evidence was not recorded: %+v", result.State.OpenQuestions[0])
-	}
-
-	if result.State.Status == FeatureStatePlanningQuestion {
-		t.Fatalf("typed atom-local evidence answer should allow planning to continue")
-	}
-}
+})
 
 func validPlan() FeaturePlan {
 	return FeaturePlan{
@@ -6861,13 +5919,11 @@ func runningExampleExistingPathPlanForTest() FeaturePlan {
 	return plan
 }
 
-func mustPlanJSON(t *testing.T, plan FeaturePlan) string {
-	t.Helper()
+func mustPlanJSON(plan FeaturePlan) string {
+	ginkgo.GinkgoHelper()
 
 	body, err := json.Marshal(plan)
-	if err != nil {
-		t.Fatalf("marshal plan: %v", err)
-	}
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("marshal plan: %v", err))
 
 	return string(body)
 }
@@ -7207,16 +6263,19 @@ func mustJSONMap(payload map[string]any) string {
 	return string(body)
 }
 
-func mkdirAndWriteFile(t *testing.T, path string, content string) {
-	t.Helper()
+func mkdirAndWriteFile(path string, content string) {
+	ginkgo.GinkgoHelper()
+	{
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir %s: %v", filepath.Dir(path), err))
+	}
+	{
+
+		err := os.WriteFile(path, []byte(content), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write %s: %v", path, err))
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
 }
 
 func validProductContextPlan() FeaturePlan {
@@ -7317,6 +6376,8 @@ func validBehavioralCoverageDraft() *BehavioralCoverageDraft {
 
 func validProductWorkflowBrief() ProductWorkflowBrief {
 	return ProductWorkflowBrief{
+		EffortID:           "effort-1",
+		TaskID:             "task-1",
 		CoverageGatePassed: true,
 		CoverageContract:   validCoverageContractRef(),
 		PRDRequirements: []PRDRequirementBrief{{

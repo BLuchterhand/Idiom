@@ -1,5 +1,7 @@
 package backends
 
+//go:generate go tool mockgen -source=proxy.go -destination=mock_proxy_http_doer_test.go -package=backends -mock_names=proxyHTTPDoer=MockProxyHTTPDoer -typed
+
 import (
 	"bytes"
 	"context"
@@ -33,6 +35,11 @@ type ProxyConfig struct {
 	Listen       int
 	DefaultAlias string
 	Routes       map[string]ProxyRoute
+}
+
+// proxyHTTPDoer is the outbound HTTP boundary consumed by the proxy handler.
+type proxyHTTPDoer interface {
+	Do(req *http.Request) (*http.Response, error)
 }
 
 // BuildProxyConfig translates a Profile into the routing table the
@@ -93,10 +100,8 @@ func BuildProxyConfig(prof Profile) (ProxyConfig, error) {
 type ProxyOptions struct {
 	// Doer is the HTTP client the proxy uses to forward requests.
 	// Nil means "use the default streaming-friendly client." Tests
-	// inject a stub that returns canned responses without dialing.
-	Doer interface {
-		Do(req *http.Request) (*http.Response, error)
-	}
+	// inject a deterministic doer without dialing.
+	Doer proxyHTTPDoer
 	// LogFunc receives one-line proxy events (route picks, errors).
 	// Nil means "discard." The CLI wires this to stderr.
 	LogFunc func(format string, args ...any)
@@ -155,9 +160,7 @@ func defaultProxyClient() *http.Client {
 // can drop the Python script without behavior change.
 type proxyHandler struct {
 	cfg  ProxyConfig
-	doer interface {
-		Do(req *http.Request) (*http.Response, error)
-	}
+	doer proxyHTTPDoer
 	logf func(format string, args ...any)
 }
 

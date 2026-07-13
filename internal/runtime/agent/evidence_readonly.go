@@ -12,10 +12,8 @@ import (
 	"unicode/utf8"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/contracts/toolfacts"
-	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
@@ -28,7 +26,7 @@ const (
 	readOnlyEvidenceContextPacket     readOnlyEvidenceKind = "context_packet"
 	readOnlyEvidenceSearchHit         readOnlyEvidenceKind = "search_hit"
 	readOnlyEvidenceOutline           readOnlyEvidenceKind = "outline"
-	readOnlyEvidenceSourceBody        readOnlyEvidenceKind = "source_body"
+	readOnlyEvidenceSourceWindow      readOnlyEvidenceKind = "source_body"
 	readOnlyEvidenceDiagnostic        readOnlyEvidenceKind = "diagnostic"
 	readOnlyEvidencePlanArtifact      readOnlyEvidenceKind = "plan_artifact"
 	readOnlyEvidenceGeneratedArtifact readOnlyEvidenceKind = "generated_artifact"
@@ -157,7 +155,7 @@ func (ledger *readOnlyAnswerabilityLedger) observeDelegatedEvidence(decision rea
 
 	for _, path := range ledgerSourcePaths {
 		ledger.addItem(readOnlyEvidenceItem{
-			Kind:    readOnlyEvidenceSourceBody,
+			Kind:    readOnlyEvidenceSourceWindow,
 			Tool:    workspace.ToolNameTask,
 			Source:  workspace.ToolNameTask,
 			Path:    path,
@@ -242,7 +240,7 @@ func readOnlyAnswerabilityForProjection(brief workerruntime.WorkerRuntimeBrief, 
 				Summary:        observation.Summary,
 			})
 
-		case readOnlyEvidenceSourceBody:
+		case readOnlyEvidenceSourceWindow:
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:    observation.Kind,
 				Tool:    observation.Tool,
@@ -798,7 +796,7 @@ func (l *readOnlyAnswerabilityLedger) markRelevantSourceBodies(namedTargets []st
 	}
 
 	for i := range l.Items {
-		if l.Items[i].Kind == readOnlyEvidenceSourceBody {
+		if l.Items[i].Kind == readOnlyEvidenceSourceWindow {
 			_, l.Items[i].Relevant = readOnlyPathSet(l.RelevantSourceBodyPaths)[NormalizeRunnerPath(l.Items[i].Path)]
 		}
 	}
@@ -1323,7 +1321,7 @@ func (l readOnlyAnswerabilityLedger) diagnosticEvidenceAnswerable() bool {
 		return false
 	}
 
-	return len(readOnlySourceLikePaths(l.DiagnosticPaths, 8)) > 0
+	return len(readOnlyDiagnosticEvidencePaths(l.DiagnosticPaths, 8)) > 0
 }
 
 func (l readOnlyAnswerabilityLedger) Answerable() bool {
@@ -1454,7 +1452,7 @@ func readOnlySourceLikePaths(paths []string, max int) []string {
 	seen := map[string]struct{}{}
 
 	for _, raw := range paths {
-		if readOnlyPathEscapesWorkspace(raw) {
+		if runnerPathEscapesWorkspace(raw) {
 			continue
 		}
 		path := NormalizeRunnerPath(raw)
@@ -1492,21 +1490,10 @@ func readOnlyRepoLocalSourcePath(path string) bool {
 	return true
 }
 
-func readOnlyPathEscapesWorkspace(raw string) bool {
-	path := strings.TrimSpace(raw)
-	path = strings.Trim(path, "`'\"()[]{}<>,.;")
-	if path == "" {
-		return false
-	}
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
-		return true
-	}
-
-	path = filepath.ToSlash(strings.ReplaceAll(path, `\`, `/`))
-	return path == ".." || strings.HasPrefix(path, "../")
-}
-
 func readOnlyPathSet(paths []string) map[string]struct{} {
+	// This set is intentionally source-only. Generic mutation/verification path
+	// algebra belongs to runnerArtifactPathSet so non-source deliverables are not
+	// silently discarded from contract ledgers.
 	set := make(map[string]struct{}, len(paths))
 	for _, path := range readOnlySourceLikePaths(paths, 0) {
 		set[path] = struct{}{}
@@ -1571,13 +1558,13 @@ func readOnlyExternalDocumentPathSet(paths []string) map[string]struct{} {
 
 func readOnlyDiagnosticEvidenceMatchesObjective(objective string, namedTargets []string, text string, paths []string) bool {
 	objective = strings.TrimSpace(objective)
-	paths = readOnlySourceLikePaths(paths, 8)
+	paths = readOnlyDiagnosticEvidencePaths(paths, 8)
 
 	if objective == "" || len(paths) == 0 {
 		return false
 	}
 
-	namedSet := readOnlyPathSet(namedTargets)
+	namedSet := runnerArtifactPathSet(textutil.Merge(namedTargets, pathparse.MentionedWorkspacePaths(objective)))
 	for _, path := range paths {
 		if _, ok := namedSet[NormalizeRunnerPath(path)]; ok {
 			return true
@@ -1613,6 +1600,32 @@ func readOnlyObjectiveExplicitlyAsksForDiagnostics(objective string) bool {
 		"source_sanity",
 		"compiler error", "compile error",
 	)
+}
+
+func readOnlyDiagnosticEvidencePaths(paths []string, max int) []string {
+	if max <= 0 {
+		max = len(paths)
+	}
+	var out []string
+	seen := make(map[string]struct{}, len(paths))
+	for _, raw := range paths {
+		if runnerPathEscapesWorkspace(raw) {
+			continue
+		}
+		path := NormalizeRunnerPath(raw)
+		if path == "" || path == "." || path == ".." {
+			continue
+		}
+		if _, duplicate := seen[path]; duplicate {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+		if max > 0 && len(out) >= max {
+			break
+		}
+	}
+	return out
 }
 
 func readOnlyScaffoldFinalAnswer(answer string) bool {
@@ -1670,21 +1683,6 @@ func contextDependentSourceFooter(lower string) bool {
 		"inspected source files:",
 		"inspected source file:",
 	)
-}
-
-func readOnlyFallbackNeedsAnswerableEvidence(brief workerruntime.WorkerRuntimeBrief, answer string) bool {
-	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return false
-	}
-
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
-		return false
-	}
-
-	return isDeterministicFallbackAnswer(answer) ||
-		looksLikeGenericEvidenceComposerAnswer(answer) ||
-		readOnlyScaffoldFinalAnswer(answer)
 }
 
 func readOnlyAnswerReportsInsufficientEvidence(answer string) bool {
@@ -1840,7 +1838,7 @@ func ExplicitAnswerCodeSymbols(reply string) []string {
 	return symbols
 }
 
-func addSourceBodyEvidenceSymbols(symbols map[string]struct{}, output string) {
+func addSourceWindowEvidenceSymbols(symbols map[string]struct{}, output string) {
 	for _, line := range exactProbeSourceLines(output) {
 		for _, raw := range sourceBodyEvidenceSymbolCandidates(line) {
 			key := NormalizedAnswerSymbol(raw)
@@ -1933,8 +1931,10 @@ func ExactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} 
 			continue
 		}
 
-		if len(record.SourceBodyPaths()) > 0 {
-			addSourceBodyEvidenceSymbols(symbols, result.Output)
+		if len(record.SourceWindowPaths()) > 0 {
+			for _, window := range result.SourceWindows() {
+				addSourceWindowEvidenceSymbols(symbols, window.Content)
+			}
 		}
 
 		addOutlineEvidenceSymbols(symbols, result)
@@ -2016,28 +2016,6 @@ func ReadOnlyExplanationHasMechanismVerb(lower string) bool {
 		" summarizes ", " summarize ", " summarized ",
 	} {
 		if strings.Contains(" "+lower+" ", phrase) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func TextSharesObjectiveTerm(text string, objective string) bool {
-	text = strings.ToLower(strings.TrimSpace(text))
-	objective = strings.ToLower(strings.TrimSpace(objective))
-
-	if text == "" || objective == "" {
-		return false
-	}
-
-	for _, term := range RecoveryObjectiveSearchWords(objective, 32) {
-		term = SingularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
-		if len(term) < 4 {
-			continue
-		}
-
-		if strings.Contains(text, term) {
 			return true
 		}
 	}
@@ -2176,103 +2154,6 @@ func (d ReadOnlyCloseout) UserFacingUncertainty() string {
 
 		return presentableUnsupportedFinalAnswerLead() + " The run did not retain relevant source-body or diagnostic evidence for the requested claim."
 	}
-}
-
-func (d ReadOnlyCloseout) ConversationFallback() string {
-	if concrete, ok := d.ConcreteFallbackAnswer(); ok {
-		return concrete
-	}
-
-	return d.ConversationUncertaintyFallback()
-}
-
-func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
-	inspectedPaths := readOnlyEvidenceDisplayPaths(
-		textutil.Merge(d.Evidence.SourceBodyPaths, d.Evidence.ExternalDocumentBodyPaths, d.Evidence.DiagnosticPaths),
-		6,
-	)
-	var anchors []string
-
-	for _, result := range d.Results {
-		if anchor := conversationFallbackEvidenceAnchor(result); anchor != "" && !slices.Contains(anchors, anchor) {
-			anchors = append(anchors, anchor)
-		}
-	}
-
-	if len(inspectedPaths) == 0 && len(anchors) == 0 {
-		return presentableUnsupportedFinalAnswerLead() + " The next useful step is one bounded source-body or diagnostic probe tied to the exact claim."
-	}
-
-	var b strings.Builder
-
-	b.WriteString(presentableUnsupportedFinalAnswerLead())
-	b.WriteString(" The run collected evidence but did not retain a concrete user-facing finding.")
-
-	if len(inspectedPaths) == 0 {
-		b.WriteString("\n\nEvidence paths:\n- relevant source files")
-	} else {
-		b.WriteString("\n\nEvidence paths:\n")
-
-		for _, path := range textutil.Prefix(inspectedPaths, 6) {
-			b.WriteString("- `")
-			b.WriteString(path)
-			b.WriteString("`\n")
-		}
-	}
-
-	if len(anchors) > 0 {
-		b.WriteString("\nSource anchors:\n")
-
-		for _, anchor := range textutil.Prefix(anchors, 6) {
-			b.WriteString("- ")
-			b.WriteString(anchor)
-			b.WriteString("\n")
-		}
-	}
-
-	return strings.TrimSpace(b.String())
-}
-
-func (d ReadOnlyCloseout) ConcreteFallbackAnswer() (string, bool) {
-	if strings.TrimSpace(d.Brief.Objective) == "" || !d.Answerable() {
-		return "", false
-	}
-
-	if exact, ok := presentableExactProbeAnswer(d.Brief, d.Results); ok {
-		return exact, true
-	}
-
-	if externalDocument, ok := presentableExternalDocumentEvidenceAnswer(d.Brief, d.Results); ok {
-		return externalDocument, true
-	}
-
-	if sourceBody, ok := presentableReadFileSourceAnswer(d.Brief, d.Results); ok {
-		return sourceBody, true
-	}
-
-	if prose, ok := presentableProseEvidenceAnswer(d.Brief, d.Results); ok {
-		return prose, true
-	}
-
-	return "", false
-}
-
-func (d ReadOnlyCloseout) RecoverableTerminalCandidate(agentName string, assessment turnContractAssessment) (string, bool) {
-	if !turnContractAssessmentCapabilities(assessment).Recoverable {
-		return "", false
-	}
-
-	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
-	if !readOnlyDirectAnswerLane(brief) || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return "", false
-	}
-
-	recovered, ok := d.ConcreteFallbackAnswer()
-	if !ok {
-		return "", false
-	}
-
-	return d.PresentableObjectiveAnswerCandidate(agentName, recovered)
 }
 
 type readOnlyFinalAnswerDecision struct {
@@ -2574,7 +2455,7 @@ func answerAddressesPlanArtifactObjective(answer string, objective string, ledge
 		return false
 	}
 
-	mentioned := readOnlySourceLikePaths(analyzeSourceCitations(answer).MentionedPaths, 16)
+	mentioned := readOnlySourceLikePaths(analyzeSourceCitations(answer).BodyReadablePaths(), 16)
 	if len(mentioned) > 0 {
 		return featurePlannerPlanPathCitationsAreRelevant(answer, mentioned, ledger)
 	}
@@ -2618,7 +2499,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 
 	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
 
-	for _, raw := range analyzeSourceCitations(answer).MentionedPaths {
+	for _, raw := range analyzeSourceCitations(answer).BodyReadablePaths() {
 		path := NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
@@ -2634,7 +2515,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 	lower := strings.ToLower(answer)
 
 	for named := range namedSet {
-		if _, read := sourceSet[named]; !read && !newToolResultEvidenceProjection(results).HasSourceBody(named) {
+		if _, read := sourceSet[named]; !read && !newToolResultEvidenceProjection(results).HasSourceWindow(named) {
 			continue
 		}
 
@@ -2762,7 +2643,7 @@ func readOnlyLowConfidenceObjectiveSupportStopWord(term string) bool {
 }
 
 func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAnswerabilityLedger) bool {
-	mentionedPaths := analyzeSourceCitations(answer).MentionedPaths
+	mentionedPaths := analyzeSourceCitations(answer).BodyReadablePaths()
 	if answerCitesRelevantExternalDocument(mentionedPaths, ledger) {
 		return true
 	}
@@ -2832,15 +2713,6 @@ func answerCitesRelevantExternalDocument(mentionedPaths []string, ledger readOnl
 	return false
 }
 
-func objectiveAsksBehaviorSummary(objective string) bool {
-	lower := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
-
-	return ContainsAny(lower,
-		" what does ",
-		" what do ",
-	)
-}
-
 func plainNamedFileContentRequest(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
 	if !ContainsAny(lower, "what is in", "what's in", "show", "summarize", "summary of", "contents of", "list") {
@@ -2901,7 +2773,7 @@ func readOnlyAnswerUsesInspectedSourceAsAnswer(answer string, ledger readOnlyAns
 		return false
 	}
 
-	if len(readOnlySourceLikePaths(analyzeSourceCitations(answer).MentionedPaths, 16)) > 0 {
+	if len(readOnlySourceLikePaths(analyzeSourceCitations(answer).BodyReadablePaths(), 16)) > 0 {
 		return true
 	}
 
@@ -2986,65 +2858,21 @@ func (d ReadOnlyCloseout) answerAddressesReadOnlyObjective(answer string) bool {
 		answerSourceCitationsAreObjectiveRelevant(answer, d.Evidence)
 }
 
-func (d ReadOnlyCloseout) PresentableFallbackCandidate(agentName string, answer string) (string, bool) {
+func (d ReadOnlyCloseout) PresentableFallbackCandidate(_ string, answer string) (string, bool) {
 	answer = strings.TrimSpace(answer)
-	if answer == "" {
+	if answer == "" || IsTextualToolCall(answer) || looksLikeUnexecutedToolRequestAnswer(answer) {
 		return "", false
 	}
-
-	if conversationFallbackShouldAvoidSourceBody(d.Brief) && looksLikeSourceBodyFallbackAnswer(answer) {
-		return d.PresentableBriefConversationFallbackCandidate(agentName)
-	}
-
-	if looksLikeDelegatedGroundedFallbackAnswer(answer) {
-		return answer, true
-	}
-
-	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) || looksLikeLineOrientedSourceSnippetAnswer(answer) {
-		if conversationFallbackShouldAvoidSourceBody(d.Brief) && strings.TrimSpace(d.Brief.Objective) == "" {
-			return d.ConversationFallback(), true
-		}
-
-		if presentable, ok := presentableNoToolsFallbackAnswer(d.Brief, d.Results, answer); ok {
-			return d.PresentableOrReadOnlyNonAnswerReplacement(agentName, presentable)
-		}
-
-		return d.PresentableBriefConversationFallbackCandidate(agentName)
-	}
-
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, d.Brief) && looksLikeNonAnswerProse(answer) {
-		if replacement, ok := d.NonAnswerReplacement(); ok {
-			return replacement, true
-		}
-
+	if finalAnswerNeedsDecoration(answer) || looksLikeGenericEvidenceComposerAnswer(answer) ||
+		genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) || looksLikeLineOrientedSourceSnippetAnswer(answer) {
 		return "", false
 	}
-
 	if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
 		return cleaned, true
 	}
-
-	if conversationFallbackShouldAvoidSourceBody(d.Brief) && strings.Contains(strings.ToLower(answer), "source: delegated read-only evidence packet") {
-		return d.PresentableBriefConversationFallbackCandidate(agentName)
-	}
-
-	if presentable, ok := presentableNoToolsFallbackAnswer(d.Brief, d.Results, answer); ok {
-		return d.PresentableOrReadOnlyNonAnswerReplacement(agentName, presentable)
-	}
-
-	answer = strings.TrimSpace(answer)
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, d.Brief) && looksLikeNonAnswerProse(answer) {
-		if replacement, ok := d.NonAnswerReplacement(); ok {
-			return replacement, true
-		}
-
-		return "", false
-	}
-
 	if !readOnlyFallbackCandidateAllowsRawPassthrough(d.Brief) {
 		return "", false
 	}
-
 	return answer, true
 }
 
@@ -3066,45 +2894,6 @@ func readOnlyFallbackCandidateAllowsRawPassthrough(brief workerruntime.WorkerRun
 	}
 
 	return true
-}
-
-func (d ReadOnlyCloseout) PresentableOrReadOnlyNonAnswerReplacement(agentName string, answer string) (string, bool) {
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		return "", false
-	}
-
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, d.Brief) && looksLikeNonAnswerProse(answer) {
-		if replacement, ok := d.NonAnswerReplacement(); ok {
-			return replacement, true
-		}
-
-		return "", false
-	}
-
-	return answer, true
-}
-
-func (d ReadOnlyCloseout) PresentableBriefConversationFallbackCandidate(agentName string) (string, bool) {
-	fallback := strings.TrimSpace(d.ConversationFallback())
-	if fallback == "" {
-		return "", false
-	}
-
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, d.Brief) && looksLikeNonAnswerProse(fallback) {
-		return d.NonAnswerReplacement()
-	}
-
-	return fallback, true
-}
-
-func (d ReadOnlyCloseout) NonAnswerReplacement() (string, bool) {
-	fallback := strings.TrimSpace(d.ConversationUncertaintyFallback())
-	if fallback != "" && !looksLikeNonAnswerProse(fallback) {
-		return fallback, true
-	}
-
-	return "", false
 }
 
 func readOnlyClosureKnownEvidencePaths(evidence readOnlyAnswerabilityLedger) []string {
@@ -3192,7 +2981,7 @@ func readOnlyCandidateOnlyPaths(ledger readOnlyAnswerabilityLedger, max int) []s
 	}
 
 	bodySet := readOnlyPathSet(ledger.SourceBodyPaths)
-	diagnosticSet := readOnlyPathSet(ledger.DiagnosticPaths)
+	diagnosticSet := runnerArtifactPathSet(readOnlyDiagnosticEvidencePaths(ledger.DiagnosticPaths, 0))
 	var out []string
 
 	for _, candidate := range readOnlySourceLikePaths(ledger.CandidatePaths, 64) {
@@ -3347,11 +3136,11 @@ func isGroundedChildPacketEvidencePath(objective string, path string) bool {
 
 func fallbackLineBudgetForTool(tool string) int {
 	switch tool {
-	case "discovery_query":
+	case workspace.ToolNameDiscoveryQuery:
 		return 20
-	case "search_content":
+	case workspace.ToolNameSearchContent:
 		return 6
-	case "read_file":
+	case workspace.ToolNameReadFile:
 		return 10
 	default:
 		return 8
@@ -3374,7 +3163,6 @@ func isHarnessRejectionErrorText(text string) bool {
 		"already contains sufficient evidence to bias toward answering",
 		"file-level raw read is too broad",
 		"file-level outline is broad orientation",
-		"do not restart broad discovery",
 		"successful write(s) since the last verification",
 		"this action class already failed earlier in the turn",
 		"not in the current allowed tool surface",
@@ -3401,24 +3189,15 @@ func isParserRecoveryRejectionSummary(summary string) bool {
 }
 
 func isHarnessRejectionSummary(summary string) bool {
-	summary = normalizedHarnessRejectionSummary(summary)
+	summary = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(summary), " (replayed same blocker)"))
 	if isParserRecoveryRejectionSummary(summary) {
-		return true
-	}
-	if postReadinessContinuationRejectionSummary(summary) {
 		return true
 	}
 
 	switch summary {
-	case "Post-child reread blocked",
-		"Broad exploration after delegation nudge blocked",
-		"Additional read_only child task blocked",
-		"Broad inspection request rejected",
-		"Verification required after workspace edits",
+	case "Verification required after workspace edits",
 		"Tool not available in current runtime contract",
-		"Repeated dead-end action rejected",
-		"Chained list_files rejected",
-		"Chained search rejected":
+		"Repeated dead-end action rejected":
 		return true
 	}
 
@@ -3471,8 +3250,6 @@ func compactOutput(output string, maxLines int) string {
 
 const readOnlyEvidencePacketPayloadType = "agent.read_only_evidence_packet.v1"
 
-const ReadOnlyEvidencePacketSchema = readOnlyEvidencePacketPayloadType
-
 type ReadOnlyEvidenceFinding struct {
 	Path   string `json:"path,omitempty"`
 	Text   string `json:"text,omitempty"`
@@ -3501,10 +3278,10 @@ func buildReadOnlyEvidencePacket(objective string, answer string, results []work
 	answer = sanitizeReadOnlyEvidencePacketAnswer(answer)
 
 	projection := newToolResultEvidenceProjection(results)
-	sourceBodyPaths := readOnlyEvidencePacketSourceLikePaths(projection.SourceBodyPaths(), 16)
+	sourceBodyPaths := readOnlyEvidencePacketSourceLikePaths(projection.SourceWindowPaths(), 16)
 	candidatePaths := projection.ReadOnlyEvidencePacketCandidatePaths()
 	citations := analyzeSourceCitations(answer)
-	inspectedPaths := readOnlyEvidencePacketSourceLikePaths(textutil.Merge(sourceBodyPaths, candidatePaths, citations.MentionedPaths), 16)
+	inspectedPaths := readOnlyEvidencePacketSourceLikePaths(textutil.Merge(sourceBodyPaths, candidatePaths, citations.BodyReadablePaths()), 16)
 	findings := readOnlyEvidencePacketFindings(answer, results, sourceBodyPaths, 6)
 	packet := ReadOnlyEvidencePacket{
 		SchemaVersion:   readOnlyEvidencePacketPayloadType,
@@ -3647,101 +3424,6 @@ func renderReadOnlyEvidencePacketForToolOutput(packet ReadOnlyEvidencePacket, an
 	}
 
 	return strings.TrimSpace(b.String())
-}
-
-func synthesizeReadOnlyDelegatedEvidenceAnswer(objective string, facts []readOnlyDelegatedEvidenceFact) (string, bool) {
-	var (
-		sourcePaths []string
-		findings    []ReadOnlyEvidenceFinding
-	)
-
-	for _, fact := range facts {
-		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
-		if !decision.TaskResultAnswerable {
-			continue
-		}
-
-		packet := normalizeReadOnlyEvidencePacket(fact.Packet)
-		sourcePaths = textutil.Merge(sourcePaths, decision.LedgerSourcePaths)
-
-		for _, finding := range packet.Findings {
-			if strings.TrimSpace(finding.Text) == "" {
-				continue
-			}
-
-			if finding.Path != "" && !slices.Contains(decision.LedgerSourcePaths, finding.Path) {
-				continue
-			}
-
-			findings = append(findings, finding)
-		}
-	}
-
-	sourcePaths = readOnlyEvidencePacketSourceLikePaths(sourcePaths, 8)
-	if len(sourcePaths) == 0 || len(findings) == 0 {
-		return "", false
-	}
-
-	paths := closurePromptEvidencePaths(sourcePaths, 8)
-	if len(paths) == 0 {
-		return "", false
-	}
-
-	var b strings.Builder
-
-	if question := delegatedDisplayQuestion(objective); question != "" {
-		b.WriteString("For `")
-		b.WriteString(question)
-		b.WriteString("`, ")
-	}
-
-	seen := map[string]struct{}{}
-
-	for _, finding := range findings {
-		text := strings.TrimSpace(finding.Text)
-		if text == "" {
-			continue
-		}
-
-		if _, ok := seen[text]; ok {
-			continue
-		}
-
-		seen[text] = struct{}{}
-		if len(seen) > 1 {
-			b.WriteString(" ")
-		}
-
-		b.WriteString(readOnlyEvidencePacketSentence(text))
-
-		if len(seen) >= 4 {
-			break
-		}
-	}
-
-	if len(seen) == 0 {
-		return "", false
-	}
-
-	b.WriteString(" This is grounded in ")
-	b.WriteString(formatInlinePathList(paths, 4))
-	b.WriteString(".")
-
-	return strings.TrimSpace(b.String()), true
-}
-
-func readOnlyEvidencePacketSentence(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-
-	switch text[len(text)-1:] {
-	case ".", "!", "?":
-		return text
-	default:
-		return text + "."
-	}
 }
 
 func normalizeReadOnlyEvidencePacket(packet ReadOnlyEvidencePacket) ReadOnlyEvidencePacket {
@@ -4004,7 +3686,7 @@ func readOnlyEvidencePacketFindings(answer string, results []workspace.ToolResul
 		findings = append(findings, ReadOnlyEvidenceFinding{Path: path, Text: text, Source: source})
 	}
 
-	for _, line := range delegatedReadOnlyFindingLines([]workspace.ToolResult{{Tool: "task", Output: answer}}, sourceBodyPaths, limit) {
+	for _, line := range delegatedReadOnlyFindingLines([]workspace.ToolResult{{Tool: workspace.ToolNameTask, Output: answer}}, sourceBodyPaths, limit) {
 		add("", line, "answer")
 	}
 
@@ -4082,7 +3764,7 @@ func readOnlyEvidencePacketSourceLikePaths(paths []string, limit int) []string {
 
 func normalizeReadOnlyEvidencePacketPath(raw string) string {
 	trimmed := strings.TrimSpace(raw)
-	if readOnlyPathEscapesWorkspace(trimmed) {
+	if runnerPathEscapesWorkspace(trimmed) {
 		return ""
 	}
 
@@ -4798,28 +4480,6 @@ func sourceEvidenceObjectiveLineTerms(objective string) []string {
 	return textutil.Sorted(terms)
 }
 
-func sourceEvidenceLineObjectiveScore(line string, terms []string) int {
-	lower := strings.ToLower(strings.TrimSpace(line))
-	if lower == "" {
-		return 0
-	}
-
-	score := 0
-
-	for _, term := range terms {
-		term = strings.ToLower(strings.TrimSpace(term))
-		if term == "" {
-			continue
-		}
-
-		if strings.Contains(lower, term) {
-			score++
-		}
-	}
-
-	return score
-}
-
 func delegatedReadOnlyQualifiedSymbolCandidate(raw string) (string, bool) {
 	value := strings.TrimSpace(raw)
 
@@ -4860,47 +4520,6 @@ func delegatedReadOnlyQualifiedSymbolCandidate(raw string) (string, bool) {
 	return value, true
 }
 
-func implementationTargetWriteReadyRedirectedReadTool(result workspace.ToolResult) (string, bool) {
-	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
-		return "", false
-	}
-
-	summary := strings.TrimSpace(result.Summary)
-	lower := strings.ToLower(summary)
-
-	if !strings.HasPrefix(lower, "redirected ") {
-		return "", false
-	}
-
-	tail := summary[len("Redirected "):]
-	idx := strings.Index(strings.ToLower(tail), " to ")
-
-	if idx < 0 {
-		return "", false
-	}
-
-	fields := strings.Fields(tail[idx+len(" to "):])
-	if len(fields) == 0 {
-		return "", false
-	}
-
-	tool := strings.Trim(fields[0], "`'\".,;:")
-	if !implementationTargetWriteReadyRedirectedSourceTool(tool) {
-		if !strings.HasSuffix(tool, "_file_outline") {
-			return "", false
-		}
-
-		related, ok := implementationTargetWriteReadyRedirectedRelatedSourceTool(result)
-		if !ok {
-			return "", false
-		}
-
-		return related, true
-	}
-
-	return tool, true
-}
-
 const readOnlyPrefetchEventRole = "read_only_named_path_prefetch"
 
 type readOnlyPrefetchEvent struct {
@@ -4917,7 +4536,7 @@ type readOnlyPrefetchEvent struct {
 	EstimatedRoundTripsSaved int                             `json:"estimated_round_trips_saved,omitempty"`
 }
 
-func (r *Runner) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder, collectedResults []workspace.ToolResult) []workspace.ToolResult {
+func (r *runExecution) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder, collectedResults []workspace.ToolResult) []workspace.ToolResult {
 	event := r.readOnlyNamedPathPrefetchEvent(collectedResults)
 	defer func() {
 		if data, err := json.Marshal(event); err == nil {
@@ -4925,11 +4544,11 @@ func (r *Runner) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder
 		}
 	}()
 
-	if !event.Eligible || r == nil || r.Workspace == nil {
+	if !event.Eligible || r == nil || r.runner.Workspace == nil {
 		return collectedResults
 	}
 
-	paths := readOnlyPrefetchObjectivePaths(r.RuntimeBrief)
+	paths := readOnlyPrefetchObjectivePaths(r.state.runtimeBrief)
 
 	event.RequestedPaths = len(paths)
 
@@ -4940,7 +4559,7 @@ func (r *Runner) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder
 		return collectedResults
 	}
 
-	report := r.Workspace.PrefetchReadFiles(paths, workspace.PrefetchReadOptions{})
+	report := r.runner.Workspace.PrefetchReadFiles(r.state.ctx, paths, workspace.PrefetchReadOptions{})
 
 	event.SelectedPaths = append([]string(nil), report.SelectedPaths...)
 	event.SkippedPaths = append([]workspace.PrefetchSkippedPath(nil), report.SkippedPaths...)
@@ -4965,12 +4584,12 @@ func (r *Runner) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder
 		})
 	}
 
-	return *recorder.collectedResults
+	return recorder.snapshotResults()
 }
 
-func (r *Runner) readOnlyNamedPathPrefetchEvent(collectedResults []workspace.ToolResult) readOnlyPrefetchEvent {
+func (r *runExecution) readOnlyNamedPathPrefetchEvent(collectedResults []workspace.ToolResult) readOnlyPrefetchEvent {
 	event := readOnlyPrefetchEvent{SchemaVersion: "idiom.read_only_named_path_prefetch.v1"}
-	if r == nil || r.Workspace == nil {
+	if r == nil || r.runner.Workspace == nil {
 		event.MissReason = "workspace_unavailable"
 		return event
 	}
@@ -4990,7 +4609,7 @@ func (r *Runner) readOnlyNamedPathPrefetchEvent(collectedResults []workspace.Too
 		return event
 	}
 
-	if !readOnlyNamedPathPrefetchLane(r.RuntimeBrief) {
+	if !readOnlyNamedPathPrefetchLane(r.state.runtimeBrief) {
 		event.MissReason = "not_read_only_workspace"
 		return event
 	}
@@ -5385,29 +5004,13 @@ func stripSourceEvidenceLinePrefix(line string) string {
 	return strings.TrimSpace(line[idx+1:])
 }
 
-func looksLikeDelegatedGroundedFallbackAnswer(answer string) bool {
-	trimmed := strings.TrimSpace(answer)
-	if trimmed == "" {
-		return false
-	}
-
-	if genericEvidenceAnswerIncludesLineOrientedSourceBody(trimmed) || looksLikeLineOrientedSourceSnippetAnswer(trimmed) {
-		return false
-	}
-
-	lower := strings.ToLower(trimmed)
-
-	return strings.HasPrefix(lower, "the answer is grounded in ") &&
-		strings.Contains(lower, "\n\nwhat this establishes:\n- ")
-}
-
-func (r *Runner) initialBootstrapInstruction() string {
+func (r *runExecution) initialBootstrapInstruction() string {
 	if r == nil {
 		return ""
 	}
 
-	family := strings.TrimSpace(r.RuntimeBrief.TaskFamily)
-	profile := strings.TrimSpace(r.RuntimeBrief.PermissionProfile)
+	family := strings.TrimSpace(r.state.runtimeBrief.TaskFamily)
+	profile := strings.TrimSpace(r.state.runtimeBrief.PermissionProfile)
 
 	switch {
 	case strings.HasPrefix(r.agentName(), "child:") && family == "delegated_read_only":
@@ -5419,7 +5022,7 @@ func (r *Runner) initialBootstrapInstruction() string {
 			"After any successful search hit, inspect that hit before doing another filename or content search.",
 			"Stop as soon as the delegated question is answered. Return concise grounded findings with inspected paths and confidence.",
 		}, "\n")
-	case workerruntime.TaskFamilyIsArchitecture(family) && workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract):
+	case workerruntime.TaskFamilyIsArchitecture(family) && workerruntime.RuntimeContractIsArchitecture(r.state.runtimeBrief.Contract):
 		return strings.Join([]string{
 			"[architecture bootstrap]",
 			"Start broad architecture questions with delegated read-only discovery when the task tool is available.",
@@ -5428,8 +5031,8 @@ func (r *Runner) initialBootstrapInstruction() string {
 		}, "\n")
 	case workerruntime.TaskFamilyIsVerificationOnly(family) || workerruntime.PermissionProfileIsReadOnlyVerificationShell(profile):
 		cmd := "go test ./..."
-		if len(r.RuntimeBrief.VerificationPlan) > 0 && strings.TrimSpace(r.RuntimeBrief.VerificationPlan[0]) != "" {
-			cmd = strings.TrimSpace(r.RuntimeBrief.VerificationPlan[0])
+		if len(r.state.runtimeBrief.VerificationPlan) > 0 && strings.TrimSpace(r.state.runtimeBrief.VerificationPlan[0]) != "" {
+			cmd = strings.TrimSpace(r.state.runtimeBrief.VerificationPlan[0])
 		}
 
 		return strings.Join([]string{
@@ -5438,38 +5041,23 @@ func (r *Runner) initialBootstrapInstruction() string {
 			fmt.Sprintf("Configured verification command: %s", cmd),
 			"After it runs, answer with the observed pass/fail result.",
 		}, "\n")
-	case debugLogContractApplies(r.RuntimeBrief, nil):
-		return strings.Join([]string{
-			"[debug-log bootstrap]",
-			"Start from the newest relevant log artifact; source-code orientation is lower value until log evidence is exhausted.",
-			"First choose the newest real log file (for example under logs/, *.log, or *.jsonl), then read its recent tail.",
-			"Stay on that selected log until you can cite the weird decision or declare the missing datum.",
-			"After one bounded log read, answer from the logs if the cause is already clear; otherwise do one targeted follow-up inside the same log.",
-		}, "\n")
-	case workerruntime.TaskFamilyEvidenceFirstMutation(family) && len(r.RuntimeBrief.TargetRefs) > 0:
-		return strings.Join([]string{
-			"[evidence-first mutation bootstrap]",
-			fmt.Sprintf("This turn will update named target file(s): %s.", strings.Join(r.RuntimeBrief.TargetRefs, ", ")),
-			"First gather source evidence from the implementation files or configs that drive the change.",
-			"Then read only the target section you plan to edit.",
-		}, "\n")
 	default:
 		return ""
 	}
 }
 
-func (r *Runner) verificationBootstrapRequest() (workspace.ToolRequest, bool) {
+func (r *runExecution) verificationBootstrapRequest() (workspace.ToolRequest, bool) {
 	if r == nil {
 		return workspace.ToolRequest{}, false
 	}
 
-	if !workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) {
+	if !workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.state.runtimeBrief.PermissionProfile) {
 		return workspace.ToolRequest{}, false
 	}
 
 	cmd := "go test ./..."
 
-	for _, candidate := range r.RuntimeBrief.VerificationPlan {
+	for _, candidate := range r.state.runtimeBrief.VerificationPlan {
 		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
 			cmd = trimmed
 			break
@@ -5521,133 +5109,6 @@ func synthesizeVerificationOnlyAnswer(req workspace.ToolRequest, result workspac
 	return strings.TrimSpace(b.String())
 }
 
-func (r *Runner) debugLogPreflightRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if r == nil || !debugLogContractApplies(r.RuntimeBrief, results) || debugLogEvidenceSatisfied(r.RuntimeBrief, results) {
-		return workspace.ToolRequest{}, false
-	}
-
-	discovery, _ := debugLogDiscoveryRequest(r.Workspace)
-	selection, ok := latestStableDebugLogSelection(results, currentDebugLogSessionID(r.Workspace))
-
-	if !ok {
-		if debugLogRequestMatchesDiscovery(req, discovery) || isConcreteDebugLogArtifactRequest(req) {
-			return workspace.ToolRequest{}, false
-		}
-
-		return discovery, true
-	}
-
-	if !hasDebugLogReadForSelection(results, selection) {
-		if strings.TrimSpace(req.Tool) == workspace.ToolNameReadFile && debugLogRequestTargetsSelection(req, selection) {
-			return workspace.ToolRequest{}, false
-		}
-
-		return debugLogTailRequest(selection), true
-	}
-
-	if _, ok := latestDebugLogSearchHit(results); !ok {
-		if shouldDeepenDebugLogSearch(results, selection) {
-			if next, ok := nextStableDebugLogSelection(results, selection, currentDebugLogSessionID(r.Workspace)); ok {
-				if strings.TrimSpace(req.Tool) == workspace.ToolNameReadFile && debugLogRequestTargetsSelection(req, next) {
-					return workspace.ToolRequest{}, false
-				}
-
-				return debugLogTailRequest(next), true
-			}
-		}
-
-		if redirected, ok := debugLogScopedSearchRedirect(req, selection); ok {
-			return redirected, true
-		}
-	}
-
-	return workspace.ToolRequest{}, false
-}
-
-func prematureTargetReadRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (string, string, bool) {
-	if !workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
-		return "", "", false
-	}
-
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
-		return "", "", false
-	}
-
-	path := strings.TrimSpace(req.Path)
-	if path == "" || !slices.Contains(brief.TargetRefs, path) {
-		return "", "", false
-	}
-
-	if !isLargeTargetRead(req) {
-		return "", "", false
-	}
-
-	if hasFocusedNonTargetEvidence(results, brief.TargetRefs) {
-		return "", "", false
-	}
-
-	return "Premature target-file read rejected",
-		"this turn needs source evidence before editing the named target file. Inspect the implementation files or configs that drive the change, then read only the target section you plan to edit.",
-		true
-}
-
-func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if !workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
-		return workspace.ToolRequest{}, false
-	}
-
-	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
-		return workspace.ToolRequest{}, false
-	}
-
-	targetReadCount := successfulTargetReadCount(results, brief.TargetRefs)
-	if !hasFocusedNonTargetEvidence(results, brief.TargetRefs) {
-		return workspace.ToolRequest{}, false
-	}
-
-	if targetReadCount == 0 {
-		if !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
-			return workspace.ToolRequest{}, false
-		}
-
-		path := strings.TrimSpace(req.Path)
-		if strings.TrimSpace(req.Tool) == workspace.ToolNameReadFile && slices.Contains(brief.TargetRefs, path) && !isLargeTargetRead(req) {
-			return workspace.ToolRequest{}, false
-		}
-
-		return firstTargetReadWindowRequest(brief.TargetRefs), true
-	}
-
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile || !slices.Contains(brief.TargetRefs, strings.TrimSpace(req.Path)) {
-		return workspace.ToolRequest{}, false
-	}
-
-	if !targetReadNeedsBounding(req) {
-		return workspace.ToolRequest{}, false
-	}
-
-	return boundedFollowupTargetReadRequest(req, results, brief.TargetRefs), true
-}
-
-func isLargeTargetRead(req workspace.ToolRequest) bool {
-	start := req.StartLine
-	end := req.EndLine
-
-	if start <= 0 && end <= 0 {
-		return true
-	}
-
-	if start <= 0 {
-		start = 1
-	}
-
-	if end <= 0 {
-		return true
-	}
-
-	return end-start > 160
-}
-
 func hasFocusedNonTargetEvidence(results []workspace.ToolResult, targetRefs []string) bool {
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
@@ -5671,10 +5132,6 @@ func hasFocusedNonTargetEvidence(results []workspace.ToolResult, targetRefs []st
 	return false
 }
 
-func hasSuccessfulTargetRead(results []workspace.ToolResult, targetRefs []string) bool {
-	return successfulTargetReadCount(results, targetRefs) > 0
-}
-
 func successfulTargetReadCount(results []workspace.ToolResult, targetRefs []string) int {
 	count := 0
 
@@ -5691,132 +5148,22 @@ func successfulTargetReadCount(results []workspace.ToolResult, targetRefs []stri
 	return count
 }
 
-func evidenceFirstTargetReadUnlocked(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) &&
-		len(brief.TargetRefs) > 0 &&
-		hasFocusedNonTargetEvidence(results, brief.TargetRefs) &&
-		!hasSuccessfulTargetRead(results, brief.TargetRefs)
-}
-
-const (
-	initialEvidenceFirstTargetReadWindowEnd = 220
-	followupEvidenceFirstTargetReadLines    = 140
-)
-
-func firstTargetReadWindowRequest(targetRefs []string) workspace.ToolRequest {
-	for _, path := range targetRefs {
-		if trimmed := strings.TrimSpace(path); trimmed != "" {
-			return workspace.ToolRequest{
-				Tool:      workspace.ToolNameReadFile,
-				Path:      trimmed,
-				StartLine: 1,
-				EndLine:   initialEvidenceFirstTargetReadWindowEnd,
-			}
-		}
-	}
-
-	return workspace.ToolRequest{}
-}
-
-func boundedFollowupTargetReadRequest(req workspace.ToolRequest, results []workspace.ToolResult, targetRefs []string) workspace.ToolRequest {
-	start := req.StartLine
-	if start <= 0 {
-		if window, ok := latestSuccessfulTargetReadWindow(results, targetRefs); ok {
-			start = window.End + 1
-		} else {
-			start = 1
-		}
-	}
-
-	if start <= 0 {
-		start = 1
-	}
-
-	return workspace.ToolRequest{
-		Tool:      workspace.ToolNameReadFile,
-		Path:      strings.TrimSpace(req.Path),
-		StartLine: start,
-		EndLine:   start + followupEvidenceFirstTargetReadLines - 1,
-	}
-}
-
-func targetReadNeedsBounding(req workspace.ToolRequest) bool {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
-		return false
-	}
-
-	start := req.StartLine
-	end := req.EndLine
-
-	if start <= 0 || end <= 0 {
-		return true
-	}
-
-	return end-start+1 > followupEvidenceFirstTargetReadLines
-}
-
-func latestSuccessfulTargetReadWindow(results []workspace.ToolResult, targetRefs []string) (debugLogReadWindow, bool) {
-	for i := len(results) - 1; i >= 0; i-- {
-		result := results[i]
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		window, ok := parseDebugLogReadWindow(result)
-		if !ok || !slices.Contains(targetRefs, strings.TrimSpace(window.Path)) {
-			continue
-		}
-
-		return window, true
-	}
-
-	return debugLogReadWindow{}, false
-}
-
-func clearEvidenceFirstTargetReadActionClasses(rejectedActions map[string]int, brief workerruntime.WorkerRuntimeBrief) {
-	if len(rejectedActions) == 0 {
-		return
-	}
-
-	for _, path := range brief.TargetRefs {
-		actionClass := toolActionClass(workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: strings.TrimSpace(path)})
-		if actionClass == "" {
-			continue
-		}
-
-		delete(rejectedActions, actionClass)
-	}
-}
-
-func clearRejectedFingerprintSummary(rejected map[string]string, fingerprint string, summary string) {
-	fingerprint = strings.TrimSpace(fingerprint)
-	summary = strings.TrimSpace(summary)
-
-	if fingerprint == "" || summary == "" || len(rejected) == 0 {
-		return
-	}
-
-	if strings.TrimSpace(rejected[fingerprint]) == summary {
-		delete(rejected, fingerprint)
-	}
-}
-
-func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
-	if r == nil || !readOnlyExplanationGateApplies(r.RuntimeBrief) {
+func (r *runExecution) readOnlyExplanationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil || !readOnlyExplanationGateApplies(r.state.runtimeBrief) {
 		return workspace.ToolResult{}, false
 	}
 
 	if reason := readOnlyExplanationMetaRejectionReason(reply); reason != "" {
 		return workspace.ToolResult{
-			Tool:    "completion_gate",
+			Tool:    completionGateToolName,
 			Summary: "Read-only explanation gate rejected meta final answer",
 			Error:   reason,
 		}, true
 	}
 
-	if reason := readOnlyBinaryVerdictContradictionReason(reply, r.RuntimeBrief.Objective); reason != "" {
+	if reason := readOnlyBinaryVerdictContradictionReason(reply, r.state.runtimeBrief.Objective); reason != "" {
 		return workspace.ToolResult{
-			Tool:    "completion_gate",
+			Tool:    completionGateToolName,
 			Summary: "Read-only explanation gate rejected contradictory verdict",
 			Error:   reason,
 		}, true
@@ -5824,7 +5171,7 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 
 	if unsupported := architectureUnsupportedExactDetail(reply, results); len(unsupported) > 0 {
 		return workspace.ToolResult{
-			Tool:    "completion_gate",
+			Tool:    completionGateToolName,
 			Summary: "Architecture completion gate rejected unsupported detail",
 			Error:   "the answer names additional implementation detail " + quotedRunnerStrings(unsupported) + " without an exact inspected probe or explicit uncertainty. Either anchor that detail with one exact read, or qualify it as unverified.",
 		}, true
@@ -6098,604 +5445,226 @@ func featurePlannerPlanMetadataPath(path string) bool {
 		strings.HasPrefix(path, "planning/")
 }
 
-func planThenExecuteAnswerDeclaresTypedBlocker(answer string) bool {
-	trimmed := strings.TrimSpace(answer)
-	if strings.HasPrefix(trimmed, "<<QUESTION>>") ||
-		strings.Contains(trimmed, "\n<<QUESTION>>") {
-
-		return true
-	}
-
-	for _, line := range strings.Split(trimmed, "\n") {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "decision: block") {
-			return true
+func (r *runExecution) implementationWritePathsMissingSourceEvidence(analysis workspace.MutationRequestAnalysis, results []workspace.ToolResult) []string {
+	projection := newToolResultEvidenceProjection(results)
+	var missing []string
+	for _, path := range mutationSourceEvidenceTargetIDs(analysis) {
+		if !r.sourceWindowCurrentForPath(path, projection) {
+			missing = append(missing, path)
 		}
 	}
 
-	return false
+	canonical, _ := canonicalRunnerWorkspaceRelativePaths(missing)
+
+	return canonical
 }
 
-func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
-	if r == nil || !slices.Contains(currentAllowedTools, workspace.ToolNameReadFile) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if summary, _, reject := r.implementationTargetSourceWriteBeforeEvidenceRejection(req, results, currentAllowedTools); !reject || summary != "Write rejected before source-body evidence" {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	paths := writeRequestPaths(req)
-	if len(paths) != 1 {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	target := NormalizeRunnerPath(paths[0])
-	if target == "" || newToolResultEvidenceProjection(results).HasSourceBody(target) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	redirected := workspace.ToolRequest{
-		Tool:            workspace.ToolNameReadFile,
-		Path:            target,
-		StartLine:       1,
-		EndLine:         180,
-		NamedGap:        "source-body evidence before applying the requested write",
-		WhyNotAnswering: "need current source evidence for the model-selected write target before editing",
-	}
-
-	return redirected, marshalToolRequestRaw(redirected), true
-}
-
-type implementationDeferredSourceEvidenceWrite struct {
-	Request         workspace.ToolRequest
-	Raw             string
-	EvidencePath    string
-	RequiresHistory bool
-}
-
-func newImplementationDeferredSourceEvidenceWrite(req workspace.ToolRequest, raw string, evidencePath string) *implementationDeferredSourceEvidenceWrite {
-	target := NormalizeRunnerPath(evidencePath)
-	if target == "" {
-		paths := writeRequestPaths(req)
-		if len(paths) == 1 {
-			target = NormalizeRunnerPath(paths[0])
-		}
-	}
-
-	if target == "" || !workspace.IsWorkspaceWriteTool(req.Tool) {
-		return nil
-	}
-
-	if strings.TrimSpace(raw) == "" {
-		raw = marshalToolRequestRaw(req)
-	}
-
-	return &implementationDeferredSourceEvidenceWrite{
-		Request:      req,
-		Raw:          raw,
-		EvidencePath: target,
-	}
-}
-
-func (r *Runner) newImplementationDeferredSourceEvidenceWrite(req workspace.ToolRequest, raw string, evidencePath string, currentAllowedTools []string) *implementationDeferredSourceEvidenceWrite {
-	if normalizedReq, normalizedRaw, ok := r.normalizeDeleteIntentDeferredWrite(req, raw, evidencePath, currentAllowedTools); ok {
-		req = normalizedReq
-		raw = normalizedRaw
-	}
-
-	return newImplementationDeferredSourceEvidenceWrite(req, raw, evidencePath)
-}
-
-func (r *Runner) normalizeDeleteIntentDeferredWrite(req workspace.ToolRequest, raw string, evidencePath string, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
-	target := NormalizeRunnerPath(evidencePath)
-	if target == "" {
-		paths := writeRequestPaths(req)
-		if len(paths) == 1 {
-			target = NormalizeRunnerPath(paths[0])
-		}
-	}
-
-	if target == "" ||
-		strings.TrimSpace(req.Tool) != workspace.ToolNameWriteFile ||
-		strings.TrimSpace(req.Content) != "" ||
-		!runnerToolAllowed(workspace.ToolNameApplyPatch, currentAllowedTools, r.RuntimeBrief.AllowedTools) {
-
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationDeleteIntentForPath(r.RuntimeBrief.Objective, strings.Join([]string{req.Description, raw}, "\n"), target) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	patch := fmt.Sprintf("*** Begin Patch\n*** Delete File: %s\n*** End Patch\n", target)
-	normalized := workspace.ToolRequest{
-		Tool:        workspace.ToolNameApplyPatch,
-		Content:     patch,
-		Description: "delete " + target,
-	}
-
-	return normalized, marshalToolRequestRaw(normalized), true
-}
-
-func runnerToolAllowed(tool string, currentAllowedTools []string, briefAllowedTools []string) bool {
-	tool = strings.TrimSpace(tool)
-	if tool == "" {
+func (r *runExecution) sourceWindowCurrentForPath(path string, projection toolResultEvidenceProjection) bool {
+	if r == nil || r.runner == nil || r.runner.Workspace == nil {
 		return false
 	}
-
-	if slices.Contains(currentAllowedTools, tool) {
-		return true
-	}
-
-	return len(currentAllowedTools) == 0 && slices.Contains(briefAllowedTools, tool)
-}
-
-func implementationDeleteIntentForPath(objective string, requestText string, path string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	objective = strings.ToLower(objective)
-	requestText = strings.ToLower(requestText)
-	if !implementationTextHasDeleteVerb(objective) || !implementationTextHasDeleteVerb(requestText) {
-		return false
-	}
-
-	if implementationTextLooksLikeContentRemoval(objective, path) {
-		return false
-	}
-
-	return implementationTextNamesFileTarget(objective, path)
-}
-
-func implementationTextHasDeleteVerb(text string) bool {
-	text = " " + strings.ToLower(strings.TrimSpace(text)) + " "
-	for _, token := range []string{" delete ", " deleting ", " remove ", " removing ", " unlink "} {
-		if strings.Contains(text, token) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func implementationTextLooksLikeContentRemoval(text string, path string) bool {
-	text = " " + strings.ToLower(strings.TrimSpace(text)) + " "
-	base := strings.ToLower(filepath.Base(path))
-	for _, phrase := range []string{
-		" text from ",
-		" content from ",
-		" line from ",
-		" lines from ",
-		" string from ",
-		" snippet from ",
-		" from " + strings.ToLower(path),
-		" from " + base,
-	} {
-		if strings.Contains(text, phrase) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func implementationTextNamesFileTarget(text string, path string) bool {
-	text = " " + strings.ToLower(strings.TrimSpace(text)) + " "
-	path = strings.ToLower(path)
-	base := strings.ToLower(filepath.Base(path))
-	stem := strings.TrimSuffix(base, filepath.Ext(base))
-
-	if strings.Contains(text, path) || strings.Contains(text, base) || (stem != "" && strings.Contains(text, " "+stem+" ")) {
-		return true
-	}
-
-	for _, phrase := range []string{
-		" that file ",
-		" this file ",
-		" the file ",
-		" a file ",
-		" new file ",
-		" created file ",
-		" file you just created ",
-		" file just created ",
-	} {
-		if strings.Contains(text, phrase) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (d *implementationDeferredSourceEvidenceWrite) replayAfterEvidence(req workspace.ToolRequest, results []workspace.ToolResult, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
-	if d == nil || strings.TrimSpace(d.EvidencePath) == "" {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationDeferredWriteCoveredBySourceEvidence(d.Request, d.EvidencePath, results, d.RequiresHistory) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if d.RequiresHistory && !implementationDeferredWriteHasHistoryEvidence(d.Request, results) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !d.replayAllowedForRequest(req) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	raw := d.Raw
-	if strings.TrimSpace(raw) == "" {
-		raw = marshalToolRequestRaw(d.Request)
-	}
-
-	return d.Request, raw, true
-}
-
-func (d *implementationDeferredSourceEvidenceWrite) replayAfterCompletionAttempt(results []workspace.ToolResult, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
-	if d == nil || strings.TrimSpace(d.EvidencePath) == "" {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationApplyPatchDeletesOnlyPath(d.Request, d.EvidencePath) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !runnerToolAllowed(d.Request.Tool, currentAllowedTools, nil) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationDeferredWriteCoveredBySourceEvidence(d.Request, d.EvidencePath, results, d.RequiresHistory) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if d.RequiresHistory && !implementationDeferredWriteHasHistoryEvidence(d.Request, results) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	raw := d.Raw
-	if strings.TrimSpace(raw) == "" {
-		raw = marshalToolRequestRaw(d.Request)
-	}
-
-	return d.Request, raw, true
-}
-
-func (d *implementationDeferredSourceEvidenceWrite) replayAfterHistoryEvidence(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
-	if d == nil || !d.RequiresHistory || strings.TrimSpace(d.EvidencePath) == "" {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) && !implementationDeferredWriteHasExecutableAnchor(d.Request) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationDeferredWriteCoveredBySourceEvidence(d.Request, d.EvidencePath, results, true) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if !implementationDeferredWriteHasHistoryEvidence(d.Request, results) {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	raw := d.Raw
-	if strings.TrimSpace(raw) == "" {
-		raw = marshalToolRequestRaw(d.Request)
-	}
-
-	return d.Request, raw, true
-}
-
-func (d *implementationDeferredSourceEvidenceWrite) fallbackVerificationRequest() (workspace.ToolRequest, bool) {
-	if d == nil {
-		return workspace.ToolRequest{}, false
-	}
-
-	paths := writeRequestPaths(d.Request)
-	if len(paths) != 1 {
-		return workspace.ToolRequest{}, false
-	}
-
-	path := NormalizeRunnerPath(paths[0])
-	if path == "" {
-		return workspace.ToolRequest{}, false
-	}
-
-	return workspace.ToolRequest{
-		Tool: workspace.ToolNameSourceSanity,
-		Path: path,
-	}, true
-}
-
-func (d *implementationDeferredSourceEvidenceWrite) replayAllowedForRequest(req workspace.ToolRequest) bool {
-	tool := strings.TrimSpace(req.Tool)
-	if tool == "" || workspace.IsWorkspaceWriteTool(tool) {
-		return false
-	}
-
-	if d.RequiresHistory && tool == workspace.ToolNameShell {
-		return true
-	}
-
-	switch tool {
-	case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameReadOnlyCapability, workspace.ToolNameSourceSanity, workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol:
-	default:
-		return false
-	}
-
-	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
-	if target == "" {
-		target = NormalizeRunnerPath(req.Path)
-	}
-
-	return target == d.EvidencePath
-}
-
-func implementationDeferredWriteHasHistoryEvidence(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	paths := writeRequestPaths(req)
-	if len(paths) == 0 {
-		return false
-	}
-
-	for _, path := range paths {
-		if !successfulGitHistoryResultForPath(path, results) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolRequest, path string, results []workspace.ToolResult, allowAnchorMismatch bool) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	switch strings.TrimSpace(req.Tool) {
-	case workspace.ToolNameEditFile:
-		oldText := strings.TrimSpace(req.OldText)
-		if oldText == "" {
-			return false
-		}
-
-		if allowAnchorMismatch {
-			return newToolResultEvidenceProjection(results).HasSourceBody(path) || implementationDeferredWriteHasExecutableAnchor(req)
-		}
-
-		return implementationSourceEvidenceTextContains(path, results, oldText)
-	case workspace.ToolNameWriteFile:
-		return fullSourceReadFileSeen(path, results)
-	case workspace.ToolNameAppendFile:
-		return fullSourceReadFileSeen(path, results)
-	case workspace.ToolNameApplyPatch:
-		if implementationApplyPatchDeletesOnlyPath(req, path) {
-			return newToolResultEvidenceProjection(results).HasSourceBody(path)
-		}
-
-		return false
-	default:
-		return false
-	}
-}
-
-func implementationApplyPatchDeletesOnlyPath(req workspace.ToolRequest, path string) bool {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameApplyPatch {
-		return false
-	}
-
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	ops, err := patching.Parse(req.Content)
-	if err != nil || len(ops) == 0 {
-		return false
-	}
-
-	for _, op := range ops {
-		if op.Kind != patching.OpDelete || NormalizeRunnerPath(op.Path) != path {
-			return false
-		}
-	}
-
-	return true
-}
-
-func implementationDeferredWriteHasExecutableAnchor(req workspace.ToolRequest) bool {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameEditFile {
-		return false
-	}
-
-	if NormalizeRunnerPath(req.Path) == "" {
-		return false
-	}
-
-	return strings.TrimSpace(req.OldText) != ""
-}
-
-func implementationSourceEvidenceTextContains(path string, results []workspace.ToolResult, want string) bool {
-	path = NormalizeRunnerPath(path)
-	want = strings.TrimSpace(want)
-
-	if path == "" || want == "" {
-		return false
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" || !slices.Contains(newToolResultEvidenceRecord(result).SourceBodyPaths(), path) {
+	for _, record := range projection.records {
+		if record.failed {
 			continue
 		}
-
-		if strings.Contains(strings.Join([]string{result.Summary, result.Output}, "\n"), want) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func planThenExecuteCandidateSourceReadyRejectionSeen(results []workspace.ToolResult) bool {
-	for _, result := range results {
-		if planThenExecuteCandidateSourceReadyResult(result) && strings.TrimSpace(result.Error) != "" {
-			return true
-		}
-	}
-
-	return false
-}
-
-func planThenExecuteCandidateSourceReadyResult(result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Code) == planThenExecuteResultCandidateSourceReady {
-		return true
-	}
-
-	// Compatibility for already-recorded logs and older seeded tests while
-	// new behavior writes and reads the typed result code above.
-	return strings.TrimSpace(result.Code) == "" &&
-		strings.TrimSpace(result.Summary) == "Candidate source already ready"
-}
-
-func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRejection(req workspace.ToolRequest, results []workspace.ToolResult, currentAllowedTools []string) (string, string, bool) {
-	if r == nil || !workspace.IsWorkspaceWriteTool(req.Tool) {
-		return "", "", false
-	}
-
-	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
-		Brief:            r.RuntimeBrief,
-		Results:          results,
-		BaseAllowedTools: runnerCurrentAllowedOrBriefTools(currentAllowedTools, r.RuntimeBrief.AllowedTools),
-	})
-	if contract.PhaseID != turnPhaseImplementationTargetSource && contract.Phase != "target_write_ready" {
-		return "", "", false
-	}
-
-	if r.writeRequestCreatesOnlyMissingTargets(req) {
-		return "", "", false
-	}
-
-	if implementationTargetSourceWriteTargetsHaveEvidence(req, results) {
-		return "", "", false
-	}
-
-	return "Write rejected before source-body evidence",
-		"implementation.target_source requires target localization and source-body evidence before changing existing source. Use a bounded read/discovery tool with named_gap for the missing target or edit-safety fact, use write_file without prior source-body evidence only for a genuinely new file, or answer <<QUESTION>> with the exact blocker/no-op evidence.",
-		true
-}
-
-func (r *Runner) writeRequestTargetsAllMissing(req workspace.ToolRequest) bool {
-	if r == nil || r.Workspace == nil {
-		return false
-	}
-
-	root := strings.TrimSpace(r.Workspace.Root())
-	if root == "" {
-		return false
-	}
-
-	paths := writeRequestPaths(req)
-	if len(paths) == 0 {
-		return false
-	}
-
-	for _, path := range paths {
-		clean := r.cleanWorkspaceRelativeWritePath(path)
-		if clean == "" {
-			return false
-		}
-
-		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(clean)))
-		if err == nil || !os.IsNotExist(err) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (r *Runner) writeRequestCreatesOnlyMissingTargets(req workspace.ToolRequest) bool {
-	switch strings.TrimSpace(req.Tool) {
-	case workspace.ToolNameWriteFile:
-		return strings.TrimSpace(req.Content) != "" && r.writeRequestTargetsAllMissing(req)
-	case workspace.ToolNameMkdir:
-		return r.writeRequestTargetsAllMissing(req)
-	case workspace.ToolNameApplyPatch:
-		ops, err := patching.Parse(req.Content)
-		if err != nil || len(ops) == 0 {
-			return false
-		}
-
-		for _, op := range ops {
-			if op.Kind != patching.OpAdd {
-				return false
+		for _, evidence := range record.SourceWindowFacts(path) {
+			current, err := r.runner.Workspace.SourceWindowCurrent(r.state.ctx, evidence)
+			if err == nil && current {
+				return true
 			}
 		}
-
-		return r.writeRequestTargetsAllMissing(req)
-	default:
-		return false
 	}
+	return false
 }
 
-func (r *Runner) cleanWorkspaceRelativeWritePath(path string) string {
-	if clean := cleanRelativeRunnerPath(path); clean != "" {
-		return clean
+func resultWithPendingPrerequisites(result workspace.ToolResult, sourceBodyPaths []string, historyPaths []string, rejectedWritePaths []string) workspace.ToolResult {
+	facts := result.Facts.Clone()
+	if facts == nil {
+		facts = &toolfacts.ToolResultFacts{}
+	}
+	if len(sourceBodyPaths) > 0 {
+		facts.PendingSourceBodyPaths, _ = canonicalRunnerWorkspaceRelativePaths(sourceBodyPaths)
+	}
+	if len(historyPaths) > 0 {
+		facts.PendingHistoryPaths, _ = canonicalRunnerWorkspaceRelativePaths(historyPaths)
+	}
+	if len(rejectedWritePaths) > 0 {
+		facts.RejectedWritePaths = canonicalPersistedRunnerPaths(rejectedWritePaths)
+	}
+	result.Facts = facts
+
+	return result
+}
+
+func (r *runExecution) implementationWritePrerequisiteDeferralResult(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil || !workspace.IsWorkspaceWriteTool(req.Tool) || CheckDescription(req) != nil {
+		return workspace.ToolResult{}, false
+	}
+	if r.runner == nil || r.runner.Workspace == nil {
+		return workspace.ToolResult{}, false
+	}
+	assessment, ok := r.mutationAdmissionForRequest(req)
+	if !ok {
+		return workspace.ToolResult{}, false
+	}
+	if assessment.Disposition != workspace.MutationAdmissionAdmittedWithoutApproval ||
+		!assessment.Analysis.Mutation || len(assessment.Analysis.Targets) == 0 {
+		return workspace.ToolResult{}, false
+	}
+	analysis := assessment.Analysis
+	rejectedWritePaths := mutationRequestCanonicalTargetIDs(analysis)
+	if r.state.mutationTargetsAlreadyRemoved(rejectedWritePaths) {
+		return workspace.ToolResult{}, false
 	}
 
-	if r == nil || r.Workspace == nil {
-		return ""
+	if !r.writeRequestCreatesOnlyMissingTargets(analysis) {
+		if missing := r.implementationWritePathsMissingSourceEvidence(analysis, results); len(missing) > 0 {
+			result := runnerToolRejection{
+				Summary:     "Write rejected before source-body evidence",
+				Error:       "implementation.target_source requires target localization and source-body evidence before changing existing source. Use a bounded read/discovery tool with named_gap for the missing target or edit-safety fact, use write_file without prior source-body evidence only for a genuinely new file, or answer <<QUESTION>> with the exact blocker/no-op evidence.",
+				Disposition: toolfacts.ToolRejectionDeferredByPrerequisite,
+			}.toolResult(req.Tool)
+
+			return resultWithPendingPrerequisites(result, missing, nil, rejectedWritePaths), true
+		}
 	}
 
-	root := strings.TrimSpace(r.Workspace.Root())
-	if root == "" {
-		return ""
+	if missingHistory := r.pathsMissingGitHistory(rejectedWritePaths, results); mutationHistoryEvidenceRequired(r.state.runtimeBrief) && len(missingHistory) > 0 {
+		result := runnerToolRejection{
+			Summary:     "Write rejected before git history evidence",
+			Error:       gitHistoryEvidenceRequiredMessage(missingHistory),
+			Disposition: toolfacts.ToolRejectionDeferredByPrerequisite,
+		}.toolResult(req.Tool)
+
+		return resultWithPendingPrerequisites(result, nil, missingHistory, rejectedWritePaths), true
 	}
 
-	path = strings.TrimSpace(path)
-	if path == "" || !filepath.IsAbs(path) {
-		return ""
-	}
+	return workspace.ToolResult{}, false
+}
 
-	for _, candidateRoot := range []string{root, config.CanonicalizeExistingPath(root)} {
-		candidateRoot = strings.TrimSpace(candidateRoot)
-		if candidateRoot == "" {
+func mutationRequestCanonicalTargetIDs(analysis workspace.MutationRequestAnalysis) []string {
+	paths := make([]string, 0, len(analysis.Targets))
+	for _, target := range analysis.Targets {
+		paths = textutil.AppendUnique(paths, target.Identity.CanonicalID)
+	}
+	return uniqueSortedRunnerPaths(paths)
+}
+
+func mutationSourceEvidenceTargetIDs(analysis workspace.MutationRequestAnalysis) []string {
+	paths := make([]string, 0, len(analysis.Targets))
+	for _, target := range analysis.Targets {
+		if target.Role == workspace.MutationTargetDirectory || target.Preimage == workspace.MutationPreimageAbsent {
 			continue
 		}
-
-		rel, err := filepath.Rel(candidateRoot, config.CanonicalizeExistingPath(path))
-		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return filepath.ToSlash(filepath.Clean(rel))
-		}
+		paths = textutil.AppendUnique(paths, target.Identity.CanonicalID)
 	}
-
-	return ""
+	return uniqueSortedRunnerPaths(paths)
 }
 
-func implementationTargetSourceWriteTargetsHaveEvidence(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	paths := writeRequestPaths(req)
-	if len(paths) == 0 {
+func (r *runExecution) writeRequestCreatesOnlyMissingTargets(analysis workspace.MutationRequestAnalysis) bool {
+	if len(analysis.Targets) == 0 {
 		return false
 	}
+	for _, target := range analysis.Targets {
+		if target.Role == workspace.MutationTargetDirectory || target.Preimage == workspace.MutationPreimageAbsent {
+			continue
+		}
+		if !r.mutationTargetDeclaredNew(target.Identity.CanonicalID) {
+			return false
+		}
+	}
+	return true
+}
 
+func (r *runExecution) mutationTargetDeclaredNew(canonicalID string) bool {
+	if r == nil || !r.state.mutation.bound {
+		return false
+	}
+	for _, rule := range r.state.mutation.canonicalScopeProjection.Rules {
+		if rule.Source == workspace.MutationScopeAuthorizedNewFile &&
+			rule.Kind == workspace.MutationScopeExactFile &&
+			rule.CanonicalID == canonicalID {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *runExecution) implementationTargetSourceWriteTargetsHaveEvidence(analysis workspace.MutationRequestAnalysis, results []workspace.ToolResult) bool {
+	paths := mutationSourceEvidenceTargetIDs(analysis)
+	if len(paths) == 0 {
+		return true
+	}
+
+	projection := newToolResultEvidenceProjection(results)
 	for _, path := range paths {
-		path = NormalizeRunnerPath(path)
-		if path == "" || !newToolResultEvidenceProjection(results).HasSourceBody(path) {
+		if !r.sourceWindowCurrentForPath(path, projection) {
 			return false
 		}
 	}
 
 	return true
+}
+
+func (r *runExecution) implementationWritePrerequisitesSatisfied(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if r == nil || !workspace.IsWorkspaceWriteTool(req.Tool) {
+		return false
+	}
+	assessment, ok := r.mutationAdmissionForRequest(req)
+	if !ok || !assessment.Analysis.Mutation || len(assessment.Analysis.Targets) == 0 {
+		return false
+	}
+	analysis := assessment.Analysis
+	requestPaths := mutationRequestCanonicalTargetIDs(analysis)
+
+	projection := newToolResultEvidenceProjection(results)
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != strings.TrimSpace(req.Tool) || result.Facts == nil ||
+			result.Facts.RejectionDisposition != toolfacts.ToolRejectionDeferredByPrerequisite {
+
+			continue
+		}
+
+		deferredPaths := canonicalPersistedRunnerPaths(result.Facts.RejectedWritePaths)
+		if len(deferredPaths) == 0 {
+			deferredPaths = canonicalPersistedRunnerPaths(textutil.Merge(
+				result.Facts.PendingSourceBodyPaths,
+				result.Facts.PendingHistoryPaths,
+			))
+		}
+		if !slices.Equal(deferredPaths, requestPaths) {
+			continue
+		}
+
+		if pending := canonicalPersistedRunnerPaths(result.Facts.PendingSourceBodyPaths); len(pending) > 0 {
+			for _, path := range pending {
+				if !r.sourceWindowCurrentForPath(path, projection) {
+					return false
+				}
+			}
+
+			return true
+		}
+
+		if pending := canonicalPersistedRunnerPaths(result.Facts.PendingHistoryPaths); len(pending) > 0 {
+			for _, path := range pending {
+				if !successfulGitHistoryResultForPath(path, results) {
+					return false
+				}
+			}
+
+			return true
+		}
+
+		return false
+	}
+
+	return false
+}
+
+func (r *runExecution) deferredRequestPrerequisitesSatisfied(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	return r.implementationWritePrerequisitesSatisfied(req, results) || deferredPlanPrerequisitesSatisfied(req, results)
 }
 
 func runnerHasWorkspaceWriteCapability(brief workerruntime.WorkerRuntimeBrief, tools []string) bool {
@@ -6961,7 +5930,7 @@ func sourceInventoryHasPathBulletList(answer string) bool {
 		if !strings.HasPrefix(line, "- ") {
 			continue
 		}
-		if len(analyzeSourceCitations(line).MentionedPaths) > 0 {
+		if len(analyzeSourceCitations(line).ReferencePaths()) > 0 {
 			pathBullets++
 		}
 	}
@@ -6979,7 +5948,7 @@ func sourceInventoryAnswerIsPrimarilyInventory(answer string) bool {
 		if sourceInventoryLineHasNonAnswerMarker(normalized) {
 			continue
 		}
-		if strings.HasPrefix(line, "- ") && len(analyzeSourceCitations(line).MentionedPaths) > 0 {
+		if strings.HasPrefix(line, "- ") && len(analyzeSourceCitations(line).ReferencePaths()) > 0 {
 			continue
 		}
 		return false
@@ -7673,8 +6642,11 @@ func gateMetaPhraseDiscussesFailure(normalized string) bool {
 
 func looksLikeEmbeddedQuestionProtocolFinalAnswer(answer string) bool {
 	trimmedAnswer := strings.TrimSpace(answer)
-	if trimmedAnswer == "" || strings.HasPrefix(trimmedAnswer, "<<QUESTION>>") {
+	if trimmedAnswer == "" || questionProtocolAnswer(trimmedAnswer) {
 		return false
+	}
+	if strings.HasPrefix(trimmedAnswer, "<<QUESTION>>") {
+		return true
 	}
 
 	for _, line := range strings.Split(trimmedAnswer, "\n") {
@@ -7734,135 +6706,33 @@ func looksLikeGroundedAnswerRepairState(answer string) bool {
 	return false
 }
 
-type sourceEvidenceObligation struct {
-	Path        string
-	Level       PlanThenExecuteSourceEvidenceLevel
-	Source      string
-	Detail      string
-	PendingTool string
-}
-
-// maxObligationResolutionAttempts is the number of failed code_navigate
-// attempts on a single path before we treat an obligation as unresolvable
-// and drop it from the write-gating set.
-const maxObligationResolutionAttempts = 3
-
-func sourceEvidenceHasBody(evidence planThenExecuteSourceEvidence) bool {
-	return planThenExecuteEvidenceRank(evidence.Level) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow)
-}
-
-func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvidenceObligation {
-	seen := make(map[string]struct{})
-
-	var pending []sourceEvidenceObligation
-
-	for i := len(results) - 1; i >= 0; i-- {
-		path := implementationTargetWriteReadyRedirectedReadPath(results[i])
-		if path == "" {
-			continue
-		}
-
-		if _, ok := seen[path]; ok {
-			continue
-		}
-
-		seen[path] = struct{}{}
-		if sourceEvidencePendingRedirectSatisfiedForPath(path, results) {
-			continue
-		}
-
-		tool, ok := implementationTargetWriteReadyRedirectedReadTool(results[i])
-		if !ok {
-			continue
-		}
-
-		evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(path)
-
-		pending = append(pending, sourceEvidenceObligation{
-			Path:        path,
-			Level:       planThenExecuteEvidenceSourceBodyPending,
-			Source:      evidence.Source,
-			Detail:      evidence.Detail,
-			PendingTool: tool,
-		})
-	}
-
-	reverseSourceEvidenceObligations(pending)
-
-	return pending
-}
-
-func sourceEvidencePendingRedirectSatisfiedForPath(path string, results []workspace.ToolResult) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	for _, result := range results {
-		evidence := newToolResultEvidenceRecord(result).SourceEvidenceForPath(path)
-		if planThenExecuteEvidenceRank(evidence.Level) < planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow) {
-			continue
-		}
-		return true
-	}
-
-	return false
-}
-
-func sourceEvidencePendingRedirectsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []sourceEvidenceObligation {
-	pending := sourceEvidencePendingRedirects(results)
-	if len(pending) == 0 {
+func splitImplementationPathToken(token string) []string {
+	token = strings.TrimSpace(token)
+	if token == "" {
 		return nil
 	}
 
-	if !implementationTargetSourceEvidenceReady(brief, results) {
-		return pending
+	var out []string
+
+	start := 0
+
+	for i, r := range token {
+		if i > start && r >= 'A' && r <= 'Z' {
+			out = append(out, token[start:i])
+			start = i
+		}
 	}
 
-	var filtered []sourceEvidenceObligation
-
-	for _, obligation := range pending {
-		if !sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief, obligation.Path) {
-			continue
-		}
-
-		if sourceEvidenceObligationResolutionAttempts(obligation.Path, results) >= maxObligationResolutionAttempts {
-			continue
-		}
-
-		filtered = append(filtered, obligation)
+	out = append(out, token[start:])
+	for i, value := range out {
+		out[i] = strings.ToLower(value)
 	}
 
-	return filtered
+	return out
 }
 
-func sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	if implementationSourcePathOverlapsObjective(path, brief.Objective) ||
-		sourceEvidencePathSharesObjectiveTerm(path, brief.Objective) {
-
-		return true
-	}
-
-	candidates := append([]string{}, brief.RequiredEditPaths...)
-
-	candidates = append(candidates, brief.TargetRefs...)
-	candidates = append(candidates, brief.EvidencePaths...)
-	candidates = append(candidates, brief.ChangedPaths...)
-	candidates = append(candidates, pathparse.MentionedWorkspacePaths(strings.Join(brief.UserBoundaries, "\n"))...)
-	candidates = append(candidates, pathparse.MentionedWorkspacePaths(brief.Objective)...)
-
-	for _, candidate := range candidates {
-		if NormalizeRunnerPath(candidate) == path {
-			return true
-		}
-	}
-
-	return false
+func sourceEvidenceHasBody(evidence planThenExecuteSourceEvidence) bool {
+	return planThenExecuteEvidenceRank(evidence.Level) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow)
 }
 
 func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
@@ -7892,339 +6762,6 @@ func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
 	return false
 }
 
-// sourceEvidenceObligationResolutionAttempts counts failed code_navigate
-// attempts on a path. When attempts reach maxObligationResolutionAttempts
-// the obligation is treated as unresolvable.
-func sourceEvidenceObligationResolutionAttempts(path string, results []workspace.ToolResult) int {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return 0
-	}
-
-	attempts := 0
-
-	for _, result := range results {
-		if !sourceEvidenceToolResultMentionsPath(result, path) {
-			continue
-		}
-
-		tool := strings.TrimSpace(result.Tool)
-		if tool != "code_navigate" && tool != "read_only_capability" {
-			continue
-		}
-
-		if strings.TrimSpace(result.Error) != "" ||
-			strings.Contains(strings.ToLower(result.Summary), "no generic") ||
-			strings.Contains(strings.ToLower(result.Summary), "zero-hit") ||
-			strings.Contains(strings.ToLower(result.Summary), "repeated dead-end") ||
-			strings.Contains(strings.ToLower(result.Summary), "needs route") {
-
-			attempts++
-		}
-	}
-
-	return attempts
-}
-
-func reverseSourceEvidenceObligations(values []sourceEvidenceObligation) {
-	for i, j := 0, len(values)-1; i < j; i, j = i+1, j-1 {
-		values[i], values[j] = values[j], values[i]
-	}
-}
-
-func sourceEvidencePendingRedirectRequestAllowed(obligation sourceEvidenceObligation, req workspace.ToolRequest) bool {
-	tool := strings.TrimSpace(req.Tool)
-	if tool == "" || tool != strings.TrimSpace(obligation.PendingTool) {
-		return false
-	}
-
-	switch {
-	case tool == "code_navigate":
-		return sourceEvidenceToolSourceBodyRequest(req)
-	case tool == "read_only_capability":
-		return sourceEvidenceToolSourceBodyRequest(req)
-	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
-		return sourceEvidenceRequestHasSymbolPattern(req)
-	default:
-		return false
-	}
-}
-
-func sourceEvidenceToolSourceBodyRequest(req workspace.ToolRequest) bool {
-	capability := sourceEvidenceCapabilityToken(firstSourceEvidenceString(req.Capability, req.Mode))
-	switch capability {
-	case "read_symbol", "inspect_symbol", "symbol_body":
-		return sourceEvidenceRequestHasSymbolPattern(req)
-	default:
-		return false
-	}
-}
-
-func sourceEvidencePendingRedirectOutlineProgressAllowed(obligation sourceEvidenceObligation, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	if NormalizeRunnerPath(req.Path) != strings.TrimSpace(obligation.Path) {
-		return false
-	}
-
-	if sourceEvidenceOutlineReadForPath(obligation.Path, results) {
-		return false
-	}
-
-	if strings.TrimSpace(req.NamedGap) == "" && strings.TrimSpace(req.WhyNotAnswering) == "" {
-		return false
-	}
-
-	tool := strings.TrimSpace(req.Tool)
-	pendingTool := strings.TrimSpace(obligation.PendingTool)
-
-	if tool == "" {
-		return false
-	}
-
-	if outlineTool := sourceEvidencePendingRedirectOutlineTool(pendingTool); outlineTool != "" && tool == outlineTool {
-		return true
-	}
-
-	if tool != pendingTool {
-		return false
-	}
-
-	switch tool {
-	case "code_navigate", "read_only_capability":
-		return sourceEvidenceCapabilityIsOutline(firstSourceEvidenceString(req.Capability, req.Mode))
-	default:
-		return false
-	}
-}
-
-func sourceEvidenceOutlineReadForPath(path string, results []workspace.ToolResult) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		tool := strings.TrimSpace(result.Tool)
-		if tool != "code_navigate" && tool != "read_only_capability" && !strings.HasSuffix(tool, "_file_outline") {
-			continue
-		}
-
-		if !sourceEvidenceToolResultMentionsPath(result, path) {
-			continue
-		}
-
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-		if strings.Contains(text, "capability: file_outline") ||
-			strings.Contains(text, "routed file_outline") ||
-			strings.Contains(text, "top-level declaration") ||
-			strings.HasSuffix(tool, "_file_outline") {
-
-			return true
-		}
-	}
-
-	return false
-}
-
-func sourceEvidenceToolResultMentionsPath(result workspace.ToolResult, path string) bool {
-	for _, readPath := range newToolResultEvidenceRecord(result).ReadPaths() {
-		if NormalizeRunnerPath(readPath) == path {
-			return true
-		}
-	}
-
-	text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-
-	return strings.Contains(text, strings.ToLower(path))
-}
-
-func sourceEvidenceCapabilityIsOutline(value string) bool {
-	switch sourceEvidenceCapabilityToken(value) {
-	case "file_outline", "outline":
-		return true
-	default:
-		return false
-	}
-}
-
-func sourceEvidencePendingRedirectOutlineTool(tool string) string {
-	tool = strings.TrimSpace(tool)
-	switch {
-	case strings.HasSuffix(tool, "_read_symbol"):
-		return strings.TrimSuffix(tool, "_read_symbol") + "_file_outline"
-	case strings.HasSuffix(tool, "_extract_body"):
-		return strings.TrimSuffix(tool, "_extract_body") + "_file_outline"
-	default:
-		return ""
-	}
-}
-
-func sourceEvidenceRequestHasSymbolPattern(req workspace.ToolRequest) bool {
-	return strings.TrimSpace(req.Pattern) != ""
-}
-
-func sourceEvidenceCapabilityToken(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, "-", "_")
-	value = strings.ReplaceAll(value, " ", "_")
-
-	return value
-}
-
-func firstSourceEvidenceString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-
-	return ""
-}
-
-func sourceEvidencePendingRedirectTools(baseTools []string, pending []sourceEvidenceObligation) []string {
-	if len(pending) == 0 {
-		return nil
-	}
-
-	available := make(map[string]struct{}, len(baseTools))
-	for _, tool := range baseTools {
-		available[strings.TrimSpace(tool)] = struct{}{}
-	}
-
-	seen := make(map[string]struct{})
-
-	var tools []string
-
-	for _, obligation := range pending {
-		for _, tool := range []string{
-			strings.TrimSpace(obligation.PendingTool),
-			sourceEvidencePendingRedirectOutlineTool(obligation.PendingTool),
-		} {
-			if tool == "" {
-				continue
-			}
-
-			if _, ok := available[tool]; !ok {
-				continue
-			}
-
-			if _, ok := seen[tool]; ok {
-				continue
-			}
-
-			seen[tool] = struct{}{}
-			tools = append(tools, tool)
-		}
-	}
-
-	return tools
-}
-
-func sourceEvidencePendingRedirectSummary(pending []sourceEvidenceObligation, max int) string {
-	if max <= 0 {
-		max = len(pending)
-	}
-
-	var parts []string
-
-	for i, obligation := range pending {
-		if i >= max {
-			parts = append(parts, fmt.Sprintf("+%d more", len(pending)-max))
-			break
-		}
-
-		path := strings.TrimSpace(obligation.Path)
-		tool := strings.TrimSpace(obligation.PendingTool)
-
-		if path == "" || tool == "" {
-			continue
-		}
-
-		parts = append(parts, fmt.Sprintf("%s via %s", path, tool))
-	}
-
-	return strings.Join(parts, ", ")
-}
-
-func sourceEvidencePendingRedirectActionSummary(pending []sourceEvidenceObligation, max int) string {
-	if max <= 0 {
-		max = len(pending)
-	}
-
-	var parts []string
-
-	for i, obligation := range pending {
-		if i >= max {
-			parts = append(parts, fmt.Sprintf("+%d more", len(pending)-max))
-			break
-		}
-
-		if label := sourceEvidencePendingRedirectActionLabel(obligation); label != "" {
-			parts = append(parts, label)
-		}
-	}
-
-	return strings.Join(parts, ", ")
-}
-
-func sourceEvidencePendingRedirectActionLabel(obligation sourceEvidenceObligation) string {
-	path := strings.TrimSpace(obligation.Path)
-	tool := strings.TrimSpace(obligation.PendingTool)
-
-	if path == "" || tool == "" {
-		return ""
-	}
-
-	switch {
-	case tool == workspace.ToolNameCodeNavigate:
-		return fmt.Sprintf(
-			"%s via %s capability=%s with pattern/symbol, or one %s first when the symbol is unknown",
-			path,
-			workspace.ToolNameCodeNavigate,
-			string(semanticlanguage.CapReadSymbol),
-			string(semanticlanguage.CapFileOutline),
-		)
-	case tool == "read_only_capability":
-		return fmt.Sprintf("%s via read_only_capability inspect-symbol with pattern/symbol, or one outline first when the symbol is unknown", path)
-	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
-		if outlineTool := sourceEvidencePendingRedirectOutlineTool(tool); outlineTool != "" {
-			return fmt.Sprintf("%s via %s with pattern/symbol, or one %s same-path outline first when the symbol is unknown", path, tool, outlineTool)
-		}
-
-		return fmt.Sprintf("%s via %s with pattern/symbol", path, tool)
-	default:
-		return fmt.Sprintf("%s via %s source-body capability", path, tool)
-	}
-}
-
-func splitImplementationPathToken(token string) []string {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil
-	}
-
-	var out []string
-
-	start := 0
-
-	for i, r := range token {
-		if i > start && r >= 'A' && r <= 'Z' {
-			out = append(out, token[start:i])
-			start = i
-		}
-	}
-
-	out = append(out, token[start:])
-	for i, value := range out {
-		out[i] = strings.ToLower(value)
-	}
-
-	return out
-}
-
 func implementationSourcePathOverlapsObjective(path string, objective string) bool {
 	terms := RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
@@ -8245,39 +6782,4 @@ func implementationSourcePathOverlapsObjective(path string, objective string) bo
 	}
 
 	return matches >= 2
-}
-
-func implementationTargetWriteReadyRedirectedSourceTool(tool string) bool {
-	tool = strings.TrimSpace(tool)
-
-	return tool == workspace.ToolNameCodeNavigate ||
-		tool == workspace.ToolNameReadOnlyCapability ||
-		strings.HasSuffix(tool, "_read_symbol") ||
-		strings.HasSuffix(tool, "_extract_body")
-}
-
-func implementationTargetWriteReadyRedirectedRelatedSourceTool(result workspace.ToolResult) (string, bool) {
-	for _, line := range strings.Split(result.Output, "\n") {
-		lower := strings.ToLower(line)
-		if !strings.Contains(lower, "related_capability:") ||
-			!strings.Contains(lower, "read_symbol") ||
-			!strings.Contains(lower, " via ") {
-
-			continue
-		}
-
-		idx := strings.Index(lower, " via ")
-		fields := strings.Fields(line[idx+len(" via "):])
-
-		if len(fields) == 0 {
-			continue
-		}
-
-		tool := strings.Trim(fields[0], "`'\".,;:")
-		if implementationTargetWriteReadyRedirectedSourceTool(tool) {
-			return tool, true
-		}
-	}
-
-	return "", false
 }

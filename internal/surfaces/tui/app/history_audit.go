@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/runprofile"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 )
@@ -14,35 +15,17 @@ type historyAuditMsg struct {
 	event historyAuditEvent
 }
 
-func (m *Model) enqueueHistoryAuditEvent(event historyAuditEvent) {
-	event = cleanHistoryAuditEvent(event)
-	if event.label == "" {
-		return
-	}
-
-	if m.events == nil {
-		m.recordHistoryAuditEvent(event)
-
-		return
-	}
-
-	select {
-	case m.events <- historyAuditMsg{event: event}:
-	default:
-	}
-}
-
 func (m *Model) historyPrivacyAuditEvent() historyAuditEvent {
 	if m == nil || m.debugLogger == nil {
 		return historyAuditEvent{}
 	}
 
-	mode := strings.TrimSpace(m.cfg.Chat.DebugLogMode)
+	mode := m.cfg.Chat.DebugLogMode
 	if mode == "" {
-		mode = "redacted"
+		mode = runprofile.DebugLogModeRedacted
 	}
 
-	if !strings.EqualFold(mode, "redacted") {
+	if mode != runprofile.DebugLogModeRedacted {
 		return historyAuditEvent{}
 	}
 
@@ -91,13 +74,13 @@ func historyToolAuditKind(event agent.ToolRequestEvent) string {
 	switch {
 	case workspace.IsWorkspaceWriteTool(tool):
 		return "write"
-	case tool == "submit_plan":
+	case tool == workspace.ToolNameSubmitPlan:
 		return "contract"
-	case tool == "task_ledger":
+	case tool == workspace.ToolNameTaskLedger:
 		return "plan"
-	case tool == "task" || tool == "child_task":
+	case tool == workspace.ToolNameTask || tool == "child_task":
 		return "delegation"
-	case tool == "shell":
+	case tool == workspace.ToolNameShell:
 		if workspace.AnalyzeShellCommand(req.Command).BuildOrTest {
 			return "verification"
 		}
@@ -105,7 +88,7 @@ func historyToolAuditKind(event agent.ToolRequestEvent) string {
 		return "shell"
 	case strings.HasPrefix(tool, "context_"):
 		return "context"
-	case strings.Contains(tool, "read") || strings.Contains(tool, "outline") || tool == "file_stats":
+	case strings.Contains(tool, "read") || strings.Contains(tool, "outline") || tool == workspace.ToolNameFileStats:
 		return "read"
 	default:
 		return "tool"
@@ -199,6 +182,8 @@ func historyAuditEventFromRunEvent(event agent.RunEvent) (historyAuditEvent, boo
 		return historyAuditPhase(event.Content)
 	case "completion_status":
 		return historyAuditCompletionStatus(event.Content)
+	case mutationStateResumeEventRole:
+		return historyAuditMutationStateResume(event.Content)
 	case "budget_ledger":
 		return historyAuditBudget(event.Content)
 	case "permission_decision":
@@ -226,6 +211,28 @@ func historyAuditEventFromRunEvent(event agent.RunEvent) (historyAuditEvent, boo
 	}
 
 	return historyAuditEvent{}, false
+}
+
+func historyAuditMutationStateResume(content string) (historyAuditEvent, bool) {
+	var payload mutationStateResumeAudit
+	if json.Unmarshal([]byte(content), &payload) != nil {
+		return historyAuditEvent{}, false
+	}
+
+	status := textutil.FirstNonEmpty(strings.TrimSpace(payload.Status), "unknown")
+	detail := joinNonEmpty("; ",
+		keyValue("reason", payload.Reason),
+		keyValue("failure", payload.FailureID),
+		keyValue("record", payload.RecordPath),
+		boolKeyValue("scope_present", payload.ScopePresent),
+		intKeyValue("commit_receipts", payload.CommitReceiptCount),
+	)
+	return historyAuditEvent{
+		kind:   "recovery",
+		label:  "mutation state resume " + status,
+		detail: detail,
+		status: status,
+	}, true
 }
 
 func historyAuditChildToolRequest(content string) (historyAuditEvent, bool) {

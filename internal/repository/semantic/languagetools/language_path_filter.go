@@ -14,7 +14,7 @@ func (m *Manager) languagePathFilterForRequest(req ToolRequest, explicitFilter f
 		return "", nil
 	}
 
-	path, err := m.pathForHandle(req.ID)
+	path, err := m.pathForHandle(req.invocationContext, req.ID)
 	if err != nil {
 		return "", err
 	}

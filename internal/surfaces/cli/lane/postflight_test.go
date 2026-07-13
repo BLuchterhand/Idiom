@@ -3,38 +3,28 @@ package lane
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 )
 
-// helper to write a brief, diff, and optional working-tree files for
-// postflight integration tests.
-func setupPostflightProject(t *testing.T, briefBody, diffBody string, files map[string]string) (root, briefPath, diffPath string) {
-	t.Helper()
+func setupPostflightProject(briefBody, diffBody string, files map[string]string) (root, briefPath, diffPath string) {
 
-	root = t.TempDir()
+	root = ginkgo.GinkgoT().TempDir()
 	briefPath = filepath.Join(root, "brief.md")
-
-	if err := os.WriteFile(briefPath, []byte(briefBody), 0o644); err != nil {
-		t.Fatalf("write brief: %v", err)
-	}
+	gomega.Expect(os.WriteFile(briefPath, []byte(briefBody), 0o644)).To(gomega.Succeed())
 
 	diffPath = filepath.Join(root, "lane.diff")
-	if err := os.WriteFile(diffPath, []byte(diffBody), 0o644); err != nil {
-		t.Fatalf("write diff: %v", err)
-	}
+	gomega.Expect(os.WriteFile(diffPath, []byte(diffBody), 0o644)).To(gomega.Succeed())
 
 	for relpath, body := range files {
 		full := filepath.Join(root, relpath)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
+		gomega.Expect(os.MkdirAll(filepath.Dir(full), 0o755)).To(gomega.Succeed())
+		gomega.Expect(os.WriteFile(full, []byte(body), 0o644)).To(gomega.Succeed())
 
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-			t.Fatalf("write %s: %v", relpath, err)
-		}
 	}
 
 	return root, briefPath, diffPath
@@ -63,264 +53,165 @@ Files To Modify
 - src/foo.go
 `
 
-// TestLanePostflightCleanDiffPasses is the canonical happy path:
-// a diff that touches only allowlisted paths, contains no
-// QUESTION markers in the working tree, and adds no narrating
-// test comments returns exit 0 with a PASS summary.
-func TestLanePostflightCleanDiffPasses(t *testing.T) {
-	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, cleanDiff, map[string]string{
-		"src/foo.go": "package src\n// real fix\nfunc Foo() {}\n",
+var _ = ginkgo.Describe("postflight", func() {
+	ginkgo.It("lane postflight clean diff passes", func() {
+		root, briefPath, diffPath := setupPostflightProject(cleanBrief, cleanDiff, map[string]string{
+			"src/foo.go": "package src\n// real fix\nfunc Foo() {}\n",
+		})
+
+		var stdout, stderr bytes.Buffer
+
+		code := runLaneMainTest([]string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("clean diff must exit 0, got %d (stderr=%s, stdout=%s)", code, stderr.String(), stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("PASS"), fmt.Sprintf("output should announce PASS, got: %s", stdout.String()))
+
 	})
+	ginkgo.It("lane postflight unresolved question marker fails exit three", func() {
+		root, briefPath, diffPath := setupPostflightProject(cleanBrief, questionMarkerDiff, map[string]string{
+			"src/foo.go": "package src\n// <<QUESTION>>: did this resolve?\nfunc Foo() {}\n",
+		})
 
-	var stdout, stderr bytes.Buffer
+		var stdout, stderr bytes.Buffer
 
-	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+		code := runLaneMainTest([]string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(3), fmt.Sprintf("question marker must exit 3, got %d (stdout=%s)", code, stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("unresolved_question_marker"), fmt.Sprintf("output should name the check that failed: %s", stdout.String()))
 
-	if code != 0 {
-		t.Fatalf("clean diff must exit 0, got %d (stderr=%s, stdout=%s)", code, stderr.String(), stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), "PASS") {
-		t.Fatalf("output should announce PASS, got: %s", stdout.String())
-	}
-}
-
-// TestLanePostflightUnresolvedQuestionMarkerFailsExitThree
-// verifies the canonical failure-mode contract: the operator-
-// distinguishable exit code 3 (not 1) signals "checks ran and
-// found problems," vs 1 ("checks couldn't even run"). Colony's
-// lane loop and CI scripts depend on this distinction.
-func TestLanePostflightUnresolvedQuestionMarkerFailsExitThree(t *testing.T) {
-	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, questionMarkerDiff, map[string]string{
-		"src/foo.go": "package src\n// <<QUESTION>>: did this resolve?\nfunc Foo() {}\n",
 	})
-
-	var stdout, stderr bytes.Buffer
-
-	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
-
-	if code != 3 {
-		t.Fatalf("question marker must exit 3, got %d (stdout=%s)", code, stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), "unresolved_question_marker") {
-		t.Fatalf("output should name the check that failed: %s", stdout.String())
-	}
-}
-
-// TestLanePostflightAllowlistMismatchFails verifies the brief-
-// extraction path: required_edit_paths come from the brief
-// (the same logic the runner uses), and a write outside that
-// scope fails the postflight.
-func TestLanePostflightAllowlistMismatchFails(t *testing.T) {
-	briefBody := `# Atom
+	ginkgo.It("lane postflight allowlist mismatch fails", func() {
+		briefBody := `# Atom
 Files To Modify
 - src/foo.go
 `
-	diffBody := `diff --git a/src/wrong.go b/src/wrong.go
+		diffBody := `diff --git a/src/wrong.go b/src/wrong.go
 --- a/src/wrong.go
 +++ b/src/wrong.go
 @@ -1 +1,2 @@
  package src
 +// out of scope
 `
-	root, briefPath, diffPath := setupPostflightProject(t, briefBody, diffBody, map[string]string{
-		"src/wrong.go": "package src\n// out of scope\n",
+		root, briefPath, diffPath := setupPostflightProject(briefBody, diffBody, map[string]string{
+			"src/wrong.go": "package src\n// out of scope\n",
+		})
+
+		var stdout, stderr bytes.Buffer
+
+		code := runLaneMainTest([]string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(3), fmt.Sprintf("allowlist mismatch must exit 3, got %d (stdout=%s)", code, stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("file_allowlist_mismatch"), fmt.Sprintf("output should name the check: %s", stdout.String()))
+
 	})
-
-	var stdout, stderr bytes.Buffer
-
-	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
-
-	if code != 3 {
-		t.Fatalf("allowlist mismatch must exit 3, got %d (stdout=%s)", code, stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), "file_allowlist_mismatch") {
-		t.Fatalf("output should name the check: %s", stdout.String())
-	}
-}
-
-// TestLanePostflightExplicitRequiredEditPathsBeatsBrief verifies
-// the precedence: a CLI-supplied --required-edit-paths overrides
-// the brief extraction. Operators triaging a false positive can
-// pass an explicit list to confirm the diff is in scope without
-// editing the brief.
-func TestLanePostflightExplicitRequiredEditPathsBeatsBrief(t *testing.T) {
-	briefBody := `# Atom
+	ginkgo.It("lane postflight explicit required edit paths beats brief", func() {
+		briefBody := `# Atom
 Files To Modify
 - src/should-not-match.go
 `
-	diffBody := `diff --git a/src/foo.go b/src/foo.go
+		diffBody := `diff --git a/src/foo.go b/src/foo.go
 --- a/src/foo.go
 +++ b/src/foo.go
 @@ -1 +1,2 @@
  package src
 +// fix
 `
-	root, briefPath, diffPath := setupPostflightProject(t, briefBody, diffBody, map[string]string{
-		"src/foo.go": "package src\n// fix\n",
+		root, briefPath, diffPath := setupPostflightProject(briefBody, diffBody, map[string]string{
+			"src/foo.go": "package src\n// fix\n",
+		})
+
+		var stdout, stderr bytes.Buffer
+
+		args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--required-edit-paths", "src/foo.go", "--project-root", root}
+		code := runLaneMainTest(args, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("explicit required_edit_paths must beat brief; got code=%d stdout=%s", code, stdout.String()))
+
 	})
+	ginkgo.It("lane postflight skip flag disables named check", func() {
+		briefBody := cleanBrief
+		diffBody := questionMarkerDiff
+		root, briefPath, diffPath := setupPostflightProject(briefBody, diffBody, map[string]string{
 
-	var stdout, stderr bytes.Buffer
+			"src/foo.go": "package src\n// <<QUESTION>>: skip me\nfunc Foo() {}\n",
+		})
 
-	args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--required-edit-paths", "src/foo.go", "--project-root", root}
-	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
+		var stdout, stderr bytes.Buffer
 
-	if code != 0 {
-		t.Fatalf("explicit required_edit_paths must beat brief; got code=%d stdout=%s", code, stdout.String())
-	}
-}
+		args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root, "--skip", "unresolved_question_marker"}
+		code := runLaneMainTest(args, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(0), fmt.Sprintf("--skip must drop the named check; got code=%d stdout=%s", code, stdout.String()))
+		gomega.Expect(stdout.String()).NotTo(gomega.ContainSubstring("unresolved_question_marker"), fmt.Sprintf("skipped check leaked into output: %s", stdout.String()))
 
-// TestLanePostflightSkipFlagDisablesNamedCheck verifies the
-// operator escape hatch: --skip removes a noisy check from the
-// pipeline without disabling the rest. Useful when one check has
-// a known false positive on a particular diff.
-func TestLanePostflightSkipFlagDisablesNamedCheck(t *testing.T) {
-	briefBody := cleanBrief
-	diffBody := questionMarkerDiff
-	root, briefPath, diffPath := setupPostflightProject(t, briefBody, diffBody, map[string]string{
-		// The diff introduces a question marker, but we'll skip that check.
-		"src/foo.go": "package src\n// <<QUESTION>>: skip me\nfunc Foo() {}\n",
 	})
+	ginkgo.It("lane postflight json emits findings and summary", func() {
+		root, briefPath, diffPath := setupPostflightProject(cleanBrief, questionMarkerDiff, map[string]string{
+			"src/foo.go": "package src\n// <<QUESTION>>: trigger\nfunc Foo() {}\n",
+		})
 
-	var stdout, stderr bytes.Buffer
+		var stdout, stderr bytes.Buffer
 
-	args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root, "--skip", "unresolved_question_marker"}
-	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
+		args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root, "--json"}
+		code := runLaneMainTest(args, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(3), fmt.Sprintf("expected exit 3, got %d (stdout=%s)", code, stdout.String()))
 
-	if code != 0 {
-		t.Fatalf("--skip must drop the named check; got code=%d stdout=%s", code, stdout.String())
-	}
+		var (
+			summary    map[string]any
+			sawFinding bool
+		)
 
-	if strings.Contains(stdout.String(), "unresolved_question_marker") {
-		t.Fatalf("skipped check leaked into output: %s", stdout.String())
-	}
-}
+		for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
 
-// TestLanePostflightJSONEmitsFindingsAndSummary verifies the
-// machine-readable output format: one JSONL line per finding plus
-// a final summary line. The orchestrator's lane loop parses these
-// to decide whether to retry or surface the diff to a human.
-func TestLanePostflightJSONEmitsFindingsAndSummary(t *testing.T) {
-	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, questionMarkerDiff, map[string]string{
-		"src/foo.go": "package src\n// <<QUESTION>>: trigger\nfunc Foo() {}\n",
-	})
+			var event map[string]any
+			gomega.Expect(json.Unmarshal([]byte(line), &event)).To(gomega.Succeed())
 
-	var stdout, stderr bytes.Buffer
-
-	args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root, "--json"}
-	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
-
-	if code != 3 {
-		t.Fatalf("expected exit 3, got %d (stdout=%s)", code, stdout.String())
-	}
-
-	var (
-		summary    map[string]any
-		sawFinding bool
-	)
-
-	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
+			switch event["type"] {
+			case "idiom.lane.postflight.finding":
+				sawFinding = true
+			case "idiom.lane.postflight.summary":
+				summary = event
+			}
 		}
+		gomega.Expect(sawFinding).To(gomega.BeTrue(), fmt.Sprintf("expected at least one finding event in JSON output: %s", stdout.String()))
+		gomega.Expect(summary).NotTo(gomega.Equal(nil), fmt.Sprintf("expected a summary event: %s", stdout.String()))
 
-		var event map[string]any
-
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatalf("non-JSON line in --json mode: %q (err=%v)", line, err)
+		if pass, _ := summary["pass"].(bool); pass {
+			ginkgo.Fail(fmt.Sprintf("summary.pass should be false when error findings exist: %v", summary))
 		}
-
-		switch event["type"] {
-		case "idiom.lane.postflight.finding":
-			sawFinding = true
-		case "idiom.lane.postflight.summary":
-			summary = event
-		}
-	}
-
-	if !sawFinding {
-		t.Fatalf("expected at least one finding event in JSON output: %s", stdout.String())
-	}
-
-	if summary == nil {
-		t.Fatalf("expected a summary event: %s", stdout.String())
-	}
-
-	if pass, _ := summary["pass"].(bool); pass {
-		t.Fatalf("summary.pass should be false when error findings exist: %v", summary)
-	}
-}
-
-// TestLanePostflightMissingDiffFlagExitsTwo verifies the missing-
-// flag contract: --diff is mandatory; absent it, the wrapper
-// returns the conventional flag-error exit (2) rather than
-// crashing or silently no-op'ing.
-func TestLanePostflightMissingDiffFlagExitsTwo(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := runLaneMainTest(t, []string{"postflight"}, &stdout, &stderr, &laneFakeRunner{})
-
-	if code != 2 {
-		t.Fatalf("missing --diff must exit 2, got %d", code)
-	}
-
-	if !strings.Contains(stderr.String(), "--diff is required") {
-		t.Fatalf("error must explain the missing flag: %s", stderr.String())
-	}
-}
-
-// TestLanePostflightMissingDiffFileExitsOne verifies the IO-
-// failure path is exit 1, distinct from the "checks found
-// problems" exit 3. A diff path that doesn't exist is a setup
-// problem, not a check failure, and the calling shell should be
-// able to tell them apart.
-func TestLanePostflightMissingDiffFileExitsOne(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	args := []string{"postflight", "--diff", "/does/not/exist.diff"}
-	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
-
-	if code != 1 {
-		t.Fatalf("missing diff file must exit 1 (IO), got %d", code)
-	}
-
-	if !strings.Contains(stderr.String(), "read diff") {
-		t.Fatalf("error must reference the diff read: %s", stderr.String())
-	}
-}
-
-// TestLanePostflightProjectCheckLoadsAndFails is the integration
-// test for the .idiom/postflight/checks/ loader: a project that
-// declares a `kind: "shell"` rule with a non-zero command sees
-// that check fail the postflight alongside the generic ones.
-func TestLanePostflightProjectCheckLoadsAndFails(t *testing.T) {
-	briefBody := cleanBrief
-	diffBody := cleanDiff
-	root, briefPath, diffPath := setupPostflightProject(t, briefBody, diffBody, map[string]string{
-		"src/foo.go": "package src\n// real fix\nfunc Foo() {}\n",
 	})
-	dir := filepath.Join(root, ".idiom", "postflight", "checks")
+	ginkgo.It("lane postflight missing diff flag exits two", func() {
+		var stdout, stderr bytes.Buffer
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+		code := runLaneMainTest([]string{"postflight"}, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(2), fmt.Sprintf("missing --diff must exit 2, got %d", code))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("--diff is required"), fmt.Sprintf("error must explain the missing flag: %s", stderr.String()))
 
-	rule := `{"name": "always-fail", "kind": "shell", "command": "false"}`
-	if err := os.WriteFile(filepath.Join(dir, "always-fail.json"), []byte(rule), 0o644); err != nil {
-		t.Fatalf("write rule: %v", err)
-	}
+	})
+	ginkgo.It("lane postflight missing diff file exits one", func() {
+		var stdout, stderr bytes.Buffer
 
-	var stdout, stderr bytes.Buffer
+		args := []string{"postflight", "--diff", "/does/not/exist.diff"}
+		code := runLaneMainTest(args, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(1), fmt.Sprintf("missing diff file must exit 1 (IO), got %d", code))
+		gomega.Expect(stderr.String()).To(gomega.ContainSubstring("read diff"), fmt.Sprintf("error must reference the diff read: %s", stderr.String()))
 
-	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+	})
+	ginkgo.It("lane postflight project check loads and fails", func() {
+		briefBody := cleanBrief
+		diffBody := cleanDiff
+		root, briefPath, diffPath := setupPostflightProject(briefBody, diffBody, map[string]string{
+			"src/foo.go": "package src\n// real fix\nfunc Foo() {}\n",
+		})
+		dir := filepath.Join(root, ".idiom", "postflight", "checks")
+		gomega.Expect(os.MkdirAll(dir, 0o755)).To(gomega.Succeed())
 
-	if code != 3 {
-		t.Fatalf("project check failure must exit 3, got %d (stdout=%s)", code, stdout.String())
-	}
+		rule := `{"name": "always-fail", "kind": "shell", "command": "false"}`
+		gomega.Expect(os.WriteFile(filepath.Join(dir, "always-fail.json"), []byte(rule), 0o644)).To(gomega.Succeed())
 
-	if !strings.Contains(stdout.String(), "always-fail") {
-		t.Fatalf("output should mention the project check that failed: %s", stdout.String())
-	}
-}
+		var stdout, stderr bytes.Buffer
+
+		code := runLaneMainTest([]string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+		gomega.Expect(code).To(gomega.Equal(3), fmt.Sprintf("project check failure must exit 3, got %d (stdout=%s)", code, stdout.String()))
+		gomega.Expect(stdout.String()).To(gomega.ContainSubstring("always-fail"), fmt.Sprintf("output should mention the project check that failed: %s", stdout.String()))
+
+	})
+})

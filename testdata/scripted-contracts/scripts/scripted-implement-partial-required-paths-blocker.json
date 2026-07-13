@@ -1,5 +1,0 @@
-[
-  "{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"tiny real Git workspace\",\"new_text\":\"tiny deterministic Git workspace\",\"description\":\"update the first required documentation path\"}",
-  "Done.\n\nChanged paths:\n- README.md",
-  "Done again.\n\nChanged paths:\n- README.md"
-]

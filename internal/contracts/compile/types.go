@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	CompilerSchemaVersion = "idiom.contractcompile.result.v1"
+	CompilerSchemaVersion = "idiom.contractcompile.result.v2"
 
 	InvariantActiveAuthority = "contract.active_authority"
 
@@ -78,6 +78,34 @@ type PlanExecutePlannerToolMetadata struct {
 	Capabilities   []autonomy.Capability
 	SideEffect     autonomy.SideEffectClass
 	PlannerAllowed bool
+}
+
+// ModelProtocolInput is the workflow-neutral input to the model-visible
+// protocol compiler. Callers must provide their active tool, action, terminal,
+// and evidence surfaces explicitly; workflow-specific defaults belong in the
+// adapter that creates this input.
+type ModelProtocolInput struct {
+	ContractID              string
+	ContractVersion         string
+	Runtime                 RuntimeEnvelopeInput
+	Protocol                ProtocolInput
+	RequiredEditCoverage    []string
+	PathRoleSummary         []string
+	VerificationObligations []string
+	RequiredTools           []string
+	ReadinessGate           []string
+	Constraints             []string
+	InvalidActions          []string
+	ContextPacket           ModelProtocolContextPacketInput
+}
+
+// ModelProtocolContextPacketInput carries redaction-safe references into the
+// compact packet bound to a compiled model protocol.
+type ModelProtocolContextPacketInput struct {
+	TargetRefs     []string
+	PathRefs       []string
+	EvidenceRefs   []string
+	ObligationRefs []string
 }
 
 type ReadinessInput struct {
@@ -168,62 +196,76 @@ type QueueState struct {
 }
 
 type ProtocolInput struct {
-	PhaseID                  string
-	ParserMode               string
-	ExpectedVisibleOutput    string
-	VisibleTools             []string
-	HiddenTools              []string
-	CallableTools            []string
-	CallableToolsSpecified   bool
-	CallableActionClasses    []string
-	InvalidActionClasses     []string
-	TerminalResponseShapes   []string
-	StructuredSchemaNames    []string
-	MalformedOutputPolicy    string
-	StaleAnchorPolicy        string
-	SourceBodyObligations    []string
-	CompletedGitHistoryPaths []string
-	PendingGitHistoryPaths   []string
-	RecoveryBudget           int
+	PhaseID                       string
+	ParserMode                    string
+	ExpectedVisibleOutput         string
+	VisibleTools                  []string
+	HiddenTools                   []string
+	CallableTools                 []string
+	CallableToolsSpecified        bool
+	CallableActionClasses         []string
+	InvalidActionClasses          []string
+	TerminalResponseShapes        []string
+	StructuredSchemaNames         []string
+	MalformedOutputPolicy         string
+	StaleAnchorPolicy             string
+	SourceBodyObligations         []string
+	SourceBodyObligationTotal     int
+	SourceBodyObligationOmitted   int
+	GroundedSourceBodyPaths       []string
+	GroundedSourceBodyPathTotal   int
+	GroundedSourceBodyPathOmitted int
+	CandidateOnlyPaths            []string
+	CandidateOnlyPathTotal        int
+	CandidateOnlyPathOmitted      int
+	CompletedGitHistoryPaths      []string
+	PendingGitHistoryPaths        []string
 }
 
 type ModelProtocolProjection struct {
-	ContractID               string                 `json:"contract_id"`
-	ContractVersion          string                 `json:"contract_version"`
-	ProtocolHash             string                 `json:"protocol_hash"`
-	SchemaNames              []string               `json:"schema_names,omitempty"`
-	PhaseID                  string                 `json:"phase_id,omitempty"`
-	ParserMode               string                 `json:"parser_mode,omitempty"`
-	ToolTransportMode        string                 `json:"tool_transport_mode,omitempty"`
-	ParserTransportMode      string                 `json:"parser_transport_mode,omitempty"`
-	ParserContract           string                 `json:"parser_contract,omitempty"`
-	NativeToolPolicy         string                 `json:"native_tool_policy,omitempty"`
-	SupportsNativeTools      bool                   `json:"supports_native_tools,omitempty"`
-	ForceNativeTools         bool                   `json:"force_native_tools,omitempty"`
-	ToolChoice               string                 `json:"tool_choice,omitempty"`
-	ResponseFormat           string                 `json:"response_format,omitempty"`
-	ExpectedVisibleOutput    string                 `json:"expected_visible_output,omitempty"`
-	VisibleTools             []string               `json:"visible_tools,omitempty"`
-	HiddenTools              []string               `json:"hidden_tools,omitempty"`
-	CallableTools            []string               `json:"callable_tools,omitempty"`
-	CallableActionClasses    []string               `json:"callable_action_classes,omitempty"`
-	InvalidActionClasses     []string               `json:"invalid_action_classes,omitempty"`
-	TerminalResponseShapes   []string               `json:"terminal_response_shapes,omitempty"`
-	StructuredSchemaNames    []string               `json:"structured_schema_names,omitempty"`
-	MalformedOutputPolicy    string                 `json:"malformed_output_policy,omitempty"`
-	StaleAnchorPolicy        string                 `json:"stale_anchor_policy,omitempty"`
-	SourceBodyObligations    []string               `json:"source_body_obligations,omitempty"`
-	CompletedGitHistoryPaths []string               `json:"completed_git_history_paths,omitempty"`
-	PendingGitHistoryPaths   []string               `json:"pending_git_history_paths,omitempty"`
-	RequiredEditCoverage     []string               `json:"required_edit_coverage,omitempty"`
-	PathRoleSummary          []string               `json:"path_role_summary,omitempty"`
-	VerificationObligations  []string               `json:"verification_obligations,omitempty"`
-	SafeAlternatives         []string               `json:"safe_alternatives,omitempty"`
-	RequiredTools            []string               `json:"required_tools,omitempty"`
-	ReadinessGate            []string               `json:"readiness_gate,omitempty"`
-	Constraints              []string               `json:"constraints,omitempty"`
-	InvalidActions           []string               `json:"invalid_actions,omitempty"`
-	RecoveryBudget           int                    `json:"recovery_budget,omitempty"`
-	ActiveInvariantID        string                 `json:"active_invariant_id,omitempty"`
-	CompactPacket            autonomy.ContextPacket `json:"compact_packet,omitempty"`
+	ContractID                    string                 `json:"contract_id"`
+	ContractVersion               string                 `json:"contract_version"`
+	ProtocolHash                  string                 `json:"protocol_hash"`
+	SchemaNames                   []string               `json:"schema_names,omitempty"`
+	PhaseID                       string                 `json:"phase_id,omitempty"`
+	ParserMode                    string                 `json:"parser_mode,omitempty"`
+	ToolTransportMode             string                 `json:"tool_transport_mode,omitempty"`
+	ParserTransportMode           string                 `json:"parser_transport_mode,omitempty"`
+	ParserContract                string                 `json:"parser_contract,omitempty"`
+	NativeToolPolicy              string                 `json:"native_tool_policy,omitempty"`
+	SupportsNativeTools           bool                   `json:"supports_native_tools,omitempty"`
+	ForceNativeTools              bool                   `json:"force_native_tools,omitempty"`
+	ToolChoice                    string                 `json:"tool_choice,omitempty"`
+	ResponseFormat                string                 `json:"response_format,omitempty"`
+	ExpectedVisibleOutput         string                 `json:"expected_visible_output,omitempty"`
+	VisibleTools                  []string               `json:"visible_tools,omitempty"`
+	HiddenTools                   []string               `json:"hidden_tools,omitempty"`
+	CallableTools                 []string               `json:"callable_tools,omitempty"`
+	CallableActionClasses         []string               `json:"callable_action_classes,omitempty"`
+	InvalidActionClasses          []string               `json:"invalid_action_classes,omitempty"`
+	TerminalResponseShapes        []string               `json:"terminal_response_shapes,omitempty"`
+	StructuredSchemaNames         []string               `json:"structured_schema_names,omitempty"`
+	MalformedOutputPolicy         string                 `json:"malformed_output_policy,omitempty"`
+	StaleAnchorPolicy             string                 `json:"stale_anchor_policy,omitempty"`
+	SourceBodyObligations         []string               `json:"source_body_obligations,omitempty"`
+	SourceBodyObligationTotal     int                    `json:"source_body_obligation_total,omitempty"`
+	SourceBodyObligationOmitted   int                    `json:"source_body_obligation_omitted,omitempty"`
+	GroundedSourceBodyPaths       []string               `json:"grounded_source_body_paths,omitempty"`
+	GroundedSourceBodyPathTotal   int                    `json:"grounded_source_body_path_total,omitempty"`
+	GroundedSourceBodyPathOmitted int                    `json:"grounded_source_body_path_omitted,omitempty"`
+	CandidateOnlyPaths            []string               `json:"candidate_only_paths,omitempty"`
+	CandidateOnlyPathTotal        int                    `json:"candidate_only_path_total,omitempty"`
+	CandidateOnlyPathOmitted      int                    `json:"candidate_only_path_omitted,omitempty"`
+	CompletedGitHistoryPaths      []string               `json:"completed_git_history_paths,omitempty"`
+	PendingGitHistoryPaths        []string               `json:"pending_git_history_paths,omitempty"`
+	RequiredEditCoverage          []string               `json:"required_edit_coverage,omitempty"`
+	PathRoleSummary               []string               `json:"path_role_summary,omitempty"`
+	VerificationObligations       []string               `json:"verification_obligations,omitempty"`
+	SafeAlternatives              []string               `json:"safe_alternatives,omitempty"`
+	RequiredTools                 []string               `json:"required_tools,omitempty"`
+	ReadinessGate                 []string               `json:"readiness_gate,omitempty"`
+	Constraints                   []string               `json:"constraints,omitempty"`
+	InvalidActions                []string               `json:"invalid_actions,omitempty"`
+	ActiveInvariantID             string                 `json:"active_invariant_id,omitempty"`
+	CompactPacket                 autonomy.ContextPacket `json:"compact_packet,omitempty"`
 }

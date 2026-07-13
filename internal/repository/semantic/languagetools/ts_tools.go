@@ -18,7 +18,6 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/repository/discovery"
 	semanticts "idiom/internal/repository/semantic/typescript"
 )
@@ -234,15 +233,11 @@ func (m *Manager) tsReadSymbol(req ToolRequest) ToolResult {
 	displayPath := m.displayPath(abs)
 
 	return ToolResult{
-		Tool:    "ts_read_symbol",
-		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", tsDisplayName(match.Qualified, match.Name), displayPath, start, end),
-		Output:  snippet,
-		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:      displayPath,
-			StartLine: start,
-			EndLine:   end,
-		}),
+		Tool:          "ts_read_symbol",
+		Summary:       fmt.Sprintf("Read %s in %s lines %d-%d", tsDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:        snippet,
+		Paths:         []string{displayPath},
+		SourceWindows: []SourceWindowPlan{{Path: displayPath, StartLine: start, EndLine: end}},
 	}
 }
 

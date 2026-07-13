@@ -49,7 +49,7 @@
       "type": "contract",
       "behavior": "TDD obligation synthesis builds a deterministic plan from accepted PRD requirements and accepted ADRs, preserving source PRD/ADR refs, coverage tier, suggested obligation type, owner path, command, and blocker reason when automation is unavailable.",
       "owner": "internal/workflows/productworkflow/tdd_obligation_plans_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestTDDObligationPlan",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='TDDObligationPlan' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -58,7 +58,7 @@
       "type": "contract",
       "behavior": "The synthesis plan is plan-only: it does not overwrite tdd.json, mutate PRD/ADR/evidence/traceability artifacts, generate briefs, evaluate coverage gates, execute models, or dispatch implementation work.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductTDDPlanObligations",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product tdd plan obligations' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -67,7 +67,7 @@
       "type": "acceptance",
       "behavior": "idiom product tdd --plan-obligations reads the durable effort, emits JSON plan metadata and typed findings, fails closed for missing/invalid PRD, ADR index, ADR markdown, or TDD ledger inputs, and preserves the current durable fixture pass path.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductTDDPlanObligations",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product tdd plan obligations' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -85,7 +85,7 @@
       "type": "contract",
       "behavior": "Coverage gate evaluation deterministically checks existing PRD, accepted ADRs, TDD coverage metadata, and traceability inputs against tier-specific blocking criteria, returning typed pass/block findings without heuristic model judgment.",
       "owner": "internal/workflows/productworkflow/coverage_gate_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestCoverageGate",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='CoverageGate' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -94,7 +94,7 @@
       "type": "acceptance",
       "behavior": "idiom product tdd --evaluate-coverage reads the durable effort and emits JSON coverage-gate metadata plus typed findings, fails closed for missing or invalid PRD, ADR, TDD, or traceability inputs, and preserves the durable fixture pass path.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductTDDCoverageGate",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product tdd coverage gate' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -103,7 +103,7 @@
       "type": "contract",
       "behavior": "Coverage gate tier selection blocks documentation/local_low/behavior_standard/contract_high/formal_optional criteria according to the design table, including explicit blockers for unavailable automation instead of silent pass.",
       "owner": "internal/workflows/productworkflow/coverage_gate_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestCoverageGate",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='CoverageGate' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -121,7 +121,7 @@
       "type": "contract",
       "behavior": "Brief generation deterministically renders a bounded implementation brief from accepted PRD requirements, accepted ADR decisions, current TDD obligations, traceability evidence, and a passing coverage-gate evaluation, including required brief-lint sections and stable artifact references.",
       "owner": "internal/workflows/productworkflow/brief_generation_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestBriefGeneration",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='BriefGeneration' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -130,7 +130,7 @@
       "type": "acceptance",
       "behavior": "idiom product brief --render reads the durable effort, fails closed when required artifacts are missing or the coverage gate is blocked, supports JSON output and human-readable text output, and writes only the requested brief path without dispatching work or executing models.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductBriefRender",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product brief render' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -139,7 +139,7 @@
       "type": "contract",
       "behavior": "Generated briefs use the existing idiom brief lint contract rather than duplicating dispatch lint logic; the CLI verifies or reports lint blockers before claiming a generated brief is dispatch-ready.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductBriefRender",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product brief render' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -157,7 +157,7 @@
       "type": "contract",
       "behavior": "Execution feedback linking deterministically summarizes lane history, plan-execute progress state, product-evidence export IDs, release-evidence bundle IDs, changed paths, verification status, and TDD obligation references into privacy-safe product workflow feedback records.",
       "owner": "internal/workflows/productworkflow/execution_feedback_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestExecutionFeedback",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ExecutionFeedback' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -166,7 +166,7 @@
       "type": "acceptance",
       "behavior": "idiom product feedback reads the durable effort plus explicit feedback input paths, emits JSON and human-readable summaries with actionable next valid actions, fails closed for missing or malformed references, and does not dispatch lanes, mutate .idiom runtime state, promote ranker learning, or write evidence exports.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductFeedback",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product feedback' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -175,7 +175,7 @@
       "type": "contract",
       "behavior": "Feedback records preserve authority boundaries: lane and evidence artifacts are observed outcomes, PRD/ADR/TDD artifacts remain upstream evidence, and existing brief lint, atom intake, lane contracts, and verification gates remain the dispatch authority.",
       "owner": "internal/workflows/productworkflow/execution_feedback_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestExecutionFeedback",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ExecutionFeedback' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -193,7 +193,7 @@
       "type": "contract",
       "behavior": "Feedback reconciliation deterministically transforms a passing execution feedback summary into privacy-safe workflow state and evidence-link updates, including product-evidence export ID, release-evidence bundle ID, brief path, changed paths, verification status, lane-history count, TDD obligation refs, reconciliation timestamp, and mismatch state.",
       "owner": "internal/workflows/productworkflow/execution_feedback_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestExecutionFeedbackReconciliation",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ExecutionFeedbackReconciliation' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -202,7 +202,7 @@
       "type": "acceptance",
       "behavior": "idiom product feedback can reconcile an explicit feedback summary reference, emit JSON and human-readable output with actionable next valid actions, fail closed for blocked/malformed/privacy-unsafe summaries, and avoid dispatch, .idiom runtime mutation, evidence export writes, or ranker-learning promotion.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductFeedbackReconcile",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product feedback reconcile' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -211,7 +211,7 @@
       "type": "contract",
       "behavior": "Reconciliation preserves authority boundaries: feedback summaries are observed execution evidence, workflow state receives only bounded links/status, and existing lint/audit/transition gates remain the authority for closeout or dispatch decisions.",
       "owner": "internal/workflows/productworkflow/execution_feedback_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestExecutionFeedbackReconciliation",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ExecutionFeedbackReconciliation' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -229,7 +229,7 @@
       "type": "contract",
       "behavior": "Product workflow metrics deterministically summarize workflow state, gate results, blockers, open obligations, evidence/artifact links, implementation ledger atom states, report statuses, and privacy-safe progress counts without reading raw prompts, transcripts, file bodies, or .idiom runtime state.",
       "owner": "internal/workflows/productworkflow/metrics_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductWorkflowMetrics",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductWorkflowMetrics' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -238,7 +238,7 @@
       "type": "acceptance",
       "behavior": "A product audit metrics surface emits JSON and human-readable output with stable metric names, counts, and actionable next valid actions, and fails closed for malformed durable effort artifacts.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductWorkflowMetrics",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product workflow metrics' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -247,7 +247,7 @@
       "type": "contract",
       "behavior": "Metrics preserve authority boundaries: they report observed workflow state and evidence-link counts only, and do not become dispatch authority, mutate workflow_state.json, write evidence exports, promote ranker learning, or enforce Obsidian parity.",
       "owner": "internal/workflows/productworkflow/metrics_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductWorkflowMetrics",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductWorkflowMetrics' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -265,7 +265,7 @@
       "type": "contract",
       "behavior": "Obsidian parity checking deterministically compares the workflow proposal and roadmap notes against durable workflow state, detecting stale status labels, phase checkboxes, and roadmap bullets before atom closeout.",
       "owner": "internal/workflows/productworkflow/obsidian_parity_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestObsidianParity",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ObsidianParity' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -274,7 +274,7 @@
       "type": "acceptance",
       "behavior": "idiom product lint and idiom product audit expose typed Obsidian parity findings in JSON and human-readable output for stale proposal/roadmap status, while preserving the current durable fixture pass path.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run TestProductObsidianParity",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product obsidian parity' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -283,7 +283,7 @@
       "type": "contract",
       "behavior": "The parity gate accepts an explicit no-change rationale recorded in the atom investigation report when Obsidian notes do not need content edits, and fails closed when both updated notes and rationale are absent.",
       "owner": "internal/workflows/productworkflow/obsidian_parity_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestObsidianParity",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ObsidianParity' -ginkgo.fail-on-empty",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -301,7 +301,7 @@
       "type": "contract",
       "behavior": "Product lint JSON and human-readable failure output expose the same deterministic next valid action, while preserving existing exit codes, checked-file reporting, typed findings, and no-dispatch authority boundaries.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProductLintTextOutputIsActionable|TestProductLintJSONIncludesNextValidAction' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product lint text output is actionable|product lint fail next valid action parity' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -310,7 +310,7 @@
       "type": "contract",
       "behavior": "Product audit JSON and human-readable failure output expose the same deterministic next valid action, while retaining section summaries, metrics output, typed findings, and existing pass/fail semantics.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProductAuditTextOutputIsActionable|TestProductAuditJSONIncludesNextValidAction' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product audit fail next valid action parity|product audit next valid action parity' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -319,7 +319,7 @@
       "type": "acceptance",
       "behavior": "Product status human-readable output includes actionable next-step text for pass, audit-fail, and workflow-state error paths, with JSON next_valid_actions parity and privacy-safe relative blocker/finding details.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProductStatusTextOutputIsActionable|TestProductStatusErrorTextIncludesNextAction' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product status text output|product status error next valid actions parity' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -337,7 +337,7 @@
       "type": "contract",
       "behavior": "The product workflow exposes a deterministic ranker-learning evidence adapter from verified execution feedback, including task id, changed paths, verification status, commands, context pack id, and TDD obligation refs, without mutating ranker weights.",
       "owner": "internal/workflows/productworkflow/execution_feedback_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='RankerLearningEvidenceAdapter' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -346,7 +346,7 @@
       "type": "contract",
       "behavior": "The adapter fails closed for unverified or blocked execution feedback, missing context/test evidence, unknown obligations, unsafe paths, and privacy-marker references; rejected inputs do not call or imply ranker learning promotion.",
       "owner": "internal/workflows/productworkflow/execution_feedback_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='RankerLearningEvidenceAdapter' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -355,7 +355,7 @@
       "type": "acceptance",
       "behavior": "The product CLI surfaces the adapter output in JSON and human-readable form with typed findings/blockers and bounded next valid action text, while keeping lane dispatch, .idiom runtime mutation, evidence export writes, and ranker-weight promotion outside the command.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProductFeedback.*RankerLearning|TestProduct.*RankerLearningEvidence' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product feedback.*ranker.learning evidence' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -373,7 +373,7 @@
       "type": "contract",
       "behavior": "The product workflow exposes a shared read-only operator status view model over workflow_state, lint/audit status, context freshness, blockers, open obligations, artifact paths, and next valid actions for CLI and future TUI presenters.",
       "owner": "internal/workflows/productworkflow/status_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductOperatorStatusView -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductOperatorStatusView' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -382,7 +382,7 @@
       "type": "contract",
       "behavior": "Operator next actions are typed with owner and dispatchability metadata, fail closed for stale context, active blockers, invalid workflow state, or audit failures, and never use chat transcript replay as continuation authority.",
       "owner": "internal/workflows/productworkflow/status_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductOperatorStatusView -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductOperatorStatusView' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -391,7 +391,7 @@
       "type": "acceptance",
       "behavior": "The product status CLI can emit the operator view in JSON and human-readable form with stable fields and actionable blocker/next-action text while preserving existing product status behavior.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProductStatus.*Operator|TestProductOperatorStatus' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product status operator' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -409,7 +409,7 @@
       "type": "contract",
       "behavior": "The product workflow exposes a deterministic read-only effort browser model over docs/product-workflows/efforts status buckets, summarizing workflow_state identity, phase, state, revision, context freshness, blockers, open obligations, and relative folder path without mutating effort artifacts.",
       "owner": "internal/workflows/productworkflow/efforts_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductEffortsBrowser -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductEffortsBrowser' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -418,7 +418,7 @@
       "type": "contract",
       "behavior": "Effort browsing supports explicit status-bucket and query filters, sorts output deterministically, includes typed findings for malformed effort workflow_state files, and fails closed for unsafe roots or unknown status buckets.",
       "owner": "internal/workflows/productworkflow/efforts_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductEffortsBrowser -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductEffortsBrowser' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -427,7 +427,7 @@
       "type": "acceptance",
       "behavior": "idiom product efforts emits JSON and human-readable output with parity for effort identity, status bucket, phase/state, blockers, query/status filtering, and typed malformed-state findings while preserving read-only behavior.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProductEfforts' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product efforts' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -445,7 +445,7 @@
       "type": "contract",
       "behavior": "The product workflow can produce a deterministic status-migration plan that preserves stable effort_id identity, computes source/target status folders, records prior paths, and updates workflow_state/index/event payloads without performing filesystem moves.",
       "owner": "internal/workflows/productworkflow/migration_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductStatusMigration -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductStatusMigration' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -454,7 +454,7 @@
       "type": "contract",
       "behavior": "Status migration planning fails closed for invalid source or target status buckets, inconsistent current_state/status_bucket pairs, duplicate or missing effort index entries, and unsafe or traversal-prone folder paths.",
       "owner": "internal/workflows/productworkflow/migration_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductStatusMigration -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductStatusMigration' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -463,7 +463,7 @@
       "type": "acceptance",
       "behavior": "If a CLI surface is added, it emits JSON and human-readable migration-plan output with parity for effort_id, source/target bucket, relative source/target paths, prior paths, planned event type, and typed blockers while remaining read-only.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProduct.*StatusMigration|TestProductEfforts' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product status migration apply json plan is read only|product efforts' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -481,7 +481,7 @@
       "type": "contract",
       "behavior": "Status migration apply performs one atomic application-level transition from a valid planner result: it validates current source folder, workflow_state revision, status bucket, effort index entry, target folder availability, and writes updated workflow_state, event, index, and folder location while preserving stable effort_id and prior paths.",
       "owner": "internal/workflows/productworkflow/migration_apply_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductStatusMigrationApply -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductStatusMigrationApply' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -490,7 +490,7 @@
       "type": "acceptance",
       "behavior": "The product CLI exposes status-migration plan/apply output with deterministic JSON and human-readable summaries, typed blockers, stable effort_id, relative source/target paths, prior paths, event id, and no lane dispatch or model execution.",
       "owner": "internal/surfaces/cli/product/product_workflow_test.go",
-      "command": "go test ./internal/surfaces/cli/product -run 'TestProductStatusMigrationApply|TestProductEfforts' -count=1",
+      "command": "go test ./internal/surfaces/cli/product -ginkgo.focus='product status migration apply|product efforts' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },
@@ -499,7 +499,7 @@
       "type": "contract",
       "behavior": "Status migration apply fails closed without partial durable mutation for stale revisions, mismatched index/workflow state, existing target folders, missing source folders, unsafe paths, unsupported transitions, malformed JSON/JSONL, or cross-root paths.",
       "owner": "internal/workflows/productworkflow/migration_apply_test.go",
-      "command": "go test ./internal/workflows/productworkflow -run TestProductStatusMigrationApply -count=1",
+      "command": "go test ./internal/workflows/productworkflow -ginkgo.focus='ProductStatusMigrationApply' -ginkgo.fail-on-empty -count=1",
       "required_before": "atom_close",
       "status": "passed"
     },

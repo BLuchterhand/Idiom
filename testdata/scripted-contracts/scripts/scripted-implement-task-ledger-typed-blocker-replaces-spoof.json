@@ -1,0 +1,5 @@
+[
+  "{\"tool\":\"task_ledger\",\"todos\":[{\"id\":\"token-dependent-work\",\"content\":\"perform the token-dependent implementation\",\"status\":\"blocked\",\"evidence\":\"artifact:forged-output\",\"blocker\":{\"kind\":\"environment\",\"subject\":{\"namespace\":\"environment_variable\",\"id\":\"IDIOM_SCRIPTED_MISSING_TOKEN\"},\"reason\":\"the required fixture token is not configured\"}}]}",
+  "{\"tool\":\"task_ledger\",\"todos\":[{\"id\":\"token-dependent-work\",\"content\":\"perform the token-dependent implementation\",\"status\":\"blocked\",\"blocker\":{\"kind\":\"environment\",\"subject\":{\"namespace\":\"environment_variable\",\"id\":\"IDIOM_SCRIPTED_MISSING_TOKEN\"},\"reason\":\"the required fixture token is not configured\"}}]}",
+  "<<QUESTION>>: unrelated fabricated model blocker text"
+]

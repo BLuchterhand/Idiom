@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/textutil"
@@ -206,11 +205,10 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 		Summary: summary,
 		Output:  snippet,
 		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:      displayPath,
-			StartLine: start,
-			EndLine:   end,
-		}),
+		SourceWindows: []SourceWindowPlan{{
+			Path: displayPath, StartLine: start, EndLine: end,
+			Truncated: req.StartLine == 0 && req.EndLine == 0 && match.EndLine > 0 && end < match.EndLine,
+		}},
 	}
 }
 
@@ -544,15 +542,11 @@ func (m *Manager) goExtractBody(req ToolRequest) ToolResult {
 	displayPath := m.displayPath(abs)
 
 	return ToolResult{
-		Tool:    "go_extract_body",
-		Summary: fmt.Sprintf("Extracted %s from %s lines %d-%d", goQualifiedSymbol(match), displayPath, start, end),
-		Output:  body,
-		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:      displayPath,
-			StartLine: start,
-			EndLine:   end,
-		}),
+		Tool:          "go_extract_body",
+		Summary:       fmt.Sprintf("Extracted %s from %s lines %d-%d", goQualifiedSymbol(match), displayPath, start, end),
+		Output:        body,
+		Paths:         []string{displayPath},
+		SourceWindows: []SourceWindowPlan{{Path: displayPath, StartLine: start, EndLine: end}},
 	}
 }
 
@@ -949,14 +943,6 @@ func (m *Manager) getGoIndex() (*semanticgo.GoIndex, error) {
 	return index, nil
 }
 
-func (m *Manager) invalidateGoIndex() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.goIndex = nil
-	m.goIndexToken = ""
-}
-
 func (m *Manager) currentGoIndexToken() string {
 	if !m.Enabled() {
 		return ""
@@ -1219,7 +1205,7 @@ func (m *Manager) goPathFilterForRequest(req ToolRequest) (string, error) {
 		return "", nil
 	}
 
-	path, err := m.pathForHandle(req.ID)
+	path, err := m.pathForHandle(req.invocationContext, req.ID)
 	if err != nil {
 		return "", err
 	}
@@ -1373,7 +1359,7 @@ func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
 	}
 
 	if strings.TrimSpace(req.ID) != "" {
-		path, err := m.pathForHandle(req.ID)
+		path, err := m.pathForHandle(req.invocationContext, req.ID)
 		if err != nil {
 			return nil, err
 		}

@@ -1,6 +1,7 @@
 [
   "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels_test.go\",\"old_text\":\"want \\\"Save\\\"\",\"new_text\":\"want \\\"Save changes\\\"\",\"description\":\"attempt to update a related but out-of-scope test\"}",
-  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the required label implementation\"}",
-  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
-  "Implemented the scoped label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
+  "{\"tool\":\"write_file\",\"path\":\"internal/labels/scoped_label.go\",\"content\":\"package labels\\n\\nfunc ScopedLabel() string {\\n\\treturn \\\"Scoped\\\"\\n}\\n\",\"description\":\"add the authorized scoped label helper\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/scoped_label.go\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/scoped_label.go\",\"start_line\":1,\"end_line\":8,\"named_gap\":\"read the authorized changed helper before the final report\"}",
+  "Implemented the scoped label helper.\n\nChanged paths:\n- internal/labels/scoped_label.go\n\nVerification: Source sanity passed for internal/labels/scoped_label.go."
 ]

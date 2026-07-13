@@ -46,12 +46,12 @@ func (s validationStatusQuestionShape) Active() bool {
 	return s.AsksVerification || s.AsksBuild || s.AsksTestAdded
 }
 
-func (r *Runner) validationStatusAnswerRejectionReason(answer string, results []workspace.ToolResult) string {
+func (r *runExecution) validationStatusAnswerRejectionReason(answer string, results []workspace.ToolResult) string {
 	if r == nil {
 		return ""
 	}
 
-	shape := validationStatusQuestionForBrief(r.RuntimeBrief)
+	shape := validationStatusQuestionForBrief(r.state.runtimeBrief)
 	if !shape.Active() {
 		return ""
 	}
@@ -74,7 +74,7 @@ func (r *Runner) validationStatusAnswerRejectionReason(answer string, results []
 		if !validationAnswerMentionsTestStatus(lower) {
 			return "the user asked whether a test was added, but the answer did not state whether any test path changed."
 		}
-		if validationAnswerClaimsTestAdded(lower) && !hasChangedTestPath(results) {
+		if validationAnswerClaimsTestAdded(lower) && !r.hasChangedTestPath(results) {
 			return "the answer claims a test was added, but the tool ledger has no successful write to a test path."
 		}
 	}
@@ -89,16 +89,16 @@ func (r *Runner) validationStatusAnswerRejectionReason(answer string, results []
 	return ""
 }
 
-func (r *Runner) validationStatusAnswerCanUseLedgerEvidence(answer string, results []workspace.ToolResult) bool {
-	if r == nil || !validationStatusQuestionForBrief(r.RuntimeBrief).Active() {
+func (r *runExecution) validationStatusAnswerCanUseLedgerEvidence(answer string, results []workspace.ToolResult) bool {
+	if r == nil || !validationStatusQuestionForBrief(r.state.runtimeBrief).Active() {
 		return false
 	}
 
 	return r.validationStatusAnswerRejectionReason(answer, results) == "" &&
-		(validationAnswerMentionsValidationLedger(strings.ToLower(answer)) || hasObservedVerificationResult(results) || len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0)
+		(validationAnswerMentionsValidationLedger(strings.ToLower(answer)) || hasObservedVerificationResult(results) || len(r.state.committedMutationEffectIDs()) > 0)
 }
 
-func validationStatusPathBackedByLedger(rawPath string, canonicalPath string, results []workspace.ToolResult) bool {
+func (r *runExecution) validationStatusPathBackedByLedger(rawPath string, canonicalPath string, results []workspace.ToolResult) bool {
 	candidates := map[string]struct{}{}
 	for _, path := range []string{rawPath, canonicalPath} {
 		if normalized := NormalizeRunnerPath(path); normalized != "" {
@@ -109,7 +109,7 @@ func validationStatusPathBackedByLedger(rawPath string, canonicalPath string, re
 		return false
 	}
 
-	for _, path := range newToolResultEvidenceProjection(results).ValidationStatusEvidenceLedgerPaths() {
+	for _, path := range r.validationStatusEvidencePaths(results) {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
@@ -121,12 +121,12 @@ func validationStatusPathBackedByLedger(rawPath string, canonicalPath string, re
 	return false
 }
 
-func (r *Runner) validationStatusTerminalRecoveryAnswer(results []workspace.ToolResult) (string, bool) {
+func (r *runExecution) validationStatusTerminalRecoveryAnswer(results []workspace.ToolResult) (string, bool) {
 	if r == nil {
 		return "", false
 	}
 
-	shape := validationStatusQuestionForBrief(r.RuntimeBrief)
+	shape := validationStatusQuestionForBrief(r.state.runtimeBrief)
 	if !shape.Active() {
 		return "", false
 	}
@@ -148,14 +148,14 @@ func (r *Runner) validationStatusTerminalRecoveryAnswer(results []workspace.Tool
 	}
 
 	if shape.AsksTestAdded {
-		if paths := changedTestPaths(results); len(paths) > 0 {
+		if paths := r.changedTestPaths(results); len(paths) > 0 {
 			lines = append(lines, "A test path changed: "+quotedRunnerStrings(paths)+".")
 		} else {
 			lines = append(lines, "I did not add or change a test path.")
 		}
 	}
 
-	if paths := validationStatusEvidencePaths(results); len(paths) > 0 {
+	if paths := r.validationStatusEvidencePaths(results); len(paths) > 0 {
 		lines = append(lines, "Ledger evidence: "+quotedRunnerStrings(paths)+".")
 	}
 
@@ -258,7 +258,7 @@ func latestSuccessfulBuildOrTestVerificationSummary(results []workspace.ToolResu
 	var latest string
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Tool) != workspace.ToolNameShell {
-			if strings.TrimSpace(result.Error) == "" && workspace.IsWorkspaceWriteTool(result.Tool) {
+			if workspaceWriteResultCommitted(workspace.ToolRequest{Tool: result.Tool}, result) {
 				latest = ""
 			}
 			continue
@@ -284,7 +284,30 @@ func hasChangedTestPath(results []workspace.ToolResult) bool {
 
 func changedTestPaths(results []workspace.ToolResult) []string {
 	var paths []string
-	for _, path := range mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()) {
+	for _, result := range results {
+		receipt := result.CommitReceipt()
+		if receipt == nil {
+			continue
+		}
+		for _, path := range receipt.DurableProjection().AffectedFileIDs {
+			if plancontract.PathLooksLikeTest(path) {
+				paths = textutil.AppendUnique(paths, path)
+			}
+		}
+	}
+	return paths
+}
+
+func (r *runExecution) hasChangedTestPath(results []workspace.ToolResult) bool {
+	return len(r.changedTestPaths(results)) > 0
+}
+
+func (r *runExecution) changedTestPaths(results []workspace.ToolResult) []string {
+	if r == nil {
+		return changedTestPaths(results)
+	}
+	var paths []string
+	for _, path := range r.state.committedAffectedFileIDs() {
 		if plancontract.PathLooksLikeTest(path) {
 			paths = textutil.AppendUnique(paths, path)
 		}
@@ -339,6 +362,14 @@ func validationStatusEvidencePaths(results []workspace.ToolResult) []string {
 	var paths []string
 	for _, path := range newToolResultEvidenceProjection(results).ValidationStatusEvidenceLedgerPaths() {
 		paths = textutil.AppendUnique(paths, path)
+	}
+	return closurePromptTargetEvidencePaths(paths, 8)
+}
+
+func (r *runExecution) validationStatusEvidencePaths(results []workspace.ToolResult) []string {
+	paths := validationStatusEvidencePaths(results)
+	if r != nil {
+		paths = textutil.Merge(paths, r.state.committedAffectedFileIDs())
 	}
 	return closurePromptTargetEvidencePaths(paths, 8)
 }

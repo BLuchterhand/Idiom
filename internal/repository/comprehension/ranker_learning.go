@@ -1,16 +1,17 @@
 package comprehension
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,9 +48,10 @@ var (
 	learningSafeTokenPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9_.:-]{0,127}$`)
 	learningGeneratedEventIDPattern = regexp.MustCompile(`^ranker_[0-9a-f]{16}$`)
 	learningHashedIDPatterns        = map[string]*regexp.Regexp{
-		"task":   regexp.MustCompile(`^task_[0-9a-f]{16}$`),
-		"corpus": regexp.MustCompile(`^corpus_[0-9a-f]{16}$`),
-		"result": regexp.MustCompile(`^result_[0-9a-f]{16}$`),
+		"request": regexp.MustCompile(`^request_[0-9a-f]{16}$`),
+		"task":    regexp.MustCompile(`^task_[0-9a-f]{16}$`),
+		"corpus":  regexp.MustCompile(`^corpus_[0-9a-f]{16}$`),
+		"result":  regexp.MustCompile(`^result_[0-9a-f]{16}$`),
 	}
 
 	learningLogAllowedSources = map[string]struct{}{
@@ -194,6 +196,7 @@ var (
 // learning path. Callers must supply deterministic, already-verified evidence;
 // unverified input is logged as rejected and never mutates weights.
 type VerifiedRankerLearningRequest struct {
+	RequestID            string
 	Source               string
 	Action               string
 	Files                []string
@@ -226,10 +229,22 @@ type VerificationEvidence struct {
 // ApplyVerifiedRankerLearning is the single automated weight-mutation gate for
 // verified feedback. It records every accepted or rejected decision in the
 // inspectable learning log with rollback data for accepted mutations.
-func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest) (LearningLogEntry, map[string]float64, error) {
+func ApplyVerifiedRankerLearning(ctx context.Context, root string, req VerifiedRankerLearningRequest) (LearningLogEntry, map[string]float64, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return LearningLogEntry{}, nil, errors.New("workspace root is required for ranker learning")
+	}
+	store, err := openRankerStateStore(ctx, root)
+	if err != nil {
+		return LearningLogEntry{}, nil, err
+	}
+	defer store.Close()
+	if err := store.recoverLocked(); err != nil {
+		return LearningLogEntry{}, nil, err
+	}
+	before, err := store.loadWeightsLocked()
+	if err != nil {
+		return LearningLogEntry{}, nil, err
 	}
 
 	source := sanitizeLearningSource(req.Source)
@@ -244,15 +259,9 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 	corpusID := sanitizeLearningCorrelationID("corpus", req.CorpusID)
 	resultID := sanitizeLearningCorrelationID("result", req.ResultID)
 	files, invalidPathCount := sanitizeLearningPaths(req.Files)
-
-	before, err := LoadLearnedWeights(root)
-	if err != nil {
-		return LearningLogEntry{}, nil, err
-	}
-
-	beforeCopy := cloneWeights(before)
-	afterCopy := cloneWeights(before)
+	after := cloneWeights(before)
 	entry := LearningLogEntry{
+		RequestID: req.RequestID,
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Source:    source,
 		Action:    logAction,
@@ -264,11 +273,8 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 		ResultID:  resultID,
 		Evidence:  learningEvidenceRef(req, files, invalidPathCount),
 	}
-
-	entry.BeforeWeights = &beforeCopy
-	entry.AfterWeights = &afterCopy
-	entry.Rollback = &LearningRollbackData{Weights: cloneWeights(before)}
 	entry.Verification = learningLogVerificationEvidence(req.VerificationEvidence)
+	materialize := false
 
 	verified := req.Verified || (entry.Evidence != nil && entry.Evidence.Verified)
 	switch {
@@ -293,25 +299,14 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 		if len(files) == 0 {
 			entry.Reason = LearningReasonNoValidFiles
 		} else {
-			updateOpts := UpdateLearnedWeightsOptions{}
+			update := learnedWeightUpdate{}
 			if action == "boost" {
-				updateOpts.Boost = files
+				update.boost = files
 			} else {
-				updateOpts.Penalty = files
+				update.penalty = files
 			}
-
-			after, updateErr := UpdateLearnedWeights(root, updateOpts)
-			if updateErr != nil {
-				entry.Reason = LearningReasonUpdateFailed
-				if appendErr := appendLearningDecision(root, &entry); appendErr != nil {
-					return entry, before, appendErr
-				}
-
-				return entry, before, updateErr
-			}
-
-			afterCopy = cloneWeights(after)
-			entry.AfterWeights = &afterCopy
+			after = applyLearnedWeightUpdate(before, update)
+			materialize = true
 			entry.State = LearningStateAccepted
 			entry.Reason = sanitizeVerifiedLearningReason(req.Reason)
 		}
@@ -323,29 +318,46 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 		entry.Reason = LearningReasonUnsupported
 	}
 
-	if err := appendLearningDecision(root, &entry); err != nil {
-		if entry.State == LearningStateAccepted && (entry.Action == "boost" || entry.Action == "penalize") {
-			_ = SaveLearnedWeights(root, before)
+	committedEntry, replayed, err := store.commitLocked(rankerStateChange{
+		entry:           entry,
+		before:          before,
+		after:           after,
+		materialize:     materialize,
+		captureSnapshot: true,
+	})
+	if err != nil {
+		if committedEntry.EventID != "" {
+			entry = committedEntry
 		}
-
-		return entry, before, err
+		return entry, cloneWeights(after), err
+	}
+	if replayed {
+		return committedEntry, cloneWeights(before), nil
 	}
 
-	if entry.AfterWeights != nil {
-		return entry, cloneWeights(*entry.AfterWeights), nil
-	}
-
-	return entry, before, nil
+	return committedEntry, cloneWeights(after), nil
 }
 
 // RecordVerifiedRankerEvidence records deterministic, verified learning
 // evidence without mutating ranker weights. It is for audit-readable outcomes
 // such as recovery reconciliation where the event is useful to the learning
 // flywheel but should not directly change future context ranking.
-func RecordVerifiedRankerEvidence(root string, req VerifiedRankerLearningRequest) (LearningLogEntry, error) {
+func RecordVerifiedRankerEvidence(ctx context.Context, root string, req VerifiedRankerLearningRequest) (LearningLogEntry, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return LearningLogEntry{}, errors.New("workspace root is required for ranker evidence")
+	}
+	store, err := openRankerStateStore(ctx, root)
+	if err != nil {
+		return LearningLogEntry{}, err
+	}
+	defer store.Close()
+	if err := store.recoverLocked(); err != nil {
+		return LearningLogEntry{}, err
+	}
+	weights, err := store.loadWeightsLocked()
+	if err != nil {
+		return LearningLogEntry{}, err
 	}
 
 	source := sanitizeLearningSource(req.Source)
@@ -354,6 +366,7 @@ func RecordVerifiedRankerEvidence(root string, req VerifiedRankerLearningRequest
 	resultID := sanitizeLearningCorrelationID("result", req.ResultID)
 	files, invalidPathCount := sanitizeLearningPaths(req.Files)
 	entry := LearningLogEntry{
+		RequestID: req.RequestID,
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Source:    source,
 		Action:    "no_op",
@@ -379,16 +392,24 @@ func RecordVerifiedRankerEvidence(root string, req VerifiedRankerLearningRequest
 		entry.Reason = sanitizeVerifiedLearningReason(req.Reason)
 	}
 
-	if err := appendLearningDecision(root, &entry); err != nil {
+	committedEntry, _, err := store.commitLocked(rankerStateChange{
+		entry:  entry,
+		before: weights,
+		after:  weights,
+	})
+	if err != nil {
+		if committedEntry.EventID != "" {
+			entry = committedEntry
+		}
 		return entry, err
 	}
 
-	return entry, nil
+	return committedEntry, nil
 }
 
 // RestoreLearnedWeightsFromLearningLog restores weights to the state captured
 // before the referenced learning event and appends a restore event.
-func RestoreLearnedWeightsFromLearningLog(root string, eventID string) (map[string]float64, LearningLogEntry, error) {
+func RestoreLearnedWeightsFromLearningLog(ctx context.Context, root string, eventID string, requestID string) (map[string]float64, LearningLogEntry, error) {
 	root = strings.TrimSpace(root)
 	eventID = strings.TrimSpace(eventID)
 
@@ -403,10 +424,21 @@ func RestoreLearnedWeightsFromLearningLog(root string, eventID string) (map[stri
 	if !learningGeneratedEventIDPattern.MatchString(eventID) {
 		return nil, LearningLogEntry{}, fmt.Errorf("learning event %q has invalid generated-id shape", eventID)
 	}
-
-	entries, err := ReadLearningLog(root)
+	store, err := openRankerStateStore(ctx, root)
 	if err != nil {
 		return nil, LearningLogEntry{}, err
+	}
+	defer store.Close()
+	if err := store.recoverLocked(); err != nil {
+		return nil, LearningLogEntry{}, err
+	}
+	logBytes, err := store.readLearningLogBytesLocked()
+	if err != nil {
+		return nil, LearningLogEntry{}, err
+	}
+	entries, err := parseCanonicalLearningLog(logBytes)
+	if err != nil {
+		return nil, LearningLogEntry{}, fmt.Errorf("read ranker learning log for rollback: %w", err)
 	}
 
 	var target *LearningLogEntry
@@ -429,45 +461,145 @@ func RestoreLearnedWeightsFromLearningLog(root string, eventID string) (map[stri
 	if !ok {
 		return nil, LearningLogEntry{}, fmt.Errorf("learning event %q has no rollback weights", eventID)
 	}
-
-	before, err := LoadLearnedWeights(root)
+	before, err := store.loadWeightsLocked()
 	if err != nil {
 		return nil, LearningLogEntry{}, err
 	}
-
-	if err := SaveLearnedWeights(root, restoreWeights); err != nil {
-		return nil, LearningLogEntry{}, err
-	}
-
-	after, err := LoadLearnedWeights(root)
-	if err != nil {
-		return nil, LearningLogEntry{}, err
-	}
-
-	beforeCopy := cloneWeights(before)
-	afterCopy := cloneWeights(after)
+	restoreWeights = canonicalLearnedWeights(restoreWeights)
 	restoreEntry := LearningLogEntry{
-		Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
-		Source:        "rollback",
-		Action:        "restore",
-		State:         LearningStateAccepted,
-		Reason:        LearningReasonRollbackRestore,
-		ResultID:      eventID,
-		BeforeWeights: &beforeCopy,
-		AfterWeights:  &afterCopy,
-		Rollback:      &LearningRollbackData{Weights: cloneWeights(before)},
+		RequestID: requestID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Source:    "rollback",
+		Action:    "restore",
+		State:     LearningStateAccepted,
+		Reason:    LearningReasonRollbackRestore,
+		ResultID:  eventID,
 		Evidence: &LearningEvidenceRef{
 			Kind:     "learning_event_rollback",
 			Verified: true,
 			ResultID: eventID,
 		},
 	}
-
-	if err := appendLearningDecision(root, &restoreEntry); err != nil {
-		return after, restoreEntry, err
+	committedEntry, replayed, err := store.commitLocked(rankerStateChange{
+		entry:           restoreEntry,
+		before:          before,
+		after:           restoreWeights,
+		materialize:     true,
+		captureSnapshot: true,
+	})
+	if err != nil {
+		if committedEntry.EventID != "" {
+			restoreEntry = committedEntry
+		}
+		return cloneWeights(restoreWeights), restoreEntry, err
+	}
+	if replayed {
+		return cloneWeights(before), committedEntry, nil
 	}
 
-	return after, restoreEntry, nil
+	return cloneWeights(restoreWeights), committedEntry, nil
+}
+
+// ApplyManualRankerNudge applies one CLI-requested decay-and-nudge cycle and
+// records the resulting state transition in the same durable transaction.
+func ApplyManualRankerNudge(ctx context.Context, root string, action string, files []string, note string, requestID string) (LearningLogEntry, map[string]float64, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return LearningLogEntry{}, nil, errors.New("workspace root is required for a manual ranker nudge")
+	}
+	action = normalizeLearningAction(action)
+	if action != "boost" && action != "penalize" {
+		return LearningLogEntry{}, nil, fmt.Errorf("manual ranker nudge action %q is unsupported", action)
+	}
+	files, _ = sanitizeLearningPaths(files)
+	if len(files) == 0 {
+		return LearningLogEntry{}, nil, errors.New("manual ranker nudge needs at least one valid file path")
+	}
+
+	store, err := openRankerStateStore(ctx, root)
+	if err != nil {
+		return LearningLogEntry{}, nil, err
+	}
+	defer store.Close()
+	if err := store.recoverLocked(); err != nil {
+		return LearningLogEntry{}, nil, err
+	}
+	before, err := store.loadWeightsLocked()
+	if err != nil {
+		return LearningLogEntry{}, nil, err
+	}
+
+	update := learnedWeightUpdate{}
+	if action == "boost" {
+		update.boost = files
+	} else {
+		update.penalty = files
+	}
+	after := applyLearnedWeightUpdate(before, update)
+	entry, replayed, err := store.commitLocked(rankerStateChange{
+		entry: LearningLogEntry{
+			RequestID: requestID,
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			Source:    "cli",
+			Action:    action,
+			State:     LearningStateAccepted,
+			Files:     files,
+			Note:      note,
+		},
+		before:          before,
+		after:           after,
+		materialize:     true,
+		captureSnapshot: true,
+	})
+	if err != nil {
+		return entry, cloneWeights(after), err
+	}
+	if replayed {
+		return entry, cloneWeights(before), nil
+	}
+
+	return entry, cloneWeights(after), nil
+}
+
+// ResetLearnedRankerWeights clears the learned materialization and records a
+// rollback-capable reset event atomically with that state transition.
+func ResetLearnedRankerWeights(ctx context.Context, root string, requestID string) (LearningLogEntry, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return LearningLogEntry{}, errors.New("workspace root is required to reset ranker weights")
+	}
+
+	store, err := openRankerStateStore(ctx, root)
+	if err != nil {
+		return LearningLogEntry{}, err
+	}
+	defer store.Close()
+	if err := store.recoverLocked(); err != nil {
+		return LearningLogEntry{}, err
+	}
+	before, err := store.loadWeightsLocked()
+	if err != nil {
+		return LearningLogEntry{}, err
+	}
+
+	entry, _, err := store.commitLocked(rankerStateChange{
+		entry: LearningLogEntry{
+			RequestID: requestID,
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			Source:    "cli",
+			Action:    "reset",
+			State:     LearningStateAccepted,
+		},
+		before:          before,
+		after:           map[string]float64{},
+		materialize:     true,
+		captureSnapshot: true,
+	})
+	if err != nil {
+		return entry, err
+	}
+
+	return entry, nil
 }
 
 func RankerLearningDisabled() bool {
@@ -477,18 +609,6 @@ func RankerLearningDisabled() bool {
 	default:
 		return false
 	}
-}
-
-func appendLearningDecision(root string, entry *LearningLogEntry) error {
-	if entry == nil {
-		return errors.New("learning decision entry is nil")
-	}
-
-	if entry.EventID == "" {
-		entry.EventID = learningEventID(*entry)
-	}
-
-	return AppendLearningLog(root, *entry)
 }
 
 func learningEvidenceRef(req VerifiedRankerLearningRequest, files []string, invalidPathCount int) *LearningEvidenceRef {
@@ -589,7 +709,7 @@ func sanitizeLearningMetrics(metrics map[string]float64) map[string]float64 {
 	}
 
 	out := make(map[string]float64, len(metrics))
-	unknownCount := 0
+	unknownCount := float64(0)
 
 	for key, value := range metrics {
 		if value != value {
@@ -602,7 +722,11 @@ func sanitizeLearningMetrics(metrics map[string]float64) map[string]float64 {
 		}
 
 		if safeKey == "unknown" {
-			unknownCount++
+			if normalizeLearningLogToken(key) == "unknown" && value > 0 {
+				unknownCount += value
+			} else {
+				unknownCount++
+			}
 			continue
 		}
 
@@ -610,7 +734,7 @@ func sanitizeLearningMetrics(metrics map[string]float64) map[string]float64 {
 	}
 
 	if unknownCount > 0 {
-		out["unknown"] = float64(unknownCount)
+		out["unknown"] = unknownCount
 	}
 
 	return out
@@ -631,34 +755,147 @@ func cloneWeights(in map[string]float64) map[string]float64 {
 }
 
 func learningEventID(entry LearningLogEntry) string {
-	h := sha256.New()
-	h.Write([]byte(entry.Timestamp))
-	h.Write([]byte{0})
-	h.Write([]byte(entry.Source))
-	h.Write([]byte{0})
-	h.Write([]byte(entry.Action))
-	h.Write([]byte{0})
-	h.Write([]byte(entry.State))
-	h.Write([]byte{0})
-	h.Write([]byte(entry.Reason))
-	h.Write([]byte{0})
+	entry.EventID = ""
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(append([]byte("ranker-event\x00"), encoded...))
 
-	for _, value := range []string{entry.TaskID, entry.CorpusID, entry.ResultID} {
+	return "ranker_" + hex.EncodeToString(sum[:8])
+}
+
+func canonicalLearningRequestID(requestID string, entry LearningLogEntry) string {
+	if requestID = sanitizeLearningCorrelationID("request", requestID); requestID != "" {
+		return requestID
+	}
+	sum := sha256.Sum256([]byte("ranker-request\x00" + learningRequestFingerprint(entry)))
+
+	return "request_" + hex.EncodeToString(sum[:8])
+}
+
+func learningRequestFingerprint(entry LearningLogEntry) string {
+	h := sha256.New()
+	for _, value := range []string{
+		entry.Source,
+		entry.Action,
+		entry.State,
+		entry.Reason,
+		strconv.FormatFloat(entry.Score, 'g', -1, 64),
+		entry.TaskID,
+		entry.CorpusID,
+		entry.ResultID,
+		entry.Note,
+	} {
 		h.Write([]byte(value))
 		h.Write([]byte{0})
 	}
-
 	files := append([]string(nil), entry.Files...)
 	slices.Sort(files)
-
 	for _, file := range files {
 		h.Write([]byte(file))
 		h.Write([]byte{0})
 	}
+	for _, value := range []any{entry.Evidence, entry.Verification} {
+		encoded, _ := json.Marshal(value)
+		h.Write(encoded)
+		h.Write([]byte{0})
+	}
 
-	sum := h.Sum(nil)
+	return hex.EncodeToString(h.Sum(nil))
+}
 
-	return "ranker_" + hex.EncodeToString(sum[:8])
+func validateLearningLogEntrySemantics(entry LearningLogEntry) error {
+	if entry.RequestID == "" {
+		return errors.New("learning-log entry is missing its stable request id")
+	}
+	if entry.EventID == "" || entry.EventID != learningEventID(entry) {
+		return errors.New("learning-log event id does not match its canonical record")
+	}
+	if entry.Source == "" || entry.Action == "" || entry.State == "" {
+		return errors.New("learning-log entry is missing its source, action, or state")
+	}
+	if entry.Action == "restore" {
+		if entry.State != LearningStateAccepted || entry.Source != "rollback" || entry.Reason != LearningReasonRollbackRestore ||
+			entry.Evidence == nil || entry.Evidence.Kind != "learning_event_rollback" || !entry.Evidence.Verified ||
+			entry.ResultID == "" || entry.Evidence.ResultID != entry.ResultID {
+			return errors.New("ranker restore event is missing its rollback authority")
+		}
+	}
+	if entry.Action == "reset" && (entry.State != LearningStateAccepted || entry.Source != "cli") {
+		return errors.New("ranker reset event is missing its CLI authority")
+	}
+
+	hasBefore := entry.BeforeWeights != nil
+	hasAfter := entry.AfterWeights != nil
+	hasRollback := entry.Rollback != nil
+	if hasBefore != hasAfter || hasBefore != hasRollback {
+		return errors.New("learning-log weight snapshots must be present or absent together")
+	}
+	if !hasBefore {
+		if learningEntryRequiresMaterialization(entry) {
+			return errors.New("materializing learning-log entry is missing weight snapshots")
+		}
+		return nil
+	}
+
+	before := canonicalLearnedWeights(*entry.BeforeWeights)
+	after := canonicalLearnedWeights(*entry.AfterWeights)
+	rollback := canonicalLearnedWeights(entry.Rollback.Weights)
+	if !weightsEqual(*entry.BeforeWeights, before) ||
+		!weightsEqual(*entry.AfterWeights, after) ||
+		!weightsEqual(entry.Rollback.Weights, rollback) {
+		return errors.New("learning-log entry contains noncanonical weight snapshots")
+	}
+	if !weightsEqual(rollback, before) {
+		return errors.New("learning-log rollback snapshot does not match before weights")
+	}
+
+	switch {
+	case entry.State != LearningStateAccepted:
+		if !weightsEqual(after, before) {
+			return errors.New("rejected learning-log entry changes weights")
+		}
+	case entry.Action == "boost" || entry.Action == "penalize":
+		if len(entry.Files) == 0 {
+			return errors.New("ranker weight update has no canonical file targets")
+		}
+		update := learnedWeightUpdate{}
+		if entry.Action == "boost" {
+			update.boost = entry.Files
+		} else {
+			update.penalty = entry.Files
+		}
+		if !weightsEqual(after, applyLearnedWeightUpdate(before, update)) {
+			return errors.New("learning-log weight transition does not match its action")
+		}
+	case entry.Action == "reset":
+		if len(after) != 0 {
+			return errors.New("ranker reset event has nonbaseline after weights")
+		}
+	case entry.Action == "no_op":
+		if !weightsEqual(after, before) {
+			return errors.New("ranker no-op event changes weights")
+		}
+	}
+
+	return nil
+}
+
+func learningEntryRequiresMaterialization(entry LearningLogEntry) bool {
+	if entry.State != LearningStateAccepted {
+		return false
+	}
+	switch entry.Action {
+	case "boost", "penalize", "reset", "restore":
+		return true
+	default:
+		return false
+	}
+}
+
+func learningEntryCapturesSnapshot(entry LearningLogEntry) bool {
+	return entry.BeforeWeights != nil && entry.AfterWeights != nil && entry.Rollback != nil
 }
 
 func firstNonEmptyStrings(primary []string, fallback []string) []string {
@@ -740,165 +977,94 @@ func learningLogVerificationEvidence(ve *VerificationEvidence) *LearningLogVerif
 // --- merged from learned_weights.go ---
 
 const (
-	LearnedWeightBaseline   = 1.0
-	LearnedWeightDecay      = 0.95
-	LearnedWeightMax        = 3.0
-	LearnedWeightMin        = 0.30
-	LearnedWeightBoost      = 0.15
-	LearnedWeightPenalty    = 0.10
-	learnedWeightsFileName  = "weights.json"
-	learnedWeightsDirSuffix = "ranker"
+	LearnedWeightBaseline = 1.0
+	LearnedWeightDecay    = 0.95
+	LearnedWeightMax      = 3.0
+	LearnedWeightMin      = 0.30
+	LearnedWeightBoost    = 0.15
+	LearnedWeightPenalty  = 0.10
 )
 
-func learnedWeightsPath(root string) string {
-	return filepath.Join(root, ".idiom", learnedWeightsDirSuffix, learnedWeightsFileName)
-}
-
-// LoadLearnedWeights reads the persisted per-file relevance multipliers from
-// .idiom/ranker/weights.json. Returns an empty map if the file is missing or
-// malformed; the caller treats every absent entry as the baseline 1.0.
-func LoadLearnedWeights(root string) (map[string]float64, error) {
-	path := learnedWeightsPath(root)
-
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return map[string]float64{}, nil
-		}
-
-		return nil, err
-	}
-
+// ParsePersistedLearnedWeights validates the canonical on-disk representation
+// written by rankerStateStore. It rejects keys or multipliers that the ranker
+// owner would normalize, clamp, or discard so integrity audits do not report a
+// different effective state from the runtime.
+func ParsePersistedLearnedWeights(raw []byte) (map[string]float64, error) {
 	var parsed map[string]float64
-
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return map[string]float64{}, nil
+	if err := json.Unmarshal(raw, &parsed); err != nil || parsed == nil {
+		return nil, errors.New("learned weights must be a JSON object of numeric multipliers")
+	}
+	if len(parsed) == 0 {
+		return nil, errors.New("baseline learned weights must be represented by a missing file")
 	}
 
 	out := make(map[string]float64, len(parsed))
-	for k, v := range parsed {
-		key := normalizeWeightKey(k)
-		if key == "" {
-			continue
+	for key, multiplier := range parsed {
+		normalized := normalizeWeightKey(key)
+		clamped := clampLearnedWeight(multiplier)
+		if normalized == "" || normalized != key || clamped != multiplier || absDiff(clamped, LearnedWeightBaseline) < 1e-9 {
+			return nil, errors.New("learned weights contain a noncanonical key or multiplier")
 		}
 
-		out[key] = clampLearnedWeight(v)
+		out[normalized] = clamped
+	}
+	canonical, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, errors.New("learned weights could not be canonically encoded")
+	}
+	canonical = append(canonical, '\n')
+	if !bytes.Equal(raw, canonical) {
+		return nil, errors.New("learned weights do not use the canonical persisted encoding")
 	}
 
 	return out, nil
 }
 
-// SaveLearnedWeights writes the map back to disk, dropping no-op entries
-// (those that have decayed back to within 1e-9 of the baseline). The write
-// is atomic via a temp file + rename so concurrent readers never see a
-// partially-written file.
-func SaveLearnedWeights(root string, weights map[string]float64) error {
-	cleaned := make(map[string]float64, len(weights))
-	for k, v := range weights {
-		key := normalizeWeightKey(k)
-		if key == "" {
-			continue
-		}
-
-		clamped := clampLearnedWeight(v)
-		if absDiff(clamped, LearnedWeightBaseline) < 1e-9 {
-			continue
-		}
-
-		cleaned[key] = clamped
-	}
-
-	path := learnedWeightsPath(root)
-	if len(cleaned) == 0 {
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-
-		return nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	keys := make([]string, 0, len(cleaned))
-	for k := range cleaned {
-		keys = append(keys, k)
-	}
-
-	slices.Sort(keys)
-
-	sorted := make(map[string]float64, len(cleaned))
-	for _, k := range keys {
-		sorted[k] = cleaned[k]
-	}
-
-	encoded, err := json.MarshalIndent(sorted, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".weights-*.json.tmp")
-	if err != nil {
-		return err
-	}
-
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(append(encoded, '\n')); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-
-		return err
-	}
-
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-
-	return nil
-}
-
-// UpdateLearnedWeightsOptions is the input shape for one tick of the
-// learning loop. Boosted paths nudge upward, penalised paths nudge downward,
-// and every existing entry decays toward baseline so old signals fade.
-type UpdateLearnedWeightsOptions struct {
-	Boost   []string
-	Penalty []string
-	// BoostAmount and PenaltyAmount are optional; zero values use the package
-	// constants.
-	BoostAmount   float64
-	PenaltyAmount float64
-}
-
-// UpdateLearnedWeights applies one decay-then-nudge cycle and persists the
-// result. Returns the new weights map.
-func UpdateLearnedWeights(root string, opts UpdateLearnedWeightsOptions) (map[string]float64, error) {
-	weights, err := LoadLearnedWeights(root)
+// LoadLearnedWeights recovers any interrupted ranker transaction, then returns
+// weights only when their canonical materialization matches the learning log.
+// A missing weights file represents the baseline; malformed or divergent state
+// fails closed.
+func LoadLearnedWeights(ctx context.Context, root string) (map[string]float64, error) {
+	store, err := openRankerStateStore(ctx, root)
 	if err != nil {
 		return nil, err
 	}
+	defer store.Close()
+	if err := store.recoverLocked(); err != nil {
+		return nil, err
+	}
+
+	weights, _, _, err := store.loadConsistentRankerStateLocked()
+	return weights, err
+}
+
+// learnedWeightUpdate is the private in-memory transformation used by ranker
+// transactions. Persistence and audit ordering remain owned by rankerStateStore.
+type learnedWeightUpdate struct {
+	boost         []string
+	penalty       []string
+	boostAmount   float64
+	penaltyAmount float64
+}
+
+func applyLearnedWeightUpdate(before map[string]float64, update learnedWeightUpdate) map[string]float64 {
+	weights := cloneWeights(before)
 
 	for k, v := range weights {
 		weights[k] = clampLearnedWeight(LearnedWeightBaseline + (v-LearnedWeightBaseline)*LearnedWeightDecay)
 	}
 
-	boostAmount := opts.BoostAmount
+	boostAmount := update.boostAmount
 	if boostAmount <= 0 {
 		boostAmount = LearnedWeightBoost
 	}
 
-	penaltyAmount := opts.PenaltyAmount
+	penaltyAmount := update.penaltyAmount
 	if penaltyAmount <= 0 {
 		penaltyAmount = LearnedWeightPenalty
 	}
 
-	for _, p := range opts.Boost {
+	for _, p := range update.boost {
 		key := normalizeWeightKey(p)
 		if key == "" {
 			continue
@@ -912,7 +1078,7 @@ func UpdateLearnedWeights(root string, opts UpdateLearnedWeightsOptions) (map[st
 		weights[key] = clampLearnedWeight(current + boostAmount)
 	}
 
-	for _, p := range opts.Penalty {
+	for _, p := range update.penalty {
 		key := normalizeWeightKey(p)
 		if key == "" {
 			continue
@@ -926,11 +1092,7 @@ func UpdateLearnedWeights(root string, opts UpdateLearnedWeightsOptions) (map[st
 		weights[key] = clampLearnedWeight(current - penaltyAmount)
 	}
 
-	if err := SaveLearnedWeights(root, weights); err != nil {
-		return nil, err
-	}
-
-	return LoadLearnedWeights(root)
+	return canonicalLearnedWeights(weights)
 }
 
 func clampLearnedWeight(v float64) float64 {

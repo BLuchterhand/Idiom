@@ -29,7 +29,6 @@ import (
 	"idiom/internal/workflows/featureplannerproduct"
 	"idiom/internal/workflows/featureplannerruntime"
 	coreplanexecute "idiom/internal/workflows/planexecute"
-	"idiom/internal/workflows/productworkflow"
 )
 
 type featurePlannerOptions struct {
@@ -193,14 +192,12 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 		return nil, nil
 	}
 
-	root := filepath.Clean(effortRoot)
-
-	handoff, err := productworkflow.LoadImplementationHandoff(root)
+	brief, err := featureplannerproduct.LoadBriefFromEffort(filepath.Clean(effortRoot))
 	if err != nil {
 		return nil, err
 	}
 
-	return featureplannerproduct.BriefFromImplementationHandoff(handoff), nil
+	return brief, nil
 }
 
 func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {
@@ -224,6 +221,9 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	if pwBrief != nil {
 		if err := validateFeaturePlannerProductContext(req, state, *pwBrief); err != nil {
 			return featurePlannerResult{}, err
+		}
+		if err := featureplanner.BindProductTaskIdentity(&state, pwBrief.TaskID); err != nil {
+			return featurePlannerResult{}, fmt.Errorf("feature-planner product workflow context mismatch: %w", err)
 		}
 
 		state.EffortRoot = strings.TrimSpace(effortRoot)
@@ -257,6 +257,11 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	})
 	if err != nil {
 		return featurePlannerResult{}, err
+	}
+	if pwBrief != nil {
+		if _, err := featureplannerproduct.FinalizeSourceSatisfiedDeliveryFromFeatureState(pwBrief, result.State); err != nil {
+			return featurePlannerResult{}, fmt.Errorf("record product source-satisfied delivery: %w", err)
+		}
 	}
 
 	if req.JSONEvents {
@@ -354,7 +359,6 @@ func validateFeaturePlannerProductContext(req featurePlannerRequest, state featu
 	if stateEffortID != "" && briefEffortID != "" && stateEffortID != briefEffortID {
 		return fmt.Errorf("feature-planner product workflow context mismatch: resumed state effort_id %q but effort root loaded %q", stateEffortID, briefEffortID)
 	}
-
 	return nil
 }
 
@@ -408,7 +412,11 @@ func defaultFeaturePlannerPlanExecute(ctx context.Context, req featurePlannerReq
 		return "", fmt.Errorf("plan-execute atom dispatch is unavailable")
 	}
 
-	planExecuteSessionID := featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt)
+	binding, err := featureplanner.ParsePlanExecuteInvocationBinding(prompt)
+	if err != nil {
+		return "", err
+	}
+	planExecuteSessionID := binding.SessionID
 	opts := coreplanexecute.Options{
 		Context:                   ctx,
 		ConfigPath:                configPath,
@@ -433,6 +441,7 @@ func defaultFeaturePlannerPlanExecute(ctx context.Context, req featurePlannerReq
 		completion := featureplanner.PlanExecuteCompletionSummaryFromOutput(planStdout.String())
 		completion = mergeFeaturePlannerPlanExecuteRunCompletion(completion, result)
 		completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion, startedAt)
+		completion = binding.CorrelateCompletion(completion)
 
 		return result.ExitCode, completion
 	}
@@ -538,7 +547,14 @@ func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID s
 	}
 
 	record, path, found, err := coreplanexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
-	if err != nil || !found {
+	if err != nil {
+		summary.Status = "failed"
+		summary.FailureKind = string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed)
+		summary.FailureReason = "load plan-execute terminal completion: " + err.Error()
+
+		return summary
+	}
+	if !found {
 		return summary
 	}
 	if !featurePlannerPlanExecuteTerminalCompletionFresh(root, record, path, invocationStartedAt) {

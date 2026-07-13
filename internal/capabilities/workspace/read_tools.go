@@ -5,8 +5,9 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -28,32 +29,25 @@ type listedEntry struct {
 const listFilesDisplayCap = 80
 const defaultLogReadLineCap = 80
 
-func (m *Manager) listFiles(_ context.Context, req ToolRequest) ToolResult {
-	base, err := m.pathAccess.ResolveReadPath(defaultString(req.Path, "."), req.Workdir)
+func (m *Manager) listFiles(ctx context.Context, req ToolRequest) ToolResult {
+	capability, err := m.pathAccess.openReadCapability(ctx, req.executionSessionIdentity, defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to resolve path", Error: err.Error()}
-		if strings.TrimSpace(req.Path) != "" {
-			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
-		}
-
-		return result
-	}
-
-	info, err := os.Stat(base)
-	if err != nil {
-		errMsg := err.Error()
+		errText := err.Error()
 		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
-			errMsg = fmt.Sprintf("directory %q does not exist in this workspace. (os: %s)", req.Path, err.Error())
+			errText = fmt.Sprintf("directory %q does not exist in this workspace. (os: %s)", req.Path, err.Error())
 		}
-
-		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to stat path", Error: errMsg}
+		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to resolve path", Error: errText}
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
 
 		return result
 	}
-	if req.Recursive && m.pathAccess.SelectedSystemSearchDirectoryAccess(base, info) {
+	defer capability.Close()
+	base := capability.Path()
+
+	info := capability.Info()
+	if req.Recursive && capability.SelectedDirectoryOnly() {
 		return selectedSystemSearchDirectoryDeniedResult(ToolNameListFiles, m.pathAccess.DisplayPath(base))
 	}
 
@@ -72,7 +66,7 @@ func (m *Manager) listFiles(_ context.Context, req ToolRequest) ToolResult {
 	if !info.IsDir() {
 		_ = appendEntry(base, false)
 	} else if !req.Recursive {
-		children, err := os.ReadDir(base)
+		children, err := capability.ReadDir(".")
 		if err != nil {
 			return ToolResult{Tool: ToolNameListFiles, Summary: "Failed to read directory", Error: err.Error()}
 		}
@@ -91,36 +85,48 @@ func (m *Manager) listFiles(_ context.Context, req ToolRequest) ToolResult {
 			}
 		}
 	} else {
-		rootDepth := strings.Count(filepath.Clean(base), string(filepath.Separator))
-
-		_ = filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		rootFS, err := capability.FS()
+		if err != nil {
+			return ToolResult{Tool: ToolNameListFiles, Summary: "Failed to read directory", Error: err.Error()}
+		}
+		walkErr := fs.WalkDir(rootFS, ".", func(relative string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
+			entryPath := base
+			if relative != "." {
+				entryPath = filepath.Join(base, filepath.FromSlash(relative))
+			}
 
-			depth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - rootDepth
+			depth := pathDepth(relative)
 			if depth > maxDepth {
 				if d.IsDir() {
-					return filepath.SkipDir
+					return fs.SkipDir
 				}
 
 				return nil
 			}
 
-			if m.shouldSkipListEntry(base, path, d.IsDir()) {
+			if m.shouldSkipListEntry(base, entryPath, d.IsDir()) {
 				if d.IsDir() {
-					return filepath.SkipDir
+					return fs.SkipDir
 				}
 
 				return nil
 			}
 
-			if !appendEntry(path, d.IsDir()) {
-				return filepath.SkipAll
+			if !appendEntry(entryPath, d.IsDir()) {
+				return fs.SkipAll
 			}
 
 			return nil
 		})
+		if walkErr != nil {
+			return ToolResult{Tool: ToolNameListFiles, Summary: "Failed to read directory", Error: walkErr.Error()}
+		}
+	}
+	if err := capability.Validate(); err != nil {
+		return ToolResult{Tool: ToolNameListFiles, Summary: "Read target changed while listing", Error: err.Error()}
 	}
 
 	m.sortExploreListEntries(entries)
@@ -274,17 +280,23 @@ func (m *Manager) exploreListPriority(entry listedEntry) int {
 	return 4
 }
 
-func (m *Manager) searchFiles(_ context.Context, req ToolRequest) ToolResult {
-	base, err := m.pathAccess.ResolveReadPath(defaultString(req.Path, "."), req.Workdir)
+func (m *Manager) searchFiles(ctx context.Context, req ToolRequest) ToolResult {
+	requestPath := defaultString(req.Path, ".")
+	capability, err := m.pathAccess.openReadCapability(ctx, req.executionSessionIdentity, requestPath, req.Workdir)
 	if err != nil {
-		if resolved, ok := resolveUserGlobalConversationLogSearchPath(defaultString(req.Path, ".")); ok {
-			base = resolved
+		if resolved, ok := resolveUserGlobalConversationLogSearchPath(requestPath); ok {
+			capability, err = m.pathAccess.openTrustedReadCapability(ctx, resolved)
 		} else {
 			return ToolResult{Tool: ToolNameSearchFiles, Summary: "Failed to resolve path", Error: err.Error()}
 		}
 	}
+	if err != nil {
+		return ToolResult{Tool: ToolNameSearchFiles, Summary: "Failed to resolve path", Error: err.Error()}
+	}
+	defer capability.Close()
+	base := capability.Path()
 
-	if info, statErr := os.Stat(base); statErr == nil && m.pathAccess.SelectedSystemSearchDirectoryAccess(base, info) {
+	if capability.SelectedDirectoryOnly() {
 		return selectedSystemSearchDirectoryDeniedResult(ToolNameSearchFiles, m.pathAccess.DisplayPath(base))
 	}
 
@@ -310,42 +322,45 @@ func (m *Manager) searchFiles(_ context.Context, req ToolRequest) ToolResult {
 	query := strings.ToLower(pattern)
 	includeLogDirs := searchIntentTargetsLogs(req.Path, pattern, req.Glob)
 	explicitHiddenRoot := searchFilesExplicitHiddenRoot(req.Path)
-	rootDepth := strings.Count(filepath.Clean(base), string(filepath.Separator))
 
 	var matches []searchFileMatch
 
-	_ = filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+	visit := func(relative string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		entryPath := base
+		if relative != "." {
+			entryPath = filepath.Join(base, filepath.FromSlash(relative))
+		}
 
 		if d.IsDir() {
-			if m.shouldSkipSearchEntry(base, path, true, includeLogDirs, explicitHiddenRoot) {
-				return filepath.SkipDir
+			if m.shouldSkipSearchEntry(base, entryPath, true, includeLogDirs, explicitHiddenRoot) {
+				return fs.SkipDir
 			}
 
-			depth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - rootDepth
+			depth := pathDepth(relative)
 			if depth > maxDepth {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 
 			return nil
 		}
 
-		if m.shouldSkipSearchEntry(base, path, false, includeLogDirs, explicitHiddenRoot) {
+		if m.shouldSkipSearchEntry(base, entryPath, false, includeLogDirs, explicitHiddenRoot) {
 			return nil
 		}
 
-		rel := strings.ToLower(m.pathAccess.DisplayPath(path))
-		name := strings.ToLower(filepath.Base(path))
+		rel := strings.ToLower(m.pathAccess.DisplayPath(entryPath))
+		name := strings.ToLower(filepath.Base(entryPath))
 
 		if !matchesSearchFilePattern(rel, name, query) {
 			return nil
 		}
 
 		match := searchFileMatch{
-			path:    path,
-			display: m.pathAccess.DisplayPath(path),
+			path:    entryPath,
+			display: m.pathAccess.DisplayPath(entryPath),
 		}
 		if info, err := d.Info(); err == nil {
 			match.modTime = info.ModTime()
@@ -354,11 +369,28 @@ func (m *Manager) searchFiles(_ context.Context, req ToolRequest) ToolResult {
 
 		matches = append(matches, match)
 		if !includeLogDirs && len(matches) >= m.cfg.MaxDirectoryEntries {
-			return filepath.SkipAll
+			return fs.SkipAll
 		}
 
 		return nil
-	})
+	}
+	if capability.Info().IsDir() {
+		rootFS, fsErr := capability.FS()
+		if fsErr != nil {
+			return ToolResult{Tool: ToolNameSearchFiles, Summary: "File search failed", Error: fsErr.Error()}
+		}
+		if walkErr := fs.WalkDir(rootFS, ".", visit); walkErr != nil {
+			return ToolResult{Tool: ToolNameSearchFiles, Summary: "File search failed", Error: walkErr.Error()}
+		}
+	} else {
+		entry := fs.FileInfoToDirEntry(capability.Info())
+		if visit(".", entry, nil) != nil {
+			return ToolResult{Tool: ToolNameSearchFiles, Summary: "File search failed", Error: "failed to inspect selected file"}
+		}
+	}
+	if err := capability.Validate(); err != nil {
+		return ToolResult{Tool: ToolNameSearchFiles, Summary: "Read target changed while searching", Error: err.Error()}
+	}
 
 	if len(matches) == 0 {
 		// Zero-hit enrichment: the pattern didn't match any path, but
@@ -690,6 +722,7 @@ func searchFilesPattern(req ToolRequest) (pattern string, interpreted string) {
 }
 
 func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
+	mutationEpoch := m.MutationEpoch()
 	path, description, err := m.resolveReadTarget(req)
 	if err != nil {
 		if recoveredPath, ok := m.closestRecoverableReadPath(req.Path, req.Workdir); ok {
@@ -719,9 +752,43 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 		return result
 	}
 
-	data, err := os.ReadFile(path)
+	capability, err := m.pathAccess.openReadCapability(ctx, req.executionSessionIdentity, path, "")
+	if err != nil {
+		if trusted, ok := resolveUserGlobalConversationLogReadPath(path); ok && filepath.Clean(trusted) == filepath.Clean(path) {
+			capability, err = m.pathAccess.openTrustedReadCapability(ctx, path)
+		}
+	}
+	if err != nil {
+		errText := readFileRecoveryError(err.Error())
+		if os.IsNotExist(err) {
+			if recoveredErr, ok := m.missingReadParentRecoveryError(req, err.Error()); ok {
+				errText = recoveredErr
+			}
+		}
+		result := ToolResult{Tool: ToolNameReadFile, Summary: "Failed to open file", Error: errText}
+		if strings.TrimSpace(req.Path) != "" {
+			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
+		}
+		return result
+	}
+	defer capability.Close()
+	path = capability.Path()
+	userRequestedRange := req.StartLine > 0 || req.EndLine > 0
+	artifactKind := classifyReadArtifact(m.pathAccess.DisplayPath(path))
+	logLike := artifactKind == readArtifactLog
+	if userRequestedRange {
+		return m.readFileLineWindow(ctx, req, capability, path, description, logLike, mutationEpoch)
+	}
+	readLimit := m.cfg.MaxFileBytes
+	if readLimit <= 0 {
+		readLimit = workspaceSnapshotDefaultBodyByteLimit
+	}
+	data, err := capability.ReadAllLimit(ctx, readLimit)
 	if err != nil {
 		errMsg := readFileRecoveryError(err.Error())
+		if errors.Is(err, errWorkspaceReadLimitExceeded) {
+			errMsg = fmt.Sprintf("file exceeds configured read byte limit %d", readLimit)
+		}
 		if os.IsNotExist(err) {
 			if recoveredErr, ok := m.missingReadParentRecoveryError(req, err.Error()); ok {
 				errMsg = recoveredErr
@@ -740,15 +807,7 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 		return result
 	}
 
-	logLike := isLogLikePath(m.pathAccess.DisplayPath(path))
-	userRequestedRange := req.StartLine > 0 || req.EndLine > 0
 	openEndedLogRange := logLike && userRequestedRange && req.EndLine <= 0
-
-	if !userRequestedRange && logLike {
-		if result, ok := m.readLogTail(path, description, defaultLogReadLineCap); ok {
-			return result
-		}
-	}
 
 	lines := textutil.SplitWorkspaceFileLines(data)
 	start := req.StartLine
@@ -793,19 +852,26 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 	if len(lines) == 0 {
 		displayPath := m.pathAccess.DisplayPath(path)
 		m.MarkPathObserved(displayPath)
-
-		return ToolResult{
+		result := ToolResult{
 			Tool:    ToolNameReadFile,
 			Summary: fmt.Sprintf("Read %s lines 0-0 (total lines: 0)", description),
 			Output:  "",
 			Paths:   []string{displayPath},
-			Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-				Path:       displayPath,
-				StartLine:  0,
-				EndLine:    0,
-				TotalLines: 0,
-			}),
 		}
+		if logLike {
+			if bindErr := m.attachDiagnosticLogReadFacts(&result, capability, 0, 0, 0, false); bindErr != nil {
+				return ToolResult{Tool: ToolNameReadFile, Summary: "Failed to bind diagnostic-log read evidence", Error: bindErr.Error()}
+			}
+			return result
+		}
+		window, bindErr := m.sourceWindowFromReadCapability(capability, data, 0, 0, false, mutationEpoch)
+		if bindErr != nil && m.pathAccess.PathWithinWorkspace(path) {
+			return ToolResult{Tool: ToolNameReadFile, Summary: "Failed to bind source window", Error: bindErr.Error()}
+		}
+		if bindErr == nil && !logLike {
+			attachWorkspaceSourceWindows(&result, window)
+		}
+		return result
 	}
 
 	start, end, clampedToFileBounds := textutil.ClampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
@@ -816,7 +882,7 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 	truncated := false
 	tailRead := false
 
-	if !userRequestedRange && isLogLikePath(m.pathAccess.DisplayPath(path)) && len(lines) > defaultLogReadLineCap {
+	if !userRequestedRange && artifactKind == readArtifactLog && len(lines) > defaultLogReadLineCap {
 		start = len(lines) - defaultLogReadLineCap + 1
 		if start < 1 {
 			start = 1
@@ -834,7 +900,9 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 	for i := start - 1; i < end && i < len(lines); i++ {
 		line := lines[i]
 		if logLike {
-			line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, lineTruncationMarker)
+			completeLine := strings.TrimRight(line, "\r\n")
+			line = textutil.TruncateBytes(completeLine, defaultLogLineCharCap, lineTruncationMarker)
+			truncated = truncated || line != completeLine
 		}
 
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
@@ -859,19 +927,123 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 		summary += fmt.Sprintf(" (total lines: %d)", len(lines))
 	}
 
-	return ToolResult{
+	result := ToolResult{
 		Tool:    ToolNameReadFile,
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:       displayPath,
-			StartLine:  start,
-			EndLine:    end,
-			TotalLines: len(lines),
-			Truncated:  tailRead || openEndedLogRange || truncated,
-		}),
 	}
+	if logLike {
+		if bindErr := m.attachDiagnosticLogReadFacts(&result, capability, start, end, len(lines), tailRead || openEndedLogRange || truncated); bindErr != nil {
+			return ToolResult{Tool: ToolNameReadFile, Summary: "Failed to bind diagnostic-log read evidence", Error: bindErr.Error()}
+		}
+		return result
+	}
+	window, bindErr := m.sourceWindowFromReadCapability(capability, data, start, end, tailRead || openEndedLogRange || truncated, mutationEpoch)
+	if bindErr != nil && m.pathAccess.PathWithinWorkspace(path) {
+		return ToolResult{Tool: ToolNameReadFile, Summary: "Failed to bind source window", Error: bindErr.Error()}
+	}
+	if bindErr == nil && !logLike {
+		attachWorkspaceSourceWindows(&result, window)
+	}
+	return result
+}
+
+func (m *Manager) readFileLineWindow(
+	ctx context.Context,
+	req ToolRequest,
+	capability *workspaceReadCapability,
+	path string,
+	description string,
+	logLike bool,
+	mutationEpoch uint64,
+) ToolResult {
+	start := req.StartLine
+	end := req.EndLine
+	requestedStart := start
+	requestedEnd := end
+	rangeWasSwapped := false
+	if start > 0 && end > 0 && start > end {
+		start, end = end, start
+		requestedStart, requestedEnd = start, end
+		rangeWasSwapped = true
+	}
+	if start <= 0 {
+		start = 1
+	}
+	openEndedLogRange := logLike && req.EndLine <= 0
+	windowLimit := m.cfg.MaxFileBytes
+	if windowLimit <= 0 {
+		windowLimit = workspaceSnapshotDefaultBodyByteLimit
+	}
+	maxWindowLines := 0
+	if openEndedLogRange {
+		maxWindowLines = defaultLogReadLineCap
+	}
+	read, err := capability.ReadLineWindow(ctx, start, end, windowLimit, maxWindowLines)
+	if err != nil {
+		errMsg := readFileRecoveryError(err.Error())
+		if errors.Is(err, errWorkspaceReadLimitExceeded) {
+			errMsg = fmt.Sprintf("requested line window exceeds configured read byte limit %d", windowLimit)
+		}
+		return ToolResult{Tool: ToolNameReadFile, Summary: "Failed to read file", Error: errMsg}
+	}
+
+	var output strings.Builder
+	outputTruncated := false
+	if read.totalLines > 0 {
+		for index, line := range strings.Split(string(read.body), "\n") {
+			if logLike {
+				completeLine := strings.TrimRight(line, "\r")
+				line = textutil.TruncateBytes(completeLine, defaultLogLineCharCap, lineTruncationMarker)
+				outputTruncated = outputTruncated || line != completeLine
+			}
+			fmt.Fprintf(&output, "%d:%s\n", read.startLine+index, line)
+		}
+	}
+	formattedOutput := strings.TrimRight(output.String(), "\n")
+	if m.cfg.MaxOutputBytes > 0 && len(formattedOutput) > m.cfg.MaxOutputBytes {
+		return ToolResult{
+			Tool: ToolNameReadFile, Summary: "Failed to format file window",
+			Error: fmt.Sprintf("formatted line window exceeds configured output byte limit %d", m.cfg.MaxOutputBytes),
+		}
+	}
+	displayPath := m.pathAccess.DisplayPath(path)
+	m.MarkPathObserved(displayPath)
+	if read.totalLines > 0 {
+		m.writeGuard.ClearEditRecoveryAfterRead(path, read.startLine, read.endLine)
+	}
+	summary := fmt.Sprintf("Read %s lines %d-%d", description, read.startLine, read.endLine)
+	if read.totalLines == 0 {
+		summary += " (total lines: 0)"
+	} else if openEndedLogRange {
+		summary += fmt.Sprintf(" (file has %d lines total; open-ended log range capped to %d lines; pass an explicit end_line for a different bounded window)", read.totalLines, defaultLogReadLineCap)
+	} else if read.clamped {
+		summary += fmt.Sprintf(" (requested range %d-%d was clamped to file bounds; file has %d lines total)", nonZeroOrDefaultInt(requestedStart, read.startLine), nonZeroOrDefaultInt(requestedEnd, read.endLine), read.totalLines)
+	} else if rangeWasSwapped {
+		summary += fmt.Sprintf(" (file has %d lines total; start_line was greater than end_line; auto-swapped to lines %d-%d; pass start_line <= end_line on future calls)", read.totalLines, read.startLine, read.endLine)
+	} else {
+		summary += fmt.Sprintf(" (total lines: %d)", read.totalLines)
+	}
+	result := ToolResult{
+		Tool: ToolNameReadFile, Summary: summary,
+		Output: formattedOutput, Paths: []string{displayPath},
+	}
+	if logLike {
+		truncated := outputTruncated || openEndedLogRange && read.endLine < read.totalLines
+		if bindErr := m.attachDiagnosticLogReadFacts(&result, capability, read.startLine, read.endLine, read.totalLines, truncated); bindErr != nil {
+			return ToolResult{Tool: ToolNameReadFile, Summary: "Failed to bind diagnostic-log read evidence", Error: bindErr.Error()}
+		}
+		return result
+	}
+	window, bindErr := m.sourceWindowFromLineRead(capability, read, false, mutationEpoch)
+	if bindErr != nil && m.pathAccess.PathWithinWorkspace(path) {
+		return ToolResult{Tool: ToolNameReadFile, Summary: "Failed to bind source window", Error: bindErr.Error()}
+	}
+	if bindErr == nil {
+		attachWorkspaceSourceWindows(&result, window)
+	}
+	return result
 }
 
 func (m *Manager) missingReadParentRecoveryError(req ToolRequest, osDetail string) (string, bool) {
@@ -885,7 +1057,7 @@ func (m *Manager) missingReadParentRecoveryError(req ToolRequest, osDetail strin
 		return "", false
 	}
 
-	parentAbs, err := m.pathAccess.ResolveReadPath(parent, req.Workdir)
+	parentAbs, err := m.pathAccess.ResolveReadPath(req.executionSessionIdentity, parent, req.Workdir)
 	if err != nil {
 		return "", false
 	}
@@ -900,47 +1072,6 @@ func (m *Manager) missingReadParentRecoveryError(req ToolRequest, osDetail strin
 	}
 
 	return readFileRecoveryError(detail), true
-}
-
-func (m *Manager) readLogTail(path string, description string, lineCap int) (ToolResult, bool) {
-	if lineCap <= 0 {
-		lineCap = defaultLogReadLineCap
-	}
-
-	lines, totalLines, err := readLastLines(path, lineCap)
-	if err != nil || len(lines) == 0 {
-		return ToolResult{}, false
-	}
-
-	start := totalLines - len(lines) + 1
-	if start < 1 {
-		start = 1
-	}
-
-	var b strings.Builder
-
-	for i, line := range lines {
-		line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, lineTruncationMarker)
-		fmt.Fprintf(&b, "%d:%s\n", start+i, line)
-	}
-
-	displayPath := m.pathAccess.DisplayPath(path)
-	m.MarkPathObserved(displayPath)
-	m.writeGuard.ClearEditRecoveryAfterRead(path, start, start+len(lines)-1)
-
-	return ToolResult{
-		Tool:    ToolNameReadFile,
-		Summary: fmt.Sprintf("Read %s lines %d-%d (file has %d lines total; defaulted to recent log tail; pass start_line/end_line for a different window)", description, start, start+len(lines)-1, totalLines),
-		Output:  strings.TrimRight(b.String(), "\n"),
-		Paths:   []string{displayPath},
-		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
-			Path:       displayPath,
-			StartLine:  start,
-			EndLine:    start + len(lines) - 1,
-			TotalLines: totalLines,
-			Truncated:  totalLines > len(lines),
-		}),
-	}, true
 }
 
 type fileStatsReport struct {
@@ -976,26 +1107,27 @@ const fileStatsDefaultLimit = 1000
 const fileStatsMaxLimit = 10000
 const fileStatsEntryDisplayCap = 50
 
-func (m *Manager) fileStats(_ context.Context, req ToolRequest) ToolResult {
+func (m *Manager) fileStats(ctx context.Context, req ToolRequest) ToolResult {
 	requestPath := strings.TrimSpace(req.Path)
 	if requestPath == "" {
 		requestPath = "."
 	}
 
-	target, err := m.pathAccess.ResolveReadPath(requestPath, req.Workdir)
+	capability, err := m.pathAccess.openReadCapability(ctx, req.executionSessionIdentity, requestPath, req.Workdir)
 	if err != nil {
 		if resolved, ok := resolveUserGlobalConversationLogSearchPath(requestPath); ok {
-			target = resolved
+			capability, err = m.pathAccess.openTrustedReadCapability(ctx, resolved)
 		} else {
 			return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to resolve path", Error: err.Error()}
 		}
 	}
-
-	info, err := os.Stat(target)
 	if err != nil {
-		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to stat path", Error: err.Error()}
+		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to resolve path", Error: err.Error()}
 	}
-	if m.pathAccess.SelectedSystemSearchDirectoryAccess(target, info) {
+	defer capability.Close()
+	target := capability.Path()
+	info := capability.Info()
+	if capability.SelectedDirectoryOnly() {
 		return selectedSystemSearchDirectoryDeniedResult(ToolNameFileStats, m.pathAccess.DisplayPath(target))
 	}
 
@@ -1019,7 +1151,11 @@ func (m *Manager) fileStats(_ context.Context, req ToolRequest) ToolResult {
 	}
 
 	if !info.IsDir() {
-		entry := m.fileStatsEntry(target, info)
+		data, readErr := capability.ReadAll()
+		if readErr != nil {
+			return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file stats", Error: readErr.Error()}
+		}
+		entry := m.fileStatsEntryFromData(target, info, data)
 
 		report.Files = 1
 		report.Bytes = entry.Bytes
@@ -1031,9 +1167,7 @@ func (m *Manager) fileStats(_ context.Context, req ToolRequest) ToolResult {
 
 		report.Entries = []fileStatsEntry{entry}
 		if req.StartLine > 0 || req.EndLine > 0 {
-			if err := m.addFileStatsLineRange(target, &report, req.StartLine, req.EndLine); err != nil {
-				return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file line stats", Error: err.Error()}
-			}
+			m.addFileStatsLineRange(data, &report, req.StartLine, req.EndLine)
 		}
 
 		return fileStatsResult(report)
@@ -1050,29 +1184,32 @@ func (m *Manager) fileStats(_ context.Context, req ToolRequest) ToolResult {
 
 	report.MaxDepth = maxDepth
 
-	err = filepath.WalkDir(target, func(path string, entry os.DirEntry, walkErr error) error {
+	rootFS, err := capability.FS()
+	if err != nil {
+		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file stats", Error: err.Error()}
+	}
+	err = fs.WalkDir(rootFS, ".", func(relative string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
+		entryPath := target
+		if relative != "." {
+			entryPath = filepath.Join(target, filepath.FromSlash(relative))
+		}
 
-		if filepath.Clean(path) == filepath.Clean(target) {
+		if relative == "." {
 			return nil
 		}
 
-		rel, err := filepath.Rel(target, path)
-		if err != nil {
-			return nil
-		}
-
-		depth := pathDepth(rel)
+		depth := pathDepth(relative)
 
 		if entry.IsDir() {
-			if m.shouldSkipListEntry(target, path, true) {
-				return filepath.SkipDir
+			if m.shouldSkipListEntry(target, entryPath, true) {
+				return fs.SkipDir
 			}
 
 			if depth > maxDepth {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 
 			report.Directories++
@@ -1080,25 +1217,29 @@ func (m *Manager) fileStats(_ context.Context, req ToolRequest) ToolResult {
 			return nil
 		}
 
-		if depth > maxDepth || m.shouldSkipListEntry(target, path, false) {
+		if depth > maxDepth || m.shouldSkipListEntry(target, entryPath, false) {
 			return nil
 		}
 
-		if !fileStatsGlobMatch(report.Glob, rel) {
+		if !fileStatsGlobMatch(report.Glob, relative) {
 			return nil
 		}
 
 		if report.Files >= limit {
 			report.Truncated = true
-			return filepath.SkipAll
+			return fs.SkipAll
 		}
 
-		info, err := entry.Info()
-		if err != nil {
-			return nil
+		data, openedInfo, readErr := capability.ReadFile(relative)
+		stats := fileStatsEntry{Path: m.pathAccess.DisplayPath(entryPath)}
+		if readErr != nil {
+			stats.Error = readErr.Error()
+			if entryInfo, infoErr := entry.Info(); infoErr == nil {
+				stats.Bytes = entryInfo.Size()
+			}
+		} else {
+			stats = m.fileStatsEntryFromData(entryPath, openedInfo, data)
 		}
-
-		stats := m.fileStatsEntry(path, info)
 		report.Files++
 
 		report.Bytes += stats.Bytes
@@ -1119,21 +1260,19 @@ func (m *Manager) fileStats(_ context.Context, req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file stats", Error: err.Error()}
 	}
+	if err := capability.Validate(); err != nil {
+		return ToolResult{Tool: ToolNameFileStats, Summary: "Read target changed while collecting stats", Error: err.Error()}
+	}
 
 	return fileStatsResult(report)
 }
 
-func (m *Manager) addFileStatsLineRange(path string, report *fileStatsReport, start int, end int) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
+func (m *Manager) addFileStatsLineRange(data []byte, report *fileStatsReport, start int, end int) {
 	lines := textutil.SplitWorkspaceFileLines(data)
 	if len(lines) == 0 {
 		report.StartLine = 0
 		report.EndLine = 0
-		return nil
+		return
 	}
 
 	requestedStart := start
@@ -1156,22 +1295,14 @@ func (m *Manager) addFileStatsLineRange(path string, report *fileStatsReport, st
 		report.LineCharacterWithBreaks += len([]rune(line)) + 1
 	}
 
-	return nil
 }
 
-func (m *Manager) fileStatsEntry(path string, info os.FileInfo) fileStatsEntry {
+func (m *Manager) fileStatsEntryFromData(path string, info os.FileInfo, data []byte) fileStatsEntry {
 	entry := fileStatsEntry{
 		Path:  m.pathAccess.DisplayPath(path),
 		Bytes: info.Size(),
 	}
-
-	lines, err := countFileNewlines(path)
-	if err != nil {
-		entry.Error = err.Error()
-		return entry
-	}
-
-	entry.Lines = lines
+	entry.Lines = countNewlines(data)
 
 	return entry
 }
@@ -1197,46 +1328,15 @@ func fileStatsResult(report fileStatsReport) ToolResult {
 	}
 }
 
-func countFileNewlines(path string) (int, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return 0, err
+func countNewlines(data []byte) int {
+	if len(data) == 0 {
+		return 0
 	}
-	defer file.Close()
-
-	buf := make([]byte, 32*1024)
-	count := 0
-
-	var (
-		total int64
-		last  byte
-	)
-
-	for {
-		n, err := file.Read(buf)
-		if n > 0 {
-			chunk := buf[:n]
-
-			count += bytes.Count(chunk, []byte{'\n'})
-			total += int64(n)
-
-			last = chunk[n-1]
-		}
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			return 0, err
-		}
-	}
-
-	if total > 0 && last != '\n' {
+	count := bytes.Count(data, []byte{'\n'})
+	if data[len(data)-1] != '\n' {
 		count++
 	}
-
-	return count, nil
+	return count
 }
 
 func pathDepth(rel string) int {
@@ -1270,45 +1370,27 @@ func fileStatsGlobMatch(glob string, rel string) bool {
 	return false
 }
 
-func readLastLines(path string, lineCap int) ([]string, int, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, 0, err
+type readArtifactKind uint8
+
+const (
+	readArtifactSource readArtifactKind = iota
+	readArtifactLog
+)
+
+func classifyReadArtifact(filePath string) readArtifactKind {
+	normalized := strings.ToLower(filepath.ToSlash(filepath.Clean(filePath)))
+	extension := path.Ext(normalized)
+	if extension == ".log" || extension == ".jsonl" {
+		return readArtifactLog
 	}
 
-	text := strings.TrimRight(string(data), "\n")
-	if text == "" {
-		return nil, 0, nil
+	for _, component := range strings.Split(normalized, "/") {
+		if component == "logs" {
+			return readArtifactLog
+		}
 	}
 
-	lines := strings.Split(text, "\n")
-	if len(lines) > lineCap {
-		lines = lines[len(lines)-lineCap:]
-	}
-
-	return lines, countFileLinesFromData(data), nil
-}
-
-func countFileLinesFromData(data []byte) int {
-	if len(data) == 0 {
-		return 0
-	}
-
-	count := bytes.Count(data, []byte{'\n'})
-	if !bytes.HasSuffix(data, []byte{'\n'}) {
-		count++
-	}
-
-	return count
-}
-func isLogLikePath(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(path))
-
-	return strings.Contains(lower, "/logs/") ||
-		strings.HasPrefix(lower, "logs/") ||
-		strings.HasSuffix(lower, ".log") ||
-		strings.HasSuffix(lower, ".jsonl") ||
-		strings.Contains(filepath.Base(lower), "log")
+	return readArtifactSource
 }
 
 func formatBytes(size int64) string {

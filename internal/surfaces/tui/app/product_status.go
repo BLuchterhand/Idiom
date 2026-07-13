@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,18 +63,18 @@ func (m *Model) productCreateEffortRoot(fields []string) (string, error) {
 		return m.productStatusAbsPath(".")
 	case 2:
 		if fields[1] == "--effort-root" {
-			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+			return "", errors.New("usage: /product-create [--effort-root <path>|<path>]")
 		}
 
 		return m.productStatusAbsPath(fields[1])
 	case 3:
 		if fields[1] != "--effort-root" {
-			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+			return "", errors.New("usage: /product-create [--effort-root <path>|<path>]")
 		}
 
 		return m.productStatusAbsPath(fields[2])
 	default:
-		return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+		return "", errors.New("usage: /product-create [--effort-root <path>|<path>]")
 	}
 }
 
@@ -117,7 +118,9 @@ func (m *Model) slashProductApprove(_ string, fields []string) bool {
 	m.logProductWorkflowCommand(fields)
 
 	// If in a product creation phase, run the creation-specific approval gate.
-	if m.featurePlannerPhase == productworkflow.PhasePRDDrafting || m.featurePlannerPhase == productworkflow.PhaseADRDrafting {
+	if m.featurePlannerPhase == productworkflow.PhasePRDDrafting ||
+		m.featurePlannerPhase == productworkflow.PhaseADRDrafting ||
+		m.featurePlannerPhase == productworkflow.PhaseTDDSynthesis {
 		if m.streaming {
 			m.status = "A product creation turn is already in progress."
 			return false
@@ -127,26 +130,25 @@ func (m *Model) slashProductApprove(_ string, fields []string) bool {
 
 		m.streaming = true
 		m.workingFrame = 0
-		m.currentTurnBusyStatus = "Running " + phase + " approval..."
+		m.currentTurnBusyStatus = "Running " + string(phase) + " approval..."
 		m.beginAgentHistoryTurn()
 
-		go func() {
-			answer, err := m.runProductApproveGate()
+		m.startPromptExecution(func(ctx context.Context, worker *promptExecutionSession) (string, error) {
+			answer, err := worker.runProductApproveGate(ctx)
 			if err != nil {
-				m.events <- streamDoneMsg{err: err}
-				return
+				return "", err
 			}
 
-			m.insertBeforePendingAssistant(llama.ChatMessage{
+			worker.insertBeforePendingAssistant(llama.ChatMessage{
 				Role:    "operator",
 				Content: fmt.Sprintf("product approve: %s phase", phase),
 			})
 
-			m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: answer})
-			m.logMessage("assistant", answer)
+			worker.appendPromptTranscriptMessage(llama.ChatMessage{Role: "assistant", Content: answer})
+			worker.logMessage("assistant", answer)
 
-			m.events <- streamDoneMsg{}
-		}()
+			return answer, nil
+		})
 
 		m.status = "Product approval in progress..."
 
@@ -187,7 +189,7 @@ func (m *Model) logProductWorkflowCommand(fields []string) {
 
 func productContinueArgs(fields []string) (string, []string, error) {
 	if len(fields) < 2 {
-		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+		return "", nil, errors.New("usage: /product-continue <action> [--effort-root <path>|<path>]")
 	}
 
 	action := ""
@@ -201,7 +203,7 @@ func productContinueArgs(fields []string) (string, []string, error) {
 
 		if field == "--effort-root" {
 			if i+1 >= len(fields) {
-				return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+				return "", nil, errors.New("usage: /product-continue <action> [--effort-root <path>|<path>]")
 			}
 
 			rootFields = append(rootFields, "--effort-root", fields[i+1])
@@ -220,11 +222,11 @@ func productContinueArgs(fields []string) (string, []string, error) {
 			continue
 		}
 
-		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+		return "", nil, errors.New("usage: /product-continue <action> [--effort-root <path>|<path>]")
 	}
 
 	if action == "" {
-		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+		return "", nil, errors.New("usage: /product-continue <action> [--effort-root <path>|<path>]")
 	}
 
 	return action, rootFields, nil
@@ -336,18 +338,18 @@ func (m *Model) productStatusEffortRoot(fields []string) (string, error) {
 		return absRoot, nil
 	case 2:
 		if fields[1] == "--effort-root" {
-			return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
+			return "", errors.New("usage: /product-status [--effort-root <path>|<path>]")
 		}
 
 		return m.productStatusAbsPath(fields[1])
 	case 3:
 		if fields[1] != "--effort-root" {
-			return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
+			return "", errors.New("usage: /product-status [--effort-root <path>|<path>]")
 		}
 
 		return m.productStatusAbsPath(fields[2])
 	default:
-		return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
+		return "", errors.New("usage: /product-status [--effort-root <path>|<path>]")
 	}
 }
 

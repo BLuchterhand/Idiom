@@ -4,90 +4,47 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestGoBuildPassesReportsCompileErrors(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module gobuildpasses_test\n\ngo 1.21\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+var _ = Describe("Go build postflight check", func() {
+	It("reports compile errors", func() {
+		dir := GinkgoT().TempDir()
+		Expect(os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module gobuildpasses_test\n\ngo 1.21\n"), 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() { undefinedFunc() }\n"), 0o644)).To(Succeed())
 
-	src := "package main\n\nfunc main() { undefinedFunc() }\n"
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
-		t.Fatalf("write main.go: %v", err)
-	}
+		findings, err := GoBuildPasses{}.Run(Diff{Files: []FileChange{{Path: "main.go"}}}, RunContext{ProjectRoot: dir})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(findings).NotTo(BeEmpty())
+		Expect(findings[0].Check).To(Equal("go_build_passes"))
+		Expect(findings[0].Severity).To(Equal(SeverityError))
+		Expect(strings.ToLower(findings[0].Message)).To(ContainSubstring("undefined"))
+	})
 
-	diff := Diff{Files: []FileChange{{Path: "main.go"}}}
+	It("passes a valid Go module", func() {
+		dir := GinkgoT().TempDir()
+		Expect(os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module gobuildpasses_valid\n\ngo 1.21\n"), 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644)).To(Succeed())
 
-	findings, err := GoBuildPasses{}.Run(diff, RunContext{ProjectRoot: dir})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
+		findings, err := GoBuildPasses{}.Run(Diff{Files: []FileChange{{Path: "main.go"}}}, RunContext{ProjectRoot: dir})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(findings).To(BeEmpty())
+	})
 
-	if len(findings) == 0 {
-		t.Fatalf("expected at least one finding for broken Go file")
-	}
+	It("does nothing for a non-Go diff", func() {
+		findings, err := GoBuildPasses{}.Run(Diff{Files: []FileChange{{Path: "README.md"}}}, RunContext{ProjectRoot: "/tmp"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(findings).To(BeNil())
+	})
 
-	if findings[0].Check != "go_build_passes" {
-		t.Fatalf("finding[0].Check = %q, want go_build_passes", findings[0].Check)
-	}
+	It("does nothing without a go.mod", func() {
+		dir := GinkgoT().TempDir()
+		Expect(os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644)).To(Succeed())
 
-	if findings[0].Severity != SeverityError {
-		t.Fatalf("finding[0].Severity = %q, want error", findings[0].Severity)
-	}
-
-	if !strings.Contains(strings.ToLower(findings[0].Message), "undefined") {
-		t.Fatalf("finding[0].Message = %q, expected to contain 'undefined'", findings[0].Message)
-	}
-}
-
-func TestGoBuildPassesPassesValidGoModule(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module gobuildpasses_valid\n\ngo 1.21\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
-		t.Fatalf("write main.go: %v", err)
-	}
-
-	diff := Diff{Files: []FileChange{{Path: "main.go"}}}
-
-	findings, err := GoBuildPasses{}.Run(diff, RunContext{ProjectRoot: dir})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if len(findings) != 0 {
-		t.Fatalf("expected no findings for valid Go module, got %v", findings)
-	}
-}
-
-func TestGoBuildPassesNoOpsForNonGoDiff(t *testing.T) {
-	diff := Diff{Files: []FileChange{{Path: "README.md"}}}
-
-	findings, err := GoBuildPasses{}.Run(diff, RunContext{ProjectRoot: "/tmp"})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if findings != nil {
-		t.Fatalf("expected nil findings for non-Go diff, got %v", findings)
-	}
-}
-
-func TestGoBuildPassesNoOpsWithoutGoMod(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
-		t.Fatalf("write main.go: %v", err)
-	}
-
-	diff := Diff{Files: []FileChange{{Path: "main.go"}}}
-
-	findings, err := GoBuildPasses{}.Run(diff, RunContext{ProjectRoot: dir})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if findings != nil {
-		t.Fatalf("expected nil findings without go.mod, got %v", findings)
-	}
-}
+		findings, err := GoBuildPasses{}.Run(Diff{Files: []FileChange{{Path: "main.go"}}}, RunContext{ProjectRoot: dir})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(findings).To(BeNil())
+	})
+})

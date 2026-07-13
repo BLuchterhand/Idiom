@@ -5,18 +5,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	featureplannercontract "idiom/internal/contracts/featureplanner"
 	"idiom/internal/workflows/featureplanner"
 )
 
-func (m *Model) saveFeaturePlannerStateAndPlanTab(state *featureplanner.FeatureState) (string, error) {
+func (m *promptExecutionSession) saveFeaturePlannerStateAndPlanTab(state *featureplanner.FeatureState) (string, error) {
 	if state == nil {
 		return "", fmt.Errorf("feature planner state is nil")
 	}
 
-	root := m.projectRoot()
+	root := resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace)
 	statePath, err := featureplanner.SaveState(root, state)
 	if err != nil {
 		return "", err
@@ -35,7 +34,7 @@ func (m *Model) saveFeaturePlannerStateAndPlanTab(state *featureplanner.FeatureS
 	return featureplanner.SaveState(root, state)
 }
 
-func (m *Model) writeFeaturePlannerPlanTabArtifact(state featureplanner.FeatureState, statePath string) (string, error) {
+func (m *promptExecutionSession) writeFeaturePlannerPlanTabArtifact(state featureplanner.FeatureState, statePath string) (string, error) {
 	plan, candidate, ok := featurePlannerPlanTabCandidate(state)
 	if !ok {
 		return "", nil
@@ -61,23 +60,26 @@ func (m *Model) writeFeaturePlannerPlanTabArtifact(state featureplanner.FeatureS
 		return "", fmt.Errorf("replace feature planner plan tab artifact: %w", err)
 	}
 
-	m.planMTime = time.Time{}
-	m.planContent = ""
-	m.planLoadError = ""
-	m.renderPlanPanelContent()
-	m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventPlanTabUpdated), featurePlannerDisplayPath(m.projectRoot(), path))
+	m.queueUIEvent(planRefreshMsg{})
+	m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventPlanTabUpdated), featurePlannerDisplayPath(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), path))
 
-	return featurePlannerRelPath(m.projectRoot(), path), nil
+	return featurePlannerRelPath(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), path), nil
 }
 
-func (m *Model) featurePlannerPlanTabPath(sessionID string) string {
+func (m *promptExecutionSession) featurePlannerPlanTabPath(sessionID string) string {
 	if m != nil && m.workspace != nil && strings.TrimSpace(m.debugLogPath) != "" {
-		if path := strings.TrimSpace(m.ensurePlanPath()); path != "" {
+		if path := strings.TrimSpace(m.planPath); path != "" {
 			return path
+		}
+		id := strings.TrimSuffix(filepath.Base(strings.TrimSpace(m.debugLogPath)), ".jsonl")
+		if id != "" {
+			m.planPath = filepath.Join(m.workspace.Root(), planDirName, id+".md")
+
+			return m.planPath
 		}
 	}
 
-	root := strings.TrimSpace(m.projectRoot())
+	root := strings.TrimSpace(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace))
 	if root == "" {
 		return ""
 	}

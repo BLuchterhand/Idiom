@@ -153,14 +153,14 @@ var laneGitDiff = func(projectRoot string) ([]byte, error) {
 // RunMainWithTelemetry is the variant the top-level dispatcher
 // uses when telemetry is wired. Behavior is identical apart from
 // passing the recorder through to the underlying subcommand.
-func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
 	deps := laneDeps{
 		loadConfig:     config.Load,
 		runPlanExecute: planexecuterunner.Run,
 		runImplement: func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int {
 			return implementcmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 		},
-		defaultPromptRun: cmdruntime.RunPromptOnce,
+		defaultPromptRun: promptRun,
 		buildContextPack: buildLaneContextPackSection,
 		telemetry:        rec,
 	}

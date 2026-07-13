@@ -1,8 +1,11 @@
 package comprehension
 
-import "testing"
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
 
-func TestAssessPackQualityDistinguishesFreshnessFromWeakSourceOwner(t *testing.T) {
+var _ = It("assess pack quality distinguishes freshness from weak source owner", func() {
 	quality := assessPackQuality(
 		"chat input text box newline wrapping first line invisible",
 		[]PackFile{
@@ -16,21 +19,12 @@ func TestAssessPackQualityDistinguishesFreshnessFromWeakSourceOwner(t *testing.T
 			{Path: "internal/surfaces/tui/app/rendering_test.go", Symbol: "TestInputHeightUsesTextareaWrappedLineCount", Command: "go test ./internal/surfaces/tui/app"},
 		},
 	)
-
-	if quality.SourceOwnerFound {
-		t.Fatalf("test-only relevance must not claim a source owner: %#v", quality)
-	}
-
-	if quality.LocalizationConfidence != "low" {
-		t.Fatalf("localization confidence = %q, want low: %#v", quality.LocalizationConfidence, quality)
-	}
-
-	if len(quality.EvidencePaths) == 0 || quality.EvidencePaths[0] != "internal/surfaces/tui/app/rendering_test.go" {
-		t.Fatalf("expected strongest test evidence first, got %#v", quality.EvidencePaths)
-	}
-}
-
-func TestAssessPackQualityTreatsGenericSourceOverlapAsWeak(t *testing.T) {
+	Expect(quality.SourceOwnerFound).To(BeFalse(), "test-only relevance must not claim a source owner: %#v", quality)
+	Expect(quality.LocalizationConfidence).To(BeEquivalentTo("low"), "localization confidence = %q, want low: %#v", quality.LocalizationConfidence, quality)
+	Expect(len(quality.EvidencePaths)).NotTo(BeEquivalentTo(0), "expected strongest test evidence first, got %#v", quality.EvidencePaths)
+	Expect(quality.EvidencePaths[0]).To(BeEquivalentTo("internal/surfaces/tui/app/rendering_test.go"), "expected strongest test evidence first, got %#v", quality.EvidencePaths)
+})
+var _ = It("assess pack quality treats generic source overlap as weak", func() {
 	quality := assessPackQuality(
 		"Research only; investigate this TUI bug: the first time the chat input text box wraps to a newline, the first existing line shifts upward and is no longer visible.",
 		[]PackFile{
@@ -45,21 +39,12 @@ func TestAssessPackQualityTreatsGenericSourceOverlapAsWeak(t *testing.T) {
 			{Path: "internal/surfaces/tui/app/rendering_test.go", Symbol: "TestInputHeightUsesTextareaWrappedLineCount", Command: "go test ./internal/surfaces/tui/app"},
 		},
 	)
-
-	if quality.SourceOwnerFound {
-		t.Fatalf("generic chat/text source overlap must not claim source ownership: %#v", quality)
-	}
-
-	if quality.LocalizationConfidence != "low" {
-		t.Fatalf("localization confidence = %q, want low: %#v", quality.LocalizationConfidence, quality)
-	}
-
-	if len(quality.EvidencePaths) == 0 || quality.EvidencePaths[0] != "internal/surfaces/tui/app/rendering_test.go" {
-		t.Fatalf("expected relevant test evidence to outrank generic source overlap, got %#v", quality.EvidencePaths)
-	}
-}
-
-func TestAssessPackQualityFindsSourceOwner(t *testing.T) {
+	Expect(quality.SourceOwnerFound).To(BeFalse(), "generic chat/text source overlap must not claim source ownership: %#v", quality)
+	Expect(quality.LocalizationConfidence).To(BeEquivalentTo("low"), "localization confidence = %q, want low: %#v", quality.LocalizationConfidence, quality)
+	Expect(len(quality.EvidencePaths)).NotTo(BeEquivalentTo(0), "expected relevant test evidence to outrank generic source overlap, got %#v", quality.EvidencePaths)
+	Expect(quality.EvidencePaths[0]).To(BeEquivalentTo("internal/surfaces/tui/app/rendering_test.go"), "expected relevant test evidence to outrank generic source overlap, got %#v", quality.EvidencePaths)
+})
+var _ = It("assess pack quality finds source owner", func() {
 	quality := assessPackQuality(
 		"textarea syncInputHeight input height wraps prompt visible top line",
 		[]PackFile{
@@ -74,16 +59,8 @@ func TestAssessPackQualityFindsSourceOwner(t *testing.T) {
 			{Path: "internal/surfaces/tui/app/rendering_test.go", Symbol: "TestInputHeightUsesTextareaWrappedLineCount", Command: "go test ./internal/surfaces/tui/app"},
 		},
 	)
-
-	if !quality.SourceOwnerFound {
-		t.Fatalf("expected source owner, got %#v", quality)
-	}
-
-	if quality.LocalizationConfidence != "high" {
-		t.Fatalf("localization confidence = %q, want high: %#v", quality.LocalizationConfidence, quality)
-	}
-
-	if len(quality.EvidencePaths) == 0 || quality.EvidencePaths[0] != "internal/surfaces/tui/app/model_state.go" {
-		t.Fatalf("expected source owner first, got %#v", quality.EvidencePaths)
-	}
-}
+	Expect(quality.SourceOwnerFound).To(BeTrue(), "expected source owner, got %#v", quality)
+	Expect(quality.LocalizationConfidence).To(BeEquivalentTo("high"), "localization confidence = %q, want high: %#v", quality.LocalizationConfidence, quality)
+	Expect(len(quality.EvidencePaths)).NotTo(BeEquivalentTo(0), "expected source owner first, got %#v", quality.EvidencePaths)
+	Expect(quality.EvidencePaths[0]).To(BeEquivalentTo("internal/surfaces/tui/app/model_state.go"), "expected source owner first, got %#v", quality.EvidencePaths)
+})

@@ -27,6 +27,10 @@ type RunOptions struct {
 	ConfigSourcePath            string
 	ScopeContract               plancontract.PlanScopeContract
 	AuthorizedNewFiles          []string
+	// OnSourceSatisfied is invoked only by a trusted prompt runtime after its
+	// terminal gate has accepted current source evidence for the returned
+	// source-satisfied answer. Plain PromptRunner replies do not mint evidence.
+	OnSourceSatisfied func([]string)
 }
 
 type MultiFlag []string

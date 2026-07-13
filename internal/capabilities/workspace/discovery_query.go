@@ -755,11 +755,9 @@ func (r *discoveryQueryRunner) toolResultFacts() *toolfacts.ToolResultFacts {
 	}
 
 	symbols := textutil.Unique(r.candidateSymbols)
-	if len(paths) == 0 && len(symbols) == 0 {
-		return nil
-	}
 
 	facts := &toolfacts.ToolResultFacts{
+		ArtifactIDs:               textutil.UniqueNonEmpty([]string{r.packet.ID, r.packet.ArtifactPath}),
 		CandidatePaths:            paths,
 		CandidateSymbols:          symbols,
 		RankedDiscoveryCandidates: ranked,

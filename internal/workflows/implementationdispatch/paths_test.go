@@ -1,17 +1,19 @@
 package implementationdispatch
 
-import "testing"
+import (
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+)
 
-func TestWorkspaceFileRejectsUnsafeRelativePaths(t *testing.T) {
-	root := t.TempDir()
-
-	for _, path := range []string{"../outside.md", `C:\repo\outside.md`, "/tmp/outside.md"} {
-		if got, ok := WorkspaceFile(root, path); ok {
-			t.Fatalf("WorkspaceFile(%q) = %q, true; want rejection", path, got)
+var _ = ginkgo.Describe("Workspace plan paths", func() {
+	ginkgo.It("rejects unsafe paths and accepts workspace-relative paths", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		for _, path := range []string{"../outside.md", `C:\repo\outside.md`, "/tmp/outside.md"} {
+			got, ok := WorkspaceFile(root, path)
+			gomega.Expect(ok).To(gomega.BeFalse(), "path: %s; resolved: %s", path, got)
 		}
-	}
-
-	if got, ok := WorkspaceFile(root, "docs/new.md"); !ok || got == "" {
-		t.Fatalf("WorkspaceFile should accept workspace-relative paths, got %q, %v", got, ok)
-	}
-}
+		got, ok := WorkspaceFile(root, "docs/new.md")
+		gomega.Expect(ok).To(gomega.BeTrue())
+		gomega.Expect(got).NotTo(gomega.BeEmpty())
+	})
+})

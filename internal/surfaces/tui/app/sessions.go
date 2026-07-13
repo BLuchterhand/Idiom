@@ -45,10 +45,17 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 	if err != nil {
 		return err
 	}
+	resumeImplementationState, resumeAudit, err := m.loadMutationStateForResume(path)
+	if err != nil {
+		m.emitMutationStateResumeAudit(resumeAudit)
+		return err
+	}
 
 	m.messages = append(m.messages, replay.messages...)
+	m.messagesRevision++
 	m.inputHistory = inputHistory
 	m.resetInputHistoryNavigation()
+	m.resumeImplementationState = resumeImplementationState
 
 	m.history.entries = append(m.history.entries, replay.history...)
 	if len(m.history.entries) > 0 {
@@ -59,6 +66,7 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 	if strings.TrimSpace(m.directFeaturePlannerSessionID) == "" {
 		m.restoreDirectFeaturePlannerSessionFromSessionLog(path)
 	}
+	m.emitMutationStateResumeAudit(resumeAudit)
 
 	return nil
 }

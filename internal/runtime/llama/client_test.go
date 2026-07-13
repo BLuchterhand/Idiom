@@ -5,26 +5,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 	"time"
 
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
+var _ = It("sends local chat options and parses the response", func() {
 	enableThinking := false
 
 	var got chatRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(r.URL.Path).To(Equal("/v1/chat/completions"))
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden chain","content":"hello"}}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`))
 	}))
@@ -45,32 +43,24 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 		PreserveThinking:  true,
 		MaxTokens:         32,
 	})
-	if err != nil {
-		t.Fatalf("CompleteChat: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(reply.Content).To(Equal("hello"))
+	Expect(reply.ReasoningContent).To(Equal("hidden chain"))
+	Expect(reply.Usage.PromptTokens).To(Equal(7))
+	Expect(reply.Usage.CompletionTokens).To(Equal(3))
+	Expect(reply.Usage.TotalTokens).To(Equal(10))
+	Expect(got.Model).To(Equal("model"))
+	Expect(got.Messages).To(HaveLen(1))
+	Expect(got.Messages[0].Content).To(Equal("hi"))
+	Expect(got.Messages[0].ReasoningContent).To(Equal("prior hidden"))
+	Expect(got.Stream).To(BeFalse())
+	Expect(got.ChatTemplateKwargs).NotTo(BeNil())
+	Expect(got.ChatTemplateKwargs.EnableThinking).NotTo(BeNil())
+	Expect(*got.ChatTemplateKwargs.EnableThinking).To(BeFalse())
+	Expect(got.ChatTemplateKwargs.PreserveThinking).To(BeTrue())
+})
 
-	if reply.Content != "hello" || reply.ReasoningContent != "hidden chain" {
-		t.Fatalf("expected reply with preserved reasoning, got %#v", reply)
-	}
-
-	if reply.Usage.PromptTokens != 7 || reply.Usage.CompletionTokens != 3 || reply.Usage.TotalTokens != 10 {
-		t.Fatalf("expected usage to be parsed, got %#v", reply.Usage)
-	}
-
-	if got.Model != "model" || got.Messages[0].Content != "hi" || got.Messages[0].ReasoningContent != "prior hidden" || got.Stream {
-		t.Fatalf("unexpected request payload: %#v", got)
-	}
-
-	if got.ChatTemplateKwargs == nil || got.ChatTemplateKwargs.EnableThinking == nil || *got.ChatTemplateKwargs.EnableThinking {
-		t.Fatalf("expected enable_thinking=false in kwargs: %#v", got.ChatTemplateKwargs)
-	}
-
-	if !got.ChatTemplateKwargs.PreserveThinking {
-		t.Fatalf("expected preserve_thinking=true in kwargs: %#v", got.ChatTemplateKwargs)
-	}
-}
-
-func TestNormalizeHostedToolsDisambiguatesSanitizedNameCollisions(t *testing.T) {
+var _ = It("disambiguates colliding sanitized hosted tool names", func() {
 	tools, reverse := normalizeHostedTools([]Tool{
 		{Type: "function", Function: ToolFunction{Name: "mcp:read/file"}},
 		{Type: "function", Function: ToolFunction{Name: "mcp_read/file"}},
@@ -83,18 +73,16 @@ func TestNormalizeHostedToolsDisambiguatesSanitizedNameCollisions(t *testing.T) 
 		tools[2].Function.Name,
 	}
 	want := []string{"mcp_read_file", "mcp_read_file_2", "mcp_read_file_2_2"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("normalized tool names = %v, want %v", got, want)
-		}
-		if reverse[got[i]] != []string{"mcp:read/file", "mcp_read/file", "mcp_read_file_2"}[i] {
-			t.Fatalf("reverse mapping for %q = %q", got[i], reverse[got[i]])
-		}
-	}
-}
+	Expect(got).To(Equal(want))
+	Expect(reverse).To(Equal(map[string]string{
+		"mcp_read_file":     "mcp:read/file",
+		"mcp_read_file_2":   "mcp_read/file",
+		"mcp_read_file_2_2": "mcp_read_file_2",
+	}))
+})
 
-func TestCompleteChatKeepsToolNameMappingRequestScoped(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+var _ = It("keeps hosted tool-name mappings request scoped", func() {
+	GinkgoT().Setenv("DEEPSEEK_API_KEY", "test-key")
 	arrived := make(chan struct{}, 2)
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,16 +137,13 @@ func TestCompleteChatKeepsToolNameMappingRequestScoped(t *testing.T) {
 	close(release)
 	for range originalNames {
 		got := <-results
-		if got.err != nil {
-			t.Fatalf("request %d failed: %v", got.index, got.err)
-		}
-		if len(got.message.ToolCalls) != 1 || got.message.ToolCalls[0].Function.Name != originalNames[got.index] {
-			t.Fatalf("request %d tool calls = %#v, want name %q", got.index, got.message.ToolCalls, originalNames[got.index])
-		}
+		Expect(got.err).NotTo(HaveOccurred(), "request %d", got.index)
+		Expect(got.message.ToolCalls).To(HaveLen(1), "request %d", got.index)
+		Expect(got.message.ToolCalls[0].Function.Name).To(Equal(originalNames[got.index]), "request %d", got.index)
 	}
-}
+})
 
-func TestCompleteChatParsesHostedCacheUsageAndReasoningTokens(t *testing.T) {
+var _ = It("parses hosted cache usage and reasoning tokens", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":13,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":5,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":2},"total_tokens":16}}`))
 	}))
@@ -169,23 +154,17 @@ func TestCompleteChatParsesHostedCacheUsageAndReasoningTokens(t *testing.T) {
 	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
 		Model: "deepseek-v4-flash",
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(reply.Usage.PromptTokens).To(Equal(13))
+	Expect(reply.Usage.PromptCacheHitTokens).To(Equal(8))
+	Expect(reply.Usage.PromptCacheMissTokens).To(Equal(5))
+	Expect(reply.Usage.PromptCacheAccountingKnown).To(BeTrue())
+	Expect(reply.Usage.CompletionTokens).To(Equal(3))
+	Expect(reply.Usage.ReasoningTokens).To(Equal(2))
+	Expect(reply.Usage.TotalTokens).To(Equal(16))
+})
 
-	if reply.Usage.PromptTokens != 13 ||
-		reply.Usage.PromptCacheHitTokens != 8 ||
-		reply.Usage.PromptCacheMissTokens != 5 ||
-		!reply.Usage.PromptCacheAccountingKnown ||
-		reply.Usage.CompletionTokens != 3 ||
-		reply.Usage.ReasoningTokens != 2 ||
-		reply.Usage.TotalTokens != 16 {
-
-		t.Fatalf("unexpected usage: %#v", reply.Usage)
-	}
-}
-
-func TestCompleteChatPreservesKnownZeroCacheUsage(t *testing.T) {
+var _ = It("preserves known zero cache usage", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":0,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":0,"completion_tokens":1,"total_tokens":1}}`))
 	}))
@@ -196,19 +175,13 @@ func TestCompleteChatPreservesKnownZeroCacheUsage(t *testing.T) {
 	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
 		Model: "deepseek-v4-flash",
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(reply.Usage.PromptCacheAccountingKnown).To(BeTrue())
+	Expect(reply.Usage.PromptCacheHitTokens).To(BeZero())
+	Expect(reply.Usage.PromptCacheMissTokens).To(BeZero())
+})
 
-	if !reply.Usage.PromptCacheAccountingKnown ||
-		reply.Usage.PromptCacheHitTokens != 0 ||
-		reply.Usage.PromptCacheMissTokens != 0 {
-
-		t.Fatalf("expected known zero cache usage, got %#v", reply.Usage)
-	}
-}
-
-func TestCompleteChatLeavesCacheUsageUnknownWhenOmitted(t *testing.T) {
+var _ = It("leaves cache usage unknown when the backend omits it", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}`))
 	}))
@@ -219,31 +192,23 @@ func TestCompleteChatLeavesCacheUsageUnknownWhenOmitted(t *testing.T) {
 	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
 		Model: "deepseek-v4-flash",
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(reply.Usage.PromptCacheAccountingKnown).To(BeFalse())
+	Expect(reply.Usage.PromptCacheHitTokens).To(BeZero())
+	Expect(reply.Usage.PromptCacheMissTokens).To(BeZero())
+	Expect(reply.Usage.ReasoningTokens).To(BeZero())
+})
 
-	if reply.Usage.PromptCacheAccountingKnown ||
-		reply.Usage.PromptCacheHitTokens != 0 ||
-		reply.Usage.PromptCacheMissTokens != 0 ||
-		reply.Usage.ReasoningTokens != 0 {
-
-		t.Fatalf("expected omitted cache usage to remain unknown, got %#v", reply.Usage)
-	}
-}
-
-func TestCompleteChatReportsHTTPAndEmptyChoiceErrors(t *testing.T) {
+var _ = It("classifies HTTP and empty-choice errors", func() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 	}))
 	defer server.Close()
 
 	client := NewClient(server.URL, time.Second)
-	if _, err := client.CompleteChat(context.Background(), nil, ChatOptions{}); err == nil {
-		t.Fatal("expected HTTP error")
-	} else if got := failures.CodeOf(err); got != failures.InvalidArgument {
-		t.Fatalf("HTTP error code = %v, want %v", got, failures.InvalidArgument)
-	}
+	_, err := client.CompleteChat(context.Background(), nil, ChatOptions{})
+	Expect(err).To(HaveOccurred())
+	Expect(failures.CodeOf(err)).To(Equal(failures.InvalidArgument))
 
 	emptyChoices := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[]}`))
@@ -251,27 +216,27 @@ func TestCompleteChatReportsHTTPAndEmptyChoiceErrors(t *testing.T) {
 	defer emptyChoices.Close()
 
 	client = NewClient(emptyChoices.URL, time.Second)
-	if _, err := client.CompleteChat(context.Background(), nil, ChatOptions{}); err == nil {
-		t.Fatal("expected empty choices error")
-	} else if got := failures.CodeOf(err); got != failures.Internal {
-		t.Fatalf("empty choices code = %v, want %v", got, failures.Internal)
-	}
-}
+	_, err = client.CompleteChat(context.Background(), nil, ChatOptions{})
+	Expect(err).To(HaveOccurred())
+	Expect(failures.CodeOf(err)).To(Equal(failures.Internal))
+})
 
-func TestCompleteChatCapturesFinishReasonFromBothBackends(t *testing.T) {
-	for _, tc := range []struct {
+var _ = Describe("local finish reasons", func() {
+	type finishReasonCase struct {
 		name    string
 		backend string
 		body    string
 		want    string
-	}{
+	}
+	for _, tc := range []finishReasonCase{
 		{"llama-stop", config.BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
 		{"llama-length", config.BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
 		{"mlx-stop", config.BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
 		{"mlx-length", config.BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
 		{"omitted", config.BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`, ""},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		tc := tc
+		It(tc.name, func() {
 			body := tc.body
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = w.Write([]byte(body))
@@ -282,26 +247,20 @@ func TestCompleteChatCapturesFinishReasonFromBothBackends(t *testing.T) {
 			client := NewClient(server.URL, time.Second).WithBackend(tc.backend)
 
 			reply, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{Model: "m"})
-			if err != nil {
-				t.Fatalf("CompleteChatMessage: %v", err)
-			}
-
-			if reply.FinishReason != tc.want {
-				t.Fatalf("backend=%s: expected finish_reason=%q, got %q", tc.backend, tc.want, reply.FinishReason)
-			}
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reply.FinishReason).To(Equal(tc.want), "backend %s", tc.backend)
 		})
 	}
-}
+})
 
-func TestMLXBackendOmitsDefaultChatTemplateKwargs(t *testing.T) {
+var _ = It("omits default MLX chat-template kwargs", func() {
 	enableThinking := true
 
 	var got chatRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
@@ -309,30 +268,25 @@ func TestMLXBackendOmitsDefaultChatTemplateKwargs(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, time.Second).WithBackend(config.BackendMLX)
-	if _, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+	_, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
 		Model:            "mlx-model",
 		EnableThinking:   &enableThinking,
 		PreserveThinking: true,
 		ThinkingBudget:   2048,
 		MaxTokens:        16,
-	}); err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got.ChatTemplateKwargs).To(BeNil())
+})
 
-	if got.ChatTemplateKwargs != nil {
-		t.Fatalf("expected default MLX request to omit chat_template_kwargs, got %#v", got.ChatTemplateKwargs)
-	}
-}
-
-func TestMLXBackendSendsExplicitChatTemplateKwargs(t *testing.T) {
+var _ = It("sends explicitly requested MLX chat-template kwargs", func() {
 	enableThinking := false
 
 	var got chatRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
@@ -340,41 +294,28 @@ func TestMLXBackendSendsExplicitChatTemplateKwargs(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, time.Second).WithBackend(config.BackendMLX)
-	if _, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+	_, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
 		Model:              "mlx-model",
 		EnableThinking:     &enableThinking,
 		PreserveThinking:   true,
 		ThinkingBudget:     2048,
 		ChatTemplateKwargs: true,
 		MaxTokens:          16,
-	}); err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got.ChatTemplateKwargs).NotTo(BeNil())
+	Expect(got.ChatTemplateKwargs.EnableThinking).NotTo(BeNil())
+	Expect(*got.ChatTemplateKwargs.EnableThinking).To(BeFalse())
+	Expect(got.ChatTemplateKwargs.PreserveThinking).To(BeTrue())
+	Expect(got.ChatTemplateKwargs.ThinkingBudget).To(Equal(2048))
+})
 
-	if got.ChatTemplateKwargs == nil {
-		t.Fatalf("expected chat_template_kwargs for MLX backend")
-	}
-
-	if got.ChatTemplateKwargs.EnableThinking == nil || *got.ChatTemplateKwargs.EnableThinking {
-		t.Fatalf("expected enable_thinking=false in MLX kwargs, got %#v", got.ChatTemplateKwargs)
-	}
-
-	if !got.ChatTemplateKwargs.PreserveThinking {
-		t.Fatalf("expected preserve_thinking=true in MLX kwargs, got %#v", got.ChatTemplateKwargs)
-	}
-
-	if got.ChatTemplateKwargs.ThinkingBudget != 2048 {
-		t.Fatalf("expected thinking_budget=2048 in MLX kwargs, got %#v", got.ChatTemplateKwargs)
-	}
-}
-
-func TestMLXBackendIncludesNativeToolDefinitions(t *testing.T) {
+var _ = It("suppresses native MLX tool definitions by default", func() {
 	var got chatRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"read_file\",\"path\":\"README.md\"}"}}]}`))
 	}))
@@ -395,22 +336,17 @@ func TestMLXBackendIncludesNativeToolDefinitions(t *testing.T) {
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got.Tools).To(BeEmpty())
+	Expect(got.ToolChoice).To(BeEmpty())
+})
 
-	if len(got.Tools) > 0 || got.ToolChoice != "" {
-		t.Fatalf("MLX requests should NOT pass native tools to the backend, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
-	}
-}
-
-func TestMLXBackendCanForceSingleNativeToolSurface(t *testing.T) {
+var _ = It("can force one native MLX terminal tool surface", func() {
 	var got chatRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"submit_plan","arguments":"{\"rationale\":\"ok\",\"edits\":[]}"}}]},"finish_reason":"tool_calls"}]}`))
 	}))
@@ -432,26 +368,20 @@ func TestMLXBackendCanForceSingleNativeToolSurface(t *testing.T) {
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got.Tools).To(HaveLen(1))
+	Expect(got.Tools[0].Function.Name).To(Equal("submit_plan"))
+	Expect(got.ToolChoice).To(Equal("required"))
+	Expect(reply.ToolCalls).To(HaveLen(1))
+	Expect(reply.ToolCalls[0].Function.Name).To(Equal("submit_plan"))
+})
 
-	if len(got.Tools) != 1 || got.Tools[0].Function.Name != "submit_plan" || got.ToolChoice != "required" {
-		t.Fatalf("forced MLX terminal request should preserve one native tool, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
-	}
-
-	if len(reply.ToolCalls) != 1 || reply.ToolCalls[0].Function.Name != "submit_plan" {
-		t.Fatalf("expected parsed native tool call, got %#v", reply.ToolCalls)
-	}
-}
-
-func TestLlamaBackendKeepsNativeToolDefinitions(t *testing.T) {
+var _ = It("keeps native tool definitions for llama", func() {
 	var got chatRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
@@ -472,17 +402,13 @@ func TestLlamaBackendKeepsNativeToolDefinitions(t *testing.T) {
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got.Tools).To(HaveLen(1))
+	Expect(got.ToolChoice).To(Equal("auto"))
+})
 
-	if len(got.Tools) != 1 || got.ToolChoice != "auto" {
-		t.Fatalf("llama requests should preserve native tools, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
-	}
-}
-
-func TestZAIBackendUsesHostedChatEndpointAuthAndThinking(t *testing.T) {
-	t.Setenv("ZAI_API_KEY", "zai-test-key")
+var _ = It("uses ZAI hosted endpoint auth and thinking controls", func() {
+	GinkgoT().Setenv("ZAI_API_KEY", "zai-test-key")
 
 	enableThinking := false
 
@@ -492,14 +418,10 @@ func TestZAIBackendUsesHostedChatEndpointAuthAndThinking(t *testing.T) {
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-
+		defer GinkgoRecover()
+		Expect(r.URL.Path).To(Equal("/chat/completions"))
 		auth = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
 	}))
@@ -522,51 +444,33 @@ func TestZAIBackendUsesHostedChatEndpointAuthAndThinking(t *testing.T) {
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
-
-	if auth != "Bearer zai-test-key" {
-		t.Fatalf("expected bearer auth, got %q", auth)
-	}
-
-	if reply.Content != "ok" || reply.ReasoningContent != "hidden" || reply.Usage.TotalTokens != 5 {
-		t.Fatalf("unexpected reply: %#v", reply)
-	}
-
-	if got["model"] != "glm-5.1" || got["stream"] != false {
-		t.Fatalf("unexpected model/stream payload: %#v", got)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(auth).To(Equal("Bearer zai-test-key"))
+	Expect(reply.Content).To(Equal("ok"))
+	Expect(reply.ReasoningContent).To(Equal("hidden"))
+	Expect(reply.Usage.TotalTokens).To(Equal(5))
+	Expect(got).To(HaveKeyWithValue("model", "glm-5.1"))
+	Expect(got).To(HaveKeyWithValue("stream", false))
 
 	messages, ok := got["messages"].([]any)
-	if !ok || len(messages) != 2 {
-		t.Fatalf("expected messages in payload, got %#v", got["messages"])
-	}
-
-	if _, ok := messages[0].(map[string]any)["reasoning_content"]; ok {
-		t.Fatalf("hosted chat payload should not resend reasoning_content, got %#v", messages[0])
-	}
-
-	if _, ok := got["top_k"]; ok {
-		t.Fatalf("hosted ZAI payload should omit local top_k, got %#v", got)
-	}
-
-	if _, ok := got["chat_template_kwargs"]; ok {
-		t.Fatalf("hosted ZAI payload should omit chat_template_kwargs, got %#v", got)
-	}
+	Expect(ok).To(BeTrue())
+	Expect(messages).To(HaveLen(2))
+	firstMessage, ok := messages[0].(map[string]any)
+	Expect(ok).To(BeTrue())
+	Expect(firstMessage).NotTo(HaveKey("reasoning_content"))
+	Expect(got).NotTo(HaveKey("top_k"))
+	Expect(got).NotTo(HaveKey("chat_template_kwargs"))
 
 	thinking, ok := got["thinking"].(map[string]any)
-	if !ok || thinking["type"] != "disabled" {
-		t.Fatalf("expected thinking disabled payload, got %#v", got["thinking"])
-	}
+	Expect(ok).To(BeTrue())
+	Expect(thinking).To(HaveKeyWithValue("type", "disabled"))
+	tools, ok := got["tools"].([]any)
+	Expect(ok).To(BeTrue())
+	Expect(tools).To(HaveLen(1))
+})
 
-	if tools, ok := got["tools"].([]any); !ok || len(tools) != 1 {
-		t.Fatalf("expected native tool definitions, got %#v", got["tools"])
-	}
-}
-
-func TestGLMBackendUsesCodingEndpointAuthThinkingAndReasoningEffort(t *testing.T) {
-	t.Setenv("ZAI_API_KEY", "glm-test-key")
+var _ = It("uses GLM coding endpoint auth, thinking, and reasoning effort", func() {
+	GinkgoT().Setenv("ZAI_API_KEY", "glm-test-key")
 
 	enableThinking := true
 
@@ -576,14 +480,10 @@ func TestGLMBackendUsesCodingEndpointAuthThinkingAndReasoningEffort(t *testing.T
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-
+		defer GinkgoRecover()
+		Expect(r.URL.Path).To(Equal("/chat/completions"))
 		auth = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden","content":"ok"},"finish_reason":"stop"}]}`))
 	}))
@@ -599,45 +499,29 @@ func TestGLMBackendUsesCodingEndpointAuthThinkingAndReasoningEffort(t *testing.T
 		EnableThinking: &enableThinking,
 		MaxTokens:      128,
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
-
-	if auth != "Bearer glm-test-key" {
-		t.Fatalf("expected bearer auth, got %q", auth)
-	}
-
-	if reply.Content != "ok" || reply.ReasoningContent != "hidden" {
-		t.Fatalf("unexpected reply: %#v", reply)
-	}
-
-	if got["model"] != "glm-5.2" || got["stream"] != false || got["reasoning_effort"] != "max" {
-		t.Fatalf("unexpected GLM payload basics: %#v", got)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(auth).To(Equal("Bearer glm-test-key"))
+	Expect(reply.Content).To(Equal("ok"))
+	Expect(reply.ReasoningContent).To(Equal("hidden"))
+	Expect(got).To(HaveKeyWithValue("model", "glm-5.2"))
+	Expect(got).To(HaveKeyWithValue("stream", false))
+	Expect(got).To(HaveKeyWithValue("reasoning_effort", "max"))
 
 	thinking, ok := got["thinking"].(map[string]any)
-	if !ok || thinking["type"] != "enabled" {
-		t.Fatalf("expected GLM thinking enabled payload, got %#v", got["thinking"])
-	}
+	Expect(ok).To(BeTrue())
+	Expect(thinking).To(HaveKeyWithValue("type", "enabled"))
+	Expect(got).NotTo(HaveKey("top_k"))
+})
 
-	if _, ok := got["top_k"]; ok {
-		t.Fatalf("hosted GLM payload should omit local top_k, got %#v", got)
-	}
-}
-
-func TestDeepSeekBackendSendsThinkingToggleWithRequiredToolChoice(t *testing.T) {
+var _ = It("sends DeepSeek thinking controls with required tool choice", func() {
 	enableThinking := false
 
 	var got map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(r.URL.Path).To(Equal("/v1/chat/completions"))
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
 	}))
@@ -657,37 +541,28 @@ func TestDeepSeekBackendSendsThinkingToggleWithRequiredToolChoice(t *testing.T) 
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
-
-	if got["model"] != "deepseek-v4-flash" || got["tool_choice"] != "required" {
-		t.Fatalf("unexpected DeepSeek request model/tool_choice: %#v", got)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got).To(HaveKeyWithValue("model", "deepseek-v4-flash"))
+	Expect(got).To(HaveKeyWithValue("tool_choice", "required"))
 
 	tools, ok := got["tools"].([]any)
-	if !ok || len(tools) != 1 {
-		t.Fatalf("expected one DeepSeek native tool definition, got %#v", got["tools"])
-	}
+	Expect(ok).To(BeTrue())
+	Expect(tools).To(HaveLen(1))
 
 	tool, ok := tools[0].(map[string]any)
-	if !ok {
-		t.Fatalf("expected tool object, got %#v", tools[0])
-	}
+	Expect(ok).To(BeTrue())
 
 	function, ok := tool["function"].(map[string]any)
-	if !ok || function["name"] != "submit_plan" {
-		t.Fatalf("expected submit_plan tool definition, got %#v", tool)
-	}
+	Expect(ok).To(BeTrue())
+	Expect(function).To(HaveKeyWithValue("name", "submit_plan"))
 
 	thinking, ok := got["thinking"].(map[string]any)
-	if !ok || thinking["type"] != "disabled" {
-		t.Fatalf("expected DeepSeek thinking disabled payload, got %#v", got["thinking"])
-	}
-}
+	Expect(ok).To(BeTrue())
+	Expect(thinking).To(HaveKeyWithValue("type", "disabled"))
+})
 
-func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+var _ = It("converts tools and parses output through the OpenAI Responses protocol", func() {
+	GinkgoT().Setenv("OPENAI_API_KEY", "openai-test-key")
 
 	var (
 		got  map[string]any
@@ -695,14 +570,10 @@ func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-
+		defer GinkgoRecover()
+		Expect(r.URL.Path).To(Equal("/v1/responses"))
 		auth = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{
 			"output": [
@@ -746,53 +617,46 @@ func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
-
-	if auth != "Bearer openai-test-key" {
-		t.Fatalf("expected bearer auth, got %q", auth)
-	}
-
-	if reply.Content != "Need the file." || len(reply.ToolCalls) != 1 || reply.ToolCalls[0].Function.Name != "read_file" {
-		t.Fatalf("unexpected responses reply: %#v", reply)
-	}
-
-	if reply.Usage.PromptTokens != 11 || reply.Usage.CompletionTokens != 7 || reply.Usage.TotalTokens != 18 {
-		t.Fatalf("unexpected usage: %#v", reply.Usage)
-	}
-
-	if got["model"] != "gpt-5-codex" || got["store"] != false || got["max_output_tokens"].(float64) != 64 {
-		t.Fatalf("unexpected responses payload basics: %#v", got)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(auth).To(Equal("Bearer openai-test-key"))
+	Expect(reply.Content).To(Equal("Need the file."))
+	Expect(reply.ToolCalls).To(HaveLen(1))
+	Expect(reply.ToolCalls[0].Function.Name).To(Equal("read_file"))
+	Expect(reply.Usage.PromptTokens).To(Equal(11))
+	Expect(reply.Usage.CompletionTokens).To(Equal(7))
+	Expect(reply.Usage.TotalTokens).To(Equal(18))
+	Expect(got).To(HaveKeyWithValue("model", "gpt-5-codex"))
+	Expect(got).To(HaveKeyWithValue("store", false))
+	Expect(got).To(HaveKeyWithValue("max_output_tokens", float64(64)))
 
 	reasoning, ok := got["reasoning"].(map[string]any)
-	if !ok || reasoning["effort"] != "high" {
-		t.Fatalf("expected reasoning effort, got %#v", got["reasoning"])
-	}
+	Expect(ok).To(BeTrue())
+	Expect(reasoning).To(HaveKeyWithValue("effort", "high"))
 
 	text, ok := got["text"].(map[string]any)
-	if !ok || text["verbosity"] != "low" {
-		t.Fatalf("expected text verbosity, got %#v", got["text"])
-	}
+	Expect(ok).To(BeTrue())
+	Expect(text).To(HaveKeyWithValue("verbosity", "low"))
 
 	tools, ok := got["tools"].([]any)
-	if !ok || len(tools) != 1 || tools[0].(map[string]any)["name"] != "read_file" {
-		t.Fatalf("expected Responses function tools, got %#v", got["tools"])
-	}
+	Expect(ok).To(BeTrue())
+	Expect(tools).To(HaveLen(1))
+	tool, ok := tools[0].(map[string]any)
+	Expect(ok).To(BeTrue())
+	Expect(tool).To(HaveKeyWithValue("name", "read_file"))
 
 	input, ok := got["input"].([]any)
-	if !ok || len(input) != 4 {
-		t.Fatalf("expected converted input items, got %#v", got["input"])
-	}
+	Expect(ok).To(BeTrue())
+	Expect(input).To(HaveLen(4))
+	functionCall, ok := input[1].(map[string]any)
+	Expect(ok).To(BeTrue())
+	functionOutput, ok := input[2].(map[string]any)
+	Expect(ok).To(BeTrue())
+	Expect(functionCall).To(HaveKeyWithValue("type", "function_call"))
+	Expect(functionOutput).To(HaveKeyWithValue("type", "function_call_output"))
+})
 
-	if input[1].(map[string]any)["type"] != "function_call" || input[2].(map[string]any)["type"] != "function_call_output" {
-		t.Fatalf("expected function_call/function_call_output input items, got %#v", got["input"])
-	}
-}
-
-func TestAnthropicBackendUsesMessagesEndpointAuthAndNativeToolBlocks(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+var _ = It("uses Anthropic messages auth and native tool blocks", func() {
+	GinkgoT().Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
 
 	var (
 		got              map[string]any
@@ -802,17 +666,13 @@ func TestAnthropicBackendUsesMessagesEndpointAuthAndNativeToolBlocks(t *testing.
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-
+		defer GinkgoRecover()
+		Expect(r.URL.Path).To(Equal("/v1/messages"))
 		apiKey = r.Header.Get("x-api-key")
 		anthropicVersion = r.Header.Get("anthropic-version")
 		auth = r.Header.Get("Authorization")
 
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 
 		_, _ = w.Write([]byte(`{
 			"role": "assistant",
@@ -846,64 +706,46 @@ func TestAnthropicBackendUsesMessagesEndpointAuthAndNativeToolBlocks(t *testing.
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(apiKey).To(Equal("anthropic-test-key"))
+	Expect(anthropicVersion).To(Equal("2023-06-01"))
+	Expect(auth).To(BeEmpty())
+	Expect(got).To(HaveKeyWithValue("model", "claude-sonnet"))
+	Expect(got).To(HaveKeyWithValue("max_tokens", float64(128)))
+	Expect(got).To(HaveKeyWithValue("system", "Use tools carefully."))
+	messages, ok := got["messages"].([]any)
+	Expect(ok).To(BeTrue())
+	Expect(messages).To(HaveLen(1))
+	tools, ok := got["tools"].([]any)
+	Expect(ok).To(BeTrue())
+	Expect(tools).To(HaveLen(1))
+	Expect(reply.Content).To(Equal("Need the file."))
+	Expect(reply.FinishReason).To(Equal("tool_use"))
+	Expect(reply.Usage.TotalTokens).To(Equal(13))
+	Expect(reply.ToolCalls).To(HaveLen(1))
+	Expect(reply.ToolCalls[0].Function.Name).To(Equal("read_file"))
+	Expect(reply.ToolCalls[0].Function.Arguments).To(MatchJSON(`{"path":"README.md"}`))
+})
 
-	if apiKey != "anthropic-test-key" || anthropicVersion != "2023-06-01" || auth != "" {
-		t.Fatalf("unexpected Anthropic auth headers: x-api-key=%q anthropic-version=%q authorization=%q", apiKey, anthropicVersion, auth)
-	}
+var _ = It("reports native-tool support by backend", func() {
+	Expect(BackendSupportsNativeTools(config.BackendMLX)).To(BeFalse())
+	Expect(BackendSupportsNativeTools(config.BackendLlama)).To(BeTrue())
+	Expect(BackendSupportsNativeTools(config.BackendCodex)).To(BeTrue())
+	Expect(BackendSupportsNativeTools(config.BackendZAI)).To(BeTrue())
+	Expect(BackendSupportsNativeTools(config.BackendGLM)).To(BeTrue())
+	Expect(BackendSupportsNativeTools(config.BackendAnthropic)).To(BeTrue())
+	Expect(NewClient("http://example.invalid", time.Second).WithBackend(config.BackendLlama).SupportsNativeTools()).To(BeTrue())
+	Expect(NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX).SupportsNativeTools()).To(BeFalse())
+})
 
-	if got["model"] != "claude-sonnet" || got["max_tokens"] != float64(128) || got["system"] != "Use tools carefully." {
-		t.Fatalf("unexpected Anthropic request basics: %#v", got)
-	}
-
-	if messages, ok := got["messages"].([]any); !ok || len(messages) != 1 {
-		t.Fatalf("expected one non-system message, got %#v", got["messages"])
-	}
-
-	if tools, ok := got["tools"].([]any); !ok || len(tools) != 1 {
-		t.Fatalf("expected Anthropic tool definition, got %#v", got["tools"])
-	}
-
-	if reply.Content != "Need the file." || reply.FinishReason != "tool_use" || reply.Usage.TotalTokens != 13 {
-		t.Fatalf("unexpected Anthropic reply: %#v", reply)
-	}
-
-	if len(reply.ToolCalls) != 1 || reply.ToolCalls[0].Function.Name != "read_file" || reply.ToolCalls[0].Function.Arguments != `{"path":"README.md"}` {
-		t.Fatalf("unexpected Anthropic tool call: %#v", reply.ToolCalls)
-	}
-}
-
-func TestBackendSupportsNativeTools(t *testing.T) {
-	if BackendSupportsNativeTools(config.BackendMLX) {
-		t.Fatal("MLX should NOT support native tools")
-	}
-
-	if !BackendSupportsNativeTools(config.BackendLlama) {
-		t.Fatal("llama backend should keep native tools")
-	}
-
-	if !BackendSupportsNativeTools(config.BackendCodex) || !BackendSupportsNativeTools(config.BackendZAI) || !BackendSupportsNativeTools(config.BackendGLM) || !BackendSupportsNativeTools(config.BackendAnthropic) {
-		t.Fatal("hosted backends should keep native tools")
-	}
-
-	if !NewClient("http://example.invalid", time.Second).WithBackend(config.BackendLlama).SupportsNativeTools() {
-		t.Fatal("llama client should report native tool support")
-	}
-
-	if NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX).SupportsNativeTools() {
-		t.Fatal("MLX client should NOT report native tool support")
-	}
-}
-
-func TestBackendStructuredOutputCapabilitiesAreConservative(t *testing.T) {
-	for _, tc := range []struct {
+var _ = Describe("structured-output capabilities", func() {
+	type structuredOutputCase struct {
 		backend         string
 		nativeTools     bool
 		jsonObject      bool
 		thinkingControl bool
-	}{
+	}
+	for _, tc := range []structuredOutputCase{
 		{config.BackendLlama, true, true, true},
 		{config.BackendMLX, false, true, true},
 		{config.BackendCodex, true, true, false},
@@ -912,80 +754,47 @@ func TestBackendStructuredOutputCapabilitiesAreConservative(t *testing.T) {
 		{config.BackendDeepSeek, true, true, true},
 		{config.BackendAnthropic, true, false, false},
 	} {
-		t.Run(tc.backend, func(t *testing.T) {
+		tc := tc
+		It("stays conservative for "+tc.backend, func() {
 			caps := BackendStructuredOutputCapabilities(tc.backend)
-			if caps.NativeTools != tc.nativeTools {
-				t.Fatalf("NativeTools = %v, want %v", caps.NativeTools, tc.nativeTools)
-			}
-
-			if caps.JSONObject != tc.jsonObject {
-				t.Fatalf("JSONObject = %v, want %v", caps.JSONObject, tc.jsonObject)
-			}
-
-			if caps.ThinkingControls != tc.thinkingControl {
-				t.Fatalf("ThinkingControls = %v, want %v", caps.ThinkingControls, tc.thinkingControl)
-			}
-
-			if caps.StrictJSONSchema || caps.Grammar || caps.RequestTimeoutTelemetry {
-				t.Fatalf("capabilities should not claim unenforced strict schema/grammar/timeout telemetry: %#v", caps)
-			}
+			Expect(caps.NativeTools).To(Equal(tc.nativeTools))
+			Expect(caps.JSONObject).To(Equal(tc.jsonObject))
+			Expect(caps.ThinkingControls).To(Equal(tc.thinkingControl))
+			Expect(caps.StrictJSONSchema).To(BeFalse())
+			Expect(caps.Grammar).To(BeFalse())
+			Expect(caps.RequestTimeoutTelemetry).To(BeFalse())
 		})
 	}
-}
+})
 
-func TestWithBackendNormalizesValue(t *testing.T) {
+var _ = It("normalizes backend values", func() {
 	c := NewClient("http://example.invalid", time.Second)
-	if c.Backend() != config.BackendLlama {
-		t.Fatalf("expected default backend llama, got %q", c.Backend())
-	}
+	Expect(c.Backend()).To(Equal(config.BackendLlama))
 
 	c.WithBackend("MLX")
-
-	if c.Backend() != config.BackendMLX {
-		t.Fatalf("expected mlx after WithBackend(MLX), got %q", c.Backend())
-	}
+	Expect(c.Backend()).To(Equal(config.BackendMLX))
 
 	c.WithBackend("codex")
-
-	if c.Backend() != config.BackendCodex {
-		t.Fatalf("expected codex after WithBackend(codex), got %q", c.Backend())
-	}
+	Expect(c.Backend()).To(Equal(config.BackendCodex))
 
 	c.WithBackend("zai")
-
-	if c.Backend() != config.BackendZAI {
-		t.Fatalf("expected zai after WithBackend(zai), got %q", c.Backend())
-	}
+	Expect(c.Backend()).To(Equal(config.BackendZAI))
 
 	c.WithBackend("glm")
-
-	if c.Backend() != config.BackendGLM {
-		t.Fatalf("expected glm after WithBackend(glm), got %q", c.Backend())
-	}
+	Expect(c.Backend()).To(Equal(config.BackendGLM))
 
 	c.WithBackend("unknown")
+	Expect(c.Backend()).To(Equal(config.BackendLlama))
+})
 
-	if c.Backend() != config.BackendLlama {
-		t.Fatalf("expected fallback to llama for unknown backend, got %q", c.Backend())
-	}
-}
+var _ = It("retries only transient model-loading responses", func() {
+	Expect(shouldRetryLoadingModel(http.StatusServiceUnavailable, "loading model")).To(BeTrue())
+	Expect(shouldRetryLoadingModel(http.StatusServiceUnavailable, "unavailable_error: loading")).To(BeTrue())
+	Expect(shouldRetryLoadingModel(http.StatusBadRequest, "loading model")).To(BeFalse())
+})
 
-func TestShouldRetryLoadingModel(t *testing.T) {
-	if !shouldRetryLoadingModel(http.StatusServiceUnavailable, "loading model") {
-		t.Fatal("expected loading model 503 to retry")
-	}
-
-	if !shouldRetryLoadingModel(http.StatusServiceUnavailable, "unavailable_error: loading") {
-		t.Fatal("expected unavailable_error 503 to retry")
-	}
-
-	if shouldRetryLoadingModel(http.StatusBadRequest, "loading model") {
-		t.Fatal("400 should not retry")
-	}
-}
-
-func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
-	t.Run("orphaned tool_call gets synthetic tool response", func(t *testing.T) {
+var _ = Describe("repairMessageToolPairing", func() {
+	It("adds a synthetic response for an orphaned tool call", func() {
 		messages := []ChatMessage{
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
@@ -998,23 +807,14 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			},
 		}
 		repaired := repairMessageToolPairing(messages)
-		if len(repaired) != 4 {
-			t.Fatalf("expected 4 messages, got %d", len(repaired))
-		}
-
+		Expect(repaired).To(HaveLen(4))
 		last := repaired[len(repaired)-1]
-		if last.Role != "tool" {
-			t.Fatalf("expected last message role 'tool', got %q", last.Role)
-		}
-		if last.ToolCallID != "call_1" {
-			t.Fatalf("expected ToolCallID 'call_1', got %q", last.ToolCallID)
-		}
-		if last.Content == "" {
-			t.Fatal("expected non-empty synthetic content")
-		}
+		Expect(last.Role).To(Equal("tool"))
+		Expect(last.ToolCallID).To(Equal("call_1"))
+		Expect(last.Content).NotTo(BeEmpty())
 	})
 
-	t.Run("mixed paired and orphaned calls", func(t *testing.T) {
+	It("keeps real responses and adds only missing responses for mixed calls", func() {
 		messages := []ChatMessage{
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
@@ -1029,9 +829,7 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "tool", ToolCallID: "call_1", Content: "file contents here"},
 		}
 		repaired := repairMessageToolPairing(messages)
-		if len(repaired) != 5 {
-			t.Fatalf("expected 5 messages, got %d", len(repaired))
-		}
+		Expect(repaired).To(HaveLen(5))
 
 		var realTool, syntheticTool *ChatMessage
 		for i := range repaired {
@@ -1046,21 +844,13 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			}
 		}
 
-		if realTool == nil {
-			t.Fatal("missing real tool response for call_1")
-		}
-		if realTool.Content != "file contents here" {
-			t.Fatalf("real tool response content mismatch: %q", realTool.Content)
-		}
-		if syntheticTool == nil {
-			t.Fatal("missing synthetic tool response for orphaned call_2")
-		}
-		if syntheticTool.Content == "" {
-			t.Fatal("synthetic tool response has empty content")
-		}
+		Expect(realTool).NotTo(BeNil())
+		Expect(realTool.Content).To(Equal("file contents here"))
+		Expect(syntheticTool).NotTo(BeNil())
+		Expect(syntheticTool.Content).NotTo(BeEmpty())
 	})
 
-	t.Run("no orphaned calls is a no-op", func(t *testing.T) {
+	It("does not add messages when all calls are paired", func() {
 		messages := []ChatMessage{
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
@@ -1074,24 +864,20 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "tool", ToolCallID: "call_1", Content: "result"},
 		}
 		repaired := repairMessageToolPairing(messages)
-		if len(repaired) != 4 {
-			t.Fatalf("expected 4 messages, got %d", len(repaired))
-		}
+		Expect(repaired).To(HaveLen(4))
 	})
 
-	t.Run("no tool_calls in messages is unchanged", func(t *testing.T) {
+	It("leaves history without tool calls unchanged", func() {
 		messages := []ChatMessage{
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi there!"},
 		}
 		repaired := repairMessageToolPairing(messages)
-		if len(repaired) != 3 {
-			t.Fatalf("expected 3 messages, got %d", len(repaired))
-		}
+		Expect(repaired).To(Equal(messages))
 	})
 
-	t.Run("empty tool_call ID is skipped", func(t *testing.T) {
+	It("skips tool calls with empty IDs", func() {
 		messages := []ChatMessage{
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
@@ -1104,18 +890,15 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			},
 		}
 		repaired := repairMessageToolPairing(messages)
-		if len(repaired) != 3 {
-			t.Fatalf("expected 3 messages (empty IDs skipped), got %d", len(repaired))
-		}
+		Expect(repaired).To(HaveLen(3))
 	})
-}
+})
 
-func TestCompleteChatMessageRepairsOrphanedToolCallsBeforeRequest(t *testing.T) {
+var _ = It("repairs orphaned tool calls before sending a request", func() {
 	var got chatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		defer GinkgoRecover()
+		Expect(json.NewDecoder(r.Body).Decode(&got)).To(Succeed())
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"final answer"}}]}`))
 	}))
 	defer server.Close()
@@ -1130,17 +913,9 @@ func TestCompleteChatMessageRepairsOrphanedToolCallsBeforeRequest(t *testing.T) 
 		}}},
 		{Role: "system", Content: "Tools are now disabled. Answer from gathered evidence."},
 	}, ChatOptions{Model: "model"})
-	if err != nil {
-		t.Fatalf("CompleteChatMessage: %v", err)
-	}
-
-	if len(got.Messages) != 4 {
-		t.Fatalf("messages = %#v, want synthetic tool response inserted", got.Messages)
-	}
-	if got.Messages[2].Role != "tool" || got.Messages[2].ToolCallID != "call_dangling_1" {
-		t.Fatalf("message after assistant tool_calls must be paired tool response, got %#v", got.Messages)
-	}
-	if got.Messages[3].Role != "system" {
-		t.Fatalf("force-answer system message should remain after pairing repair, got %#v", got.Messages)
-	}
-}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got.Messages).To(HaveLen(4))
+	Expect(got.Messages[2].Role).To(Equal("tool"))
+	Expect(got.Messages[2].ToolCallID).To(Equal("call_dangling_1"))
+	Expect(got.Messages[3].Role).To(Equal("system"))
+})

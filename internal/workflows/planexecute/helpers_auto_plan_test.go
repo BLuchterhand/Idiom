@@ -2,19 +2,21 @@ package planexecute
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 
+	ginkgo "github.com/onsi/ginkgo/v2"
+	gomega "github.com/onsi/gomega"
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/config"
 )
 
-func TestPlanExecuteExactPlanEditsParsesBlockquotedRequiredBehaviorNewFileBody(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("plan execute exact plan edits parses blockquoted required behavior new file body", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "writerroute"), 0o755); err != nil {
-		t.Fatalf("mkdir writerroute: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir writerroute: %v", err))
 	}
 
 	prompt := []string{
@@ -41,29 +43,20 @@ func TestPlanExecuteExactPlanEditsParsesBlockquotedRequiredBehaviorNewFileBody(t
 		"> ```",
 	}
 	edits, reason := planExecuteExactPlanEditsForWorkspace(strings.Join(prompt, "\n"), []string{"internal/contracts/writerroute/decision.go"}, root)
-
-	if reason != "" {
-		t.Fatalf("unexpected reason: %s", reason)
-	}
-
-	if len(edits) != 1 {
-		t.Fatalf("edits = %d, want 1: %#v", len(edits), edits)
-	}
+	gomega.Expect(reason != "").To(gomega.BeFalse(), fmt.Sprintf("unexpected reason: %s", reason))
+	gomega.Expect(len(edits) != 1).To(gomega.BeFalse(), fmt.Sprintf("edits = %d, want 1: %#v", len(edits), edits))
 
 	edit := edits[0]
-	if edit.Path != "internal/contracts/writerroute/decision.go" || !edit.ReplaceAll || edit.OldText != "" {
-		t.Fatalf("unexpected edit shape: %#v", edit)
-	}
+	gomega.Expect(edit.Path).To(gomega.Equal("internal/contracts/writerroute/decision.go"), fmt.Sprintf("unexpected edit shape: %#v", edit))
+	gomega.Expect(edit.ReplaceAll).To(gomega.BeTrue(), fmt.Sprintf("unexpected edit shape: %#v", edit))
+	gomega.Expect(edit.OldText).To(gomega.Equal(""), fmt.Sprintf("unexpected edit shape: %#v", edit))
+	gomega.Expect(edit.NewText != "package writerroute\n\nconst SchemaVersion = \"idiom.writer_route.v1\"").To(gomega.BeFalse(), fmt.Sprintf("unexpected new_text: %q", edit.NewText))
+})
 
-	if edit.NewText != "package writerroute\n\nconst SchemaVersion = \"idiom.writer_route.v1\"" {
-		t.Fatalf("unexpected new_text: %q", edit.NewText)
-	}
-}
-
-func TestPlanExecuteExactPlanEditsBindsImplicitBodyToNearestPathMention(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("plan execute exact plan edits binds implicit body to nearest path mention", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "writerroute"), 0o755); err != nil {
-		t.Fatalf("mkdir writerroute: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir writerroute: %v", err))
 	}
 
 	prompt := []string{
@@ -86,28 +79,19 @@ func TestPlanExecuteExactPlanEditsBindsImplicitBodyToNearestPathMention(t *testi
 		"> ```",
 	}
 	edits, reason := planExecuteExactPlanEditsForWorkspace(strings.Join(prompt, "\n"), []string{"internal/contracts/writerroute/decision.go"}, root)
+	gomega.Expect(reason != "").To(gomega.BeFalse(), fmt.Sprintf("unexpected reason: %s", reason))
+	gomega.Expect(len(edits) != 1).To(gomega.BeFalse(), fmt.Sprintf("edits = %d, want 1: %#v", len(edits), edits))
+	gomega.Expect(strings.Contains(edits[0].NewText, "testing")).To(gomega.BeFalse(), fmt.Sprintf("implicit body parser captured out-of-scope test block: %q", edits[0].NewText))
+})
 
-	if reason != "" {
-		t.Fatalf("unexpected reason: %s", reason)
-	}
-
-	if len(edits) != 1 {
-		t.Fatalf("edits = %d, want 1: %#v", len(edits), edits)
-	}
-
-	if strings.Contains(edits[0].NewText, "testing") {
-		t.Fatalf("implicit body parser captured out-of-scope test block: %q", edits[0].NewText)
-	}
-}
-
-func TestPlanExecuteExactPlanEditsDoesNotInferImplicitBodyForExistingPath(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("plan execute exact plan edits does not infer implicit body for existing path", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "idiom"), 0o755); err != nil {
-		t.Fatalf("mkdir cmd/idiom: %v", err)
+		ginkgo.Fail(fmt.Sprintf("mkdir cmd/idiom: %v", err))
 	}
 
 	if err := os.WriteFile(filepath.Join(root, "cmd", "idiom", "lane.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatalf("write lane.go: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write lane.go: %v", err))
 	}
 
 	prompt := []string{
@@ -122,48 +106,37 @@ func TestPlanExecuteExactPlanEditsDoesNotInferImplicitBodyForExistingPath(t *tes
 		"> ```",
 	}
 	edits, reason := planExecuteExactPlanEditsForWorkspace(strings.Join(prompt, "\n"), []string{"cmd/idiom/lane.go"}, root)
+	gomega.Expect(len(edits) != 0).To(gomega.BeFalse(), fmt.Sprintf("implicit body parser must not replace existing paths: %#v", edits))
+	gomega.Expect(reason == "").To(gomega.BeFalse(), fmt.Sprintf("expected skip reason for non-exact prompt"))
+})
 
-	if len(edits) != 0 {
-		t.Fatalf("implicit body parser must not replace existing paths: %#v", edits)
-	}
-
-	if reason == "" {
-		t.Fatalf("expected skip reason for non-exact prompt")
-	}
-}
-
-func TestPlanExecuteClassifyAutoExactPlanEditsDetectsAlreadyAppliedAndPending(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("plan execute classify auto exact plan edits detects already applied and pending", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	if err := os.WriteFile(filepath.Join(root, "applied.txt"), []byte("new\n"), 0o644); err != nil {
-		t.Fatalf("write applied: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write applied: %v", err))
 	}
 
 	if err := os.WriteFile(filepath.Join(root, "pending.txt"), []byte("old\n"), 0o644); err != nil {
-		t.Fatalf("write pending: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write pending: %v", err))
 	}
 
 	result := planExecuteClassifyAutoExactPlanEdits(root, []planartifact.PlanEdit{
 		{Path: "applied.txt", OldText: "old\n", NewText: "new\n"},
 		{Path: "pending.txt", OldText: "old\n", NewText: "new\n"},
 	})
+	gomega.Expect(result.AppliedCount).To(gomega.Equal(1), fmt.Sprintf("unexpected classification: %#v", result))
+	gomega.Expect(result.PendingCount).To(gomega.Equal(1), fmt.Sprintf("unexpected classification: %#v", result))
+	gomega.Expect(result.UnknownCount).To(gomega.Equal(0), fmt.Sprintf("unexpected classification: %#v", result))
+	gomega.Expect(result.AppliedPaths).To(gomega.HaveLen(1), fmt.Sprintf("applied paths = %#v", result.AppliedPaths))
+	gomega.Expect(result.AppliedPaths[0]).To(gomega.Equal("applied.txt"), fmt.Sprintf("applied paths = %#v", result.AppliedPaths))
+	gomega.Expect(result.PendingPaths).To(gomega.HaveLen(1), fmt.Sprintf("pending paths = %#v", result.PendingPaths))
+	gomega.Expect(result.PendingPaths[0]).To(gomega.Equal("pending.txt"), fmt.Sprintf("pending paths = %#v", result.PendingPaths))
+})
 
-	if result.AppliedCount != 1 || result.PendingCount != 1 || result.UnknownCount != 0 {
-		t.Fatalf("unexpected classification: %#v", result)
-	}
-
-	if len(result.AppliedPaths) != 1 || result.AppliedPaths[0] != "applied.txt" {
-		t.Fatalf("applied paths = %#v", result.AppliedPaths)
-	}
-
-	if len(result.PendingPaths) != 1 || result.PendingPaths[0] != "pending.txt" {
-		t.Fatalf("pending paths = %#v", result.PendingPaths)
-	}
-}
-
-func TestPlanExecuteTryAutoExactPlanSourceSatisfiedWhenAllEditsAlreadyApplied(t *testing.T) {
-	root := t.TempDir()
+var _ = ginkgo.It("plan execute try auto exact plan source satisfied when all edits already applied", func() {
+	root := ginkgo.GinkgoT().TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("new a\n"), 0o644); err != nil {
-		t.Fatalf("write a: %v", err)
+		ginkgo.Fail(fmt.Sprintf("write a: %v", err))
 	}
 
 	cfg := testPlanExecuteConfig(root)
@@ -177,15 +150,12 @@ func TestPlanExecuteTryAutoExactPlanSourceSatisfiedWhenAllEditsAlreadyApplied(t 
 		"new_text:\n\n```text\nnew a\n```\n"
 
 	result := planExecuteTryAutoExactPlan(context.Background(), cfg, prompt, []string{"a.txt"}, planExecuteTestDependencies().SubmitAutoPlan)
-
-	if !result.SourceSatisfied || result.Submitted {
-		t.Fatalf("expected source-satisfied without submission, got %#v", result)
-	}
-
-	if result.AppliedCount != 1 || len(result.AppliedPaths) != 1 || result.AppliedPaths[0] != "a.txt" {
-		t.Fatalf("unexpected applied classification: %#v", result)
-	}
-}
+	gomega.Expect(result.SourceSatisfied).To(gomega.BeTrue(), fmt.Sprintf("expected source-satisfied without submission, got %#v", result))
+	gomega.Expect(result.Submitted).To(gomega.BeFalse(), fmt.Sprintf("expected source-satisfied without submission, got %#v", result))
+	gomega.Expect(result.AppliedCount).To(gomega.Equal(1), fmt.Sprintf("unexpected applied classification: %#v", result))
+	gomega.Expect(result.AppliedPaths).To(gomega.HaveLen(1), fmt.Sprintf("unexpected applied classification: %#v", result))
+	gomega.Expect(result.AppliedPaths[0]).To(gomega.Equal("a.txt"), fmt.Sprintf("unexpected applied classification: %#v", result))
+})
 
 func testPlanExecuteConfig(root string) config.Config {
 	cfg := config.Default()

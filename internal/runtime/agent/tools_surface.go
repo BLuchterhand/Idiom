@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -15,744 +14,15 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/contracts/autonomy"
+	contractcompile "idiom/internal/contracts/compile"
 	"idiom/internal/contracts/pathparse"
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/taskledger"
 	"idiom/internal/platform/textutil"
-	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
-
-// DiscoveryRedirect inspects an about-to-run tool request and, if a more
-// deterministic language-specific tool exists for the same question,
-// returns a synthesized redirect ToolResult that points the model at the
-// better tool. A second identical call (same fingerprint) is allowed
-// through as the fallback path — the model gets one nudge per
-// (fingerprint, turn), never a lockout.
-//
-// The redirect layer reasons in capability tokens rather than tool-name space,
-// so adding a new language only requires a LanguageSupport entry in the
-// semantic language registry — no changes here.
-type DiscoveryRedirect struct {
-	// firedRedirects keys on the redirect fingerprint (tool+Path+Pattern).
-	// The first time a fingerprint fires, we synthesize a redirect. The
-	// second time, we execute normally — the model has committed to the
-	// generic path and we respect that rather than looping forever.
-	firedRedirects map[string]bool
-	// decisionTablesShown keys on language name. Ensures the full
-	// decision guide is injected once per (language, turn), not on every
-	// redirect.
-	decisionTablesShown map[string]bool
-	// kindFireCount keys on "lang|capability" and counts how many times a
-	// given redirect class has fired this turn. Repeated redirects make
-	// the guidance more explicit, but remain soft so the redirect layer
-	// does not become a read-budget stop.
-	kindFireCount map[string]int
-	// fingerprintFireCount keys on the redirect fingerprint. Tracks how
-	// many times this exact (tool+path+pattern) fingerprint has fired a
-	// redirect this turn. The fallthrough gating uses this per-fingerprint
-	// counter, not the kind-level counter, so that different patterns that
-	// share the same (language, capability) class don't jointly exhaust
-	// the fallthrough budget for each other.
-	fingerprintFireCount map[string]int
-	// allowedTools is the active lane/runtime surface. When a
-	// language-specific direct tool is present in the workspace manager
-	// but hidden by the lane contract, redirects must point at an
-	// advertised wrapper such as code_navigate instead of leaking the
-	// hidden direct tool name as the next candidate request.
-	allowedTools []string
-}
-
-// smallFileRedirectThreshold is the line count below which read_file on
-// a Go/C++ file skips the outline redirect and executes directly. Based
-// on log analysis: files under this size almost always get read
-// whole-file in the follow-up step anyway, so the outline is pure
-// overhead. Larger files benefit from outline because the model picks
-// a specific symbol to go_read_symbol next.
-//
-// Threshold chosen from SWE suite empirical: 29% of tasks hit
-// redirect_storm at the 200-line threshold. Most .go files in typical
-// repos are under 400 lines — raising here cuts the outline detour
-// for the majority while still protecting the large-file case.
-const smallFileRedirectThreshold = 400
-
-// NewDiscoveryRedirect returns a per-turn redirect state.
-func NewDiscoveryRedirect() *DiscoveryRedirect {
-	return &DiscoveryRedirect{
-		firedRedirects:       make(map[string]bool),
-		decisionTablesShown:  make(map[string]bool),
-		kindFireCount:        make(map[string]int),
-		fingerprintFireCount: make(map[string]int),
-	}
-}
-
-func (d *DiscoveryRedirect) SetAllowedTools(tools []string) {
-	if d == nil {
-		return
-	}
-
-	d.allowedTools = append(d.allowedTools[:0], tools...)
-}
-
-// RedirectDecision is the outcome of a Consider call. When ShouldRedirect
-// is false the runner proceeds with the original request untouched.
-type RedirectDecision struct {
-	ShouldRedirect bool
-	// Result is the synthesized ToolResult delivered back to the model
-	// in place of executing the original request.
-	Result workspace.ToolResult
-	// DecisionGuide, if non-empty, is a one-shot system message the
-	// runner should append to the turn's message list. This carries the
-	// language's full capability list and fires at most once per
-	// (language, turn).
-	DecisionGuide string
-	// Language is the language matched by the redirect (for telemetry).
-	Language string
-	// Capability is the capability token the redirect recommends (for telemetry).
-	Capability string
-	// HardReject signals that the caller should treat this as a
-	// rejection (populate its rejectedFingerprints, bump counters)
-	// rather than as a soft "redirected" result. Generic code-read
-	// redirects intentionally leave this false: they are guidance, not
-	// permission invariants.
-	HardReject bool
-}
-
-// Consider inspects a request and returns a redirect decision. When the
-// request is already a language-specific tool, is not covered by any
-// rule, or has already fired a redirect this turn, the decision has
-// ShouldRedirect=false.
-//
-// ws is used to confirm the language is actually active in the current
-// workspace — we never redirect to a tool that does not apply.
-func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Manager) RedirectDecision {
-	if d == nil || ws == nil {
-		return RedirectDecision{}
-	}
-
-	if isStructuredTool(req.Tool) {
-		return RedirectDecision{}
-	}
-
-	if textutil.EqualTrimFold(req.Tool, "shell") {
-		return RedirectDecision{}
-	}
-
-	lang, cap, ok := matchRedirectRule(req, ws)
-	if !ok {
-		return RedirectDecision{}
-	}
-
-	if cap == semanticlanguage.CapFileOutline && strings.TrimSpace(req.Path) == "" {
-		if path, ok := redirectReadFilePath(req, ws); ok {
-			req.Path = path
-		}
-	}
-
-	req = normalizeRedirectRequest(req, lang, cap)
-
-	replacement := lang.Tool(cap)
-
-	if replacement == "" {
-		return RedirectDecision{}
-	}
-
-	adapter := d.redirectAdapter(replacement)
-	fp := redirectFingerprint(req)
-	kind := lang.Name + "|" + string(cap)
-	priorKindFires := d.kindFireCount[kind]
-
-	// Increment the per-fingerprint counter first so the fallthrough
-	// check uses this call's count. Call 1 (fpFires=1): redirect.
-	// Call 2 (fpFires=2): fall through — honor the model's retry.
-	// Calls 3+ (fpFires>=3): redirect again with escalated messaging.
-	fpFires := d.fingerprintFireCount[fp] + 1
-
-	d.fingerprintFireCount[fp] = fpFires
-
-	if fpFires == 2 {
-		// Model retried the same call after one redirect — honor it.
-		return RedirectDecision{}
-	}
-
-	d.firedRedirects[fp] = true
-	d.kindFireCount[kind] = priorKindFires + 1
-
-	guide := ""
-
-	if !d.decisionTablesShown[lang.Name] {
-		d.decisionTablesShown[lang.Name] = true
-		guide = lang.DecisionGuide
-	}
-
-	// After turnWideReadFileHardBlockAt whole-file outline redirects of the
-	// same language, flip wide raw reads to a hard-reject path so the runner
-	// populates rejectedFingerprints and a retry terminates the churn. Gated
-	summary := redirectSummary(req, adapter.Tool)
-	msg := redirectMessage(req, lang, cap, replacement, adapter)
-
-	if priorKindFires >= 1 {
-		msg = escalateRedirectMessage(msg, lang, cap, adapter.Label(), priorKindFires+1)
-	}
-
-	result := workspace.ToolResult{
-		Tool:    req.Tool,
-		Summary: summary,
-		Output:  msg,
-	}
-
-	return RedirectDecision{
-		ShouldRedirect: true,
-		Result:         result,
-		DecisionGuide:  guide,
-		Language:       lang.Name,
-		Capability:     string(cap),
-	}
-}
-
-type redirectAdapter struct {
-	Tool       string
-	Underlying string
-}
-
-func (a redirectAdapter) Label() string {
-	if strings.TrimSpace(a.Tool) == "code_navigate" {
-		return "code_navigate"
-	}
-
-	if strings.TrimSpace(a.Underlying) != "" && strings.TrimSpace(a.Underlying) != strings.TrimSpace(a.Tool) {
-		return fmt.Sprintf("%s (underlying %s)", strings.TrimSpace(a.Tool), strings.TrimSpace(a.Underlying))
-	}
-
-	return strings.TrimSpace(a.Tool)
-}
-
-func (d *DiscoveryRedirect) redirectAdapter(replacement string) redirectAdapter {
-	replacement = strings.TrimSpace(replacement)
-
-	adapter := redirectAdapter{Tool: replacement}
-
-	if replacement == "" || len(d.allowedTools) == 0 || redirectToolAllowed(d.allowedTools, replacement) {
-		return adapter
-	}
-
-	if redirectToolAllowed(d.allowedTools, "code_navigate") {
-		return redirectAdapter{Tool: "code_navigate", Underlying: replacement}
-	}
-
-	return adapter
-}
-
-func redirectToolAllowed(tools []string, tool string) bool {
-	tool = strings.TrimSpace(tool)
-	if tool == "" {
-		return false
-	}
-
-	for _, candidate := range tools {
-		if strings.TrimSpace(candidate) == tool {
-			return true
-		}
-	}
-
-	return false
-}
-
-func redirectSummary(req workspace.ToolRequest, replacement string) string {
-	replacement = strings.TrimSpace(replacement)
-
-	path := strings.TrimSpace(req.Path)
-
-	if path != "" {
-		return fmt.Sprintf("Redirected %s to %s", path, replacement)
-	}
-
-	return fmt.Sprintf("Redirected to %s", replacement)
-}
-
-// escalateRedirectMessage prepends a hardened preface to the standard
-// redirect body when the same (language, capability) class has already
-// fired this turn. The number of prior fires is included so the model
-// sees the streak, not just an anonymous scolding.
-func escalateRedirectMessage(base string, lang semanticlanguage.LanguageSupport, cap semanticlanguage.Capability, replacement string, fireNumber int) string {
-	preface := fmt.Sprintf(
-		"This exact call has been redirected %d times this turn. The structured tool route via %s for %s code queries remains available. If the structured tool already returned results for this symbol, those results are your answer.\n\n",
-		fireNumber, replacement, lang.Name,
-	)
-
-	return preface + base
-}
-
-func redirectMessage(req workspace.ToolRequest, lang semanticlanguage.LanguageSupport, cap semanticlanguage.Capability, replacement string, adapter redirectAdapter) string {
-	var b strings.Builder
-
-	fmt.Fprintf(&b, "This %s code query is answered through the %s capability via %s.\n",
-		lang.Name, cap, adapter.Label())
-
-	switch cap {
-	case semanticlanguage.CapFileOutline:
-		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, "")
-
-		readSym := lang.Tool(semanticlanguage.CapReadSymbol)
-		fmt.Fprintf(&b, "related_capability: read_symbol via %s returns one declaration body by name.\n", relatedRedirectAdapterLabel(adapter, readSym))
-		b.WriteString("raw_range_fallback: read_file with start_line/end_line remains appropriate for ranges a single declaration cannot cover.\n")
-	case semanticlanguage.CapWorkspaceSymbol, semanticlanguage.CapFindSymbol:
-		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, req.Pattern)
-		b.WriteString("The structured result includes file, line, kind, and qualified name.\n")
-
-		readSym := lang.Tool(semanticlanguage.CapReadSymbol)
-		if readSym != "" {
-			fmt.Fprintf(&b, "related_capability: read_symbol via %s returns a hit's body by pattern and path; raw range fallback remains for context beyond a single declaration.\n", relatedRedirectAdapterLabel(adapter, readSym))
-		}
-	case semanticlanguage.CapReferences:
-		path := req.Path
-		if strings.TrimSpace(path) == "" {
-			path = "."
-		}
-
-		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, path, req.Pattern)
-
-		readSym := lang.Tool(semanticlanguage.CapReadSymbol)
-		if readSym != "" {
-			fmt.Fprintf(&b, "related_capability: read_symbol via %s can inspect each hit's enclosing declaration; raw range fallback remains for surrounding context.\n", relatedRedirectAdapterLabel(adapter, readSym))
-		}
-	default:
-		// Generic hint for capabilities that don't have a bespoke
-		// template above. Adding a new Capability should not silently
-		// degrade this message — the hint always names the tool so the
-		// model can construct the call from its schema.
-		fmt.Fprintf(&b, "candidate_adapter: %s with equivalent arguments from the rejected request.\n", adapter.Label())
-	}
-
-	b.WriteString("The structured route remains available. This redirect has fired for this exact fingerprint this turn.")
-
-	return strings.TrimSpace(b.String())
-}
-
-func relatedRedirectAdapterLabel(primary redirectAdapter, directRelated string) string {
-	if strings.TrimSpace(primary.Tool) == "code_navigate" {
-		return "code_navigate"
-	}
-
-	return strings.TrimSpace(directRelated)
-}
-
-func writeRedirectCandidateRequest(b *strings.Builder, adapter redirectAdapter, cap semanticlanguage.Capability, language, path, pattern string) {
-	if b == nil {
-		return
-	}
-
-	if strings.TrimSpace(adapter.Tool) == "code_navigate" {
-		fmt.Fprintf(b, "candidate_request: {\"tool\":\"code_navigate\",\"capability\":%q", string(cap))
-
-		if strings.TrimSpace(path) != "" {
-			fmt.Fprintf(b, ",\"path\":%q", path)
-		}
-
-		if strings.TrimSpace(pattern) != "" {
-			fmt.Fprintf(b, ",\"pattern\":%q", pattern)
-		}
-
-		if strings.TrimSpace(language) != "" {
-			fmt.Fprintf(b, ",\"language\":%q", language)
-		}
-
-		b.WriteString("}\n")
-
-		return
-	}
-
-	fmt.Fprintf(b, "candidate_request: {\"tool\":%q", adapter.Tool)
-
-	if strings.TrimSpace(pattern) != "" {
-		fmt.Fprintf(b, ",\"pattern\":%q", pattern)
-	}
-
-	if strings.TrimSpace(path) != "" {
-		fmt.Fprintf(b, ",\"path\":%q", path)
-	}
-
-	b.WriteString("}\n")
-}
-
-func normalizeRedirectRequest(req workspace.ToolRequest, lang semanticlanguage.LanguageSupport, cap semanticlanguage.Capability) workspace.ToolRequest {
-	switch cap {
-	case semanticlanguage.CapWorkspaceSymbol, semanticlanguage.CapFindSymbol, semanticlanguage.CapReferences:
-		if ident, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, req.Pattern); ok {
-			req.Pattern = ident
-		}
-	}
-
-	return req
-}
-
-func redirectFingerprint(req workspace.ToolRequest) string {
-	return req.Tool + "|" + req.ID + "|" + req.Path + "|" + req.Pattern + "|" + req.Glob + "|" + req.Command
-}
-
-func redirectReadFilePath(req workspace.ToolRequest, ws *workspace.Manager) (string, bool) {
-	path := strings.TrimSpace(req.Path)
-	if path != "" {
-		return path, true
-	}
-
-	id := strings.TrimSpace(req.ID)
-	if id == "" || ws == nil {
-		return "", false
-	}
-
-	resolved, err := ws.ResolveHandlePath(id)
-	if err != nil {
-		return "", false
-	}
-
-	if rel, err := filepath.Rel(ws.Root(), resolved); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-		return filepath.ToSlash(rel), true
-	}
-
-	return resolved, true
-}
-
-// matchRedirectRule maps a generic tool request to a (language,
-// capability) pair when a deterministic tool would answer the same
-// question better. Returns ok=false when no rule matches.
-func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (semanticlanguage.LanguageSupport, semanticlanguage.Capability, bool) {
-	switch strings.ToLower(strings.TrimSpace(req.Tool)) {
-	case "read_file":
-		// A read_file on a code file with no line range is almost
-		// always "what's in this file?" — file_outline answers that
-		// with line ranges the model can use for a follow-up bounded
-		// read_file. A read with start_line/end_line set is a
-		// targeted read and is not redirected.
-		if req.StartLine > 0 || req.EndLine > 0 {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		path, ok := redirectReadFilePath(req, ws)
-		if !ok {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		lang, ok := semanticlanguage.LanguageForFile(path)
-		if !ok {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		if !languageActive(ws, lang) {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		if lang.Tool(semanticlanguage.CapFileOutline) == "" {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		lineCount, ok := ws.FileLineCount(path)
-		if !ok {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		// Small files short-circuit the outline detour. A typical
-		// outline+read_symbol loop costs two tool calls plus a chunk
-		// of prompt context for the outline table; below this
-		// threshold, reading the whole file directly is cheaper AND
-		// more informative (the model needs the bodies anyway). This
-		// applies to tests too: small tests are cheap to read, but a
-		// multi-thousand-line test file needs an outline before a raw
-		// dump can blow the planner context budget.
-		// The threshold is deliberately generous — outline is still the
-		// right answer for 500-line files with many decls.
-		if lineCount > 0 && lineCount <= smallFileRedirectThreshold {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		return lang, semanticlanguage.CapFileOutline, true
-	case "search_content":
-		pattern := strings.TrimSpace(req.Pattern)
-		if pattern == "" {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		if searchContentTargetsConcreteFile(req) && workspace.LooksLikeIdentifier(pattern) {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		lang, ok := languageForSearchRequest(req, ws)
-		if !ok {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		if !languageActive(ws, lang) {
-			return semanticlanguage.LanguageSupport{}, "", false
-		}
-
-		// Choose between workspace-wide and path-scoped symbol search
-		// based on request intent, not purely on which tool the language
-		// exposes. When the model already scoped the request to a path,
-		// the index-backed find_symbol respects that scope directly;
-		// workspace_symbol (gopls-backed) would ignore it and return
-		// unfiltered hits. When no path is set, workspace_symbol is the
-		// right default — it has the broader reach. Either tool falls
-		// back to the other when the preferred one is missing.
-		primary, secondary := semanticlanguage.CapWorkspaceSymbol, semanticlanguage.CapFindSymbol
-		if strings.TrimSpace(req.Path) != "" {
-			primary, secondary = semanticlanguage.CapFindSymbol, semanticlanguage.CapWorkspaceSymbol
-		}
-
-		cap := primary
-		if lang.Tool(cap) == "" {
-			cap = secondary
-			if lang.Tool(cap) == "" {
-				return semanticlanguage.LanguageSupport{}, "", false
-			}
-		}
-
-		return lang, cap, true
-	}
-
-	return semanticlanguage.LanguageSupport{}, "", false
-}
-
-// considerConversationReadFileRedirect redirects repeated source-file
-// read_file calls on the same file to the shared code-navigation source-body
-// capability. Diagnostic logs are deliberately excluded: their useful evidence
-// is temporal windows, not symbols.
-func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) RedirectDecision {
-	if d == nil {
-		return RedirectDecision{}
-	}
-
-	if !conversationDiscoveryRedirectApplies(brief) {
-		return RedirectDecision{}
-	}
-
-	if !textutil.EqualTrimFold(req.Tool, "read_file") {
-		return RedirectDecision{}
-	}
-
-	path := NormalizeRunnerPath(req.Path)
-	if path == "" {
-		return RedirectDecision{}
-	}
-
-	if IsDiagnosticLogArtifactPath(path) {
-		return RedirectDecision{}
-	}
-
-	// Don't redirect to code_navigate if it's been hidden by turn-level
-	// tool hiding (e.g., same-path fixation). Redirecting to a hidden tool
-	// creates a dead end — the model follows the redirect only to get a
-	// hidden-tool rejection, wasting a step and confusing the investigation.
-	codeNavigateVisible := len(d.allowedTools) == 0 || redirectToolAllowed(d.allowedTools, workspace.ToolNameCodeNavigate)
-	if !codeNavigateVisible {
-		return RedirectDecision{}
-	}
-
-	// Only redirect after the model has already read this file at
-	// least twice this turn. First read is legitimate exploration.
-	fp := "read_file|" + path + "|conversation"
-	fpFires := d.fingerprintFireCount[fp] + 1
-
-	d.fingerprintFireCount[fp] = fpFires
-
-	if fpFires < 3 {
-		return RedirectDecision{}
-	}
-
-	d.firedRedirects[fp] = true
-
-	summary := "Redirected repeated read_file to " + workspace.ToolNameCodeNavigate
-	msg := fmt.Sprintf(
-		"You have read %s %d times this turn. Instead of reading small chunks, use %s with the symbol name to get the full body in one call. Try:\n\n%s\n\n"+
-			"If you don't know the symbol name, use %s first to list available symbols.",
-		path, fpFires,
-		workspace.CodeNavigateCapabilityInstruction(semanticlanguage.CapReadSymbol),
-		workspace.CodeNavigateRequestExample(semanticlanguage.CapReadSymbol, path, "<symbol name>"),
-		workspace.CodeNavigateCapabilityInstruction(semanticlanguage.CapFileOutline),
-	)
-
-	return RedirectDecision{
-		ShouldRedirect: true,
-		Result: workspace.ToolResult{
-			Tool:    req.Tool,
-			Summary: summary,
-			Output:  msg,
-		},
-	}
-}
-
-// conversationDiscoveryRedirectApplies returns true when conversation-lane
-// discovery redirects should fire for this brief. Matches conversation
-// TaskFamily plus direct_answer and grounded_evidence_summary contracts.
-func conversationDiscoveryRedirectApplies(brief workerruntime.WorkerRuntimeBrief) bool {
-	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) {
-		return true
-	}
-
-	return workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractDirectAnswer) ||
-		workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence)
-}
-
-func searchContentTargetsConcreteFile(req workspace.ToolRequest) bool {
-	path := strings.TrimSpace(req.Path)
-	if path == "" || strings.ContainsAny(path, "*?[]{}") {
-		return false
-	}
-
-	return filepath.Ext(filepath.Base(path)) != ""
-}
-
-// languageForSearchRequest infers a language for a generic search_content
-// request from the strongest available signal. It deliberately avoids
-// guessing: ambiguous syntax in a polyglot workspace falls through to the
-// original text search instead of redirecting to the wrong language tool.
-func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) (semanticlanguage.LanguageSupport, bool) {
-	if lang, ok := languageFromConcretePath(req.Path); ok && patternCompatibleWithLanguage(req.Pattern, lang) {
-		return lang, true
-	}
-
-	if lang, ok := languageFromGlob(req.Glob); ok && patternCompatibleWithLanguage(req.Pattern, lang) {
-		return lang, true
-	}
-
-	return languageFromSyntaxPattern(req.Pattern, ws)
-}
-
-func patternCompatibleWithLanguage(pattern string, lang semanticlanguage.LanguageSupport) bool {
-	if workspace.LooksLikeSymbolIdentifier(pattern) {
-		return true
-	}
-
-	_, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, pattern)
-	return ok
-}
-
-func languageFromConcretePath(path string) (semanticlanguage.LanguageSupport, bool) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return semanticlanguage.LanguageSupport{}, false
-	}
-
-	ext := filepath.Ext(path)
-	if ext == "" {
-		return semanticlanguage.LanguageSupport{}, false
-	}
-
-	return semanticlanguage.LanguageForExtension(ext)
-}
-
-func languageActive(ws *workspace.Manager, lang semanticlanguage.LanguageSupport) bool {
-	for _, active := range ws.ActiveLanguages() {
-		if active.Name == lang.Name {
-			return true
-		}
-	}
-
-	return false
-}
-
-// languageFromGlob derives a language from a filename glob like
-// "*.go", "*.{cpp,h}", "**/*.cc". Only language-specific globs
-// redirect; a generic "*" matches nothing here.
-func languageFromGlob(glob string) (semanticlanguage.LanguageSupport, bool) {
-	glob = strings.ToLower(strings.TrimSpace(glob))
-	if glob == "" {
-		return semanticlanguage.LanguageSupport{}, false
-	}
-
-	base := filepath.Base(glob)
-	// Handle brace-expansion patterns like "*.{cpp,h}".
-	if strings.Contains(base, "{") && strings.Contains(base, "}") {
-		open := strings.Index(base, "{")
-		close := strings.Index(base, "}")
-
-		if open >= 0 && close > open {
-			inner := base[open+1 : close]
-			for _, ext := range strings.Split(inner, ",") {
-				ext = strings.TrimSpace(ext)
-				if ext == "" {
-					continue
-				}
-
-				if !strings.HasPrefix(ext, ".") {
-					ext = "." + ext
-				}
-
-				if lang, ok := semanticlanguage.LanguageForExtension(ext); ok {
-					return lang, true
-				}
-			}
-
-			return semanticlanguage.LanguageSupport{}, false
-		}
-	}
-
-	ext := filepath.Ext(base)
-	if ext == "" {
-		return semanticlanguage.LanguageSupport{}, false
-	}
-
-	return semanticlanguage.LanguageForExtension(ext)
-}
-
-func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (semanticlanguage.LanguageSupport, bool) {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || ws == nil {
-		return semanticlanguage.LanguageSupport{}, false
-	}
-
-	var matches []semanticlanguage.LanguageSupport
-
-	for _, lang := range ws.ActiveLanguages() {
-		if _, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, pattern); ok {
-			matches = append(matches, lang)
-		}
-	}
-
-	if len(matches) != 1 {
-		return semanticlanguage.LanguageSupport{}, false
-	}
-
-	return matches[0], true
-}
-
-// isStructuredTool reports whether a tool name is already a
-// language-specific structured tool; we never redirect one structured
-// tool to another.
-func isStructuredTool(tool string) bool {
-	t := strings.ToLower(strings.TrimSpace(tool))
-	if t == "" {
-		return false
-	}
-
-	for _, prefix := range structuredToolPrefixes() {
-		if strings.HasPrefix(t, prefix) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func structuredToolPrefixes() []string {
-	seen := make(map[string]bool)
-
-	var prefixes []string
-
-	for _, lang := range semanticlanguage.LanguageRegistry() {
-		for _, tool := range lang.Tools {
-			prefix, _, ok := strings.Cut(strings.ToLower(strings.TrimSpace(tool)), "_")
-			if !ok || prefix == "" || seen[prefix+"_"] {
-				continue
-			}
-
-			seen[prefix+"_"] = true
-			prefixes = append(prefixes, prefix+"_")
-		}
-	}
-
-	return prefixes
-}
 
 type debugLogSearchHit struct {
 	Handle string
@@ -766,9 +36,15 @@ type debugLogFileSelection struct {
 }
 
 type debugLogReadWindow struct {
-	Path  string
-	Start int
-	End   int
+	Path        string
+	CanonicalID string
+	Start       int
+	End         int
+}
+
+func (window debugLogReadWindow) MatchesPath(path string) bool {
+	path = normalizedDiagnosticLogEvidenceReference(path)
+	return path != "" && (path == window.Path || path == window.CanonicalID)
 }
 
 var singleSearchContentSummaryRE = regexp.MustCompile(`^Found 1 matching line at (.+):([0-9]+)\.`)
@@ -784,70 +60,6 @@ func debugLogEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results [
 	}
 
 	return hasDebugLogReadWindowForHit(results, hit)
-}
-
-func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief, sessionID string) (string, string, bool) {
-	if !debugLogContractApplies(brief, results) || debugLogEvidenceSatisfied(brief, results) {
-		return "", "", false
-	}
-
-	selection, ok := latestDebugLogSelection(results)
-	if !ok || !hasDebugLogReadForSelection(results, selection) {
-		return "", "", false
-	}
-
-	if path, ok := concreteDebugLogArtifactPathForRequest(req, results); ok &&
-		!debugLogSelectionMatchesPath(selection, path) &&
-		!currentSessionDebugLogPath(path, sessionID) {
-
-		return "", "", false
-	}
-
-	if workspace.IsReadTool(strings.TrimSpace(req.Tool)) && !debugLogRequestTargetsSelection(req, selection) {
-		return "Selected-log scope enforced",
-			"you already selected and read the newest relevant log. Stay on that log until you can cite the weird decision or declare the missing datum.",
-			true
-	}
-
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile || !debugLogRequestTargetsSelection(req, selection) {
-		return "", "", false
-	}
-
-	if _, ok := latestDebugLogSearchHit(results); ok {
-		return "", "", false
-	}
-
-	if debugLogReadRequestAddsWindow(req, results, selection) {
-		return "", "", false
-	}
-
-	return "Blind log reread rejected",
-		"you already have the newest tail of the selected log. A final answer is available if that tail supports it; otherwise search within the selected log for one concrete marker.",
-		true
-}
-
-func debugLogFollowupRequest(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if !debugLogContractApplies(brief, results) {
-		return workspace.ToolRequest{}, false
-	}
-
-	hit, ok := latestDebugLogSearchHit(results)
-	if !ok || hasDebugLogReadWindowForHit(results, hit) {
-		return workspace.ToolRequest{}, false
-	}
-
-	switch strings.TrimSpace(req.Tool) {
-	case workspace.ToolNameSearchContent:
-		return debugLogReadWindowRequest(hit), true
-	case workspace.ToolNameReadFile:
-		if debugLogRequestTargetsHit(req, hit) && debugLogRequestCoversHit(req, hit) {
-			return workspace.ToolRequest{}, false
-		}
-
-		return debugLogReadWindowRequest(hit), true
-	default:
-		return workspace.ToolRequest{}, false
-	}
 }
 
 func latestDebugLogSelection(results []workspace.ToolResult) (debugLogFileSelection, bool) {
@@ -970,7 +182,7 @@ func hasDebugLogReadForSelection(results []workspace.ToolResult, selection debug
 			continue
 		}
 
-		if selection.Path != "" && window.Path == selection.Path {
+		if selection.Path != "" && window.MatchesPath(selection.Path) {
 			return true
 		}
 	}
@@ -1217,38 +429,6 @@ func shouldDeepenDebugLogSearch(results []workspace.ToolResult, selection debugL
 	return false
 }
 
-func debugLogDiscoveryRequest(mgr *workspace.Manager) (workspace.ToolRequest, bool) {
-	pattern := "*.log"
-
-	if mgr != nil {
-		root := strings.TrimSpace(mgr.Root())
-		for _, rel := range []string{"logs", "log", "traces", "trace"} {
-			if root == "" {
-				break
-			}
-
-			if info, err := os.Stat(filepath.Join(root, rel)); err == nil && info.IsDir() {
-				pattern = filepath.ToSlash(rel) + "/**/*"
-				break
-			}
-		}
-	}
-
-	return workspace.ToolRequest{Tool: workspace.ToolNameSearchFiles, Pattern: pattern, Path: "."}, true
-}
-
-func debugLogTailRequest(selection debugLogFileSelection) workspace.ToolRequest {
-	req := workspace.ToolRequest{Tool: workspace.ToolNameReadFile}
-	if selection.Handle != "" {
-		req.ID = selection.Handle
-		return req
-	}
-
-	req.Path = selection.Path
-
-	return req
-}
-
 func debugLogRequestTargetsSelection(req workspace.ToolRequest, selection debugLogFileSelection) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameReadFile:
@@ -1322,7 +502,7 @@ func debugLogReadRequestAddsWindow(req workspace.ToolRequest, results []workspac
 			continue
 		}
 
-		pathMatches := selection.Path != "" && NormalizeRunnerPath(window.Path) == NormalizeRunnerPath(selection.Path)
+		pathMatches := selection.Path != "" && window.MatchesPath(selection.Path)
 		if !pathMatches {
 			continue
 		}
@@ -1368,27 +548,6 @@ func isConcreteDebugLogArtifactRequest(req workspace.ToolRequest) bool {
 	}
 }
 
-func debugLogScopedSearchRedirect(req workspace.ToolRequest, selection debugLogFileSelection) (workspace.ToolRequest, bool) {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameSearchContent || debugLogRequestTargetsSelection(req, selection) {
-		return workspace.ToolRequest{}, false
-	}
-
-	if exactDebugLogFilePath(req.Path) || exactDebugLogFilePath(req.Glob) {
-		return workspace.ToolRequest{}, false
-	}
-
-	if !mentionsConcreteDebugLogSelector(req.Path) && !mentionsConcreteDebugLogSelector(req.Glob) {
-		return workspace.ToolRequest{}, false
-	}
-
-	redirected := req
-
-	redirected.Path = selection.Path
-	redirected.Glob = ""
-
-	return redirected, true
-}
-
 func mentionsConcreteDebugLogSelector(value string) bool {
 	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(value)))
 	if lower == "" {
@@ -1417,242 +576,6 @@ func exactDebugLogFilePath(path string) bool {
 		strings.HasSuffix(lower, ".jsonl") ||
 		strings.HasSuffix(lower, ".ndjson") ||
 		strings.HasSuffix(lower, ".trace")
-}
-
-func generatedEvidenceArtifactReadRedirectRequest(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolRequest, string, string, bool) {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	path := NormalizeRunnerPath(req.Path)
-	if !isGeneratedDiscoveryContextArtifactPath(path) {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	paths := discoveryQueryCandidatePaths(results, 6)
-	if len(paths) == 0 {
-		paths = newToolResultEvidenceProjection(results).promptEvidencePaths(6)
-	}
-
-	paths = nonArtifactEvidencePaths(paths)
-	if len(paths) == 0 {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	redirected := req
-
-	redirected.Path = paths[0]
-	redirected.StartLine = 0
-	redirected.EndLine = 0
-	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence named by generated discovery artifact")
-	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "generated discovery/context JSON is provenance, not source-body evidence")
-
-	return redirected, marshalToolRequestRaw(redirected), "generated discovery/context artifact redirected to source-body path", true
-}
-
-func structuredSourceReadRewriteRequest(req workspace.ToolRequest, ws *workspace.Manager, allowedTools []string, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, string, string, bool) {
-	if ws == nil || runnerBriefRequiresMutation(brief) || !redirectToolAllowed(allowedTools, workspace.ToolNameCodeNavigate) {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile || req.StartLine > 0 || req.EndLine > 0 {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	lang, cap, ok := matchRedirectRule(req, ws)
-	if !ok || cap != semanticlanguage.CapFileOutline {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	path, ok := redirectReadFilePath(req, ws)
-	if !ok || strings.TrimSpace(path) == "" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	redirected := workspace.ToolRequest{
-		Tool:            workspace.ToolNameCodeNavigate,
-		Capability:      string(cap),
-		Path:            NormalizeRunnerPath(path),
-		Language:        lang.Name,
-		NamedGap:        req.NamedGap,
-		WhyNotAnswering: req.WhyNotAnswering,
-	}
-	raw := marshalToolRequestRaw(redirected)
-
-	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	return redirected, raw, "source read redirected to structured navigation", true
-}
-
-func pathlessReadSymbolAfterOutlineRewriteRequest(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolRequest, string, string, bool) {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameCodeNavigate || strings.TrimSpace(req.Path) != "" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	capability := strings.TrimSpace(req.Capability)
-	if capability != "read_symbol" && capability != "symbol_body" && capability != "inspect_symbol" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	symbol := strings.TrimSpace(req.Pattern)
-	if symbol == "" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	path := latestCodeNavigateOutlinePath(results)
-	if path == "" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	redirected := req
-
-	redirected.Path = path
-
-	if strings.TrimSpace(redirected.Pattern) == "" {
-		redirected.Pattern = symbol
-	}
-
-	raw := marshalToolRequestRaw(redirected)
-	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	return redirected, raw, "pathless read_symbol anchored to latest file_outline path", true
-}
-
-func latestCodeNavigateOutlinePath(results []workspace.ToolResult) string {
-	for i := len(results) - 1; i >= 0; i-- {
-		result := results[i]
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameCodeNavigate || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-		if !strings.Contains(text, "file_outline") {
-			continue
-		}
-
-		for _, path := range newToolResultEvidenceRecord(result).ReadPaths() {
-			path = NormalizeRunnerPath(path)
-			if path != "" && !IsNonSourceEvidenceArtifactPath(path) {
-				return path
-			}
-		}
-
-		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(strings.Join([]string{result.Summary, result.Output}, "\n"))) {
-			path = NormalizeRunnerPath(path)
-			if path != "" && !IsNonSourceEvidenceArtifactPath(path) {
-				return path
-			}
-		}
-	}
-
-	return ""
-}
-
-func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, string, string, bool) {
-	if runnerBriefRequiresMutation(brief) || strings.TrimSpace(req.Tool) != workspace.ToolNameCodeNavigate {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	capability := strings.TrimSpace(req.Capability)
-	if capability != "file_outline" && capability != "outline" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	path := NormalizeRunnerPath(req.Path)
-	if path == "" || newToolResultEvidenceProjection(results).HasSourceBody(path) || !priorFileOutlineForPath(path, results) {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	symbol := planThenExecuteBestOutlineSymbol(path, brief.Objective, results)
-	if symbol == "" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	redirected := req
-
-	redirected.Capability = "read_symbol"
-	redirected.Pattern = symbol
-	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for repeated outline path")
-	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "need a declaration body from the outlined file rather than another outline")
-
-	raw := marshalToolRequestRaw(redirected)
-
-	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	return redirected, raw, "repeated file_outline upgraded to source-body read_symbol", true
-}
-
-func priorFileOutlineForPath(path string, results []workspace.ToolResult) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameCodeNavigate || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-		if !strings.Contains(text, "file_outline") {
-			continue
-		}
-
-		for _, candidate := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(strings.Join([]string{result.Summary, result.Output}, "\n"))) {
-			if NormalizeRunnerPath(candidate) == path {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func readOnlyDefinitionToReadSymbolRewriteRequest(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, string, string, bool) {
-	if runnerBriefRequiresMutation(brief) || strings.TrimSpace(req.Tool) != workspace.ToolNameCodeNavigate {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
-		!workerruntime.RuntimeContractIsArchitecture(brief.Contract) &&
-		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
-
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	capability := strings.TrimSpace(req.Capability)
-	if capability != "find_definition" && capability != "definition" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	path := NormalizeRunnerPath(req.Path)
-	symbol := strings.TrimSpace(req.Pattern)
-
-	if path == "" || symbol == "" {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	redirected := req
-
-	redirected.Path = path
-	redirected.Capability = "read_symbol"
-	redirected.Pattern = symbol
-	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for definition target")
-	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "definition location is anchor evidence; the answer needs the declaration body")
-
-	raw := marshalToolRequestRaw(redirected)
-
-	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
-		return workspace.ToolRequest{}, "", "", false
-	}
-
-	return redirected, raw, "read-only definition probe upgraded to source-body read_symbol", true
 }
 
 func isGeneratedDiscoveryContextArtifactPath(path string) bool {
@@ -1718,34 +641,12 @@ func hasDebugLogReadWindowForHit(results []workspace.ToolResult, hit debugLogSea
 			continue
 		}
 
-		if hit.Path != "" && window.Path == hit.Path && hit.Line >= window.Start && hit.Line <= window.End {
+		if hit.Path != "" && window.MatchesPath(hit.Path) && hit.Line >= window.Start && hit.Line <= window.End {
 			return true
 		}
 	}
 
 	return false
-}
-
-func debugLogReadWindowRequest(hit debugLogSearchHit) workspace.ToolRequest {
-	start := hit.Line - 20
-	if start < 1 {
-		start = 1
-	}
-
-	end := hit.Line + 20
-	req := workspace.ToolRequest{
-		Tool:      workspace.ToolNameReadFile,
-		StartLine: start,
-		EndLine:   end,
-	}
-
-	if hit.Handle != "" {
-		req.ID = hit.Handle
-	} else {
-		req.Path = hit.Path
-	}
-
-	return req
 }
 
 func debugLogRequestTargetsHit(req workspace.ToolRequest, hit debugLogSearchHit) bool {
@@ -1776,19 +677,12 @@ func debugLogRequestCoversHit(req workspace.ToolRequest, hit debugLogSearchHit) 
 }
 
 func parseDebugLogReadWindow(result workspace.ToolResult) (debugLogReadWindow, bool) {
-	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
-		return debugLogReadWindow{}, false
-	}
-
-	for _, fact := range sourceBodyFactsFromResult(result) {
-		if fact.Path == "" || fact.StartLine <= 0 || fact.EndLine < fact.StartLine {
-			continue
-		}
-
+	for _, fact := range newToolResultEvidenceRecord(result).diagnosticLogReads {
 		return debugLogReadWindow{
-			Path:  fact.Path,
-			Start: fact.StartLine,
-			End:   fact.EndLine,
+			Path:        fact.PolicySubject,
+			CanonicalID: fact.CanonicalID,
+			Start:       fact.StartLine,
+			End:         fact.EndLine,
 		}, true
 	}
 
@@ -1820,20 +714,6 @@ func parseRunnerInt(s string) int {
 	return value
 }
 
-func (r *Runner) augmentReadOnlyChildPrompt(prompt string) string {
-	guidance := []string{
-		"A final answer is available once the evidence is sufficient. After readiness, take another read only for an exact material missing claim; do not continue reading for completeness — but when the delegated question asks about a mechanism's thresholds, derived values, or configurable parameters, reading the symbol body that defines them is part of understanding the mechanism, not optional completeness reading.",
-		"Treat inherited instructions to explore directories, entrypoints, or patterns as background only unless the delegated question explicitly requires them.",
-		"Use repository-relative workspace paths in the answer. Do not rely on transient file handles such as f23 or tool-local aliases.",
-		"Prefer targeted symbol tools and bounded file reads over workspace-wide overviews.",
-	}
-	if namedPaths := pathparse.MentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
-		guidance = append(guidance, fmt.Sprintf("Start from these named workspace paths: %s.", strings.Join(namedPaths, ", ")))
-	}
-
-	return strings.TrimSpace(prompt) + "\n\nScope guidance:\n- " + strings.Join(guidance, "\n- ")
-}
-
 func answerFirstNoToolsPrompt(reason string) string {
 	reason = strings.TrimSpace(reason)
 
@@ -1857,7 +737,7 @@ const (
 	noToolsCloseoutDeterministicRequired noToolsCloseoutMode = "deterministic_required"
 )
 
-func (r *Runner) completeWithoutMoreToolsWithReasonMode(
+func (r *runExecution) completeWithoutMoreToolsWithReasonMode(
 	ctx context.Context,
 	turnMessages []llama.ChatMessage,
 	opts llama.ChatOptions,
@@ -1875,40 +755,23 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 	reason = answerFirstNoToolsPrompt(reason)
 
 	if mode == noToolsCloseoutDeterministicRequired {
-		if answer, ok := r.deterministicNoModelCloseoutAnswer(reason, collectedResults); ok {
-			return answer, nil
-		}
-
-		return "", fmt.Errorf("deterministic closeout required but no deterministic answer is available")
+		return r.terminalStatusCloseoutAnswer(reason, collectedResults), nil
 	}
 
-	preferModelSynthesis := shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults)
-
-	if !preferModelSynthesis && postReadinessForcedCompletionReason(reason) {
-		if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackBeforeModel, collectedResults); ok {
-			if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
-				return answer, nil
-			}
-		}
-	}
-
-	if !preferModelSynthesis {
-		if answer, ok := immediateBudgetFallbackAnswer(r.agentName(), r.RuntimeBrief, reason, collectedResults); ok {
-			return answer, nil
-		}
-	}
+	preferModelSynthesis := shouldPreferModelBudgetSynthesis(r.agentName(), r.state.runtimeBrief, collectedResults)
+	statusProjection := r.terminalStatusCloseoutAnswer(reason, collectedResults)
+	reason = strings.TrimSpace(reason + "\n\nTyped closeout status (use as evidence, not as a response template):\n" + statusProjection)
 
 	if preferModelSynthesis {
 		reason = strings.TrimSpace(reason + "\nUse the evidence already gathered to answer the delegated question directly. Do not return a partial-findings template if a concise grounded answer is possible.")
-		if paths := newToolResultEvidenceProjection(collectedResults).delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, 4); len(paths) > 0 {
+		if paths := newToolResultEvidenceProjection(collectedResults).delegatedClosureEvidencePaths(r.state.runtimeBrief.Objective, 4); len(paths) > 0 {
 			reason = strings.TrimSpace(reason + "\nCarry forward the inspected implementation paths explicitly in the answer: " + summarizePostChildEvidencePaths(paths, 4) + ". Do not collapse the answer to a single file when the evidence already spans multiple relevant implementation paths.")
 		}
 	}
 
-	// If any task_ledger items are still in_progress, prepend a closure
-	// hint so the forced-completion reply actually resolves them instead
-	// of leaving dangling in_progress todos in the transcript.
-	if hint := taskLedgerClosureHint(collectedResults); hint != "" {
+	// Keep the model-facing closeout aligned with the run-owned ledger. Tool
+	// output is a rendered view and must not become lifecycle authority.
+	if hint := taskLedgerClosureHint(r.taskLedger); hint != "" {
 		reason = hint + "\n\n" + reason
 	}
 
@@ -1922,10 +785,10 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 	}
 
 	modelStart := time.Now()
-	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
+	textOnlyOpts := textOnlyChatOptions(opts, r.state.runtimeBrief)
 	requestMessages := r.chatMessagesForOptions(turnMessages, textOnlyOpts)
 
-	assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
+	assistantMessage, err := r.runner.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
 	if err != nil {
 		return "", err
 	}
@@ -1940,7 +803,7 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 	r.emitThinkingTrace(0, "forced_completion_reply", assistantMessage, textOnlyOpts, false)
 
 	deterministicFallback := func() (string, bool) {
-		return r.deterministicNoToolsFallback(noToolsFallbackAfterInvalidModelCloseout, collectedResults)
+		return statusProjection, strings.TrimSpace(statusProjection) != ""
 	}
 
 	if len(assistantMessage.ToolCalls) > 0 {
@@ -1951,12 +814,6 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 		}
 
 		if fallback, ok := deterministicFallback(); ok {
-			return fallback, nil
-		}
-
-		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
-			return "", err
-		} else if ok {
 			return fallback, nil
 		}
 
@@ -1974,12 +831,6 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 			return fallback, nil
 		}
 
-		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
-			return "", err
-		} else if ok {
-			return fallback, nil
-		}
-
 		return "", fmt.Errorf("tool loop exhausted and model still emitted textual tool call markup instead of answering")
 	}
 
@@ -1991,12 +842,6 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 		}
 
 		if fallback, ok := deterministicFallback(); ok {
-			return fallback, nil
-		}
-
-		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
-			return "", err
-		} else if ok {
 			return fallback, nil
 		}
 
@@ -2012,12 +857,6 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 			return fallback, nil
 		}
 
-		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
-			return "", err
-		} else if ok {
-			return fallback, nil
-		}
-
 		return "", fmt.Errorf("tool loop exhausted and model still requested another tool instead of answering")
 	}
 
@@ -2026,14 +865,12 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 		return "", err
 	}
 
-	if _, rejected := r.completionGateRejection(answer, collectedResults, 0, nil, false); rejected {
+	if _, rejected := r.completionGateRejection(answer, collectedResults, 0, r.taskLedger, false); rejected {
 		if fallback, ok := deterministicFallback(); ok {
 			return fallback, nil
 		}
 
-		// No deterministic fallback available — return a clean user-facing
-		// message instead of an error so the user sees something useful.
-		return "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?", nil
+		return statusProjection, nil
 	}
 
 	if _, rejected := r.readOnlyNonSubstantiveCompletionRejection(answer, collectedResults); rejected {
@@ -2041,80 +878,47 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 			return fallback, nil
 		}
 
-		return "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?", nil
+		return statusProjection, nil
 	}
 
 	if finalAnswerNeedsDecoration(answer) {
-		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, textOnlyOpts, answer, collectedResults, metrics); err != nil {
+		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, textOnlyOpts, answer+"\n\n"+statusProjection, collectedResults, metrics); err != nil {
 			return "", err
 		} else if ok {
-			if presentable, ok := r.presentableFallbackCandidate(collectedResults, repaired); ok {
-				return presentable, nil
-			}
+			return repaired, nil
 		}
 
-		if presentable, ok := r.presentableFallbackCandidate(collectedResults, answer); ok {
-			return presentable, nil
-		}
+		return statusProjection, nil
 	}
 
 	return answer, nil
 }
 
-func (r *Runner) deterministicNoModelCloseoutAnswer(reason string, results []workspace.ToolResult) (string, bool) {
+func (r *runExecution) terminalStatusCloseoutAnswer(reason string, results []workspace.ToolResult) string {
 	if r == nil {
-		return "", false
+		return "Closeout status: unavailable."
 	}
 
-	if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterBudgetExhausted, results); ok {
-		return answer, true
-	}
-
-	if answer, ok := immediateBudgetFallbackAnswer(r.agentName(), r.RuntimeBrief, reason, results); ok {
-		return answer, true
-	}
-
-	return budgetDeterministicBlocker(reason, r.RuntimeBrief, results), true
-}
-
-func postReadinessForcedCompletionReason(reason string) bool {
-	lower := strings.ToLower(strings.TrimSpace(reason))
-
-	return strings.Contains(lower, "post-readiness") &&
-		strings.Contains(lower, "tools are now disabled")
-}
-
-func (r *Runner) repairOrFallbackFinalAnswer(
-	ctx context.Context,
-	turnMessages []llama.ChatMessage,
-	opts llama.ChatOptions,
-	collectedResults []workspace.ToolResult,
-	metrics *runnerMetrics,
-) (string, bool, error) {
-
-	rawFallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults)
-	if !ok {
-		return "", false, nil
-	}
-
-	if finalAnswerNeedsDecoration(rawFallback) && r.userFacingFinalAnswer() {
-		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, opts, rawFallback, collectedResults, metrics); err != nil {
-			return "", false, err
-		} else if ok {
-			if presentable, ok := r.presentableFallbackCandidate(collectedResults, repaired); ok {
-				return presentable, true, nil
+	if runnerBriefRequiresMutation(r.state.runtimeBrief) {
+		state := r.implementationCompletionState(results)
+		switch state.TerminalDisposition {
+		case implementationTerminalDispositionPlanSubmitted:
+			if state.CloseoutReady() {
+				return "Deliverable status: plan_submitted. A successful submit_plan result is recorded; executor-side workspace mutation is outside this planner run."
 			}
+		case implementationTerminalDispositionMutationComplete:
+			return r.synthesizeMutationFallbackAnswer(results)
+		}
+
+		if blocker, ok := r.implementationContractCloseoutBlocker(results, reason); ok {
+			return blocker
 		}
 	}
 
-	if presentable, ok := r.presentableFallbackCandidate(collectedResults, rawFallback); ok {
-		return presentable, true, nil
-	}
-
-	return "", false, nil
+	return r.budgetDeterministicBlocker(reason, results)
 }
 
-func (r *Runner) repairInternalFinalAnswer(
+func (r *runExecution) repairInternalFinalAnswer(
 	ctx context.Context,
 	turnMessages []llama.ChatMessage,
 	opts llama.ChatOptions,
@@ -2144,7 +948,7 @@ func (r *Runner) repairInternalFinalAnswer(
 	modelStart := time.Now()
 	requestMessages := r.chatMessagesForOptions(repairMessages, opts)
 
-	repairMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
+	repairMessage, err := r.runner.Client.CompleteChatMessage(ctx, requestMessages, opts)
 	if err != nil {
 		return "", false, err
 	}
@@ -2181,16 +985,16 @@ func (r *Runner) repairInternalFinalAnswer(
 	// (retryInvalidFinalAnswer) already runs this gate, but this
 	// fallback-repair path was skipping it, allowing garbage answers
 	// like raw tool result transcripts to reach the user.
-	if _, rejected := r.completionGateRejection(content, collectedResults, 0, nil, false); rejected {
+	if _, rejected := r.completionGateRejection(content, collectedResults, 0, r.taskLedger, false); rejected {
 		return "", false, nil
 	}
 
-	r.LastAssistantMessage = repairMessage
+	r.state.lastAssistantMessage = repairMessage
 
 	return content, true, nil
 }
 
-func (r *Runner) retryInvalidFinalAnswer(
+func (r *runExecution) retryInvalidFinalAnswer(
 	ctx context.Context,
 	turnMessages []llama.ChatMessage,
 	reply llama.ChatMessage,
@@ -2229,7 +1033,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 	modelStart := time.Now()
 	requestMessages := r.chatMessagesForOptions(retryMessages, opts)
 
-	retryMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
+	retryMessage, err := r.runner.Client.CompleteChatMessage(ctx, requestMessages, opts)
 	if err != nil {
 		return "", false, err
 	}
@@ -2258,31 +1062,21 @@ func (r *Runner) retryInvalidFinalAnswer(
 		content = cleaned
 	}
 
-	if _, rejected := r.completionGateRejection(content, collectedResults, 0, nil, false); rejected {
-		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, collectedResults); ok {
-			return fallback, true, nil
-		}
-
-		return "", false, nil
+	if _, rejected := r.completionGateRejection(content, collectedResults, 0, r.taskLedger, false); rejected {
+		return r.terminalStatusCloseoutAnswer("The final-answer retry was rejected by the active completion contract.", collectedResults), true, nil
 	}
 
 	if finalAnswerNeedsDecoration(content) {
 		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, opts, content, collectedResults, metrics); err != nil {
 			return "", false, err
 		} else if ok {
-			if presentable, ok := r.presentableFallbackCandidate(collectedResults, repaired); ok {
-				return presentable, true, nil
-			}
+			return repaired, true, nil
 		}
 
-		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterInvalidModelCloseout, collectedResults); ok {
-			return fallback, true, nil
-		}
-
-		return "", false, nil
+		return r.terminalStatusCloseoutAnswer("The final-answer retry remained invalid after repair.", collectedResults), true, nil
 	}
 
-	r.LastAssistantMessage = retryMessage
+	r.state.lastAssistantMessage = retryMessage
 
 	return content, true, nil
 }
@@ -2297,21 +1091,25 @@ const (
 	noToolsFallbackAfterEmptyAnswerRetryFailed noToolsFallbackPhase = "after_empty_answer_retry_failed"
 )
 
-func (r *Runner) deterministicNoToolsFallback(phase noToolsFallbackPhase, results []workspace.ToolResult) (string, bool) {
-	if r == nil || !shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results) {
+func (r *runExecution) deterministicNoToolsFallback(phase noToolsFallbackPhase, results []workspace.ToolResult) (string, bool) {
+	if r == nil || !r.shouldPreferDeterministicNoToolsAnswer(results) {
 		return "", false
 	}
 
-	if runnerBriefRequiresMutation(r.RuntimeBrief) && phase == noToolsFallbackBeforeModel {
+	if runnerBriefRequiresMutation(r.state.runtimeBrief) && phase == noToolsFallbackBeforeModel {
 		return "", false
 	}
 
-	return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
+	return r.terminalStatusCloseoutAnswer("Tools and model retries are exhausted ("+string(phase)+").", results), true
 }
 
-func shouldPreferDeterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+func (r *runExecution) shouldPreferDeterministicNoToolsAnswer(results []workspace.ToolResult) bool {
+	if r == nil {
+		return false
+	}
+	brief := r.state.runtimeBrief
 	if runnerBriefRequiresMutation(brief) {
-		return len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 ||
+		return r.implementationCompletionState(results).HasChanges() ||
 			len(brief.RequiredEditPaths) > 0 ||
 			len(brief.RequiredEditSnippets) > 0 ||
 			targetPacketSupportsWrite(brief)
@@ -2322,25 +1120,6 @@ func shouldPreferDeterministicNoToolsAnswer(agentName string, brief workerruntim
 	}
 
 	return false
-}
-
-func deterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	if !runnerBriefRequiresMutation(brief) && workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
-		return "", false
-	}
-
-	answer, ok := synthesizeNoToolsFallbackAnswer(agentName, brief, results)
-	if !ok {
-		return "", false
-	}
-
-	if userFacingAgentName(agentName) &&
-		looksLikeLeakedImplementationBlockerTemplate(strings.ToLower(strings.TrimSpace(answer))) {
-		return "", false
-	}
-
-	return presentableFallbackCandidate(agentName, brief, results, answer)
 }
 
 func presentableFallbackCandidate(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
@@ -2354,14 +1133,6 @@ func presentableFallbackCandidate(agentName string, brief workerruntime.WorkerRu
 	}
 
 	return readOnlyClosureDecisionForResults(brief, results).PresentableFallbackCandidate(agentName, answer)
-}
-
-func fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName string, brief workerruntime.WorkerRuntimeBrief) bool {
-	if strings.HasPrefix(agentName, "child:") || strings.HasPrefix(agentName, "child_write:") {
-		return false
-	}
-
-	return readOnlyDirectAnswerLane(brief) && !runnerBriefRequiresMutation(brief)
 }
 
 func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -2397,19 +1168,19 @@ func runnerBriefAllowsExternalToolAppend(brief workerruntime.WorkerRuntimeBrief)
 	}
 }
 
-func (r *Runner) advertisedAllowedTools(base []string) []string {
+func (r *runExecution) advertisedAllowedTools(base []string) []string {
 	var surface workspace.ToolSurfaceSnapshot
-	if r.Workspace != nil {
+	if r.runner.Workspace != nil {
 		surface = r.workspaceToolSurfaceSnapshot()
 	}
 
 	return surface.AdvertisedAllowedTools(workspace.AdvertisedToolSurfaceInput{
 		BaseTools:        base,
-		RuntimeTools:     r.RuntimeBrief.AllowedTools,
-		ConversationOnly: workerruntime.PermissionProfileIsConversationOnly(r.RuntimeBrief.PermissionProfile),
-		SuppressAll: strings.TrimSpace(r.RuntimeBrief.TaskFamily) == workerruntime.ArtifactFinalAnswerTaskFamily ||
-			strings.TrimSpace(r.RuntimeBrief.Contract) == "artifact_final_answer",
-		DisableTaskTool: r.DisableTaskTool,
+		RuntimeTools:     r.state.runtimeBrief.AllowedTools,
+		ConversationOnly: workerruntime.PermissionProfileIsConversationOnly(r.state.runtimeBrief.PermissionProfile),
+		SuppressAll: strings.TrimSpace(r.state.runtimeBrief.TaskFamily) == workerruntime.ArtifactFinalAnswerTaskFamily ||
+			strings.TrimSpace(r.state.runtimeBrief.Contract) == "artifact_final_answer",
+		DisableTaskTool: r.runner.DisableTaskTool,
 	})
 }
 
@@ -2531,6 +1302,9 @@ func looksLikeLineOrientedToolRequest(lower string) bool {
 }
 
 func toolResultMadeProgress(req workspace.ToolRequest, result workspace.ToolResult) bool {
+	if workspaceWriteResultCommitted(req, result) {
+		return true
+	}
 	if strings.TrimSpace(result.Error) != "" {
 		return false
 	}
@@ -2540,153 +1314,10 @@ func toolResultMadeProgress(req workspace.ToolRequest, result workspace.ToolResu
 		return strings.TrimSpace(result.Output) != ""
 	}
 	if workspace.IsWorkspaceWriteTool(tool) {
-		summary := strings.ToLower(strings.TrimSpace(result.Summary))
-		return summary != "" && !strings.Contains(summary, "no-op")
-	}
-
-	return strings.TrimSpace(result.Output) != "" || strings.TrimSpace(result.Summary) != ""
-}
-
-func isMissingPathListFailure(req workspace.ToolRequest, result workspace.ToolResult) bool {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameListFiles {
 		return false
 	}
 
-	errText := strings.ToLower(strings.TrimSpace(result.Error))
-
-	return strings.Contains(errText, "no such file or directory") || strings.Contains(errText, "cannot find the path")
-}
-
-// rewriteMissingRequiredNewFileProbe converts a "file not found" error
-// on a probe targeting a required_edit_path, or a missing parent dir of
-// required_edit_paths, into an actionable nudge: the planner can create
-// those files via submit_plan's whole-file shape (replace_all=true with
-// empty old_text + new_text=full body). Without this rewrite the planner
-// sees the bare "no such file" error, treats it as a blocker, and gives
-// up. That is the failure mode local Qwen hit on plan-execute dispatch.
-//
-// The rewrite preserves the result as an Error (so the planner can't
-// use it as evidence of an actual file body) but replaces the message
-// with one that names the right next step. We intentionally do NOT
-// convert to a successful no-op: a successful probe of a non-existent
-// path would leak into downstream "did the planner read this path"
-// heuristics in misleading ways.
-func rewriteMissingRequiredNewFileProbe(req workspace.ToolRequest, result workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) workspace.ToolResult {
-	if !missingRequiredNewFileProbeTool(req.Tool) {
-		return result
-	}
-
-	if strings.TrimSpace(result.Error) == "" {
-		return result
-	}
-
-	lower := strings.ToLower(result.Error)
-	if !strings.Contains(lower, "no such file") && !strings.Contains(lower, "does not exist") {
-		return result
-	}
-
-	target := NormalizeRunnerPath(strings.TrimSpace(req.Path))
-	if target == "" {
-		return result
-	}
-
-	matches := requiredNewFileProbeMatches(target, brief.RequiredEditPaths)
-	if len(matches) == 0 {
-		return result
-	}
-
-	if len(matches) == 1 && NormalizeRunnerPath(matches[0]) == target {
-		result.Summary = "Required new-file path does not exist yet"
-		result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to inspect it. In submit_plan, include a replace_all edit for %q with empty old_text, a complete new_text body from the brief or gathered evidence, and a specific purpose. Do not copy placeholder body text or schema examples. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming the missing body evidence. Large bodies are moved to artifact refs after submission.", target, target)
-
-		return result
-	}
-
-	result.Summary = "Required new-file directory does not exist yet"
-	result.Error = fmt.Sprintf("path %q is a missing parent for required_edit_paths: %s. These are NEW FILES you must create. Do NOT keep trying to inspect the missing directory. In submit_plan, include one replace_all edit per required new-file path with empty old_text and a full new_text body. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming that missing body evidence.", target, quotedRunnerStrings(matches))
-
-	return result
-}
-
-func unavailableRequiredNewFileProbeNudge(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, manager *workspace.Manager) (string, string, bool) {
-	if !missingRequiredNewFileProbeTool(req.Tool) {
-		return "", "", false
-	}
-
-	target := NormalizeRunnerPath(strings.TrimSpace(req.Path))
-	if target == "" {
-		return "", "", false
-	}
-
-	matches := requiredNewFileProbeMatches(target, brief.RequiredEditPaths)
-	if len(matches) == 0 {
-		return "", "", false
-	}
-
-	if !requiredNewFileProbeTargetMissing(target, manager) {
-		return "", "", false
-	}
-
-	if len(matches) == 1 && NormalizeRunnerPath(matches[0]) == target {
-		return "Required new-file path does not exist yet",
-			fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. The requested probe tool %q is not available in the current allowed tool surface, and probing is unnecessary. In submit_plan, include a replace_all edit for %q with empty old_text, a complete new_text body from the brief or gathered evidence, and a specific purpose. Do not copy placeholder body text or schema examples. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming the missing body evidence.", target, strings.TrimSpace(req.Tool), target),
-			true
-	}
-
-	return "Required new-file directory does not exist yet",
-		fmt.Sprintf("path %q is a missing parent for required_edit_paths: %s. These are NEW FILES you must create. The requested probe tool %q is not available in the current allowed tool surface, and probing is unnecessary. In submit_plan, include one replace_all edit per required new-file path with empty old_text and a full new_text body. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming that missing body evidence.", target, quotedRunnerStrings(matches), strings.TrimSpace(req.Tool)),
-		true
-}
-
-func requiredNewFileProbeTargetMissing(target string, manager *workspace.Manager) bool {
-	root := ""
-	if manager != nil {
-		root = strings.TrimSpace(manager.Root())
-	}
-
-	if root == "" {
-		return true
-	}
-
-	path := target
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, filepath.FromSlash(path))
-	}
-
-	_, err := os.Stat(path)
-
-	return os.IsNotExist(err)
-}
-
-func missingRequiredNewFileProbeTool(tool string) bool {
-	tool = strings.TrimSpace(tool)
-	if tool == workspace.ToolNameReadFile || tool == workspace.ToolNameListFiles {
-		return true
-	}
-
-	return strings.HasSuffix(tool, "_file_outline")
-}
-
-func requiredNewFileProbeMatches(target string, requiredPaths []string) []string {
-	target = strings.Trim(strings.TrimSpace(NormalizeRunnerPath(target)), "/")
-	if target == "" {
-		return nil
-	}
-
-	var matches []string
-
-	for _, p := range requiredPaths {
-		path := strings.Trim(strings.TrimSpace(NormalizeRunnerPath(p)), "/")
-		if path == "" {
-			continue
-		}
-
-		if path == target || strings.HasPrefix(path, target+"/") || filepath.Dir(path) == target {
-			matches = textutil.AppendUniqueMulti(matches, path)
-		}
-	}
-
-	return matches
+	return strings.TrimSpace(result.Output) != "" || strings.TrimSpace(result.Summary) != ""
 }
 
 func briefIsDocDeliverableLane(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -2719,7 +1350,7 @@ func briefIsScratchpadDeliverableLane(brief workerruntime.WorkerRuntimeBrief) bo
 }
 
 func scopedImplementationUsesBoundedSourceEdits(brief workerruntime.WorkerRuntimeBrief, paths []string) bool {
-	if !implementationScopedEditSurfaceActive(brief, nil) || briefIsDocDeliverableLane(brief) {
+	if !runnerBriefRequiresMutation(brief) || len(paths) == 0 || briefIsDocDeliverableLane(brief) {
 		return false
 	}
 
@@ -2730,64 +1361,6 @@ func scopedImplementationUsesBoundedSourceEdits(brief workerruntime.WorkerRuntim
 		}
 
 		if recoverySearchPathLooksEditableSource(normalized) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// writeTouchesOnlyNonSourcePaths returns true when every path in a
-// write result is a non-source file (markdown, plain text). Used to
-// exempt doc-deliverable lanes from the post-write verification gate.
-func writeTouchesOnlyNonSourcePaths(result workspace.ToolResult) bool {
-	paths := newToolResultEvidenceRecord(result).ChangedPathList()
-	if len(paths) == 0 {
-		return false
-	}
-
-	for _, p := range paths {
-		if !writePathIsNonSource(p) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func mkdirTouchesOnlyRequiredPathParents(result workspace.ToolResult, requiredPaths []string) bool {
-	if strings.TrimSpace(result.Tool) != workspace.ToolNameMkdir || len(requiredPaths) == 0 {
-		return false
-	}
-
-	paths := newToolResultEvidenceRecord(result).ChangedPathList()
-	if len(paths) == 0 {
-		return false
-	}
-
-	for _, path := range paths {
-		if !mkdirPathIsRequiredParent(path, requiredPaths) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func mkdirPathIsRequiredParent(path string, requiredPaths []string) bool {
-	path = strings.Trim(NormalizeRunnerPath(path), "/")
-	if path == "" {
-		return false
-	}
-
-	for _, required := range requiredPaths {
-		required = strings.Trim(NormalizeRunnerPath(required), "/")
-		if required == "" || !writePathIsNonSource(required) {
-			continue
-		}
-
-		parent := strings.Trim(filepath.ToSlash(filepath.Dir(required)), "/")
-		if path == parent || strings.HasPrefix(parent, path+"/") {
 			return true
 		}
 	}
@@ -2810,7 +1383,7 @@ func writePathIsNonSource(path string) bool {
 		strings.HasSuffix(p, ".rst")
 }
 
-func (r *Runner) ensureNonEmptyAnswer(
+func (r *runExecution) ensureNonEmptyAnswer(
 	ctx context.Context,
 	turnMessages []llama.ChatMessage,
 	reply llama.ChatMessage,
@@ -2822,14 +1395,10 @@ func (r *Runner) ensureNonEmptyAnswer(
 	trimmed := strings.TrimSpace(reply.Content)
 	if trimmed != "" {
 		if IsTextualToolCall(trimmed) {
-			if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterInvalidModelCloseout, collectedResults); ok {
-				return fallback, nil
-			}
-
-			return "", fmt.Errorf("%s agent emitted textual tool call markup instead of a non-empty answer", r.agentName())
+			return r.terminalStatusCloseoutAnswer(r.agentName()+" agent emitted textual tool-call markup instead of a final answer.", collectedResults), nil
 		}
 
-		r.LastAssistantMessage = reply
+		r.state.lastAssistantMessage = reply
 
 		return trimmed, nil
 	}
@@ -2845,7 +1414,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 
 	retryMessages = append(retryMessages, llama.ChatMessage{
 		Role:    "system",
-		Content: emptyAnswerRetryPrompt(r.RuntimeBrief),
+		Content: emptyAnswerRetryPrompt(r.state.runtimeBrief),
 	})
 
 	if metrics != nil {
@@ -2853,10 +1422,10 @@ func (r *Runner) ensureNonEmptyAnswer(
 	}
 
 	modelStart := time.Now()
-	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
+	textOnlyOpts := textOnlyChatOptions(opts, r.state.runtimeBrief)
 	requestMessages := r.chatMessagesForOptions(retryMessages, textOnlyOpts)
 
-	retryMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
+	retryMessage, err := r.runner.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
 	if err != nil {
 		return "", err
 	}
@@ -2871,41 +1440,25 @@ func (r *Runner) ensureNonEmptyAnswer(
 	r.emitThinkingTrace(0, "empty_answer_retry_reply", retryMessage, textOnlyOpts, false)
 
 	if len(retryMessage.ToolCalls) > 0 {
-		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
-			return fallback, nil
-		}
-
-		return "", fmt.Errorf("%s agent emitted a tool request instead of a non-empty answer", r.agentName())
+		return r.terminalStatusCloseoutAnswer(r.agentName()+" agent emitted a tool request after the empty-answer retry.", collectedResults), nil
 	}
 
 	if IsTextualToolCall(retryReply) {
-		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
-			return fallback, nil
-		}
-
-		return "", fmt.Errorf("%s agent emitted textual tool call markup instead of a non-empty answer", r.agentName())
+		return r.terminalStatusCloseoutAnswer(r.agentName()+" agent emitted textual tool-call markup after the empty-answer retry.", collectedResults), nil
 	}
 
 	if _, _, ok, parseErr := workspace.ParseToolRequest(retryReply); parseErr != nil {
 		return "", parseErr
 	} else if ok {
-		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
-			return fallback, nil
-		}
-
-		return "", fmt.Errorf("%s agent emitted a tool request instead of a non-empty answer", r.agentName())
+		return r.terminalStatusCloseoutAnswer(r.agentName()+" agent emitted a tool request after the empty-answer retry.", collectedResults), nil
 	}
 
 	retryTrimmed := strings.TrimSpace(retryReply)
 	if retryTrimmed == "" {
-		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
-			return fallback, nil
-		}
-
-		return "", fmt.Errorf("%s agent returned an empty response", r.agentName())
+		return r.terminalStatusCloseoutAnswer(r.agentName()+" agent returned an empty response after the final retry.", collectedResults), nil
 	}
 
-	r.LastAssistantMessage = retryMessage
+	r.state.lastAssistantMessage = retryMessage
 
 	return retryTrimmed, nil
 }
@@ -2989,38 +1542,17 @@ func rewriteVisibilityNote(originalTool, rewrittenTool string) string {
 	}
 }
 
-// taskLedgerClosureHint inspects the collected tool-results set and, if the
-// most recent task_ledger state still has any items flagged in_progress,
-// returns a short reminder asking the model to close them with a final
-// status in the upcoming reply. Returns the empty string when there is
-// nothing open.
-func taskLedgerClosureHint(results []workspace.ToolResult) string {
-	var latest *workspace.ToolResult
-
-	for i := len(results) - 1; i >= 0; i-- {
-		if results[i].Tool == workspace.ToolNameTaskLedger && strings.TrimSpace(results[i].Error) == "" {
-			copyResult := results[i]
-
-			latest = &copyResult
-
-			break
-		}
-	}
-
-	if latest == nil {
+// taskLedgerClosureHint projects unresolved in-progress work from the
+// authoritative run-owned ledger. It never parses the rendered ToolResult.
+func taskLedgerClosureHint(ledger *taskLedgerState) string {
+	if ledger == nil {
 		return ""
 	}
 
-	if !strings.Contains(strings.ToLower(latest.Output), "in_progress") {
-		return ""
-	}
-
-	var openItems []string
-
-	for _, line := range strings.Split(latest.Output, "\n") {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "in_progress") {
-			openItems = append(openItems, strings.TrimSpace(line))
+	var openItems []workspace.TaskLedgerItem
+	for _, item := range ledger.items {
+		if item.Status == taskledger.StatusInProgress {
+			openItems = append(openItems, item)
 		}
 	}
 
@@ -3030,12 +1562,10 @@ func taskLedgerClosureHint(results []workspace.ToolResult) string {
 
 	var b strings.Builder
 
-	b.WriteString("Task ledger has open items you never closed. Resolve them in your reply (state each as completed / blocked / cancelled with one short evidence sentence):\n")
+	b.WriteString("Task ledger still has typed in_progress obligations while tools are disabled. Do not claim they completed; report them as unresolved in the final status:\n")
 
 	for _, item := range openItems {
-		b.WriteString("- ")
-		b.WriteString(item)
-		b.WriteString("\n")
+		fmt.Fprintf(&b, "- id=%q content=%q status=%q\n", strings.TrimSpace(item.ID), strings.TrimSpace(item.Content), string(item.Status))
 	}
 
 	return strings.TrimRight(b.String(), "\n")
@@ -3075,7 +1605,7 @@ const (
 // when the model produced empty visible content but substantial reasoning.
 // This happens with Qwen in thinking-enabled mode when the model puts its
 // entire response into the reasoning block and leaves Content empty.
-func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage, results []workspace.ToolResult) (string, bool) {
+func (r *runExecution) salvageAnswerFromReasoning(reply llama.ChatMessage, results []workspace.ToolResult) (string, bool) {
 	if r == nil || strings.TrimSpace(reply.Content) != "" {
 		return "", false
 	}
@@ -3087,7 +1617,7 @@ func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage, results []w
 
 	// Only apply to lanes that can produce a direct answer (conversation,
 	// read-only). Mutation lanes need tool-call-shaped recovery, not prose.
-	if runnerBriefRequiresMutation(r.RuntimeBrief) {
+	if runnerBriefRequiresMutation(r.state.runtimeBrief) {
 		return "", false
 	}
 
@@ -3614,52 +2144,35 @@ func looksLikeStructuredInternalState(p string) bool {
 	return hasInternalStateMarker
 }
 
-// rewriteToolRequest records a tool-request rewrite and returns the redirected
-// request/raw pair. Call sites still assign req/raw explicitly so loop-state
-// mutation stays visible in Runner.Run.
-func (r *Runner) rewriteToolRequest(
-	messages *[]llama.ChatMessage,
-	original workspace.ToolRequest,
-	originalRaw string,
-	redirected workspace.ToolRequest,
-	redirectedRaw string,
-	reason string,
-) (workspace.ToolRequest, string) {
-	r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
-		"agent":          r.agentName(),
-		"original_tool":  strings.TrimSpace(original.Tool),
-		"rewritten_tool": strings.TrimSpace(redirected.Tool),
-		"original_raw":   strings.TrimSpace(originalRaw),
-		"rewritten_raw":  strings.TrimSpace(redirectedRaw),
-		"reason":         reason,
-	}))
-	*messages = append(*messages, llama.ChatMessage{
-		Role:    "system",
-		Content: rewriteVisibilityNote(original.Tool, redirected.Tool),
-	})
-	return redirected, redirectedRaw
-}
-
-func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
-	visible := runnerVisibleBriefForToolSurface(brief, results)
-	if r == nil || r.Workspace == nil ||
-		(!exactAnchorPreWriteSurfaceActive(brief, results) &&
-			!implementationTargetSourcePending(brief, results) &&
-			!implementationTargetWriteReadySurfaceActive(brief, results) &&
-			!implementationScopedEditSurfaceActive(brief, results)) {
+func (r *runExecution) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
+	completion := implementationCompletionState{}
+	if r != nil {
+		completion = r.implementationCompletionState(results)
+	}
+	mutationCommitted := completion.HasChanges()
+	visible := runnerVisibleBriefForToolSurface(brief, results, completion)
+	if r == nil || r.runner.Workspace == nil ||
+		(!exactAnchorPreWriteSurfaceActive(brief, results, mutationCommitted) &&
+			!implementationTargetSourcePending(brief, results, mutationCommitted) &&
+			!implementationTargetWriteReadySurfaceActive(brief, results, mutationCommitted) &&
+			!implementationScopedEditSurfaceActive(brief, results, completion.MissingRequiredPaths, mutationCommitted)) {
 
 		return visible
 	}
 
 	baseAllowed := r.workspaceAdvertisedAllowedTools()
 	allowed := workspace.ToolSurfacePhaseAllowedTools(baseAllowed, workspace.ToolSurfacePhaseImplementationPreWrite)
-	if implementationTargetSourcePending(brief, results) {
+	if implementationTargetSourcePending(brief, results, mutationCommitted) {
 		allowed = workspace.ToolSurfacePhaseAllowedTools(baseAllowed, workspace.ToolSurfacePhaseImplementationTargetSource)
-	} else if implementationTargetWriteReadySurfaceActive(brief, results) {
-		allowed = implementationTargetWriteReadyAllowedToolsForBrief(baseAllowed, brief, results)
-	} else if implementationScopedEditSurfaceActive(brief, results) {
-		allowed = workspace.ImplementationScopedEditAllowedToolsWithExternalReadOnlyDiscovery(baseAllowed, r.workspaceToolSurfaceSnapshot().ExternalToolIsReadOnlyDiscovery)
+	} else if implementationTargetWriteReadySurfaceActive(brief, results, mutationCommitted) {
+		allowed = implementationTargetWriteReadyAllowedToolsForBrief(baseAllowed, brief, results, mutationCommitted)
+	} else if implementationScopedEditSurfaceActive(brief, results, completion.MissingRequiredPaths, mutationCommitted) {
+		allowed = workspace.ImplementationScopedEditAllowedToolsWithExternalReadOnlyDiscovery(baseAllowed, r.externalReadOnlyDiscoveryTool)
 	}
+	allowed = textutil.Merge(
+		allowed,
+		r.permissionAuthorizedInspection(baseAllowed).ToolNames(),
+	)
 
 	visible.AllowedTools = allowed
 	visible.ToolManifest = nil
@@ -3671,8 +2184,8 @@ func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBri
 	return workerruntime.NormalizeRuntimeBrief(visible)
 }
 
-func (r *Runner) textualToolProtocolPrompt(brief workerruntime.WorkerRuntimeBrief) string {
-	if r == nil || r.Client == nil || r.Client.SupportsNativeTools() {
+func (r *runExecution) textualToolProtocolPrompt(brief workerruntime.WorkerRuntimeBrief) string {
+	if r == nil || r.runner.Client == nil || r.runner.Client.SupportsNativeTools() {
 		return ""
 	}
 
@@ -3828,12 +2341,16 @@ func textualToolProtocolEntryKey(entry workspace.ToolManifestEntry) string {
 	return strings.TrimSpace(entry.Tool) + "\x00" + strings.TrimSpace(entry.Request)
 }
 
-func workspaceWriteResultCompleted(req workspace.ToolRequest, result workspace.ToolResult) bool {
+func workspaceWriteResultCommitted(req workspace.ToolRequest, result workspace.ToolResult) bool {
 	if !workspace.IsWorkspaceWriteTool(req.Tool) {
 		return false
 	}
+	receipt := result.CommitReceipt()
+	return receipt != nil && len(receipt.DurableProjection().Effects) > 0
+}
 
-	return strings.TrimSpace(result.Error) == ""
+func workspaceWriteResultFullyCommitted(req workspace.ToolRequest, result workspace.ToolResult) bool {
+	return workspaceWriteResultCommitted(req, result) && strings.TrimSpace(result.Error) == ""
 }
 
 func exactAnchorImplementationActive(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -3842,80 +2359,6 @@ func exactAnchorImplementationActive(brief workerruntime.WorkerRuntimeBrief) boo
 	}
 
 	return slices.Contains(brief.Constraints, "exact_anchor_implementation")
-}
-
-func requiredEditPathScopeRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) (summary string, errorText string, reject bool) {
-	required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
-	if len(required) == 0 || !workspace.IsWorkspaceWriteTool(req.Tool) {
-		return "", "", false
-	}
-
-	paths := writeRequestPaths(req)
-	if len(paths) == 0 {
-		return "", "", false
-	}
-
-	var outside []string
-
-	for _, path := range paths {
-		normalized := NormalizeRunnerPath(path)
-		if normalized == "" {
-			continue
-		}
-
-		if strings.TrimSpace(req.Tool) == workspace.ToolNameMkdir && requiredEditPathAllowsMkdir(normalized, required) {
-			continue
-		}
-
-		if _, ok := required[normalized]; !ok {
-			outside = append(outside, normalized)
-		}
-	}
-
-	if len(outside) == 0 {
-		return "", "", false
-	}
-
-	return "Write outside required edit paths rejected",
-		fmt.Sprintf("this implementation contract restricts writes to required_edit_paths %s; attempted write path(s) outside that scope: %s. Use an allowed path or report a concrete scope blocker.",
-			quotedRunnerStrings(mapKeys(required)), quotedRunnerStrings(outside)),
-		true
-}
-
-func writeRequestPaths(req workspace.ToolRequest) []string {
-	switch strings.TrimSpace(req.Tool) {
-	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameMkdir:
-		if strings.TrimSpace(req.Path) != "" {
-			return []string{req.Path}
-		}
-	case workspace.ToolNameApplyPatch:
-		ops, err := patching.Parse(req.Content)
-		if err != nil {
-			return nil
-		}
-
-		return patching.OpPaths(ops)
-	case workspace.ToolNameGoMoveDeclarations:
-		var paths []string
-
-		if strings.TrimSpace(req.Path) != "" {
-			paths = append(paths, req.Path)
-		}
-
-		if strings.TrimSpace(req.Destination) != "" {
-			paths = append(paths, req.Destination)
-		}
-
-		for _, move := range req.Moves {
-			if strings.TrimSpace(move.Destination) != "" {
-				paths = append(paths, move.Destination)
-			}
-		}
-
-		return paths
-	}
-
-	return nil
 }
 
 func normalizedRequiredEditPathSet(paths []string) map[string]struct{} {
@@ -3973,28 +2416,6 @@ func requiredEditPathAllowsMkdir(dir string, required map[string]struct{}) bool 
 	}
 
 	return false
-}
-
-func markRuntimeBriefPathsObserved(manager *workspace.Manager, brief workerruntime.WorkerRuntimeBrief) {
-	if manager == nil {
-		return
-	}
-
-	candidates := append([]string{}, brief.TargetRefs...)
-
-	candidates = append(candidates, brief.EvidencePaths...)
-	candidates = append(candidates, brief.ChangedPaths...)
-	candidates = append(candidates, pathparse.MentionedWorkspacePaths(strings.Join(brief.TargetPacket, "\n"))...)
-	candidates = append(candidates, pathparse.MentionedWorkspacePaths(strings.Join(brief.UserBoundaries, "\n"))...)
-
-	for _, candidate := range candidates {
-		candidate = strings.Trim(candidate, "`'\" ,.;:")
-		if candidate == "" || !strings.Contains(candidate, ".") {
-			continue
-		}
-
-		manager.MarkPathObserved(candidate)
-	}
 }
 
 func nonEmptyRunnerStrings(values []string, max int) []string {
@@ -4152,17 +2573,62 @@ func shouldRejectExactReplayBeforeLoopGate(req workspace.ToolRequest) bool {
 }
 
 func normalizeRunnerToolRequest(req workspace.ToolRequest) workspace.ToolRequest {
-	req.Path = NormalizeRunnerPath(req.Path)
-	req.Destination = NormalizeRunnerPath(req.Destination)
-	req.Workdir = NormalizeRunnerPath(req.Workdir)
+	req.Path = canonicalFingerprintPath(req.Path)
+	req.Destination = canonicalFingerprintPath(req.Destination)
+	req.Workdir = canonicalFingerprintPath(req.Workdir)
 	req.NamedGap = ""
 	req.WhyNotAnswering = ""
 
+	req.Moves = append([]workspace.GoDeclarationMove(nil), req.Moves...)
 	for i := range req.Moves {
-		req.Moves[i].Destination = NormalizeRunnerPath(req.Moves[i].Destination)
+		req.Moves[i].Destination = canonicalFingerprintPath(req.Moves[i].Destination)
+	}
+	req.Edits = append([]planartifact.PlanEdit(nil), req.Edits...)
+	for i := range req.Edits {
+		req.Edits[i].Path = canonicalFingerprintPath(req.Edits[i].Path)
+	}
+	req.SourceSatisfiedPaths = append([]string(nil), req.SourceSatisfiedPaths...)
+	for i := range req.SourceSatisfiedPaths {
+		req.SourceSatisfiedPaths[i] = canonicalFingerprintPath(req.SourceSatisfiedPaths[i])
+	}
+	if strings.TrimSpace(req.Tool) == workspace.ToolNameApplyPatch {
+		req.Content = canonicalFingerprintPatch(req.Content)
 	}
 
 	return req
+}
+
+func canonicalFingerprintPath(path string) string {
+	if canonical := cleanRelativeRunnerPath(path); canonical != "" {
+		return canonical
+	}
+
+	return NormalizeRunnerPath(path)
+}
+
+func canonicalFingerprintPatch(content string) string {
+	ops, err := patching.Parse(content)
+	if err != nil {
+		return content
+	}
+
+	for i := range ops {
+		path := cleanRelativeRunnerPath(ops[i].Path)
+		if path == "" {
+			return content
+		}
+		ops[i].Path = path
+		if strings.TrimSpace(ops[i].MoveTo) == "" {
+			continue
+		}
+		moveTo := cleanRelativeRunnerPath(ops[i].MoveTo)
+		if moveTo == "" {
+			return content
+		}
+		ops[i].MoveTo = moveTo
+	}
+
+	return patching.Serialize(ops)
 }
 
 // truncForRetryReason trims a summary so the stored "why this was
@@ -4364,7 +2830,7 @@ func normalizeActionToken(value string) string {
 	return value
 }
 
-func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, inspection workspace.PermissionAuthorizedInspectionProjection, authority planThenExecutePathAuthority) []string {
 	taskFamily := strings.TrimSpace(brief.TaskFamily)
 	input := workspace.PlanExecuteTextualAllowedToolsInput{
 		TaskFamily:          taskFamily,
@@ -4374,35 +2840,40 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 	if taskFamily == PlanThenExecuteReviewRepairTaskFamily {
 		if !completionGateResultSeen(results) && len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) == 0 {
 			input.ReviewRepairInitialProbe = true
-			return workspace.PlanExecuteTextualAllowedTools(input)
+			return textutil.Merge(workspace.PlanExecuteTextualAllowedTools(input), inspection.ToolNames())
 		}
 
 		contract := deriveTurnPhaseContract(TurnPhaseContractInput{
-			PhaseHint:        turnPhaseReviewRepairTerminal,
-			Brief:            brief,
-			Results:          results,
-			BaseAllowedTools: brief.AllowedTools,
+			PhaseHint:           contractcompile.TurnPhaseReviewRepairTerminal,
+			Brief:               brief,
+			Results:             results,
+			InspectionAuthority: inspection,
+			BaseAllowedTools:    brief.AllowedTools,
 		})
 		input.ReviewRepairTerminalAllowedTools = contract.AllowedTools
-		return workspace.PlanExecuteTextualAllowedTools(input)
+		return textutil.Merge(workspace.PlanExecuteTextualAllowedTools(input), inspection.ToolNames())
 	}
 
 	if taskFamily != PlanThenExecutePlannerTaskFamily {
-		return workspace.PlanExecuteTextualAllowedTools(input)
+		return textutil.Merge(workspace.PlanExecuteTextualAllowedTools(input), inspection.ToolNames())
 	}
 
-	state, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results)
+	state, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results, authority)
 	input.BaseTools = baseTools
 	input.CallableTools = state.CallableTools
 	input.ParserVisibleTools = state.ParserVisibleTools
 	input.TerminalOptions = state.TerminalOptions
-	input.SourceSatisfiedTerminalComplete = planExecuteSourceSatisfiedTerminalEvidenceComplete(brief, results, state)
-	input.TerminalSubmitPlanAllowed = planThenExecuteTerminalSubmitPlanAllowed(brief, results)
-	return workspace.PlanExecuteTextualAllowedTools(input)
+	input.SourceSatisfiedTerminalComplete = planExecuteSourceSatisfiedTerminalEvidenceComplete(brief, results, state, authority)
+	input.TerminalSubmitPlanAllowed = planThenExecuteTerminalSubmitPlanAllowed(brief, results, authority)
+	allowed := workspace.PlanExecuteTextualAllowedTools(input)
+	if input.TerminalSubmitPlanAllowed {
+		allowed = textutil.Merge(allowed, []string{workspace.ToolNameSubmitPlan})
+	}
+	return textutil.Merge(allowed, inspection.ToolNames())
 }
 
-func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) []string {
-	allowed := runnerPlanExecuteTextualAllowedTools(currentAllowedTools, brief, results)
+func (r *runExecution) runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest, inspection workspace.PermissionAuthorizedInspectionProjection, authority planThenExecutePathAuthority) []string {
+	allowed := runnerPlanExecuteTextualAllowedTools(currentAllowedTools, brief, results, inspection, authority)
 	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
 		return allowed
 	}
@@ -4416,16 +2887,29 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 		return allowed
 	}
 
-	state, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results)
-	if planExecuteSourceSatisfiedTerminalEvidenceComplete(brief, results, state) {
+	state, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results, authority)
+	if planExecuteSourceSatisfiedTerminalEvidenceComplete(brief, results, state, authority) {
 		return allowed
 	}
+
+	// A submit_plan that is otherwise grounded and in scope must reach the
+	// typed history-prerequisite owner. Hiding it here turns the exact model
+	// request into a phase rejection, so no DeferredPlanPaths ledger is created
+	// and the later history result cannot restore that intent. Permission and
+	// configured policy are still evaluated by the normal dispatch pipeline.
+	if tool == workspace.ToolNameSubmitPlan && slices.Contains(baseTools, workspace.ToolNameSubmitPlan) && r != nil {
+		_, historyPending := r.submitPlanHistoryPendingForRequest(req, results)
+		if historyPending {
+			return textutil.Merge(allowed, []string{workspace.ToolNameSubmitPlan})
+		}
+	}
+
 	return workspace.PlanExecuteTextualAllowedToolsForRequest(allowed, state.ParserVisibleTools, baseTools, tool)
 }
 
-func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (PlanExecutePlanningState, []string) {
+func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, authority planThenExecutePathAuthority) (PlanExecutePlanningState, []string) {
 	baseTools := workspace.PlanExecuteTextualBaseTools(brief.TaskFamily, brief.AllowedTools, currentAllowedTools)
-	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	state := derivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, authority)
 	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
 		baseTools = textutil.Unique(append(baseTools, workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteAnchorRefresh)...))
 	}
@@ -4433,7 +2917,7 @@ func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, br
 	return state, baseTools
 }
 
-func (r *Runner) salvageToolRequestFromReasoning(reply llama.ChatMessage, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+func (r *runExecution) salvageToolRequestFromReasoning(reply llama.ChatMessage, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
 	if r == nil || strings.TrimSpace(reply.Content) != "" {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -4457,7 +2941,7 @@ func (r *Runner) salvageToolRequestFromReasoning(reply llama.ChatMessage, result
 	return workspace.ToolRequest{}, "", false
 }
 
-func (r *Runner) salvageVisibleToolRequestFromProse(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+func (r *runExecution) salvageVisibleToolRequestFromProse(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
 	if r == nil {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -4500,29 +2984,7 @@ func (r *Runner) salvageVisibleToolRequestFromProse(reply string, results []work
 		return req, parsedRaw, true
 	}
 
-	if repaired, repairedRaw, repairedOK := r.delegatedReadOnlyVisibleDiscoveryRepair(results, req); repairedOK && r.safeVisibleToolRequest(repaired, results) {
-		return repaired, repairedRaw, true
-	}
-
 	return workspace.ToolRequest{}, "", false
-}
-
-func (r *Runner) delegatedReadOnlyVisibleDiscoveryRepair(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, string, bool) {
-	if r == nil || len(results) > 0 || strings.TrimSpace(req.Tool) != workspace.ToolNameDiscoveryQuery {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	repaired, ok := r.delegatedReadOnlyDiscoveryQueryRepairRequest(results, req)
-	if !ok {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	raw := marshalToolRequestRaw(repaired)
-	if raw == "" {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	return repaired, raw, true
 }
 
 func parseMalformedVisibleReadOnlyToolJSONPrefix(text string) (workspace.ToolRequest, string, bool) {
@@ -4627,7 +3089,7 @@ func firstJSONLikeIntField(text string, key string) (int, bool) {
 	return value, true
 }
 
-func (r *Runner) explicitVisibleToolJSONRecoveryAllowed(text string, fields map[string]json.RawMessage, results []workspace.ToolResult) bool {
+func (r *runExecution) explicitVisibleToolJSONRecoveryAllowed(text string, fields map[string]json.RawMessage, results []workspace.ToolResult) bool {
 	if r == nil || !completionGateResultSeen(results) {
 		return false
 	}
@@ -4803,7 +3265,7 @@ func parseVisibleToolRequestJSONObject(raw string, fields map[string]json.RawMes
 	return workspace.ToolRequest{}, "", false
 }
 
-func (r *Runner) safeVisibleToolRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+func (r *runExecution) safeVisibleToolRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	if strings.TrimSpace(req.Tool) == workspace.ToolNameSubmitPlan {
 		return r.safeVisibleSubmitPlanRequest(req, results)
 	}
@@ -4819,8 +3281,8 @@ func (r *Runner) safeVisibleToolRequest(req workspace.ToolRequest, results []wor
 	return r.safeReasoningToolRequest(req, results)
 }
 
-func (r *Runner) safeVisibleWorkspaceWriteRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || !workspace.IsWorkspaceWriteTool(req.Tool) {
+func (r *runExecution) safeVisibleWorkspaceWriteRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if r == nil || !runnerBriefRequiresMutation(r.state.runtimeBrief) || !workspace.IsWorkspaceWriteTool(req.Tool) {
 		return false
 	}
 
@@ -4828,11 +3290,13 @@ func (r *Runner) safeVisibleWorkspaceWriteRequest(req workspace.ToolRequest, res
 		return false
 	}
 
-	if _, _, reject := requiredEditPathScopeRejection(req, r.RuntimeBrief); reject {
+	assessment, ok := r.mutationAdmissionForRequest(req)
+	if !ok || !assessment.Analysis.Mutation || len(assessment.Analysis.Targets) == 0 {
 		return false
 	}
+	analysis := assessment.Analysis
 
-	if len(r.RuntimeBrief.RequiredEditPaths) > 0 {
+	if len(r.state.runtimeBrief.RequiredEditPaths) > 0 {
 		return r.safeReasoningWorkspaceWriteRequest(req)
 	}
 
@@ -4840,13 +3304,13 @@ func (r *Runner) safeVisibleWorkspaceWriteRequest(req workspace.ToolRequest, res
 		return false
 	}
 
-	paths := writeRequestPaths(req)
+	paths := mutationRequestCanonicalTargetIDs(analysis)
 	if len(paths) == 0 {
 		return false
 	}
 
 	for _, path := range paths {
-		if !newToolResultEvidenceProjection(results).HasSourceBody(path) {
+		if !newToolResultEvidenceProjection(results).HasSourceWindow(path) {
 			return false
 		}
 	}
@@ -4854,7 +3318,7 @@ func (r *Runner) safeVisibleWorkspaceWriteRequest(req workspace.ToolRequest, res
 	return true
 }
 
-func (r *Runner) safeVisiblePlanExecuteMissingTargetReadRequest(req workspace.ToolRequest) bool {
+func (r *runExecution) safeVisiblePlanExecuteMissingTargetReadRequest(req workspace.ToolRequest) bool {
 	if r == nil || !r.planThenExecutePlannerPhase() {
 		return false
 	}
@@ -4863,10 +3327,12 @@ func (r *Runner) safeVisiblePlanExecuteMissingTargetReadRequest(req workspace.To
 		return false
 	}
 
-	return planThenExecuteReadRequestMissingConcreteTarget(req)
+	return strings.TrimSpace(req.Path) == "" &&
+		strings.TrimSpace(req.ID) == "" &&
+		strings.TrimSpace(req.Handle) == ""
 }
 
-func (r *Runner) safeVisibleSubmitPlanRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+func (r *runExecution) safeVisibleSubmitPlanRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	if r == nil || !r.planThenExecutePlannerPhase() || strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan {
 		return false
 	}
@@ -4900,14 +3366,13 @@ func (r *Runner) safeVisibleSubmitPlanRequest(req workspace.ToolRequest, results
 	return len(missingRequiredEditPaths(required, covered)) == 0
 }
 
-func (r *Runner) planThenExecuteSubmitPlanOnlyVisibleJSONSalvageAllowed(results []workspace.ToolResult) bool {
+func (r *runExecution) planThenExecuteSubmitPlanOnlyVisibleJSONSalvageAllowed(results []workspace.ToolResult) bool {
 	if r == nil || !r.planThenExecutePlannerPhase() {
 		return false
 	}
 
-	return planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, results) ||
-		planThenExecuteOpenCandidateSourceCanSubmit(r.RuntimeBrief, results) ||
-		planThenExecuteRejectedPlanCorrectionOnly(r.RuntimeBrief, results)
+	return planThenExecuteTerminalSubmitPlanAllowed(r.state.runtimeBrief, results, r.planThenExecutePathAuthority()) ||
+		planThenExecuteRejectedPlanCorrectionOnly(r.state.runtimeBrief, results)
 }
 
 func reasoningToolRequestCandidates(reasoning string) []string {
@@ -4947,7 +3412,7 @@ func reasoningToolRequestCandidates(reasoning string) []string {
 	return candidates
 }
 
-func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+func (r *runExecution) safeReasoningToolRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" || reasoningToolRequestHasPlaceholder(req) {
 		return false
@@ -5043,8 +3508,8 @@ func normalizeRunnerDiscoveryQueryPurpose(value string) string {
 	}
 }
 
-func (r *Runner) safeReasoningWorkspaceWriteRequest(req workspace.ToolRequest) bool {
-	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+func (r *runExecution) safeReasoningWorkspaceWriteRequest(req workspace.ToolRequest) bool {
+	if r == nil || !runnerBriefRequiresMutation(r.state.runtimeBrief) || len(r.state.runtimeBrief.RequiredEditPaths) == 0 {
 		return false
 	}
 
@@ -5052,12 +3517,8 @@ func (r *Runner) safeReasoningWorkspaceWriteRequest(req workspace.ToolRequest) b
 		return false
 	}
 
-	paths := writeRequestPaths(req)
-	if len(paths) == 0 {
-		return false
-	}
-
-	if _, _, reject := requiredEditPathScopeRejection(req, r.RuntimeBrief); reject {
+	assessment, ok := r.mutationAdmissionForRequest(req)
+	if !ok || !assessment.Analysis.Mutation || len(assessment.Analysis.Targets) == 0 {
 		return false
 	}
 
@@ -5367,7 +3828,7 @@ func tokenizerWriteRequestUnsafe(transport string, tool string) bool {
 		return false
 	}
 
-	return !(transport == "key_value" && tool == "edit_file")
+	return !(transport == "key_value" && tool == workspace.ToolNameEditFile)
 }
 
 func repairToolRequestSyntax(result toolRequestSyntaxNormalization) toolRequestSyntaxNormalization {
@@ -5482,7 +3943,7 @@ func repairStringifiedSubmitPlanEditsToolRequest(raw string, activeToolCall *lla
 		toolName = strings.TrimSpace(toolName)
 	}
 
-	if toolName != "submit_plan" {
+	if toolName != workspace.ToolNameSubmitPlan {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -5518,7 +3979,7 @@ func repairStringifiedSubmitPlanEditsToolRequest(raw string, activeToolCall *lla
 		return workspace.ToolRequest{}, "", false
 	}
 
-	req.Tool = "submit_plan"
+	req.Tool = workspace.ToolNameSubmitPlan
 
 	return req, string(repaired), true
 }
@@ -5654,13 +4115,13 @@ func normalizeReadToolAlias(req *workspace.ToolRequest) bool {
 		return false
 	}
 
-	req.Tool = "read_file"
+	req.Tool = workspace.ToolNameReadFile
 
 	return true
 }
 
 func normalizeReadFileLinesAlias(result *toolRequestSyntaxNormalization) bool {
-	if result == nil || strings.TrimSpace(result.Request.Tool) != "read_file" || result.Request.StartLine > 0 || result.Request.EndLine > 0 {
+	if result == nil || strings.TrimSpace(result.Request.Tool) != workspace.ToolNameReadFile || result.Request.StartLine > 0 || result.Request.EndLine > 0 {
 		return false
 	}
 
@@ -5925,7 +4386,7 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 
 	// Parse read_file lines alias: "lines: N-M" becomes start_line=N,
 	// end_line=M; "lines: N" becomes start_line=N, end_line=N.
-	if raw := strings.TrimSpace(values["lines"]); strings.TrimSpace(req.Tool) == "read_file" &&
+	if raw := strings.TrimSpace(values["lines"]); strings.TrimSpace(req.Tool) == workspace.ToolNameReadFile &&
 		strings.TrimSpace(values["start_line"]) == "" && strings.TrimSpace(values["end_line"]) == "" && raw != "" {
 
 		start, end, ok := parseReadFileLinesAlias(raw)
@@ -6413,7 +4874,7 @@ func keyValueRawFieldStructuralTransition(lastKey, key string) bool {
 }
 
 func keyValueAllowsEmptyValue(key string, values map[string]string) bool {
-	return key == "new_text" && strings.TrimSpace(values["tool"]) == "edit_file"
+	return key == "new_text" && strings.TrimSpace(values["tool"]) == workspace.ToolNameEditFile
 }
 
 func keyValueContinuationField(key string) bool {
@@ -6892,7 +5353,7 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 			continue
 		}
 
-		if tool.Function.Name == "read_file" {
+		if tool.Function.Name == workspace.ToolNameReadFile {
 			if narrowed, narrowOK := mutateSchemaRequireLineRange(mutated); narrowOK {
 				mutated = narrowed
 			}
@@ -6922,7 +5383,7 @@ func stripPostReadinessBroadTools(tools []llama.Tool) []llama.Tool {
 	out := make([]llama.Tool, 0, len(tools))
 	for _, t := range tools {
 		name := strings.TrimSpace(t.Function.Name)
-		if name == "search_files" || name == "list_files" {
+		if name == workspace.ToolNameSearchFiles || name == workspace.ToolNameListFiles {
 			continue
 		}
 
@@ -7260,6 +5721,20 @@ func NormalizeRunnerPath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.TrimPrefix(path, "./")
 	return path
+}
+
+func runnerPathEscapesWorkspace(raw string) bool {
+	path := strings.TrimSpace(raw)
+	path = strings.Trim(path, "`'\"()[]{}<>,.;")
+	if path == "" {
+		return false
+	}
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
+		return true
+	}
+
+	path = filepath.ToSlash(strings.ReplaceAll(path, `\`, `/`))
+	return path == ".." || strings.HasPrefix(path, "../")
 }
 
 // ContainsAny reports whether text contains any of the given needles.
