@@ -14,6 +14,7 @@ patent material are intentionally excluded from the repository.
 
 ## Maintainer Guides
 
+- [Idiom-Tura comparative architecture and adoption design](../architect.md)
 - [Architecture](architecture.md)
 - [Consolidation overhaul design](consolidation-overhaul-design.md)
 - [Development](development.md)
