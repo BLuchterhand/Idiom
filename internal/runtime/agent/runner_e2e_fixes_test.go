@@ -9,12 +9,83 @@ import (
 	"github.com/onsi/gomega"
 
 	"idiom/internal/capabilities/workspace"
+	compactionevidence "idiom/internal/evidence/compaction"
+	"idiom/internal/evidence/trace"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
 
 var _ = ginkgo.Describe("Runner end-to-end recovery fixes", ginkgo.Label("e2e"), func() {
+	ginkgo.It("fails closed when resumed compaction provenance is rejected", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		server, requestBodies := newScriptedChatServer([]string{"must not be called"})
+		defer server.Close()
+		provenance := compactionevidence.New("source", "retained", "summary", 4, 3, []string{"kept.go"}, []string{"missing.go"}, "evidence_weighted", "resume")
+		runner := &Runner{
+			Client: llama.NewClient(server.URL(), 5*time.Second),
+			Workspace: workspace.NewManager(config.Workspace{
+				Root: root,
+				CWD:  root,
+			}),
+			SeedContextCompactionProvenance: &provenance,
+		}
+
+		_, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "resume"}}, llama.ChatOptions{}, nil, nil, nil)
+		gomega.Expect(err).To(gomega.MatchError("context compaction provenance is not accepted for resume"))
+		gomega.Expect(requestBodies()).To(gomega.BeEmpty())
+	})
+
+	ginkgo.It("emits and replays a redacted model-to-tool trace", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeRunnerE2EFile(root, "README.md", "trace evidence\n")
+		server, _ := newScriptedChatServer([]string{
+			`{"tool":"read_file","path":"README.md"}`,
+			"The README contains trace evidence.",
+		})
+		recorder := trace.NewRecorder("runner-trace-e2e")
+		var modelEvents []string
+		runner := &Runner{
+			Client: llama.NewClient(server.URL(), 5*time.Second),
+			Workspace: workspace.NewManager(config.Workspace{
+				Root: root,
+				CWD:  root,
+			}),
+			Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+			RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "conversation",
+				Contract:          "direct_answer",
+				Objective:         "Read README.md and report its evidence.",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{workspace.ToolNameReadFile},
+			},
+			Trace: recorder,
+			OnEvent: func(event RunEvent) {
+				if event.Role == "model_call" {
+					modelEvents = append(modelEvents, event.Content)
+				}
+			},
+		}
+
+		answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Read README.md and report its evidence."}}, llama.ChatOptions{}, nil, nil, nil)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(answer).To(gomega.Equal("The README contains trace evidence."))
+		gomega.Expect(modelEvents).NotTo(gomega.BeEmpty())
+		gomega.Expect(modelEvents[0]).To(gomega.ContainSubstring(`"model_capability_profile_schema":"idiom.model_capability_profile.v1"`))
+
+		document := recorder.Snapshot()
+		gomega.Expect(trace.Replay(document).Valid).To(gomega.BeTrue())
+		kinds := make(map[trace.SpanKind]bool)
+		for _, span := range document.Spans {
+			kinds[span.Kind] = true
+		}
+		gomega.Expect(kinds[trace.SpanModelCall]).To(gomega.BeTrue())
+		gomega.Expect(kinds[trace.SpanToolRequest]).To(gomega.BeTrue())
+		gomega.Expect(kinds[trace.SpanPolicy]).To(gomega.BeTrue())
+		gomega.Expect(kinds[trace.SpanToolResult]).To(gomega.BeTrue())
+		gomega.Expect(kinds[trace.SpanEvidence]).To(gomega.BeTrue())
+	})
+
 	ginkgo.It("allows a documentation read after readiness while under the cap", func() {
 		root := ginkgo.GinkgoT().TempDir()
 		writeRunnerE2EFile(root, "internal/runtime/agent/foo.go", "package agent\n\nfunc Foo() {}\n")

@@ -252,7 +252,7 @@ func clonePtr[T any](value *T) *T {
 }
 
 func BackendSupportsNativeTools(backend string) bool {
-	return backendAdapterFor(backend).StructuredOutputCapabilities().NativeTools
+	return BackendModelCapabilityProfile(backend, "").StructuredOutput.NativeTools
 }
 
 // StructuredOutputCapabilities is an explicit capability report for the
@@ -368,7 +368,7 @@ func (c *Client) SupportsNativeTools() bool {
 		return true
 	}
 
-	return BackendSupportsNativeTools(c.Backend())
+	return c.CapabilityProfile().StructuredOutput.NativeTools
 }
 
 func (c *Client) modelsURL() string {

@@ -15728,7 +15728,7 @@ var _ = ginkgo.It("RunnerCompactsLongTurnHistoryWithTaskLedgerState", func() {
 			if event.Role == "context_compaction" {
 				sawCompactionEvent = true
 
-				if !strings.Contains(event.Content, "runner_task_state") {
+				if !strings.Contains(event.Content, "runner_task_state") || !strings.Contains(event.Content, `"reconstruction_status":"verified"`) {
 					ginkgo.Fail(fmt.Sprintf("expected runner task state compaction event, got %s", event.Content), 1)
 				}
 			}

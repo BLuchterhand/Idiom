@@ -24,6 +24,15 @@ func exploreModeWriteBlocked(tool string, mode Mode) (string, bool) {
 // wall-clock timeout so a misbehaving backend cannot stall the lane
 // indefinitely.
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResult) {
+	envelope := NewToolExecutionEnvelope(toolTransportFromContext(ctx), req)
+	defer func() {
+		envelope.applyResult(result, ctx != nil && ctx.Err() != nil)
+		m.observeToolExecution(envelope)
+		if observer := toolExecutionObserverFromContext(ctx); observer != nil {
+			observer(envelope)
+		}
+	}()
+
 	ctx = m.snapshotExecutionSession(ctx)
 	ctx = m.snapshotSystemSearchAccessApprover(ctx)
 	ctx = m.snapshotMutationApprover(ctx)
@@ -36,13 +45,27 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 	}()
 
 	if decision := m.EvaluateConfiguredToolRule(req); decision.Decision == toolpolicy.Deny {
+		envelope.PreflightDecision = decision.Decision
+		envelope.Status = ToolExecutionDenied
 		return m.toolRuleDeniedResult(req, decision.Target)
 	}
 	var authorizationFailure *ToolResult
 	ctx, authorizationFailure = m.authorizeMutationRequest(ctx, req)
 	if authorizationFailure != nil {
+		envelope.PreflightDecision = toolpolicy.Ask
+		envelope.ApprovalRequired = strings.Contains(strings.ToLower(authorizationFailure.Error), "approval")
+		if envelope.ApprovalRequired {
+			envelope.Status = ToolExecutionApproval
+		} else {
+			envelope.Status = ToolExecutionDenied
+		}
 		return *authorizationFailure
 	}
+	envelope.PreflightDecision = m.EvaluateToolRule(req)
+	if envelope.PreflightDecision == toolpolicy.None {
+		envelope.PreflightDecision = toolpolicy.Allow
+	}
+	envelope.Status = ToolExecutionAdmitted
 
 	timeout := m.ToolTimeoutForRequest(req)
 	if timeout <= 0 {

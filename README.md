@@ -89,7 +89,7 @@ set. Full install does not install model weights and does not create hosted API
 keys.
 
 Global initialization creates missing files such as `~/.idiom/config.json`,
-`~/.idiom/backends.json`, prompt templates, external-tool placeholders, and
+the legacy `~/.idiom/backends.json` compatibility file, prompt templates, external-tool placeholders, and
 postflight-check placeholders. It is merge-only: if a file already exists, the
 installer leaves it untouched.
 
@@ -164,9 +164,10 @@ For the checked-in hosted example, set the provider API key:
 export DEEPSEEK_API_KEY=...
 ```
 
-The tracked `.idiom/backends.json` uses `deepseek-v4-flash` as the default
-hosted profile and includes a local `llama.cpp` example that points at the
-ignored placeholder path `models/local-model.gguf`.
+The tracked `.idiom/backends.json` is a legacy portable example for explicit
+backend-management commands. It uses `deepseek-v4-flash`; it does not override
+the model in the active `config.json`. Put the backend profile alongside
+`llama_server` in `.idiom/config.json` or `~/.idiom/config.json` instead.
 
 The installer creates user-global config. For a repository that needs its own
 project-specific config, initialize project-local Idiom config:
@@ -175,7 +176,8 @@ project-specific config, initialize project-local Idiom config:
 idiom init
 ```
 
-Then edit `.idiom/backends.json` or `.idiom/config.json` for your backend:
+Then edit the `llama_server` and `backends` blocks in `.idiom/config.json` for
+your backend:
 
 - hosted backends need a model name and an API-key environment variable
 - local `llama.cpp` backends need `llama-server` and a local GGUF model path

@@ -53,7 +53,7 @@ func (m *promptExecutionSession) writerRouteDecisionForPrompt(prompt string, pla
 		}
 	}
 
-	aliases := writerrouting.RoleAliases(resolveProjectRoot(m.cfg.Chat.ProjectRoot, m.workspace), "")
+	aliases := writerrouting.RoleAliasesForConfig(m.cfg, "")
 	plannerModel := m.writerRouteModelForRole(aliases, backends.RolePlanner)
 	executorModel := m.writerRouteModelForRole(aliases, backends.RoleExecutor)
 	classifierModel := m.writerRouteModelForRole(aliases, backends.RoleClassifier)

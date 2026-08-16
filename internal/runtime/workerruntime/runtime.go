@@ -4,7 +4,10 @@ import (
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/toolfacts"
 )
+
+const EvidenceIntentRuntimeCapability = "runtime_capability"
 
 type ToolResultSummary struct {
 	Tool        string `json:"tool,omitempty"`
@@ -42,6 +45,7 @@ type WorkerRuntimeBrief struct {
 	AllowedTools         []string                           `json:"allowed_tools,omitempty"`
 	ForbiddenTools       []string                           `json:"forbidden_tools,omitempty"`
 	ToolManifest         []workspace.ToolManifestEntry      `json:"tool_manifest,omitempty"`
+	CapabilityEvidence   []toolfacts.CapabilityEvidence     `json:"capability_evidence,omitempty"`
 	EvidenceCapabilities []string                           `json:"available_evidence_capabilities,omitempty"`
 	RequiredEvidence     []string                           `json:"required_evidence,omitempty"`
 	RequiredTools        []string                           `json:"required_tools,omitempty"`
@@ -89,46 +93,47 @@ type ActionGuidance struct {
 }
 
 type RunState struct {
-	Lane                 string                        `json:"lane,omitempty"`
-	TaskFamily           string                        `json:"task_family,omitempty"`
-	Contract             string                        `json:"contract,omitempty"`
-	Phase                string                        `json:"phase,omitempty"`
-	Objective            string                        `json:"objective,omitempty"`
-	RequestedOutcome     string                        `json:"requested_outcome,omitempty"`
-	WriteIntent          string                        `json:"write_intent,omitempty"`
-	ReadOnlyConstraint   bool                          `json:"read_only_constraint,omitempty"`
-	EvidenceIntent       string                        `json:"evidence_intent,omitempty"`
-	Step                 int                           `json:"step,omitempty"`
-	Permission           string                        `json:"permission_profile,omitempty"`
-	TargetRefs           []string                      `json:"target_refs,omitempty"`
-	RequiredEditPaths    []string                      `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths     []string                      `json:"allowed_edit_paths,omitempty"`
-	EvidencePaths        []string                      `json:"evidence_paths,omitempty"`
-	ChangedPaths         []string                      `json:"changed_paths,omitempty"`
-	Constraints          []string                      `json:"constraints,omitempty"`
-	AllowedTools         []string                      `json:"allowed_tools,omitempty"`
-	ForbiddenTools       []string                      `json:"forbidden_tools,omitempty"`
-	ToolManifest         []workspace.ToolManifestEntry `json:"tool_manifest,omitempty"`
-	EvidenceCapabilities []string                      `json:"available_evidence_capabilities,omitempty"`
-	RequiredEvidence     []string                      `json:"required_evidence,omitempty"`
-	RequiredTools        []string                      `json:"required_tools,omitempty"`
-	ReadinessGate        []string                      `json:"readiness_gate,omitempty"`
-	EvidenceContract     []string                      `json:"evidence_contract,omitempty"`
-	SearchPolicy         []string                      `json:"search_policy,omitempty"`
-	DiscoveryExamples    []string                      `json:"discovery_examples,omitempty"`
-	VerificationContract string                        `json:"verification_contract,omitempty"`
-	VerificationPlan     []string                      `json:"verification_plan,omitempty"`
-	StopConditions       []string                      `json:"stop_conditions,omitempty"`
-	FinalCritic          []string                      `json:"final_critic,omitempty"`
-	TargetPacket         []string                      `json:"target_packet,omitempty"`
-	UserBoundaries       []string                      `json:"user_boundaries,omitempty"`
-	Budget               BudgetBrief                   `json:"budget,omitempty"`
-	LastTool             string                        `json:"last_tool,omitempty"`
-	LastResult           ToolResultSummary             `json:"last_result,omitempty"`
-	FailureClass         recoverycontract.FailureClass `json:"failure_class,omitempty"`
-	NextActions          []string                      `json:"next_actions,omitempty"`
-	InvalidActions       []string                      `json:"invalid_actions,omitempty"`
-	Readiness            *ReadinessState               `json:"readiness,omitempty"`
+	Lane                 string                         `json:"lane,omitempty"`
+	TaskFamily           string                         `json:"task_family,omitempty"`
+	Contract             string                         `json:"contract,omitempty"`
+	Phase                string                         `json:"phase,omitempty"`
+	Objective            string                         `json:"objective,omitempty"`
+	RequestedOutcome     string                         `json:"requested_outcome,omitempty"`
+	WriteIntent          string                         `json:"write_intent,omitempty"`
+	ReadOnlyConstraint   bool                           `json:"read_only_constraint,omitempty"`
+	EvidenceIntent       string                         `json:"evidence_intent,omitempty"`
+	Step                 int                            `json:"step,omitempty"`
+	Permission           string                         `json:"permission_profile,omitempty"`
+	TargetRefs           []string                       `json:"target_refs,omitempty"`
+	RequiredEditPaths    []string                       `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths     []string                       `json:"allowed_edit_paths,omitempty"`
+	EvidencePaths        []string                       `json:"evidence_paths,omitempty"`
+	ChangedPaths         []string                       `json:"changed_paths,omitempty"`
+	Constraints          []string                       `json:"constraints,omitempty"`
+	AllowedTools         []string                       `json:"allowed_tools,omitempty"`
+	ForbiddenTools       []string                       `json:"forbidden_tools,omitempty"`
+	ToolManifest         []workspace.ToolManifestEntry  `json:"tool_manifest,omitempty"`
+	CapabilityEvidence   []toolfacts.CapabilityEvidence `json:"capability_evidence,omitempty"`
+	EvidenceCapabilities []string                       `json:"available_evidence_capabilities,omitempty"`
+	RequiredEvidence     []string                       `json:"required_evidence,omitempty"`
+	RequiredTools        []string                       `json:"required_tools,omitempty"`
+	ReadinessGate        []string                       `json:"readiness_gate,omitempty"`
+	EvidenceContract     []string                       `json:"evidence_contract,omitempty"`
+	SearchPolicy         []string                       `json:"search_policy,omitempty"`
+	DiscoveryExamples    []string                       `json:"discovery_examples,omitempty"`
+	VerificationContract string                         `json:"verification_contract,omitempty"`
+	VerificationPlan     []string                       `json:"verification_plan,omitempty"`
+	StopConditions       []string                       `json:"stop_conditions,omitempty"`
+	FinalCritic          []string                       `json:"final_critic,omitempty"`
+	TargetPacket         []string                       `json:"target_packet,omitempty"`
+	UserBoundaries       []string                       `json:"user_boundaries,omitempty"`
+	Budget               BudgetBrief                    `json:"budget,omitempty"`
+	LastTool             string                         `json:"last_tool,omitempty"`
+	LastResult           ToolResultSummary              `json:"last_result,omitempty"`
+	FailureClass         recoverycontract.FailureClass  `json:"failure_class,omitempty"`
+	NextActions          []string                       `json:"next_actions,omitempty"`
+	InvalidActions       []string                       `json:"invalid_actions,omitempty"`
+	Readiness            *ReadinessState                `json:"readiness,omitempty"`
 }
 
 type StepInstruction struct {

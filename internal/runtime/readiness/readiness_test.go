@@ -1,11 +1,14 @@
 package readiness
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"idiom/internal/platform/config"
 )
 
 var _ = Describe("Runtime readiness", func() {
@@ -23,6 +26,20 @@ var _ = Describe("Runtime readiness", func() {
 		configPath := filepath.Join(configDir, "config.json")
 		Expect(os.WriteFile(configPath, []byte(`{"workspace":{"root":".."}}`), 0o644)).To(Succeed())
 		Expect(WorkspaceRootFromConfig(configPath)).To(Equal(filepath.Clean(dir)))
+	})
+
+	It("treats the consolidated config backend block as authoritative", func() {
+		root := GinkgoT().TempDir()
+		Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(`{"default_profile":"deepseek"}`), 0o644)).To(Succeed())
+
+		cfg := config.Default()
+		cfg.Backends = json.RawMessage(`{"default_profile":"qwen"}`)
+		file, found, err := loadBackendFile(root, cfg, true)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(file.DefaultProfile).To(Equal("qwen"))
 	})
 
 	It("blocks unknown host check statuses", func() {

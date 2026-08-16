@@ -2,7 +2,10 @@ package session_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -13,6 +16,50 @@ import (
 	"idiom/internal/runtime/session"
 	"idiom/internal/runtime/session/sessionmocks"
 )
+
+var _ = ginkgo.Describe("Backend resource resolution", func() {
+	ginkgo.It("keeps the configured model authoritative over a legacy project profile", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		gomega.Expect(os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)).To(gomega.Succeed())
+		gomega.Expect(os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(`{
+  "default_profile": "deepseek",
+  "profiles": {"deepseek": {"models": [{"alias": "deepseek", "kind": "deepseek", "model": "deepseek-v4-flash", "roles": ["planner"]}]}}
+}`), 0o644)).To(gomega.Succeed())
+
+		cfg := config.Default()
+		cfg.Workspace.Root = root
+		cfg.Workspace.CWD = root
+		cfg.LlamaServer.Model = "/models/Qwen3.8-27B-4bit"
+		cfg.LlamaServer.Kind = config.BackendMLX
+
+		resources := session.ResolveBackendResources(cfg)
+		gomega.Expect(resources.PlannerSpec.Model).To(gomega.Equal(cfg.LlamaServer.Model))
+		gomega.Expect(resources.PlannerSpec.IsMLX()).To(gomega.BeTrue())
+	})
+
+	ginkgo.It("uses the embedded backend profile when consolidated config supplies one", func() {
+		cfg := config.Default()
+		cfg.Backends = json.RawMessage(`{
+  "default_profile": "qwen",
+  "profiles": {"qwen": {"models": [{"alias": "qwen", "kind": "mlx", "model_path": "/models/qwen", "roles": ["planner"]}]}}
+}`)
+
+		resources := session.ResolveBackendResources(cfg)
+		gomega.Expect(resources.PlannerSpec.Model).To(gomega.Equal("/models/qwen"))
+		gomega.Expect(resources.PlannerSpec.IsMLX()).To(gomega.BeTrue())
+		gomega.Expect(resources.PlannerSpec.DisplayName).To(gomega.Equal("qwen"))
+	})
+
+	ginkgo.It("reports malformed consolidated backend data while keeping config defaults", func() {
+		cfg := config.Default()
+		cfg.Backends = json.RawMessage(`{"profiles":`)
+		cfg.LlamaServer.Model = "/models/Qwen3.8-27B-4bit"
+
+		resources := session.ResolveBackendResources(cfg)
+		gomega.Expect(resources.PlannerSpec.Model).To(gomega.Equal(cfg.LlamaServer.Model))
+		gomega.Expect(resources.Warnings).NotTo(gomega.BeEmpty())
+	})
+})
 
 var _ = ginkgo.Describe("Headless prompt sessions", func() {
 	ginkgo.It("uses one configured engine for a sequence of prompts", func() {

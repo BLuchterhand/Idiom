@@ -20,6 +20,7 @@ import (
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
+	compactionevidence "idiom/internal/evidence/compaction"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
@@ -188,6 +189,41 @@ func retryableModelTransportError(err error) bool {
 	}
 
 	return false
+}
+
+func modelCapacityFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return textutil.ContainsAny(text,
+		"metal::malloc",
+		"resource limit",
+		"out of memory",
+		"memory allocation failed",
+		"allocation failed",
+		"cuda out of memory",
+	)
+}
+
+func modelCapacityRecoveryOptions(opts llama.ChatOptions) llama.ChatOptions {
+	thinkingOff := false
+	opts.EnableThinking = &thinkingOff
+	opts.PreserveThinking = false
+	opts.ThinkingBudget = 0
+
+	if opts.MaxTokens > 0 {
+		// Keep the recovery request proportional to the configured budget while
+		// ensuring it remains large enough to emit one useful answer or tool call.
+		reduced := opts.MaxTokens / 4
+		if reduced < 1024 {
+			reduced = 1024
+		}
+		opts.MaxTokens = reduced
+	}
+
+	return opts
 }
 
 var (
@@ -1283,14 +1319,15 @@ type runnerThinkingTrace struct {
 }
 
 type runnerContextCompaction struct {
-	Lane             string   `json:"lane"`
-	DroppedMessages  int      `json:"dropped_messages"`
-	RetainedMessages int      `json:"retained_messages"`
-	MaxHistory       int      `json:"max_history,omitempty"`
-	MaxChars         int      `json:"max_chars,omitempty"`
-	PinnedPaths      []string `json:"pinned_paths,omitempty"`
-	PinnedMemoryKind string   `json:"pinned_memory_kind"`
-	Strategy         string   `json:"strategy"`
+	Lane             string                        `json:"lane"`
+	DroppedMessages  int                           `json:"dropped_messages"`
+	RetainedMessages int                           `json:"retained_messages"`
+	MaxHistory       int                           `json:"max_history,omitempty"`
+	MaxChars         int                           `json:"max_chars,omitempty"`
+	PinnedPaths      []string                      `json:"pinned_paths,omitempty"`
+	PinnedMemoryKind string                        `json:"pinned_memory_kind"`
+	Strategy         string                        `json:"strategy"`
+	Provenance       compactionevidence.Provenance `json:"provenance"`
 }
 
 func (r *runExecution) emitNextActionState(step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool) {
@@ -1860,6 +1897,7 @@ func (r *runExecution) emitModelCallTraceWithOptions(step int, label string, pro
 	payload["backend_kind"] = backendKind
 
 	backendCaps := llama.BackendStructuredOutputCapabilities(backendKind)
+	modelProfile := llama.BackendModelCapabilityProfile(backendKind, opts.Model)
 
 	payload["backend_capability_native_tools"] = backendCaps.NativeTools
 	payload["backend_capability_json_object"] = backendCaps.JSONObject
@@ -1867,6 +1905,12 @@ func (r *runExecution) emitModelCallTraceWithOptions(step int, label string, pro
 	payload["backend_capability_grammar"] = backendCaps.Grammar
 	payload["backend_capability_thinking_controls"] = backendCaps.ThinkingControls
 	payload["backend_capability_request_timeout_telemetry"] = backendCaps.RequestTimeoutTelemetry
+	payload["model_capability_profile_schema"] = modelProfile.SchemaVersion
+	payload["model_capability_profile_fingerprint"] = modelProfile.Fingerprint
+	payload["model_capability_profile_source"] = modelProfile.Source
+	payload["model_capability_context_status"] = modelProfile.ContextWindow.Status
+	payload["model_capability_max_output_status"] = modelProfile.MaxOutputTokens.Status
+	payload["model_capability_system_messages_must_lead"] = modelProfile.ChatTemplate.SystemMessagesMustLead
 	payload["model_alias"] = safeModelAliasForTelemetry(opts.Model)
 	payload["parser_contract"] = parserContract
 
@@ -2117,6 +2161,24 @@ func (r *runExecution) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage
 		return false
 	}
 
+	pinnedPaths := newToolResultEvidenceProjection(results).pinnedPathsForBrief(r.state.runtimeBrief, 8, r.completionChangedPaths(results))
+	requiredPaths := append([]string(nil), r.state.runtimeBrief.RequiredEditPaths...)
+	requiredPaths = append(requiredPaths, r.completionChangedPaths(results)...)
+	provenance := compactionevidence.New(
+		messageDigest(current),
+		messageDigest(compacted),
+		summary.Content,
+		len(current),
+		len(compacted),
+		pinnedPaths,
+		requiredPaths,
+		"retain_system_and_user_objective_with_evidence_weighted_middle",
+		"context_budget",
+	)
+	if !provenance.Acceptable() {
+		return false
+	}
+
 	*messages = compacted
 	r.emitContextCompaction(runnerContextCompaction{
 		Lane:             r.agentName(),
@@ -2124,12 +2186,22 @@ func (r *runExecution) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage
 		RetainedMessages: len(compacted),
 		MaxHistory:       policy.MaxContextMessages,
 		MaxChars:         policy.MaxContextChars,
-		PinnedPaths:      newToolResultEvidenceProjection(results).pinnedPathsForBrief(r.state.runtimeBrief, 8, r.completionChangedPaths(results)),
+		PinnedPaths:      pinnedPaths,
 		PinnedMemoryKind: "runner_task_state",
 		Strategy:         "retain_system_and_user_objective_with_evidence_weighted_middle",
+		Provenance:       provenance,
 	})
 
 	return true
+}
+
+func messageDigest(messages []llama.ChatMessage) string {
+	data, err := json.Marshal(messages)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
 }
 
 func (r *runExecution) emitContextCompaction(compaction runnerContextCompaction) {

@@ -70,6 +70,12 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		return guidance
 	}
 
+	if class, detail, ok := dedicatedMCPRecovery(input); ok {
+		mcpGuidance := mcpRecoveryGuidance(input, class, detail)
+		mcpGuidance.Constraints = append([]string(nil), guidance.Constraints...)
+		return mcpGuidance
+	}
+
 	if exactAnchorWriteFailure(input.Constraints, tool, statusCombined) {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "retry one corrected write shape from the target packet if a safe anchor is known")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> naming the missing anchor if the packet anchor no longer matches")

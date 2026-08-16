@@ -263,11 +263,6 @@ var _ = ginkgo.It("role spec explicit alias can target non default profile", fun
 			}
 		}
 	}`
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
-
 	defaults := config.LlamaServer{
 		Kind:  "mlx",
 		Host:  "127.0.0.1",
@@ -278,6 +273,7 @@ var _ = ginkgo.It("role spec explicit alias can target non default profile", fun
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.LlamaServer = defaults
+	cfg.Backends = []byte(body)
 	spec := runtimesession.ResolveBackendResources(cfg).PlannerSpec
 
 	gomega.Expect(spec.Port).To(gomega.Equal(47783), fmt.Sprintf("resolved spec = %+v, want 27B profile target", spec))
@@ -309,11 +305,6 @@ var _ = ginkgo.It("role spec executor ignores explicit planner alias", func() {
 			}
 		}
 	}`
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
-
 	defaults := config.LlamaServer{
 		Kind:  "mlx",
 		Host:  "127.0.0.1",
@@ -324,6 +315,7 @@ var _ = ginkgo.It("role spec executor ignores explicit planner alias", func() {
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Implementer = &defaults
+	cfg.Backends = []byte(body)
 	spec := runtimesession.ResolveBackendResources(cfg).ExecutorSpec
 
 	gomega.Expect(spec.Port).To(gomega.Equal(47781), fmt.Sprintf("resolved spec = %+v, want coder executor", spec))

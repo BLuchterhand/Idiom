@@ -538,3 +538,97 @@ var _ = ginkgo.It("EmptyTypedDiagnosticLogCountsAsInspectedWithoutInventingLineC
 	gomega.Expect(hasDebugLogReadForSelection([]workspace.ToolResult{result}, debugLogFileSelection{Path: "logs/empty.log"})).To(gomega.BeTrue())
 	gomega.Expect(newToolResultEvidenceProjection([]workspace.ToolResult{result}).DiagnosticLogReadCoversPath("logs/empty.log", 1, 1)).To(gomega.BeFalse())
 })
+
+var _ = ginkgo.Describe("Typed runtime capability evidence", func() {
+	ginkgo.It("closes a capability answer from the typed route and active tool surface", func() {
+		brief := workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what runtime tools are available",
+			PermissionProfile: "read_only_workspace",
+			EvidenceIntent:    workerruntime.EvidenceIntentRuntimeCapability,
+			AllowedTools:      []string{"mcp:exa/web_search_exa", "mcp:exa/web_fetch_exa"},
+		}
+
+		ledger := readOnlyAnswerabilityForResults(brief, nil)
+		gomega.Expect(readOnlyDirectAnswerLane(brief)).To(gomega.BeTrue())
+		gomega.Expect(ledger.Answerable()).To(gomega.BeTrue())
+		gomega.Expect(ledger.CapabilityEvidenceRelevant).To(gomega.BeTrue())
+
+		closeout := readOnlyClosureDecisionForResults(brief, nil)
+		gomega.Expect(closeout.Evidence.capabilityEvidenceAnswerable()).To(gomega.BeTrue())
+		decision := closeout.FinalAnswerDecision("The runtime exposes the configured web search and fetch tools; a live backend call has not been verified.")
+		gomega.Expect(decision.BlockerKind).To(gomega.BeEmpty())
+		gomega.Expect(decision.AcceptedEvidencePaths).To(gomega.ContainElement("capability:mcp:exa/web_search_exa:exposed"))
+	})
+
+	ginkgo.It("does not let an untyped conversation bypass source grounding", func() {
+		brief := workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			EvidenceIntent:    "generic",
+			AllowedTools:      []string{"mcp:exa/web_search_exa"},
+		}
+
+		gomega.Expect(readOnlyAnswerabilityForResults(brief, nil).Answerable()).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("accepts producer-owned verified capability evidence", func() {
+		brief := workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			EvidenceIntent:    workerruntime.EvidenceIntentRuntimeCapability,
+			AllowedTools:      []string{"mcp:exa/web_search_exa"},
+		}
+		result := workspace.ToolResult{
+			Tool: "mcp:exa/web_search_exa",
+			Facts: &toolfacts.ToolResultFacts{CapabilityEvidence: []toolfacts.CapabilityEvidence{{
+				Tool:   "mcp:exa/web_search_exa",
+				Status: toolfacts.CapabilityEvidenceVerified,
+				Source: "mcp_dispatch",
+			}}},
+		}
+
+		ledger := readOnlyAnswerabilityForResults(brief, []workspace.ToolResult{result})
+		gomega.Expect(ledger.Answerable()).To(gomega.BeTrue())
+		gomega.Expect(ledger.CapabilityEvidence).To(gomega.ContainElement(toolfacts.CapabilityEvidence{
+			Tool: "mcp:exa/web_search_exa", Status: toolfacts.CapabilityEvidenceVerified, Source: "mcp_dispatch",
+		}))
+	})
+})
+
+var _ = ginkgo.Describe("Typed external web evidence", func() {
+	ginkgo.It("projects candidate and body source identities without promoting them to path source bodies", func() {
+		candidate := workspace.ToolResult{
+			Tool: "mcp:exa/web_search_exa",
+			Facts: &toolfacts.ToolResultFacts{ExternalWebSources: []toolfacts.ExternalWebSourceEvidence{{
+				Kind:         toolfacts.ExternalWebSourceCandidate,
+				URL:          "https://example.com/article",
+				CanonicalURL: "https://example.com/article",
+				Title:        "Example article",
+			}}},
+		}
+		body := workspace.ToolResult{
+			Tool: "mcp:exa/web_fetch_exa",
+			Facts: &toolfacts.ToolResultFacts{ExternalWebSources: []toolfacts.ExternalWebSourceEvidence{{
+				Kind:         toolfacts.ExternalWebSourceBody,
+				URL:          "https://example.com/article",
+				CanonicalURL: "https://example.com/article",
+			}}},
+		}
+
+		projection := newToolResultEvidenceProjection([]workspace.ToolResult{candidate, body})
+		gomega.Expect(projection.ExternalWebSourceEvidence()).To(gomega.Equal([]toolfacts.ExternalWebSourceEvidence{
+			{Kind: toolfacts.ExternalWebSourceCandidate, URL: "https://example.com/article", CanonicalURL: "https://example.com/article", Title: "Example article"},
+			{Kind: toolfacts.ExternalWebSourceBody, URL: "https://example.com/article", CanonicalURL: "https://example.com/article"},
+		}))
+
+		brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "conversation", Contract: "direct_answer", PermissionProfile: "read_only_workspace", EvidenceIntent: "generic"}
+		ledger := readOnlyAnswerabilityForResults(brief, []workspace.ToolResult{candidate, body})
+		gomega.Expect(ledger.SourceBodyPaths).To(gomega.BeEmpty())
+		gomega.Expect(ledger.ExternalDocumentBodyPaths).To(gomega.BeEmpty())
+		gomega.Expect(ledger.ExternalWebSources).To(gomega.HaveLen(2))
+	})
+})

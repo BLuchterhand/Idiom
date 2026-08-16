@@ -4,8 +4,12 @@
 
 Check the selected profile and required environment variables:
 
+Check the active model in `config.json` first. `idiom backend status` operates
+on the legacy standalone backend file used by explicit backend-management
+commands; it is not the source of the TUI's active model.
+
 ```bash
-idiom backend status --profile deepseek-v4-flash
+idiom doctor --profile plan
 ```
 
 For hosted profiles, confirm that the API key environment variable is set. For

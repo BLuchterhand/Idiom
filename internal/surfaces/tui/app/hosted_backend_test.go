@@ -2,8 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/backends"
@@ -104,10 +102,6 @@ var _ = ginkgo.It("backends model to llama server keeps custom base url for same
 var _ = ginkgo.It("role spec resolves explicit hosted alias across profiles", func() {
 	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	{
-		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
-	}
 
 	backendsJSON := `{
   "default_profile": "local",
@@ -127,11 +121,6 @@ var _ = ginkgo.It("role spec resolves explicit hosted alias across profiles", fu
     }
   }
 }`
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
-
 	defaults := config.Default().LlamaServer
 
 	defaults.Model = "glm-5.1"
@@ -140,6 +129,7 @@ var _ = ginkgo.It("role spec resolves explicit hosted alias across profiles", fu
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.LlamaServer = defaults
+	cfg.Backends = []byte(backendsJSON)
 	got := runtimesession.ResolveBackendResources(cfg).PlannerSpec
 
 	gomega.Expect(got.IsZAI()).To(gomega.BeTrue(), fmt.Sprintf("unexpected resolved spec: %#v", got))
@@ -150,10 +140,6 @@ var _ = ginkgo.It("role spec resolves explicit hosted alias across profiles", fu
 var _ = ginkgo.It("new reuses planner client when classifier role matches planner", func() {
 	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	{
-		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
-	}
 
 	backendsJSON := `{
   "default_profile": "local",
@@ -171,13 +157,9 @@ var _ = ginkgo.It("new reuses planner client when classifier role matches planne
     }
   }
 }`
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
-
 	cfg := config.Default()
 
+	cfg.Backends = []byte(backendsJSON)
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.RouteClassifier.Enabled = true
@@ -199,10 +181,6 @@ var _ = ginkgo.It("new reuses planner client when classifier role matches planne
 var _ = ginkgo.It("new hosted classifier role does not use stale local classifier base url", func() {
 	t := ginkgo.GinkgoT()
 	root := t.TempDir()
-	{
-		err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("mkdir .idiom: %v", err))
-	}
 
 	backendsJSON := `{
   "default_profile": "deepseek",
@@ -223,13 +201,9 @@ var _ = ginkgo.It("new hosted classifier role does not use stale local classifie
     }
   }
 }`
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
-
 	cfg := config.Default()
 
+	cfg.Backends = []byte(backendsJSON)
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.RouteClassifier.Enabled = true

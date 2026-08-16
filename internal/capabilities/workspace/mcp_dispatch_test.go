@@ -15,6 +15,7 @@ import (
 	gomega "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 	"idiom/internal/capabilities/mcp"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 )
@@ -246,10 +247,38 @@ _ = ginkgo.Describe("mcp dispatch", func() {
 		gomega.Expect(result.Tool).To(gomega.Equal("mcp:fake/echo"), fmt.Sprintf("Tool = %q", result.Tool))
 		gomega.Expect(result.Output).To(gomega.Equal("hello back"), fmt.Sprintf("Output = %q, want %q", result.Output, "hello back"))
 		gomega.Expect(result.Summary).To(gomega.Equal("MCP mcp:fake/echo"), fmt.Sprintf("Summary = %q", result.Summary))
+		gomega.Expect(result.Facts).NotTo(gomega.BeNil())
+		gomega.Expect(result.Facts.CapabilityEvidence).To(gomega.ContainElement(toolfacts.CapabilityEvidence{
+			Tool: "mcp:fake/echo", Status: toolfacts.CapabilityEvidenceVerified, Source: "mcp_dispatch",
+		}))
 		call := <-calls
 		gomega.Expect(call.Name).To(gomega.Equal("echo"))
 		gomega.Expect(call.Arguments).To(gomega.MatchJSON(`{"text":"hello"}`))
 
+	})
+	ginkgo.It("manager execute attaches typed web source identity without changing capability evidence", func() {
+		reg, _ := registerMockMCP("exa", mcpProtocolScript{
+			Tool:          mcp.Tool{Name: "web_fetch_exa", Description: "Fetch", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			CallReplyText: `{"url":"https://example.com/article","title":"Example article","text":"body"}`,
+		})
+
+		mgr := NewManager(config.Workspace{})
+		mgr.toolSurface.SetMCPRegistry(reg)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		result := mgr.Execute(ctx, ToolRequest{Tool: "mcp:exa/web_fetch_exa", Args: []byte(`{"url":"https://example.com/article"}`)})
+		gomega.Expect(result.Error).To(gomega.BeEmpty())
+		gomega.Expect(result.Facts).NotTo(gomega.BeNil())
+		gomega.Expect(result.Facts.CapabilityEvidence).To(gomega.ContainElement(toolfacts.CapabilityEvidence{
+			Tool: "mcp:exa/web_fetch_exa", Status: toolfacts.CapabilityEvidenceVerified, Source: "mcp_dispatch",
+		}))
+		gomega.Expect(result.Facts.ExternalWebSources).To(gomega.Equal([]toolfacts.ExternalWebSourceEvidence{{
+			Kind:         toolfacts.ExternalWebSourceBody,
+			URL:          "https://example.com/article",
+			CanonicalURL: "https://example.com/article",
+			Title:        "Example article",
+		}}))
 	})
 	ginkgo.It("manager execute_mcp without registry returns error", func() {
 		mgr := NewManager(config.Workspace{})
@@ -261,6 +290,10 @@ _ = ginkgo.Describe("mcp dispatch", func() {
 		result := mgr.Execute(ctx, req)
 		gomega.Expect(result.Error).NotTo(gomega.Equal(""), fmt.Sprintf("expected error, got none"))
 		gomega.Expect(result.Error).To(gomega.ContainSubstring("registry not configured"), fmt.Sprintf("Error = %q, want mention of registry", result.Error))
+		gomega.Expect(result.Facts).NotTo(gomega.BeNil())
+		gomega.Expect(result.Facts.CapabilityEvidence).To(gomega.ContainElement(toolfacts.CapabilityEvidence{
+			Tool: "mcp:fake/echo", Status: toolfacts.CapabilityEvidenceUnavailable, Source: "mcp_dispatch",
+		}))
 
 	})
 	ginkgo.It("manager execute_mcp unregistered tool returns error", func() {
@@ -279,6 +312,10 @@ _ = ginkgo.Describe("mcp dispatch", func() {
 		result := mgr.Execute(ctx, req)
 		gomega.Expect(result.Error).NotTo(gomega.Equal(""), fmt.Sprintf("expected error for unregistered tool"))
 		gomega.Expect(result.Error).To(gomega.ContainSubstring("not registered"), fmt.Sprintf("Error = %q, want 'not registered'", result.Error))
+		gomega.Expect(result.Facts).NotTo(gomega.BeNil())
+		gomega.Expect(result.Facts.CapabilityEvidence).To(gomega.ContainElement(toolfacts.CapabilityEvidence{
+			Tool: "mcp:other/unknown", Status: toolfacts.CapabilityEvidenceUnavailable, Source: "mcp_dispatch",
+		}))
 
 	})
 })

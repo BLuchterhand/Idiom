@@ -29,18 +29,51 @@ import (
 type Manager struct {
 	cfg config.Workspace
 
-	mode                 Mode
-	thoroughness         ExploreThoroughness
-	bypassReadBeforeEdit bool
-	mu                   sync.Mutex
-	pathTracker          PathTracker
-	pathAccess           PathAccess
-	writeGuard           WriteGuard
-	permissionRules      map[string][]toolpolicy.Rule
-	protectedWritePaths  map[string]struct{}
-	toolSurface          ToolSurface
-	languageTools        atomic.Pointer[languagetools.Manager]
-	mutationEpoch        atomic.Uint64
+	mode                  Mode
+	thoroughness          ExploreThoroughness
+	bypassReadBeforeEdit  bool
+	mu                    sync.Mutex
+	pathTracker           PathTracker
+	pathAccess            PathAccess
+	writeGuard            WriteGuard
+	permissionRules       map[string][]toolpolicy.Rule
+	protectedWritePaths   map[string]struct{}
+	toolSurface           ToolSurface
+	languageTools         atomic.Pointer[languagetools.Manager]
+	mutationEpoch         atomic.Uint64
+	toolExecutionObserver func(ToolExecutionEnvelope)
+}
+
+// SetToolExecutionObserver installs a transport-neutral lifecycle observer.
+// The observer receives metadata-only envelopes after dispatch or rejection.
+func (m *Manager) SetToolExecutionObserver(observer func(ToolExecutionEnvelope)) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.toolExecutionObserver = observer
+	m.mu.Unlock()
+}
+
+func (m *Manager) observeToolExecution(envelope ToolExecutionEnvelope) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	observer := m.toolExecutionObserver
+	m.mu.Unlock()
+	if observer != nil {
+		observer(envelope)
+	}
+}
+
+// RecordToolExecutionEnvelope records a pre-dispatch transport decision when
+// a configured surface rejects a request before Manager.Execute is reached.
+func (m *Manager) RecordToolExecutionEnvelope(envelope ToolExecutionEnvelope) {
+	if err := envelope.Validate(); err != nil {
+		return
+	}
+	m.observeToolExecution(envelope)
 }
 
 type Mode string

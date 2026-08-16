@@ -1051,11 +1051,12 @@ func finalAnswerAcceptanceAllowsObjectiveDiagnosticNonAnswer(acceptance finalAns
 }
 
 type readOnlyDirectAnswerRelevance struct {
-	Status                  string
-	BlockerKind             string
-	Reason                  string
-	RelevantSourceBodyPaths []string
-	AnswerObjectiveTerms    []string
+	Status                     string
+	BlockerKind                string
+	Reason                     string
+	RelevantSourceBodyPaths    []string
+	RelevantExternalWebSources []string
+	AnswerObjectiveTerms       []string
 }
 
 func readOnlyDirectAnswerLane(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -1118,6 +1119,10 @@ func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntime
 }
 
 func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) []string {
+	if ledger.capabilityEvidenceAnswerable() {
+		return capabilityEvidenceReferences(ledger.CapabilityEvidence)
+	}
+
 	mentioned := readOnlySourceLikePaths(analyzeSourceCitations(answer).BodyReadablePaths(), 16)
 	relevant := ledger.RelevantSourceBodyPaths
 	objectivePaths := ledger.SourceBodyObjectivePaths
@@ -1144,6 +1149,15 @@ func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAns
 	}
 
 	return readOnlyEvidenceDisplayPaths(paths, 8)
+}
+
+func capabilityEvidenceReferences(evidence []toolfacts.CapabilityEvidence) []string {
+	var refs []string
+	for _, fact := range toolfacts.NormalizeCapabilityEvidence(evidence) {
+		ref := "capability:" + fact.Tool + ":" + string(fact.Status)
+		refs = textutil.AppendUnique(refs, ref)
+	}
+	return refs
 }
 
 func acceptedFeaturePlannerPlanArtifactPaths(answer string, ledger readOnlyAnswerabilityLedger) []string {
@@ -1321,6 +1335,9 @@ func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[stri
 
 	if len(acceptance.RelevantSourceBodyPaths) > 0 {
 		fields["relevant_source_body_paths"] = textutil.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
+	}
+	if len(acceptance.RelevantExternalWebSources) > 0 {
+		fields["relevant_external_web_sources"] = textutil.LimitSlice(acceptance.RelevantExternalWebSources, 8)
 	}
 
 	return fields

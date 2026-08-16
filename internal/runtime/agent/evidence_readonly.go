@@ -28,9 +28,11 @@ const (
 	readOnlyEvidenceOutline           readOnlyEvidenceKind = "outline"
 	readOnlyEvidenceSourceWindow      readOnlyEvidenceKind = "source_body"
 	readOnlyEvidenceDiagnostic        readOnlyEvidenceKind = "diagnostic"
+	readOnlyEvidenceCapability        readOnlyEvidenceKind = "capability"
 	readOnlyEvidencePlanArtifact      readOnlyEvidenceKind = "plan_artifact"
 	readOnlyEvidenceGeneratedArtifact readOnlyEvidenceKind = "generated_artifact"
 	readOnlyEvidenceExternalDocument  readOnlyEvidenceKind = "external_document_body"
+	readOnlyEvidenceExternalWebSource readOnlyEvidenceKind = "external_web_source"
 )
 
 const featurePlannerPlanArtifactPayloadType = "feature_planner_plan_artifact"
@@ -55,6 +57,7 @@ type readOnlyAnswerabilityLedger struct {
 	Objective                      string
 	TaskFamily                     string
 	Contract                       string
+	EvidenceIntent                 string
 	Items                          []readOnlyEvidenceItem
 	CandidatePaths                 []string
 	CandidateObjectivePaths        []string
@@ -74,6 +77,11 @@ type readOnlyAnswerabilityLedger struct {
 	DiagnosticEvidence             bool
 	DiagnosticPaths                []string
 	DiagnosticRelevant             bool
+	CapabilityEvidence             []toolfacts.CapabilityEvidence
+	CapabilityEvidenceRelevant     bool
+	ExternalWebSources             []toolfacts.ExternalWebSourceEvidence
+	ExternalWebBodySources         []string
+	RelevantExternalWebSources     []string
 	PlanArtifactEvidence           bool
 	PlanArtifactPaths              []string
 	PlanArtifactRelevant           bool
@@ -185,10 +193,13 @@ func readOnlyAnswerabilityForProjection(brief workerruntime.WorkerRuntimeBrief, 
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 
 	ledger := readOnlyAnswerabilityLedger{
-		Objective:  strings.TrimSpace(brief.Objective),
-		TaskFamily: strings.TrimSpace(brief.TaskFamily),
-		Contract:   strings.TrimSpace(brief.Contract),
+		Objective:      strings.TrimSpace(brief.Objective),
+		TaskFamily:     strings.TrimSpace(brief.TaskFamily),
+		Contract:       strings.TrimSpace(brief.Contract),
+		EvidenceIntent: strings.TrimSpace(brief.EvidenceIntent),
 	}
+	ledger.CapabilityEvidence = append([]toolfacts.CapabilityEvidence(nil), brief.CapabilityEvidence...)
+	ledger.observeCapabilityEvidence()
 	namedTargets := readOnlyObjectiveEvidencePaths(brief)
 
 	ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, readOnlyBriefCandidateEvidencePaths(brief))
@@ -222,6 +233,43 @@ func readOnlyAnswerabilityForProjection(brief workerruntime.WorkerRuntimeBrief, 
 				Relevant:       relevant,
 				Summary:        observation.Summary,
 			})
+
+		case readOnlyEvidenceCapability:
+			if brief.EvidenceIntent != workerruntime.EvidenceIntentRuntimeCapability {
+				continue
+			}
+
+			for _, evidence := range observation.CapabilityFacts {
+				ledger.CapabilityEvidence = append(ledger.CapabilityEvidence, evidence)
+				ledger.CapabilityEvidenceRelevant = true
+				ledger.addItem(readOnlyEvidenceItem{
+					Kind:    observation.Kind,
+					Tool:    evidence.Tool,
+					Source:  evidence.Source,
+					Summary: string(evidence.Status),
+				})
+			}
+
+		case readOnlyEvidenceExternalWebSource:
+			sources := toolfacts.NormalizeExternalWebSources(observation.ExternalWebSources)
+			bodySupportsObjective := sourceBodyHasStrongObjectiveToken(observation.Output, ledger.Objective)
+			for _, source := range sources {
+				ledger.ExternalWebSources = append(ledger.ExternalWebSources, source)
+				relevant := source.Kind == toolfacts.ExternalWebSourceBody && bodySupportsObjective
+				if source.Kind == toolfacts.ExternalWebSourceBody {
+					ledger.ExternalWebBodySources = textutil.Merge(ledger.ExternalWebBodySources, []string{source.CanonicalURL})
+					if relevant {
+						ledger.RelevantExternalWebSources = textutil.Merge(ledger.RelevantExternalWebSources, []string{source.CanonicalURL})
+					}
+				}
+				ledger.addItem(readOnlyEvidenceItem{
+					Kind:     observation.Kind,
+					Tool:     observation.Tool,
+					Source:   source.CanonicalURL,
+					Relevant: relevant,
+					Summary:  string(source.Kind),
+				})
+			}
 
 		case readOnlyEvidencePlanArtifact:
 			relevant := featurePlannerPlanArtifactPathsMatchObjective(ledger.Objective, observation.CandidatePaths)
@@ -316,6 +364,7 @@ func readOnlyAnswerabilityForProjection(brief workerruntime.WorkerRuntimeBrief, 
 	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
 	ledger.markRelevantExternalDocuments()
+	ledger.markRelevantExternalWebSources()
 
 	// Determine whether unread candidate paths exist (candidates not yet read as source bodies).
 	candidateSet := make(map[string]struct{}, len(ledger.CandidatePaths))
@@ -342,6 +391,22 @@ func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
 	item.CandidatePaths = readOnlySourceLikePaths(item.CandidatePaths, 128)
 	item.Summary = strings.TrimSpace(item.Summary)
 	l.Items = append(l.Items, item)
+}
+
+func (l *readOnlyAnswerabilityLedger) observeCapabilityEvidence() {
+	if l == nil || l.EvidenceIntent != workerruntime.EvidenceIntentRuntimeCapability {
+		return
+	}
+
+	for _, evidence := range toolfacts.NormalizeCapabilityEvidence(l.CapabilityEvidence) {
+		l.CapabilityEvidenceRelevant = true
+		l.addItem(readOnlyEvidenceItem{
+			Kind:    readOnlyEvidenceCapability,
+			Tool:    evidence.Tool,
+			Source:  evidence.Source,
+			Summary: string(evidence.Status),
+		})
+	}
 }
 
 func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path string, body string) {
@@ -819,6 +884,18 @@ func (l *readOnlyAnswerabilityLedger) markRelevantExternalDocuments() {
 		if l.Items[i].Kind == readOnlyEvidenceExternalDocument {
 			_, l.Items[i].Relevant = relevantSet[normalizeReadOnlyExternalDocumentPath(l.Items[i].Path)]
 		}
+	}
+}
+
+func (l *readOnlyAnswerabilityLedger) markRelevantExternalWebSources() {
+	l.ExternalWebBodySources = uniqueCanonicalExternalWebURLs(l.ExternalWebBodySources)
+	l.RelevantExternalWebSources = intersectCanonicalExternalWebURLs(l.RelevantExternalWebSources, l.ExternalWebBodySources)
+	for i := range l.Items {
+		if l.Items[i].Kind != readOnlyEvidenceExternalWebSource || l.Items[i].Summary != string(toolfacts.ExternalWebSourceBody) {
+			continue
+		}
+
+		_, l.Items[i].Relevant = canonicalExternalWebURLSet(l.RelevantExternalWebSources)[l.Items[i].Source]
 	}
 }
 
@@ -1324,7 +1401,19 @@ func (l readOnlyAnswerabilityLedger) diagnosticEvidenceAnswerable() bool {
 	return len(readOnlyDiagnosticEvidencePaths(l.DiagnosticPaths, 8)) > 0
 }
 
+func (l readOnlyAnswerabilityLedger) capabilityEvidenceAnswerable() bool {
+	if l.EvidenceIntent != workerruntime.EvidenceIntentRuntimeCapability || !l.CapabilityEvidenceRelevant {
+		return false
+	}
+
+	return len(toolfacts.NormalizeCapabilityEvidence(l.CapabilityEvidence)) > 0
+}
+
 func (l readOnlyAnswerabilityLedger) Answerable() bool {
+	if l.capabilityEvidenceAnswerable() {
+		return true
+	}
+
 	if l.planArtifactAnswerable() {
 		return true
 	}
@@ -1338,6 +1427,10 @@ func (l readOnlyAnswerabilityLedger) Answerable() bool {
 	}
 
 	if len(l.RelevantExternalDocumentPaths) > 0 && len(l.MissingNamedSourcePaths) == 0 {
+		return true
+	}
+
+	if len(l.RelevantExternalWebSources) > 0 && len(l.MissingNamedSourcePaths) == 0 {
 		return true
 	}
 
@@ -2157,21 +2250,23 @@ func (d ReadOnlyCloseout) UserFacingUncertainty() string {
 }
 
 type readOnlyFinalAnswerDecision struct {
-	Status                  string
-	BlockerKind             string
-	Reason                  string
-	AcceptedEvidencePaths   []string
-	RelevantSourceBodyPaths []string
-	AnswerObjectiveTerms    []string
+	Status                     string
+	BlockerKind                string
+	Reason                     string
+	AcceptedEvidencePaths      []string
+	RelevantSourceBodyPaths    []string
+	RelevantExternalWebSources []string
+	AnswerObjectiveTerms       []string
 }
 
 func (d readOnlyFinalAnswerDecision) DirectAnswerRelevance() readOnlyDirectAnswerRelevance {
 	return readOnlyDirectAnswerRelevance{
-		Status:                  d.Status,
-		BlockerKind:             d.BlockerKind,
-		Reason:                  d.Reason,
-		RelevantSourceBodyPaths: append([]string(nil), d.RelevantSourceBodyPaths...),
-		AnswerObjectiveTerms:    append([]string(nil), d.AnswerObjectiveTerms...),
+		Status:                     d.Status,
+		BlockerKind:                d.BlockerKind,
+		Reason:                     d.Reason,
+		RelevantSourceBodyPaths:    append([]string(nil), d.RelevantSourceBodyPaths...),
+		RelevantExternalWebSources: append([]string(nil), d.RelevantExternalWebSources...),
+		AnswerObjectiveTerms:       append([]string(nil), d.AnswerObjectiveTerms...),
 	}
 }
 
@@ -2245,9 +2340,20 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	}
 
 	decision := readOnlyFinalAnswerDecision{
-		Status:                  "checked",
-		RelevantSourceBodyPaths: ledger.RelevantSourceBodyPaths,
-		AnswerObjectiveTerms:    answerObjectiveTerms(substantiveAnswer, objective),
+		Status:                     "checked",
+		RelevantSourceBodyPaths:    ledger.RelevantSourceBodyPaths,
+		RelevantExternalWebSources: append([]string(nil), ledger.RelevantExternalWebSources...),
+		AnswerObjectiveTerms:       answerObjectiveTerms(substantiveAnswer, objective),
+	}
+	if ledger.capabilityEvidenceAnswerable() {
+		if strings.TrimSpace(substantiveAnswer) == "" || readOnlyAnswerHasHardNonFinalProse(substantiveAnswer) {
+			decision.BlockerKind = "answer_objective_unmet:non_final_prose"
+			decision.Reason = "the runtime capability evidence is sufficient, but the response is not a substantive final answer"
+			return decision
+		}
+
+		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
+		return decision
 	}
 	if readOnlyAnswerReportsInsufficientEvidence(substantiveAnswer) {
 		decision.Status = string(turnReasonInsufficientEvidenceAnswer)
@@ -2276,7 +2382,7 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	// shared decision still rejects path inventories and wrong-owner
 	// citations so carried evidence cannot bypass the acceptance contract.
 	if ledger.directAnswerConversation() &&
-		(len(d.Brief.EvidencePaths) > 0 || len(ledger.SourceBodyPaths) > 0 || len(ledger.ExternalDocumentBodyPaths) > 0) &&
+		(len(d.Brief.EvidencePaths) > 0 || len(ledger.SourceBodyPaths) > 0 || len(ledger.ExternalDocumentBodyPaths) > 0 || len(ledger.RelevantExternalWebSources) > 0) &&
 		readOnlyCarriedEvidenceAnswerAccepted(substantiveAnswer, objective, ledger, d.Results) {
 
 		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
@@ -2647,6 +2753,15 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 	if answerCitesRelevantExternalDocument(mentionedPaths, ledger) {
 		return true
 	}
+	if answerCitesRelevantExternalWebSource(answer, ledger) {
+		return true
+	}
+	if len(ledger.RelevantExternalWebSources) > 0 {
+		// Web research is only grounded when the final answer cites a URL whose
+		// fetched body supported the objective. A search lead or an uncited body
+		// must not satisfy the same path-oriented fallback used for workspace code.
+		return false
+	}
 	mentionsExternalDocument := answerMentionsExternalDocument(mentionedPaths, ledger.ExternalDocumentBodyPaths)
 
 	mentioned := readOnlySourceLikePaths(mentionedPaths, 16)
@@ -2950,6 +3065,12 @@ func readOnlyEvidenceLedgerGuidanceForBrief(brief workerruntime.WorkerRuntimeBri
 		parts = append(parts, "body-backed external document evidence: "+formatInlinePathList(paths, 3))
 	} else if paths := readOnlyEvidenceDisplayPaths(ledger.ExternalDocumentBodyPaths, 3); len(paths) > 0 {
 		parts = append(parts, "external documents inspected: "+formatInlinePathList(paths, 3))
+	}
+
+	if urls := ledger.RelevantExternalWebSources; len(urls) > 0 {
+		parts = append(parts, "body-backed web evidence: "+formatInlinePathList(urls, 3)+" (cite the fetched URL in the answer)")
+	} else if urls := ledger.ExternalWebBodySources; len(urls) > 0 {
+		parts = append(parts, "web pages fetched but not yet shown relevant to the objective: "+formatInlinePathList(urls, 3))
 	}
 
 	if ledger.DiagnosticRelevant {

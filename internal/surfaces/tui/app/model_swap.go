@@ -39,13 +39,8 @@ func (m *Model) applyModelSwap(name string) {
 	m.modelThinkingFloor = false
 	m.maxTokensOverride = 0
 
-	root := ""
-	if m.workspace != nil {
-		root = m.workspace.Root()
-	}
-
-	file, found, err := backends.LoadFromProjectRoot(root)
-	if err != nil || !found {
+	file, err := backends.Parse(m.cfg.Backends)
+	if err != nil {
 		m.status = fmt.Sprintf("Model set to %s", name)
 		return
 	}
@@ -94,7 +89,7 @@ func (m *Model) slashModel(_ string, args []string) bool {
 	if len(args) <= 1 {
 		aliases := m.collectAllAliases()
 		if len(aliases) == 0 {
-			m.status = "No models discovered. Check .idiom/backends.json or server status."
+			m.status = "No models discovered. Check config.json backends or server status."
 			return true
 		}
 
@@ -106,7 +101,7 @@ func (m *Model) slashModel(_ string, args []string) bool {
 	case "list":
 		aliases := m.collectAllAliases()
 		if len(aliases) == 0 {
-			m.status = "No models discovered. Check .idiom/backends.json or server status."
+			m.status = "No models discovered. Check config.json backends or server status."
 			return true
 		}
 
@@ -123,7 +118,7 @@ func (m *Model) collectAllAliases() []string {
 
 	var names []string
 
-	if file, found, err := backends.LoadFromProjectRoot(m.workspace.Root()); err == nil && found {
+	if file, err := backends.Parse(m.cfg.Backends); err == nil {
 		if prof, ok := file.Profile(""); ok {
 			for _, model := range prof.Models {
 				if alias := strings.TrimSpace(model.Alias); alias != "" && !seen[alias] {

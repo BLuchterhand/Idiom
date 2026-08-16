@@ -71,8 +71,17 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 
 func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
 	if nested, ok, err := decodeNestedToolRequestJSON(payload); ok || err != nil {
-		return nested, err
+		if err != nil {
+			return nested, err
+		}
+
+		return NormalizeMCPToolRequestArgs(nested, payload), nil
 	}
 
-	return decodeFlatToolRequestJSON(payload)
+	req, err := decodeFlatToolRequestJSON(payload)
+	if err != nil {
+		return ToolRequest{}, err
+	}
+
+	return NormalizeMCPToolRequestArgs(req, payload), nil
 }

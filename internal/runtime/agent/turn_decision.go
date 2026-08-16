@@ -132,19 +132,20 @@ const finalAnswerAcceptanceSchema = "final_answer_acceptance.v1"
 const finalAnswerPolicyInvariantAcceptance = "final_answer.acceptance"
 
 type finalAnswerAcceptance struct {
-	SchemaVersion            string
-	Decision                 finalAnswerAcceptanceDecision
-	BlockerKind              string
-	Reason                   string
-	EvidencePaths            []string
-	ContractAssessment       turnContractAssessment
-	ObjectiveRelevanceStatus string
-	RelevantSourceBodyPaths  []string
-	AnswerObjectiveTerms     []string
-	PackID                   autonomy.ContractPackID
-	InvariantID              string
-	PolicyDecision           autonomy.ToolPolicyDecision
-	ParityReport             ParityReport
+	SchemaVersion              string
+	Decision                   finalAnswerAcceptanceDecision
+	BlockerKind                string
+	Reason                     string
+	EvidencePaths              []string
+	ContractAssessment         turnContractAssessment
+	ObjectiveRelevanceStatus   string
+	RelevantSourceBodyPaths    []string
+	RelevantExternalWebSources []string
+	AnswerObjectiveTerms       []string
+	PackID                     autonomy.ContractPackID
+	InvariantID                string
+	PolicyDecision             autonomy.ToolPolicyDecision
+	ParityReport               ParityReport
 }
 
 func rejectFinalAnswerAcceptance(acceptance finalAnswerAcceptance, kind turnViolationKind, reason turnReasonCode) finalAnswerAcceptance {
@@ -237,6 +238,7 @@ func finalAnswerAcceptanceWithDirectAnswerRelevance(acceptance finalAnswerAccept
 	if relevance.Status != "" {
 		acceptance.ObjectiveRelevanceStatus = relevance.Status
 		acceptance.RelevantSourceBodyPaths = append([]string(nil), relevance.RelevantSourceBodyPaths...)
+		acceptance.RelevantExternalWebSources = append([]string(nil), relevance.RelevantExternalWebSources...)
 		acceptance.AnswerObjectiveTerms = append([]string(nil), relevance.AnswerObjectiveTerms...)
 	}
 	if diagnostic, ok := turnDiagnosticFromLegacyBlocker(relevance.BlockerKind, relevance.Reason, relevance.RelevantSourceBodyPaths); ok {

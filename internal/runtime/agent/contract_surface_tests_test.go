@@ -20700,6 +20700,28 @@ var _ = ginkgo.It("NormalizeToolRequestSyntaxKeyValue", func() {
 	}
 })
 
+var _ = ginkgo.It("NormalizeToolRequestSyntaxKeyValueMCPPreservesArgs", func() {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: mcp:exa/web_search_exa\nquery: current date today",
+	})
+
+	if result.ParseErr != nil {
+		ginkgo.Fail(fmt.Sprintf("NormalizeToolRequestSyntax: %v", result.ParseErr), 1)
+	}
+
+	if !result.OK {
+		ginkgo.Fail("expected MCP key/value tool request to normalize", 1)
+	}
+
+	if result.Request.Tool != "mcp:exa/web_search_exa" || string(result.Request.Args) != `{"query":"current date today"}` {
+		ginkgo.Fail(fmt.Sprintf("unexpected MCP request: tool=%q args=%q", result.Request.Tool, string(result.Request.Args)), 1)
+	}
+
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		ginkgo.Fail(fmt.Sprintf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport), 1)
+	}
+})
+
 var _ = ginkgo.It("NormalizeToolRequestSyntaxKeyValueSearchScopeAlias", func() {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: "tool: search_content\npattern: implementation detection\nscope: .",

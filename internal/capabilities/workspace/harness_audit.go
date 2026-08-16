@@ -185,6 +185,7 @@ func (m *Manager) harnessAudit(ctx context.Context, req ToolRequest) ToolResult 
 		Tool:    "harness_audit",
 		Summary: harnessAuditSummary(report),
 		Output:  string(data),
+		Facts:   exposedCapabilityEvidence(m.ToolSurfaceSnapshot().AllowedTools(), "harness_audit"),
 	}
 }
 

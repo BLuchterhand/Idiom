@@ -315,8 +315,8 @@ type Model struct {
 	controller *llama.ServerController
 	// plannerSpec + executorSpec are the resolved LlamaServer specs for
 	// the planner and executor roles. They mirror cfg.LlamaServer /
-	// cfg.Implementer when no .idiom/backends.json declares those roles
-	// and reflect the backends.json entry otherwise. Status messages
+	// cfg.Implementer when no consolidated backend profile declares those roles
+	// and reflect the consolidated profile entry otherwise. Status messages
 	// and resolveModelID lookups should read these instead of cfg.* so
 	// they stay correct under both wiring sources.
 	plannerSpec  config.LlamaServer

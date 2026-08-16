@@ -843,6 +843,17 @@ var _ = ginkgo.It("rejects a stale async server result while retaining ownership
 		Binary:      scriptPath,
 		LogFile:     logPath,
 	}
+	cfg.Backends = []byte(`{
+  "default_profile": "swap",
+  "profiles": {
+    "swap": {
+      "models": [
+        {"alias": "glm-5.1", "kind": "zai", "model": "glm-5.1", "base_url": "https://api.z.ai/api/paas/v4", "api_key_env": "ZAI_API_KEY"},
+        {"alias": "other-model", "kind": "zai", "model": "other-model", "base_url": "https://api.z.ai/api/paas/v4", "api_key_env": "ZAI_API_KEY"}
+      ]
+    }
+  }
+}`)
 	live := New(cfg)
 	ginkgo.DeferCleanup(func() { _ = live.Close() })
 	oldController := live.controller

@@ -3225,6 +3225,8 @@ func parseVisibleLineToolRequest(text string) (workspace.ToolRequest, string, bo
 		}
 	}
 
+	req = workspace.NormalizeMCPToolRequestArgs(req, nil)
+
 	return req, marshalToolRequestRaw(req), true
 }
 
@@ -4199,7 +4201,7 @@ func parseReadFileLinesAlias(raw string) (int, int, bool) {
 	return line, line, true
 }
 
-func parseFunctionCallToolArguments(args string) (map[string]string, bool) {
+func parseFunctionCallToolArguments(args string, allowArbitraryFields bool) (map[string]string, bool) {
 	values := map[string]string{}
 	if strings.TrimSpace(args) == "" {
 		return values, true
@@ -4217,7 +4219,7 @@ func parseFunctionCallToolArguments(args string) (map[string]string, bool) {
 		}
 
 		key = strings.ToLower(strings.TrimSpace(key))
-		if !keyValueToolRequestFieldAllowed(key) {
+		if !allowArbitraryFields && !keyValueToolRequestFieldAllowed(key) {
 			return nil, false
 		}
 
@@ -4326,7 +4328,7 @@ func toolRequestSyntaxIdentifier(value string) bool {
 	}
 
 	for i, r := range value {
-		if r == '_' || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || (i > 0 && '0' <= r && r <= '9') {
+		if r == '_' || r == ':' || r == '/' || r == '-' || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || (i > 0 && '0' <= r && r <= '9') {
 			continue
 		}
 
@@ -4384,6 +4386,14 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		req.Path = values["scope"]
 	}
 
+	if strings.HasPrefix(strings.TrimSpace(tool), "mcp:") {
+		args, ok := marshalMCPTextualArguments(values)
+		if !ok {
+			return workspace.ToolRequest{}, false
+		}
+		req.Args = args
+	}
+
 	// Parse read_file lines alias: "lines: N-M" becomes start_line=N,
 	// end_line=M; "lines: N" becomes start_line=N, end_line=N.
 	if raw := strings.TrimSpace(values["lines"]); strings.TrimSpace(req.Tool) == workspace.ToolNameReadFile &&
@@ -4432,7 +4442,7 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		}
 	}
 
-	return req, true
+	return workspace.NormalizeMCPToolRequestArgs(req, nil), true
 }
 
 func keyValueToolRequestFieldAllowed(key string) bool {
@@ -4447,6 +4457,41 @@ func keyValueToolRequestFieldAllowed(key string) bool {
 	default:
 		return false
 	}
+}
+
+func marshalMCPTextualArguments(values map[string]string) (json.RawMessage, bool) {
+	args := make(map[string]json.RawMessage, len(values))
+	for key, value := range values {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key == "" || key == "tool" {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		if json.Valid([]byte(value)) {
+			var raw any
+			if err := json.Unmarshal([]byte(value), &raw); err == nil {
+				encoded, err := json.Marshal(raw)
+				if err != nil {
+					return nil, false
+				}
+				args[key] = encoded
+				continue
+			}
+		}
+
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, false
+		}
+		args[key] = encoded
+	}
+
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return nil, false
+	}
+	return encoded, true
 }
 
 func classifyUnsupportedTextualToolShape(text string) string {
@@ -4754,7 +4799,7 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 			break
 		}
 
-		if !keyValueToolRequestFieldAllowed(key) {
+		if !keyValueToolRequestFieldAllowed(key) && !strings.HasPrefix(strings.TrimSpace(values["tool"]), "mcp:") {
 			if sawKeyValue && keyValueContinuationField(lastKey) {
 				if !appendContinuation(line) {
 					return ToolRequestTokenization{Unsafe: true}
@@ -5000,7 +5045,7 @@ func (functionCallToolRequestTokenizer) Tokenize(text string) ToolRequestTokeniz
 	}
 
 	args := strings.TrimSpace(body[open+1 : len(body)-1])
-	values, ok := parseFunctionCallToolArguments(args)
+	values, ok := parseFunctionCallToolArguments(args, strings.HasPrefix(tool, "mcp:"))
 	if !ok {
 		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}

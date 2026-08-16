@@ -44,6 +44,7 @@ type Spec struct {
 	CanonicalPWD   bool
 	MergeOutput    bool
 	OutputLogPath  string
+	Sandbox        *SandboxProfile
 }
 
 type Result struct {
@@ -653,6 +654,10 @@ func (p *Process) Close() error {
 
 func configuredCommand(ctx context.Context, spec Spec) (*exec.Cmd, error) {
 	name, args, err := commandArgv(spec)
+	if err != nil {
+		return nil, err
+	}
+	name, args, err = sandboxCommandArgv(spec, name, args)
 	if err != nil {
 		return nil, err
 	}

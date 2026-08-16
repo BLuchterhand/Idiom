@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace/externaltool"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 )
@@ -76,11 +77,15 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 func (m *Manager) executeMCP(ctx context.Context, req ToolRequest) ToolResult {
 	registry := m.toolSurface.MCPRegistry()
 	if registry == nil {
-		return toolUnavailableResult(req.Tool, "MCP unavailable", "mcp registry not configured")
+		result := toolUnavailableResult(req.Tool, "MCP unavailable", "mcp registry not configured")
+		result.Facts = capabilityEvidenceForTool(req.Tool, toolfacts.CapabilityEvidenceUnavailable, "mcp_dispatch")
+		return result
 	}
 
 	if !registry.Has(req.Tool) {
-		return toolUnsupportedResult(req.Tool, "Unknown MCP tool", "mcp tool not registered: "+req.Tool)
+		result := toolUnsupportedResult(req.Tool, "Unknown MCP tool", "mcp tool not registered: "+req.Tool)
+		result.Facts = capabilityEvidenceForTool(req.Tool, toolfacts.CapabilityEvidenceUnavailable, "mcp_dispatch")
+		return result
 	}
 
 	args := req.Args
@@ -90,20 +95,44 @@ func (m *Manager) executeMCP(ctx context.Context, req ToolRequest) ToolResult {
 
 	result, err := registry.Call(ctx, req.Tool, args)
 	if err != nil {
-		return toolFailureFromMaybeTypedErrorResult(req.Tool, "MCP call failed", err, failures.Internal, reasonToolInternalFailure)
+		failure := toolFailureFromMaybeTypedErrorResult(req.Tool, "MCP call failed", err, failures.Internal, reasonToolInternalFailure)
+		failure.Facts = capabilityEvidenceForTool(req.Tool, toolfacts.CapabilityEvidenceUnavailable, "mcp_dispatch")
+		return failure
 	}
 
 	output := joinMCPContent(result.Content)
 	summary := "MCP " + req.Tool
-	out := ToolResult{Tool: req.Tool, Summary: summary, Output: output}
+	facts := capabilityEvidenceForTool(req.Tool, toolfacts.CapabilityEvidenceVerified, "mcp_dispatch")
+	facts.ExternalWebSources = externalWebSourceEvidenceForMCP(req.Tool, externalWebRequestedURL(req.Args), result.Content)
+	out := ToolResult{Tool: req.Tool, Summary: summary, Output: output, Facts: facts}
 
 	if result.IsError {
 		out.Error = output
 		out.Output = ""
 		out.Summary = "MCP tool reported an error"
+		out.Facts = capabilityEvidenceForTool(req.Tool, toolfacts.CapabilityEvidenceUnavailable, "mcp_dispatch")
 	}
 
 	return out
+}
+
+func externalWebRequestedURL(args json.RawMessage) string {
+	var fields map[string]any
+	if err := json.Unmarshal(args, &fields); err != nil {
+		return ""
+	}
+
+	for _, name := range []string{"url", "source_url", "link", "canonical_url"} {
+		for key, value := range fields {
+			if !strings.EqualFold(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""), strings.ReplaceAll(strings.ReplaceAll(name, "_", ""), "-", "")) {
+				continue
+			}
+			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+				return strings.TrimSpace(text)
+			}
+		}
+	}
+	return ""
 }
 
 func joinMCPContent(parts []json.RawMessage) string {

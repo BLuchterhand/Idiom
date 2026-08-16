@@ -24,13 +24,15 @@ After release assets are available, use the installers described in
 
 ## Configure a Backend
 
-The checked-in `.idiom/backends.json` uses placeholder configuration and
-environment-variable names. Do not commit real API keys or private model paths.
+The checked-in `.idiom/backends.json` is a legacy example for explicit backend
+commands. Active model selection comes from the `llama_server` and `backends`
+blocks in `config.json`. Do not commit real API keys or private model paths.
 
 Hosted example:
 
 ```bash
 export DEEPSEEK_API_KEY=...
+# Explicit legacy backend-management command:
 idiom backend status --profile deepseek-v4-flash
 ```
 

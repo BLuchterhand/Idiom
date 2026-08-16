@@ -1,10 +1,12 @@
 package workerruntime
 
 import (
+	"slices"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 )
 
@@ -19,6 +21,7 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.AllowedTools = textutil.UniqueNonEmpty(state.AllowedTools)
 	state.ForbiddenTools = textutil.UniqueNonEmpty(state.ForbiddenTools)
 	state.EvidenceCapabilities = textutil.UniqueNonEmpty(state.EvidenceCapabilities)
+	state.CapabilityEvidence = toolfacts.NormalizeCapabilityEvidence(state.CapabilityEvidence)
 	state.RequiredEvidence = textutil.UniqueNonEmpty(state.RequiredEvidence)
 	state.RequiredTools = textutil.UniqueNonEmpty(state.RequiredTools)
 	state.ReadinessGate = textutil.UniqueNonEmpty(state.ReadinessGate)
@@ -309,6 +312,10 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 		state.EvidenceCapabilities = append([]string(nil), brief.EvidenceCapabilities...)
 	}
 
+	if len(state.CapabilityEvidence) == 0 {
+		state.CapabilityEvidence = append([]toolfacts.CapabilityEvidence(nil), brief.CapabilityEvidence...)
+	}
+
 	if len(state.RequiredEvidence) == 0 {
 		state.RequiredEvidence = append([]string(nil), brief.RequiredEvidence...)
 	}
@@ -427,7 +434,57 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 		brief.EvidenceCapabilities = compactEvidenceCapabilitySummary(brief.ToolManifest)
 	}
 
+	if brief.EvidenceIntent == EvidenceIntentRuntimeCapability {
+		brief.CapabilityEvidence = normalizeRuntimeCapabilityEvidence(brief.CapabilityEvidence, brief.AllowedTools, brief.ToolManifest)
+	} else {
+		brief.CapabilityEvidence = nil
+	}
+
 	return brief
+}
+
+func normalizeRuntimeCapabilityEvidence(explicit []toolfacts.CapabilityEvidence, allowedTools []string, manifest []workspace.ToolManifestEntry) []toolfacts.CapabilityEvidence {
+	allowed := make(map[string]struct{}, len(allowedTools)+len(manifest))
+	for _, tool := range allowedTools {
+		if tool = strings.TrimSpace(tool); tool != "" {
+			allowed[tool] = struct{}{}
+		}
+	}
+	for _, entry := range manifest {
+		if tool := strings.TrimSpace(entry.Tool); tool != "" {
+			allowed[tool] = struct{}{}
+		}
+	}
+
+	if len(explicit) > 0 {
+		filtered := make([]toolfacts.CapabilityEvidence, 0, len(explicit))
+		for _, fact := range toolfacts.NormalizeCapabilityEvidence(explicit) {
+			if _, ok := allowed[fact.Tool]; ok {
+				filtered = append(filtered, fact)
+			}
+		}
+		return filtered
+	}
+
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	tools := make([]string, 0, len(allowed))
+	for tool := range allowed {
+		tools = append(tools, tool)
+	}
+	slices.Sort(tools)
+
+	evidence := make([]toolfacts.CapabilityEvidence, 0, len(tools))
+	for _, tool := range tools {
+		evidence = append(evidence, toolfacts.CapabilityEvidence{
+			Tool:   tool,
+			Status: toolfacts.CapabilityEvidenceExposed,
+			Source: "runtime_tool_surface",
+		})
+	}
+	return evidence
 }
 
 type RuntimeToolSet struct {

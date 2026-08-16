@@ -52,6 +52,10 @@
     "request_timeout_seconds": 900,
     "server_start_timeout_seconds": 240
   },
+  "backends": {
+    "default_profile": "",
+    "profiles": {}
+  },
   "route_classifier": {
     "enabled": true,
     "base_url": "",

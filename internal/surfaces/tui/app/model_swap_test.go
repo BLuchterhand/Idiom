@@ -44,8 +44,9 @@ func writeTestBackendsJSON(t ginkgo.FullGinkgoTInterface, root string) {
 
 	{
 		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(testBackendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write legacy backends.json fixture: %v", err))
 	}
+
 }
 
 func newTestModelWithWorkspace(t ginkgo.FullGinkgoTInterface) *Model {
@@ -66,6 +67,7 @@ func newTestModelWithWorkspace(t ginkgo.FullGinkgoTInterface) *Model {
 				MaxTokens:        8192,
 			},
 			LlamaServer: config.Default().LlamaServer,
+			Backends:    []byte(testBackendsJSON),
 		},
 		workspace:   ws,
 		plannerSpec: config.Default().LlamaServer,
@@ -630,7 +632,7 @@ func newTestModelWithMultiProfile(t ginkgo.FullGinkgoTInterface) *Model {
 
 	{
 		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(multiProfileBackendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write legacy backends.json fixture: %v", err))
 	}
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
@@ -645,6 +647,7 @@ func newTestModelWithMultiProfile(t ginkgo.FullGinkgoTInterface) *Model {
 				MaxTokens:        8192,
 			},
 			LlamaServer: config.Default().LlamaServer,
+			Backends:    []byte(multiProfileBackendsJSON),
 		},
 		workspace:   ws,
 		plannerSpec: config.Default().LlamaServer,

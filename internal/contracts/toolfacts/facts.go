@@ -3,11 +3,56 @@ package toolfacts
 import (
 	"crypto/sha256"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"idiom/internal/contracts/toolpolicy"
 )
+
+// CapabilityEvidenceStatus describes what the harness has established about a
+// callable capability. Exposed means the current runtime contract advertises
+// the tool; verified means a call completed successfully; unavailable means
+// the producer reported that the capability could not be used.
+type CapabilityEvidenceStatus string
+
+const (
+	CapabilityEvidenceExposed     CapabilityEvidenceStatus = "exposed"
+	CapabilityEvidenceVerified    CapabilityEvidenceStatus = "verified"
+	CapabilityEvidenceUnavailable CapabilityEvidenceStatus = "unavailable"
+)
+
+// CapabilityEvidence is producer-owned evidence about the active tool
+// surface. It is separate from source-body and diagnostic evidence because a
+// capability question is answered by the runtime contract, not a repository
+// file.
+type CapabilityEvidence struct {
+	Tool   string                   `json:"tool"`
+	Status CapabilityEvidenceStatus `json:"status"`
+	Source string                   `json:"source,omitempty"`
+}
+
+// ExternalWebSourceKind preserves the distinction between a web-search lead
+// and a fetched source body. Search results are useful for choosing what to
+// fetch, but must not be treated as body-backed evidence.
+type ExternalWebSourceKind string
+
+const (
+	ExternalWebSourceCandidate ExternalWebSourceKind = "candidate"
+	ExternalWebSourceBody      ExternalWebSourceKind = "body"
+)
+
+// ExternalWebSourceEvidence is producer-owned identity metadata extracted
+// from a successful web MCP result. The result body remains model-facing and
+// ephemeral; these fields provide a safe, durable association for later
+// evidence projection without treating a candidate as a fetched body.
+type ExternalWebSourceEvidence struct {
+	Kind         ExternalWebSourceKind `json:"kind"`
+	URL          string                `json:"url"`
+	CanonicalURL string                `json:"canonical_url"`
+	Title        string                `json:"title,omitempty"`
+	Publisher    string                `json:"publisher,omitempty"`
+}
 
 // DiscoveryStrength describes how strongly a discovery tool localized a source
 // owner before any source-body read.
@@ -181,6 +226,8 @@ func (d ToolRejectionDisposition) PhaseLocal() bool {
 // ToolResultFacts carries producer-owned evidence facts that consumers should
 // not re-derive from model-facing result text.
 type ToolResultFacts struct {
+	CapabilityEvidence        []CapabilityEvidence         `json:"capability_evidence,omitempty"`
+	ExternalWebSources        []ExternalWebSourceEvidence  `json:"external_web_sources,omitempty"`
 	DiagnosticEvidencePaths   []string                     `json:"diagnostic_evidence_paths,omitempty"`
 	RejectedWritePaths        []string                     `json:"rejected_write_paths,omitempty"`
 	DeferredPlanPaths         []string                     `json:"deferred_plan_paths,omitempty"`
@@ -237,6 +284,8 @@ func (facts *ToolResultFacts) Clone() *ToolResultFacts {
 	}
 
 	return &ToolResultFacts{
+		CapabilityEvidence:        append([]CapabilityEvidence(nil), facts.CapabilityEvidence...),
+		ExternalWebSources:        append([]ExternalWebSourceEvidence(nil), facts.ExternalWebSources...),
 		DiagnosticEvidencePaths:   append([]string(nil), facts.DiagnosticEvidencePaths...),
 		RejectedWritePaths:        append([]string(nil), facts.RejectedWritePaths...),
 		DeferredPlanPaths:         append([]string(nil), facts.DeferredPlanPaths...),
@@ -261,6 +310,88 @@ func (facts *ToolResultFacts) Clone() *ToolResultFacts {
 		GitHistoryStatus:          facts.GitHistoryStatus,
 		ShellCommand:              facts.ShellCommand,
 		ShellWorkdir:              facts.ShellWorkdir,
+	}
+}
+
+// NormalizeExternalWebSources removes invalid, incomplete, and duplicate
+// source identities while preserving producer order. Only HTTP(S) URLs are
+// durable web identities; no source is inferred from free-form text here.
+func NormalizeExternalWebSources(evidence []ExternalWebSourceEvidence) []ExternalWebSourceEvidence {
+	seen := make(map[string]struct{}, len(evidence))
+	out := make([]ExternalWebSourceEvidence, 0, len(evidence))
+	for _, fact := range evidence {
+		fact.URL = strings.TrimSpace(fact.URL)
+		fact.CanonicalURL = canonicalExternalWebURL(fact.CanonicalURL)
+		if fact.CanonicalURL == "" {
+			fact.CanonicalURL = canonicalExternalWebURL(fact.URL)
+		}
+		if fact.CanonicalURL == "" {
+			continue
+		}
+		if fact.URL == "" {
+			fact.URL = fact.CanonicalURL
+		} else if canonicalExternalWebURL(fact.URL) == "" {
+			fact.URL = fact.CanonicalURL
+		}
+		fact.Title = strings.TrimSpace(fact.Title)
+		fact.Publisher = strings.TrimSpace(fact.Publisher)
+		if fact.Kind != ExternalWebSourceCandidate && fact.Kind != ExternalWebSourceBody {
+			continue
+		}
+
+		key := string(fact.Kind) + "\x00" + fact.CanonicalURL
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func canonicalExternalWebURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return ""
+	}
+	parsed.Fragment = ""
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	return parsed.String()
+}
+
+// NormalizeCapabilityEvidence removes incomplete and duplicate capability
+// facts while preserving producer order for stable telemetry and prompts.
+func NormalizeCapabilityEvidence(evidence []CapabilityEvidence) []CapabilityEvidence {
+	seen := make(map[string]struct{}, len(evidence))
+	out := make([]CapabilityEvidence, 0, len(evidence))
+	for _, fact := range evidence {
+		fact.Tool = strings.TrimSpace(fact.Tool)
+		fact.Source = strings.TrimSpace(fact.Source)
+		if fact.Tool == "" || !validCapabilityEvidenceStatus(fact.Status) {
+			continue
+		}
+		key := fact.Tool + "\x00" + string(fact.Status)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func validCapabilityEvidenceStatus(status CapabilityEvidenceStatus) bool {
+	switch status {
+	case CapabilityEvidenceExposed, CapabilityEvidenceVerified, CapabilityEvidenceUnavailable:
+		return true
+	default:
+		return false
 	}
 }
 

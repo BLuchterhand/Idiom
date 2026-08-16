@@ -24,6 +24,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/runprofile"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
@@ -2411,12 +2412,9 @@ var _ = ginkgo.It("run prompt once semantic required paths uses direct implement
 		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner","classifier"]},
 		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
 	]}}}`, plannerServer.URL, executorServer.URL)
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
 
 	cfg := config.Default()
+	cfg.Backends = []byte(backendsJSON)
 
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
@@ -2572,12 +2570,9 @@ var _ = ginkgo.It("run prompt once natural language tdd feature uses classifier 
 		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner","classifier"]},
 		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
 	]}}}`, plannerServer.URL, executorServer.URL)
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
 
 	cfg := config.Default()
+	cfg.Backends = []byte(backendsJSON)
 
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
@@ -2703,12 +2698,9 @@ var _ = ginkgo.It("run prompt once semantic required paths falls back to active 
 		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner","classifier"]},
 		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
 	]}}}`, plannerServer.URL, executorServer.URL)
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends.json: %v", err))
-	}
 
 	cfg := config.Default()
+	cfg.Backends = []byte(backendsJSON)
 
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
@@ -5537,12 +5529,9 @@ var _ = ginkgo.It("plan execute prompt runner uses executor route when available
 		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner"]},
 		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
 	]}}}`, plannerServer.URL, executorServer.URL)
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends: %v", err))
-	}
 
 	cfg := config.Default()
+	cfg.Backends = []byte(backendsJSON)
 
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
@@ -5626,12 +5615,9 @@ var _ = ginkgo.It("plan execute prompt runner use active model skips executor ro
 		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner"]},
 		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
 	]}}}`, plannerServer.URL, executorServer.URL)
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends: %v", err))
-	}
 
 	cfg := config.Default()
+	cfg.Backends = []byte(backendsJSON)
 
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
@@ -5751,12 +5737,9 @@ var _ = ginkgo.It("use config planner model bypasses planner role alias", func()
 	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
 		{"alias":"local-planner","model":"local-planner","base_url":%q,"roles":["planner"]}
 	]}}}`, aliasPlannerServer.URL)
-	{
-		err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("write backends: %v", err))
-	}
 
 	cfg := config.Default()
+	cfg.Backends = []byte(backendsJSON)
 	cfg.LlamaServer.BaseURL = configPlannerServer.URL
 	cfg.LlamaServer.Model = "deepseek-v4-flash"
 	cfg.Chat.AutoStartServer = false
@@ -7654,4 +7637,18 @@ var _ = ginkgo.It("turn route plan runtime brief for architecture uses shaping o
 
 	gomega.Expect(len(brief.ReadinessGate)).To(gomega.Not(gomega.Equal(0)), fmt.Sprintf("expected architecture analysis to keep a closure gate and final critic, got %#v", brief))
 	gomega.Expect(len(brief.FinalCritic)).To(gomega.Not(gomega.Equal(0)), fmt.Sprintf("expected architecture analysis to keep a closure gate and final critic, got %#v", brief))
+})
+
+var _ = ginkgo.It("preserves the typed runtime capability evidence intent", func() {
+	route := normalizeTurnRoutePlan(turnRoutePlan{
+		Family:         "conversation",
+		EvidenceIntent: "runtime-capability",
+	}, modepolicy.BuildMode())
+
+	gomega.Expect(route.EvidenceIntent).To(gomega.Equal(workerruntime.EvidenceIntentRuntimeCapability))
+	brief := turnRoutePlanRuntimeBrief(route, modepolicy.BuildMode(), []string{"mcp:exa/web_search_exa"})
+	gomega.Expect(brief.EvidenceIntent).To(gomega.Equal(workerruntime.EvidenceIntentRuntimeCapability))
+	gomega.Expect(brief.CapabilityEvidence).To(gomega.ContainElement(toolfacts.CapabilityEvidence{
+		Tool: "mcp:exa/web_search_exa", Status: toolfacts.CapabilityEvidenceExposed, Source: "runtime_tool_surface",
+	}))
 })

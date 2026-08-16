@@ -26,7 +26,7 @@ type DecisionOptions struct {
 func BuildDecision(cfg config.Config, opts DecisionOptions) writerroute.Decision {
 	aliases := opts.RoleAliases
 	if len(aliases) == 0 && !opts.UserOverride {
-		aliases = RoleAliases(cfg.Workspace.Root, "")
+		aliases = RoleAliasesForConfig(cfg, "")
 	}
 	selection := ModelSelection{
 		Config:                    cfg,

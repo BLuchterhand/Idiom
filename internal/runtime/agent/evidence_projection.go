@@ -48,15 +48,17 @@ type readOnlyDelegatedEvidenceFact struct {
 }
 
 type readOnlyEvidenceObservation struct {
-	Kind            readOnlyEvidenceKind
-	Tool            string
-	Source          string
-	Path            string
-	CandidatePaths  []string
-	HitCount        int
-	HighCardinality bool
-	Summary         string
-	Output          string
+	Kind               readOnlyEvidenceKind
+	Tool               string
+	Source             string
+	CapabilityFacts    []toolfacts.CapabilityEvidence
+	ExternalWebSources []toolfacts.ExternalWebSourceEvidence
+	Path               string
+	CandidatePaths     []string
+	HitCount           int
+	HighCardinality    bool
+	Summary            string
+	Output             string
 }
 
 func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultEvidenceProjection {
@@ -475,6 +477,28 @@ func (record toolResultEvidenceRecord) ReadOnlyEvidenceObservations() []readOnly
 	}
 
 	var observations []readOnlyEvidenceObservation
+	if record.result.Facts != nil {
+		if capabilityFacts := toolfacts.NormalizeCapabilityEvidence(record.result.Facts.CapabilityEvidence); len(capabilityFacts) > 0 {
+			observations = append(observations, readOnlyEvidenceObservation{
+				Kind:            readOnlyEvidenceCapability,
+				Tool:            record.tool,
+				Source:          "tool_result",
+				CapabilityFacts: capabilityFacts,
+				Summary:         record.summary,
+				Output:          record.output,
+			})
+		}
+		if webSources := toolfacts.NormalizeExternalWebSources(record.result.Facts.ExternalWebSources); len(webSources) > 0 {
+			observations = append(observations, readOnlyEvidenceObservation{
+				Kind:               readOnlyEvidenceExternalWebSource,
+				Tool:               record.tool,
+				Source:             "tool_result",
+				ExternalWebSources: webSources,
+				Summary:            record.summary,
+				Output:             record.output,
+			})
+		}
+	}
 
 	if len(record.diagnosticLogReads) > 0 {
 		logPaths := make([]string, 0, len(record.diagnosticLogReads)*2)
@@ -1644,6 +1668,20 @@ func (projection toolResultEvidenceProjection) ExternalDocumentBodyMatches(path 
 	}
 
 	return uniqueSortedRunnerPaths(matches)
+}
+
+// ExternalWebSourceEvidence returns typed web-source identity facts from the
+// projected results. Candidate and body kinds remain distinct; this accessor
+// does not promote either kind into the path-based source-body evidence set.
+func (projection toolResultEvidenceProjection) ExternalWebSourceEvidence() []toolfacts.ExternalWebSourceEvidence {
+	var evidence []toolfacts.ExternalWebSourceEvidence
+	for _, record := range projection.records {
+		if record.result.Facts == nil || record.failed {
+			continue
+		}
+		evidence = append(evidence, record.result.Facts.ExternalWebSources...)
+	}
+	return toolfacts.NormalizeExternalWebSources(evidence)
 }
 
 func externalDocumentPathMatchesCitation(path string, candidate string) bool {

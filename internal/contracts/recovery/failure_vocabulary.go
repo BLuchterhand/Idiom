@@ -46,6 +46,8 @@ const (
 	FailureClassChildTaskFailure              FailureClass = "child_task_failure"
 	FailureClassCheckpointFailure             FailureClass = "checkpoint_failure"
 	FailureClassToolFailure                   FailureClass = "tool_failure"
+	FailureClassMCPToolFailure                FailureClass = "mcp_tool_failure"
+	FailureClassMCPInputError                 FailureClass = "mcp_input_error"
 	FailureClassExactAnchorWriteFailure       FailureClass = "exact_anchor_write_failure"
 	FailureClassExactAnchorPrewriteHiddenTool FailureClass = "exact_anchor_prewrite_hidden_tool"
 )
@@ -96,6 +98,8 @@ func FailureClasses() []FailureClass {
 		FailureClassChildTaskFailure,
 		FailureClassCheckpointFailure,
 		FailureClassToolFailure,
+		FailureClassMCPToolFailure,
+		FailureClassMCPInputError,
 		FailureClassExactAnchorWriteFailure,
 		FailureClassExactAnchorPrewriteHiddenTool,
 	}

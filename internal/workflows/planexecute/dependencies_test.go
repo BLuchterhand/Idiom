@@ -96,7 +96,7 @@ func buildWriterRouteDecisionForTest(input WriterRouteDecisionInput) writerroute
 	cfg := input.Config
 	opts := input.Options
 
-	aliases := writerrouting.RoleAliases(cfg.Workspace.Root, "")
+	aliases := writerrouting.RoleAliasesForConfig(cfg, "")
 	userOverride := strings.TrimSpace(opts.Model) != ""
 	if userOverride {
 		aliases = nil

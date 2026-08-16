@@ -17,10 +17,14 @@ import (
 )
 
 type Config struct {
-	AppName         string          `json:"app_name"`
-	LlamaServer     LlamaServer     `json:"llama_server"`
-	Implementer     *LlamaServer    `json:"implementer,omitempty"`
-	Chat            Chat            `json:"chat"`
+	AppName     string       `json:"app_name"`
+	LlamaServer LlamaServer  `json:"llama_server"`
+	Implementer *LlamaServer `json:"implementer,omitempty"`
+	Chat        Chat         `json:"chat"`
+	// Backends carries the consolidated backend profile document. It remains
+	// opaque here so the platform config package does not duplicate the
+	// backend schema owned by internal/runtime/backends.
+	Backends        json.RawMessage `json:"backends,omitempty"`
 	TUI             TUI             `json:"tui,omitempty"`
 	Workspace       Workspace       `json:"workspace"`
 	MCP             []MCPServer     `json:"mcp,omitempty"`

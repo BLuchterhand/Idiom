@@ -9,6 +9,35 @@ import (
 )
 
 var _ = ginkgo.Describe("Tool-result facts", func() {
+	ginkgo.It("normalizes capability evidence without collapsing exposed and verified states", func() {
+		got := NormalizeCapabilityEvidence([]CapabilityEvidence{
+			{Tool: " mcp:exa/web_search_exa ", Status: CapabilityEvidenceExposed, Source: "runtime_tool_surface"},
+			{Tool: "mcp:exa/web_search_exa", Status: CapabilityEvidenceExposed, Source: "duplicate"},
+			{Tool: "mcp:exa/web_search_exa", Status: CapabilityEvidenceVerified, Source: "mcp_dispatch"},
+			{Tool: "", Status: CapabilityEvidenceVerified},
+			{Tool: "mcp:exa/web_fetch_exa", Status: CapabilityEvidenceStatus("unknown")},
+		})
+
+		gomega.Expect(got).To(gomega.Equal([]CapabilityEvidence{
+			{Tool: "mcp:exa/web_search_exa", Status: CapabilityEvidenceExposed, Source: "runtime_tool_surface"},
+			{Tool: "mcp:exa/web_search_exa", Status: CapabilityEvidenceVerified, Source: "mcp_dispatch"},
+		}))
+	})
+
+	ginkgo.It("normalizes external web source identity without collapsing candidate and body evidence", func() {
+		got := NormalizeExternalWebSources([]ExternalWebSourceEvidence{
+			{Kind: ExternalWebSourceCandidate, URL: "HTTPS://Example.com/article#section", Title: "Article"},
+			{Kind: ExternalWebSourceCandidate, URL: "https://example.com/article", Title: "duplicate"},
+			{Kind: ExternalWebSourceBody, URL: "https://example.com/article", CanonicalURL: "https://example.com/article", Publisher: "Example"},
+			{Kind: ExternalWebSourceBody, URL: "file:///tmp/not-web"},
+		})
+
+		gomega.Expect(got).To(gomega.Equal([]ExternalWebSourceEvidence{
+			{Kind: ExternalWebSourceCandidate, URL: "HTTPS://Example.com/article#section", CanonicalURL: "https://example.com/article", Title: "Article"},
+			{Kind: ExternalWebSourceBody, URL: "https://example.com/article", CanonicalURL: "https://example.com/article", Publisher: "Example"},
+		}))
+	})
+
 	ginkgo.It("normalizes and merges revision-bound source-window duplicates", func() {
 		content := "func current() {}\n"
 		revision := SourceWindowSHA256([]byte("package app\n" + content))
@@ -180,6 +209,11 @@ var _ = ginkgo.Describe("Tool-result facts", func() {
 
 	ginkgo.It("clones slice-backed evidence without sharing storage", func() {
 		original := &ToolResultFacts{
+			ExternalWebSources: []ExternalWebSourceEvidence{{
+				Kind:         ExternalWebSourceBody,
+				URL:          "https://example.com/article",
+				CanonicalURL: "https://example.com/article",
+			}},
 			DiagnosticEvidencePaths: []string{"diagnostic.log"},
 			VerificationEvidence: []VerificationEvidence{{
 				Kind:  VerificationEvidenceHTMLParse,
@@ -226,6 +260,7 @@ var _ = ginkgo.Describe("Tool-result facts", func() {
 		clone.CandidatePaths[0] = "changed_candidate.go"
 		clone.CandidateSymbols[0] = "Changed"
 		clone.RankedDiscoveryCandidates[0].Path = "changed_ranked.go"
+		clone.ExternalWebSources[0].URL = "https://example.com/changed"
 
 		gomega.Expect(original.DiagnosticEvidencePaths).To(gomega.Equal([]string{"diagnostic.log"}))
 		gomega.Expect(original.VerificationEvidence[0].Paths).To(gomega.Equal([]string{"web/index.html"}))
@@ -235,6 +270,7 @@ var _ = ginkgo.Describe("Tool-result facts", func() {
 		gomega.Expect(original.CandidatePaths).To(gomega.Equal([]string{"b.go"}))
 		gomega.Expect(original.CandidateSymbols).To(gomega.Equal([]string{"Run"}))
 		gomega.Expect(original.RankedDiscoveryCandidates[0].Path).To(gomega.Equal("b.go"))
+		gomega.Expect(original.ExternalWebSources[0].URL).To(gomega.Equal("https://example.com/article"))
 		gomega.Expect(original.SearchHitCount).To(gomega.Equal(12))
 		gomega.Expect(original.SearchHighCardinality).To(gomega.BeTrue())
 		gomega.Expect(clone.ShellWorkdir).To(gomega.Equal("internal/runtime/agent"))

@@ -529,6 +529,11 @@ func (r *runExecution) readOnlyEvidenceSourceGroundingAssessment(brief workerrun
 		)
 	}
 	directCandidateOnly := readOnlyDirectAnswerLane(brief) && directAnswerCloseout.CandidateOnlyEvidence()
+	if readOnlyDirectAnswerLane(brief) && directAnswerCloseout.Answerable() &&
+		len(directAnswerCloseout.Evidence.RelevantExternalWebSources) > 0 &&
+		!answerCitesRelevantExternalWebSource(answer, directAnswerCloseout.Evidence) {
+		return sourceGroundingMissingEvidenceAssessment("internet-research answers must cite a canonical URL whose fetched body supports the user's objective.")
+	}
 	if brief.Readiness == nil &&
 		!readOnlyExplanationGateApplies(brief) &&
 		!workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDirectAnswer) &&

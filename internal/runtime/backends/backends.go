@@ -1,5 +1,6 @@
-// Package backends owns the schema and loader for
-// `.idiom/backends.json`, the project-side description of which local
+// Package backends owns the schema and parser for the consolidated `backends`
+// config block and its legacy standalone `.idiom/backends.json` form, the
+// description of which local
 // LLM backends a project's idiom sessions talk to. Phase 4 of the
 // reusability migration introduced this so callers like
 // `idiom lane plan-execute` can pull an executor-role alias from
@@ -10,9 +11,9 @@
 // + NewProxyHandler + ServeProxy — see proxy.go) that drives
 // `idiom backend proxy`, the Go port of Colony's mlx_alias_proxy.py.
 //
-// The file lives at <project-root>/.idiom/backends.json and is
-// optional — callers that can't load it (missing, malformed) should
-// fall back to their previous defaults.
+// The legacy standalone file lives at <project-root>/.idiom/backends.json and
+// is optional. Active runtime callers should parse the embedded config block;
+// explicit backend-management commands may still load the standalone file.
 package backends
 
 import (
@@ -24,7 +25,8 @@ import (
 	"strings"
 )
 
-// File is the on-disk representation of `.idiom/backends.json`. A
+// File is the representation of the consolidated `backends` block or
+// standalone `.idiom/backends.json`. A
 // project can declare multiple Profiles (e.g. "qwen-pair" with both
 // reasoning and coder backends, "single-llama-cpp" for a single-model
 // dev box) and pick one with `--profile` at lane invocation time.
@@ -126,10 +128,20 @@ func Load(path string) (File, error) {
 		return File{}, fmt.Errorf("backends: read %q: %w", path, err)
 	}
 
-	var f File
-
-	if err := json.Unmarshal(body, &f); err != nil {
+	f, err := Parse(body)
+	if err != nil {
 		return File{}, fmt.Errorf("backends: parse %q: %w", path, err)
+	}
+
+	return f, nil
+}
+
+// Parse decodes the backend profile document from either a standalone
+// backends.json file or the consolidated config.json backends field.
+func Parse(body []byte) (File, error) {
+	var f File
+	if err := json.Unmarshal(body, &f); err != nil {
+		return File{}, err
 	}
 
 	return f, nil

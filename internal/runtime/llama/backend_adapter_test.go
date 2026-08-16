@@ -247,6 +247,25 @@ var _ = Describe("Backend-owned request history", func() {
 		}
 	})
 
+	It("merges incremental system guidance for MLX templates", func() {
+		messages := []ChatMessage{
+			{Role: "user", Content: "inspect the project"},
+			{Role: "system", Content: "keep the answer concise"},
+			{Role: "assistant", Content: "I will inspect it"},
+			{Role: "system", Content: "cite the relevant paths"},
+		}
+
+		got := NewClient("http://example.invalid", 0).
+			WithBackend(config.BackendMLX).
+			ChatMessagesForRequest(messages, ChatOptions{PreserveThinking: true})
+
+		Expect(got).To(HaveLen(3))
+		Expect(got[0].Role).To(Equal("system"))
+		Expect(got[0].Content).To(Equal("keep the answer concise\n\ncite the relevant paths"))
+		Expect(got[1].Role).To(Equal("user"))
+		Expect(got[2].Role).To(Equal("assistant"))
+	})
+
 	It("uses the same reasoning policy for an assistant history message", func() {
 		opts := ChatOptions{PreserveThinking: false}
 		message := ChatMessage{

@@ -14,6 +14,8 @@ import (
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
+	compactionevidence "idiom/internal/evidence/compaction"
+	"idiom/internal/evidence/trace"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
@@ -34,7 +36,41 @@ func (r *Runner) Run(
 	if r.Client == nil {
 		return "", fmt.Errorf("runner client is required")
 	}
-	run := newRunExecution(r, ctx, messages, opts)
+	runRunner := *r
+	if r.Trace != nil {
+		tracedEvent := r.OnEvent
+		trun := r.Trace
+		runRunner.OnEvent = func(event RunEvent) {
+			trun.RecordRunEvent(event.Role, event.Content)
+			if tracedEvent != nil {
+				tracedEvent(event)
+			}
+		}
+		tracedRequest := onToolRequest
+		onToolRequest = func(event ToolRequestEvent) {
+			requestFingerprint := workspace.ToolRequestFingerprint(event.Request)
+			trun.RecordToolRequest(event.Request.Tool, requestFingerprint)
+			if tracedRequest != nil {
+				tracedRequest(event)
+			}
+		}
+		tracedResult := onToolResult
+		onToolResult = func(event ToolResultEvent) {
+			requestFingerprint := workspace.ToolRequestFingerprint(event.Request)
+			status := trace.StatusCompleted
+			if strings.TrimSpace(event.Result.Error) != "" {
+				status = trace.StatusFailed
+			}
+			trun.RecordToolResult(requestFingerprint, status, map[string]any{
+				"tool":  event.Request.Tool,
+				"error": event.Result.Error != "",
+			})
+			if tracedResult != nil {
+				tracedResult(event)
+			}
+		}
+	}
+	run := newRunExecution(&runRunner, ctx, messages, opts)
 	answer, err := run.runSessionLoop(onStatus, onToolRequest, onToolResult)
 	if r.OnAssistantMessage != nil {
 		r.OnAssistantMessage(run.state.lastAssistantMessage)
@@ -73,6 +109,22 @@ func newRunExecution(r *Runner, ctx context.Context, messages []llama.ChatMessag
 		lanePolicySnapshot: lanePolicySnapshot,
 	}
 	run.state.bindWorkspaceInvocationAuthority(r)
+	if r.Trace != nil {
+		run.state.ctx = workspace.WithToolExecutionObserver(run.state.ctx, func(envelope workspace.ToolExecutionEnvelope) {
+			r.Trace.RecordToolPolicy(envelope.RequestFingerprint, string(envelope.PreflightDecision), trace.StatusObserved)
+			if envelope.EvidenceProduced {
+				r.Trace.RecordToolEvidence(envelope.RequestFingerprint, map[string]any{
+					"evidence_paths": len(envelope.EvidencePaths),
+				})
+			}
+			if envelope.VerificationStatus != "unverified" {
+				r.Trace.RecordToolVerification(envelope.RequestFingerprint, envelope.VerificationStatus)
+			}
+		})
+	}
+	if r.SeedContextCompactionProvenance != nil && !r.SeedContextCompactionProvenance.Acceptable() {
+		run.state.initializationErr = fmt.Errorf("context compaction provenance is not accepted for resume")
+	}
 	if r.Workspace != nil {
 		run.state.sourceWindowCurrent = func(evidence toolfacts.SourceWindowEvidence) bool {
 			current, err := r.Workspace.SourceWindowCurrent(run.state.ctx, evidence)
@@ -239,16 +291,23 @@ type Runner struct {
 	// run. Live authorization is always rebound from RuntimeBrief and compared
 	// with this projection before any execution helper observes the run.
 	SeedImplementationState *recoverycontract.ImplementationState
-	PreExecute              func(step int, req workspace.ToolRequest) *workspace.ToolResult
-	CompletionGate          CompletionGate
-	TaskLedger              TaskLedgerPolicy
-	PermissionPolicy        toolpolicy.Policy
-	CheckpointPolicy        CheckpointPolicy
+	// SeedContextCompactionProvenance is the latest accepted compaction record
+	// supplied by a resumable caller. Rejected provenance fails closed before
+	// the resumed run can issue a model request.
+	SeedContextCompactionProvenance *compactionevidence.Provenance
+	PreExecute                      func(step int, req workspace.ToolRequest) *workspace.ToolResult
+	CompletionGate                  CompletionGate
+	TaskLedger                      TaskLedgerPolicy
+	PermissionPolicy                toolpolicy.Policy
+	CheckpointPolicy                CheckpointPolicy
 	// RuntimeBrief is immutable input configuration. Each Run copies it into
 	// runnerRunState before deriving live objective, evidence, and readiness.
 	RuntimeBrief workerruntime.WorkerRuntimeBrief
 	OnEvent      func(RunEvent)
-	OnThought    func(ThoughtEvent)
+	// Trace receives metadata-only invocation spans. It is optional so callers
+	// that do not request diagnostics pay no trace allocation cost.
+	Trace     *trace.Recorder
+	OnThought func(ThoughtEvent)
 	// ContextSize is the configured llama.cpp context window in tokens.
 	// Surfaced in model_call telemetry so log analysis can compute
 	// ctx_pct (prompt_tokens / ctx_size) without having to reconcile
@@ -520,6 +579,19 @@ func (r *runExecution) runSessionLoop(
 					Content: "The previous model request was interrupted by a temporary connection issue. Continue from where you left off, repeating any incomplete tool call or thought.",
 				})
 				r.emitEvent(RunEvent{Role: "transport_retry", Content: fmt.Sprintf("transport error, retry %d/1: %s", runState.lifecycle.progress.transportRetries, strings.ToLower(err.Error()))})
+
+				continue
+			}
+
+			if !runState.lifecycle.progress.modelCapacityRetryUsed && modelCapacityFailure(err) {
+				runState.lifecycle.progress.modelCapacityRetryUsed = true
+				runState.opts = modelCapacityRecoveryOptions(runState.opts)
+				runState.turnMessages = llama.PrepareChatMessagesForBackend(
+					runState.turnMessages,
+					runState.opts,
+					r.clientBackend(),
+				)
+				r.emitEvent(RunEvent{Role: "model_capacity_retry", Content: "model allocation failed; retrying with preserved reasoning disabled and an adaptive response budget"})
 
 				continue
 			}

@@ -33,7 +33,7 @@ func (c *Client) requestSurfaceFact(opts ChatOptions) requestSurfaceFact {
 	sort.Strings(names)
 
 	transport := "textual"
-	if !opts.ResponseFormatJSON && (opts.ForceNativeTools || c.adapter().StructuredOutputCapabilities().NativeTools) {
+	if !opts.ResponseFormatJSON && (opts.ForceNativeTools || c.CapabilityProfile().StructuredOutput.NativeTools) {
 		transport = "native"
 	}
 

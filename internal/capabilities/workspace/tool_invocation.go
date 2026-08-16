@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"idiom/internal/contracts/toolpolicy"
 )
 
 const (
@@ -97,14 +99,27 @@ func (s *ConfiguredToolSurface) InvokeTool(ctx context.Context, req ToolRequest,
 		outcome.SetupFailure = "mcp setup: " + strings.Join(s.MCPFailures, "; ")
 		result = ToolResult{Tool: strings.TrimSpace(req.Tool), Summary: opts.SetupFailureSummary, Error: outcome.SetupFailure}
 	case !exposureDecision.Allowed:
+		if s != nil && s.Manager != nil {
+			envelope := NewToolExecutionEnvelope(opts.Transport, req)
+			envelope.PreflightDecision = toolpolicy.Deny
+			envelope.Status = ToolExecutionDenied
+			s.Manager.RecordToolExecutionEnvelope(envelope)
+		}
 		result = ToolProfileDeniedResult(req.Tool, opts.Profile, exposureDecision)
 	case !policyDecision.Allowed:
+		if s != nil && s.Manager != nil {
+			envelope := NewToolExecutionEnvelope(opts.Transport, req)
+			envelope.PreflightDecision = toolpolicy.Deny
+			envelope.Status = ToolExecutionDenied
+			s.Manager.RecordToolExecutionEnvelope(envelope)
+		}
 		result = ToolProfileDeniedResult(req.Tool, opts.Profile, policyDecision)
 	case s == nil || s.Manager == nil:
 		outcome.SetupFailure = "tool setup: manager is not configured"
 		result = ToolResult{Tool: strings.TrimSpace(req.Tool), Summary: opts.SetupFailureSummary, Error: outcome.SetupFailure}
 	default:
 		toolCtx, cancel := toolInvocationContext(ctx, timeout, opts.TimeoutMargin)
+		toolCtx = WithToolTransport(toolCtx, opts.Transport)
 		startedAt := time.Now()
 		result = s.Manager.Execute(toolCtx, req)
 		cancel()

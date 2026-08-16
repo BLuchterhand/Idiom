@@ -1,6 +1,8 @@
 package writerrouting
 
 import (
+	"encoding/json"
+
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/backends"
@@ -48,6 +50,19 @@ var _ = Describe("Writer route decisions", func() {
 		Expect(decision.ExecutorModel).To(Equal("qwen-display"))
 		Expect(decision.ClassifierModel).To(Equal("qwen-display"))
 		Expect(decision.EffectiveModel).To(Equal("qwen-display"))
+	})
+
+	It("reads role aliases from the consolidated config block", func() {
+		cfg := config.Default()
+		cfg.LlamaServer.Model = "qwen-base"
+		cfg.Backends = json.RawMessage(`{
+  "default_profile": "qwen",
+  "profiles": {"qwen": {"models": [{"alias": "qwen", "roles": ["planner"]}]}}
+}`)
+
+		decision := BuildDecision(cfg, DecisionOptions{Mode: writerroute.ModeReadOnly, Lane: "main"})
+
+		Expect(decision.RoleAliases).To(HaveKeyWithValue(backends.RolePlanner, "qwen"))
 	})
 
 	It("keeps explicit CLI model overrides authoritative", func() {

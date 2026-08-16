@@ -40,10 +40,32 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	}
 
 	if tool != "" {
-		if target != "" {
-			plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "same "+tool+" request on "+target)
+		if class, _, ok := dedicatedMCPRecovery(ActionGuidanceInput{Request: input.Request, Result: input.Result, Reason: input.Reason}); ok {
+			doNotRepeat := "same " + tool + " request"
+			if target != "" {
+				doNotRepeat += " on " + target
+			}
+			if class == recoverycontract.FailureClassMCPInputError {
+				doNotRepeat += " with the same invalid MCP input"
+			} else {
+				doNotRepeat += " without addressing the MCP failure"
+			}
+			plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, doNotRepeat)
 		} else {
-			plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "same "+tool+" request")
+			doNotRepeat := "same " + tool + " request"
+			if target != "" {
+				doNotRepeat += " on " + target
+			}
+			plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, doNotRepeat)
+		}
+	}
+
+	if class, detail, ok := dedicatedMCPRecovery(ActionGuidanceInput{Reason: input.Reason, Request: input.Request, Result: input.Result}); ok {
+		plan.FailureClass = class
+		if class == recoverycontract.FailureClassMCPInputError {
+			plan.RequiredNext = appendUnique(plan.RequiredNext, "correct the MCP input for "+tool+"; server reported: "+detail+"; retry that MCP tool or answer with <<QUESTION>> naming the exact blocker")
+		} else {
+			plan.RequiredNext = appendUnique(plan.RequiredNext, "keep "+tool+" callable for a corrected or retry MCP call; if unresolved, answer with <<QUESTION>> naming the exact MCP blocker")
 		}
 	}
 
@@ -143,6 +165,7 @@ func toolParseValidNext(validNext []string, transport string, submitPlanReady bo
 func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.ToolResult) recoverycontract.FailureClass {
 	combined := combinedLower(reason, result.Summary, result.Error, result.Output)
 	tool := strings.TrimSpace(req.Tool)
+	mcpClass, _, mcpFailure := classifyMCPFailure(req, result)
 
 	switch {
 	case textutil.ContainsAny(combined, "tool_parse", "malformed tool request", "valid json tool object"):
@@ -169,6 +192,8 @@ func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.
 		return recoverycontract.FailureClassChildTaskFailure
 	case strings.Contains(combined, "checkpoint"):
 		return recoverycontract.FailureClassCheckpointFailure
+	case mcpFailure:
+		return mcpClass
 	case strings.TrimSpace(result.Error) != "":
 		return recoverycontract.FailureClassToolFailure
 	default:

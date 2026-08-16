@@ -249,7 +249,48 @@ func (a localChatAdapter) chatTemplateKwargs(opts ChatOptions) *chatTemplateKwar
 }
 
 func (a localChatAdapter) ChatMessagesForRequest(messages []ChatMessage, opts ChatOptions) []ChatMessage {
-	return chatMessagesForBackend(repairMessageToolPairing(messages), opts, a)
+	prepared := repairMessageToolPairing(messages)
+	if BackendModelCapabilityProfile(a.kind, opts.Model).ChatTemplate.SystemMessagesMustLead == CapabilitySupported {
+		prepared = normalizeMLXSystemMessages(prepared)
+	}
+
+	return chatMessagesForBackend(prepared, opts, a)
+}
+
+// normalizeMLXSystemMessages adapts Idiom's incremental system guidance to
+// MLX chat templates that require every system message to be the first
+// message. Idiom may append system guidance after tool results or an
+// assistant turn; Qwen3.5/Qwen3.8's template rejects that otherwise valid
+// history. Keeping the guidance in order at the front preserves all of it
+// while satisfying the backend's protocol constraint.
+func normalizeMLXSystemMessages(messages []ChatMessage) []ChatMessage {
+	var systemContent strings.Builder
+	otherMessages := make([]ChatMessage, 0, len(messages))
+	foundSystem := false
+
+	for _, message := range messages {
+		if !strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			otherMessages = append(otherMessages, message)
+			continue
+		}
+
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+
+		if foundSystem {
+			systemContent.WriteString("\n\n")
+		}
+		systemContent.WriteString(content)
+		foundSystem = true
+	}
+
+	if !foundSystem {
+		return messages
+	}
+
+	return append([]ChatMessage{{Role: "system", Content: systemContent.String()}}, otherMessages...)
 }
 
 func (a localChatAdapter) ChatCompletionsPayload(messages []ChatMessage, opts ChatOptions, stream bool, _ backendRequestSettings) backendChatPayload {

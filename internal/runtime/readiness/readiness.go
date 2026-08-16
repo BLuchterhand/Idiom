@@ -290,8 +290,8 @@ func BuildProfiles(configPath, selected string, hostChecks []HostCheck) ([]Profi
 		}
 	}
 
-	backendFile, backendFound, backendErr := backends.LoadFromProjectRoot(root)
 	cfg, cfgOK := loadConfig(configPath)
+	backendFile, backendFound, backendErr := loadBackendFile(root, cfg, cfgOK)
 	contextReady, contextDetail := contextIndexReadiness(root)
 	queueCheck, queueMetrics, queueUnavailable := queueReadiness()
 
@@ -301,6 +301,19 @@ func BuildProfiles(configPath, selected string, hostChecks []HostCheck) ([]Profi
 	}
 
 	return reports, nil
+}
+
+func loadBackendFile(root string, cfg config.Config, cfgOK bool) (backends.File, bool, error) {
+	if cfgOK && cfg.Backends != nil {
+		file, err := backends.Parse(cfg.Backends)
+
+		return file, true, err
+	}
+
+	// Config files written before the consolidated backends field existed keep
+	// the standalone file as an explicit compatibility fallback. Once a config
+	// contains the field—even an empty object—it is authoritative.
+	return backends.LoadFromProjectRoot(root)
 }
 
 func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends.File, backendFound bool, backendErr error, cfg config.Config, cfgOK bool, contextReady bool, contextDetail string, queueCheck Check, queueMetrics Metrics, queueUnavailable *Unavailable) ProfileReport {

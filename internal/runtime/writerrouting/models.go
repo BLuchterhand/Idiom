@@ -29,6 +29,10 @@ func RoleAliases(projectRoot string, profileName string) map[string]string {
 		return nil
 	}
 
+	return roleAliasesFromProfile(profile)
+}
+
+func roleAliasesFromProfile(profile backends.Profile) map[string]string {
 	aliases := make(map[string]string, 3)
 	for _, role := range []string{backends.RolePlanner, backends.RoleExecutor, backends.RoleClassifier} {
 		if resolution := profile.ResolveRoleAlias(role); resolution.OK && strings.TrimSpace(resolution.Alias) != "" {
@@ -41,6 +45,28 @@ func RoleAliases(projectRoot string, profileName string) map[string]string {
 	}
 
 	return aliases
+}
+
+// RoleAliasesForConfig resolves role aliases from the consolidated config.
+// Standalone project backends are intentionally not consulted here: they are
+// an explicit legacy command surface and must not override the active config
+// used by the TUI and headless runtime.
+func RoleAliasesForConfig(cfg config.Config, profileName string) map[string]string {
+	if len(cfg.Backends) == 0 {
+		return nil
+	}
+
+	file, err := backends.Parse(cfg.Backends)
+	if err != nil {
+		return nil
+	}
+
+	profile, found := file.Profile(profileName)
+	if !found {
+		return nil
+	}
+
+	return roleAliasesFromProfile(profile)
 }
 
 func ModelForRole(selection ModelSelection, role string) string {

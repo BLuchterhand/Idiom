@@ -61,6 +61,7 @@ type runnerProgressLifecycleState struct {
 	rejectedActions        map[string]int
 	consecutiveRejected    int
 	transportRetries       int
+	modelCapacityRetryUsed bool
 	consecutiveNoProgress  int
 	consecutiveNarrowCalls int
 	lastNarrowFamily       string

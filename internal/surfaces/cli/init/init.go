@@ -146,6 +146,8 @@ type initSeedFile struct {
 
 var initSeedFiles = []initSeedFile{
 	{relPath: "config.json", body: initSeedConfigJSON},
+	// Keep the standalone file for explicit backend start/stop/status and
+	// profile commands; active runtime selection lives in config.json.
 	{relPath: "backends.json", body: initSeedBackendsJSON},
 	{relPath: "external_tools/README.md", body: initSeedExternalToolsReadme},
 	{relPath: "postflight/checks/README.md", body: initSeedPostflightChecksReadme},
@@ -157,7 +159,7 @@ var initSeedFiles = []initSeedFile{
 }
 
 const initSeedConfigJSON = `{
-  "_comment": "Idiom config. The hosted default needs DEEPSEEK_API_KEY. For local use, edit llama_server to point at a real local model and keep private paths out of version control.",
+  "_comment": "Idiom config. The hosted default needs DEEPSEEK_API_KEY. Active runtime backend profiles belong in this file's backends block. For local use, edit llama_server to point at a real local model and keep private paths out of version control.",
   "app_name": "Idiom",
   "llama_server": {
     "kind": "deepseek",
@@ -175,6 +177,10 @@ const initSeedConfigJSON = `{
     "default_profiles": ["coding"],
     "project_root": "",
     "project_prompt_files": []
+  },
+  "backends": {
+    "default_profile": "",
+    "profiles": {}
   },
   "route_classifier": {
     "enabled": true,
@@ -202,7 +208,7 @@ const initSeedConfigJSON = `{
 `
 
 const initSeedBackendsJSON = `{
-  "_comment": "Portable backend examples. The default hosted profile needs DEEPSEEK_API_KEY. The Anthropic example needs ANTHROPIC_API_KEY. The local example uses a placeholder model path under ignored models/; replace it with your local model.",
+  "_comment": "Legacy portable backend examples for explicit backend commands. Active runtime selection belongs in config.json. The default hosted profile needs DEEPSEEK_API_KEY. The Anthropic example needs ANTHROPIC_API_KEY. The local example uses a placeholder model path under ignored models/; replace it with your local model.",
   "default_profile": "deepseek-v4-flash",
   "profiles": {
     "deepseek-v4-flash": {

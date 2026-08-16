@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 
@@ -30,6 +31,20 @@ var _ = ginkgo.Describe("Configuration", func() {
 		gomega.Expect(cfg.Chat.MaxToolSteps).To(gomega.BeZero())
 		gomega.Expect(cfg.Chat.MaxOperationalModelCalls).To(gomega.BeZero())
 		gomega.Expect(cfg.Chat.AttachInstructionFiles).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("loads the consolidated backend profile document without duplicating its schema", func() {
+		cfg := loadTestConfig(`{
+  "llama_server": {"kind":"mlx","binary":"mlx_lm.server","model":"Qwen/Qwen3.8-27B"},
+  "backends": {"default_profile":"qwen","profiles":{"qwen":{"models":[{"alias":"qwen","kind":"mlx","model_path":"Qwen/Qwen3.8-27B","roles":["planner"]}]}}},
+  "chat": {"preset":"custom","max_tokens":16},
+  "workspace": {"root":".","cwd":"."}
+}`)
+		gomega.Expect(cfg.Backends).NotTo(gomega.BeEmpty())
+
+		var document map[string]any
+		gomega.Expect(json.Unmarshal(cfg.Backends, &document)).To(gomega.Succeed())
+		gomega.Expect(document).To(gomega.HaveKeyWithValue("default_profile", "qwen"))
 	})
 
 	ginkgo.It("makes the global fallback policy explicit", func() {

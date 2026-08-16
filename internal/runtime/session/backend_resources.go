@@ -2,7 +2,6 @@ package session
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -12,7 +11,8 @@ import (
 	"idiom/internal/runtime/llama"
 )
 
-// BackendResolutionWarning records a role-specific backends.json failure.
+// BackendResolutionWarning records a role-specific consolidated backend
+// profile failure.
 // Resolution falls back to the supplied config defaults, so callers can
 // surface the warning without treating it as a fatal session error.
 type BackendResolutionWarning struct {
@@ -41,16 +41,10 @@ type BackendResources struct {
 
 // ResolveBackendResources resolves planner, executor, and classifier roles and
 // constructs their clients and launchable controllers. Missing or malformed
-// backends.json data falls back to config defaults and is reported in Warnings.
+// consolidated backend data falls back to config defaults and is reported in
+// Warnings. Standalone backends.json files are not implicitly loaded here.
 func ResolveBackendResources(cfg config.Config) BackendResources {
-	projectRoot := strings.TrimSpace(cfg.Workspace.Root)
-	if projectRoot == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			projectRoot = cwd
-		}
-	}
-
-	backendSnapshot := loadBackendConfigSnapshot(projectRoot)
+	backendSnapshot := loadBackendConfigSnapshot(cfg)
 	callTimeout := time.Duration(cfg.Chat.RequestTimeoutSeconds) * time.Second
 	plannerSpec, _, plannerErr := resolveRoleSpecFromSnapshot(backendSnapshot, backends.RolePlanner, cfg.LlamaServer)
 	plannerClient := llama.NewClientForServer(plannerSpec, callTimeout)
@@ -124,18 +118,23 @@ type backendConfigSnapshot struct {
 	err          error
 }
 
-func loadBackendConfigSnapshot(projectRoot string) backendConfigSnapshot {
-	file, found, err := backends.LoadFromProjectRoot(projectRoot)
-	snapshot := backendConfigSnapshot{file: file, fileFound: found, err: err}
-	if err != nil || !found {
-		return snapshot
+func loadBackendConfigSnapshot(cfg config.Config) backendConfigSnapshot {
+	if len(cfg.Backends) > 0 {
+		file, err := backends.Parse(cfg.Backends)
+		profile, profileFound := file.Profile("")
+		return backendConfigSnapshot{
+			file:         file,
+			fileFound:    true,
+			profile:      profile,
+			profileFound: profileFound,
+			err:          err,
+		}
 	}
 
-	snapshot.profile, snapshot.profileFound = file.Profile("")
-
-	return snapshot
+	// Standalone .idiom/backends.json is a legacy explicit-profile surface.
+	// It must not implicitly override the active model from config.json.
+	return backendConfigSnapshot{}
 }
-
 func (r *BackendResources) addWarning(role string, err error) {
 	if r == nil || err == nil {
 		return

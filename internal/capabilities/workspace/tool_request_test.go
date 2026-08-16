@@ -26,6 +26,46 @@ var _ = ginkgo.Describe("tool request", func() {
 		gomega.Expect(raw).To(gomega.Equal(`{"tool":"read_file","path":"README.md"}`), fmt.Sprintf("unexpected raw payload: %q", raw))
 
 	})
+
+	ginkgo.It("parse MCP tool request preserves textual JSON arguments", func() {
+		req, _, ok, err := ParseToolRequest("```tool\n" +
+			`{"tool":"mcp:exa/web_search_exa","query":"current date today","custom":{"fresh":true}}` +
+			"\n```")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParseToolRequest: %v", err))
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected MCP tool request")
+		gomega.Expect(req.Tool).To(gomega.Equal("mcp:exa/web_search_exa"))
+
+		var args map[string]any
+		gomega.Expect(json.Unmarshal(req.Args, &args)).To(gomega.Succeed())
+		gomega.Expect(args).To(gomega.Equal(map[string]any{
+			"query":  "current date today",
+			"custom": map[string]any{"fresh": true},
+		}))
+	})
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "request object", body: `{"tool":"mcp:exa/web_search_exa","request":{"query":"wrapped"}}`},
+		{name: "input string", body: `{"tool":"mcp:exa/web_search_exa","input":"{\"query\":\"wrapped\"}"}`},
+	} {
+		tc := tc
+		ginkgo.It("unwraps MCP "+tc.name+" arguments", func() {
+			req, _, ok, err := ParseToolRequest("```tool\n" + tc.body + "\n```")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParseToolRequest: %v", err))
+			gomega.Expect(ok).To(gomega.BeTrue(), "expected MCP tool request")
+			gomega.Expect(req.Tool).To(gomega.Equal("mcp:exa/web_search_exa"))
+			gomega.Expect(string(req.Args)).To(gomega.Equal(`{"query":"wrapped"}`))
+		})
+	}
+
+	ginkgo.It("does not add MCP arguments to native textual requests", func() {
+		req, _, ok, err := ParseToolRequest(`{"tool":"read_file","path":"README.md"}`)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("ParseToolRequest: %v", err))
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected native tool request")
+		gomega.Expect(req.Args).To(gomega.BeEmpty())
+	})
 })
 var _ = ginkgo.Describe("parse tool request accepts plain tool prefix json object", func() {
 

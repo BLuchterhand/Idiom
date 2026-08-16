@@ -111,7 +111,7 @@ func (m *promptExecutionSession) classifyTurnRouteWithModel(ctx context.Context,
 				"Use coarse OpenCode-shaped routing: conversation for normal question-answer turns, read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
 				"Classify the requested outcome first. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate.",
 				"write_intent enum: yes, no, ambiguous. Use yes only when the requested outcome is to edit files, repair behavior, add tests/docs/config, or otherwise change the workspace. Use no for explanation, how-to, status, and read-only investigation.",
-				"evidence_intent enum: generic, relation_trace, refactor. Use relation_trace for read-only questions asking how symbols call, use, reference, delegate, dispatch, or hand off to each other. Use refactor for move, extract, split, rename, reshape, or reorganization work.",
+				"evidence_intent enum: generic, relation_trace, refactor, runtime_capability. Use relation_trace for read-only questions asking how symbols call, use, reference, delegate, dispatch, or hand off to each other. Use refactor for move, extract, split, rename, reshape, or reorganization work. Use runtime_capability when the answer is about the capabilities exposed by the current agent runtime or tool contract, including whether a configured external/search tool is available; do not use it for facts that require invoking that external tool.",
 				"continuation_target enum: prior_change, current_prompt_only, none. A post-completion defect report like 'that did not fix it' or 'it still fails' targets prior_change.",
 				"Explicit read-only constraints such as 'do not edit', 'just explain', 'without changing files', or 'diagnose only' set read_only_constraint=true and keep the route read-only even if the topic mentions a possible change.",
 				"Prefer conversation by default for questions, status requests, how-to requests, and lightweight repo questions. Conversation may use efficient read-only workspace tools when the answer depends on code or logs.",
@@ -238,7 +238,7 @@ func (m *promptExecutionSession) repairTurnRouteClassification(ctx context.Conte
 				"Choose family from: " + routeClassifierFamilyEnumList() + ".",
 				"Use contracts from: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
 				"Use lanes from: main, explore, verification, locate, review, architecture, implement.",
-				"Include requested_outcome, write_intent, read_only_constraint, evidence_intent, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. evidence_intent enum: generic, relation_trace, refactor. continuation_target enum: prior_change, current_prompt_only, none. Use conversation for read-only diagnosis and log inspection; do not route normal user prompts to debug_logs.",
+				"Include requested_outcome, write_intent, read_only_constraint, evidence_intent, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. evidence_intent enum: generic, relation_trace, refactor, runtime_capability. continuation_target enum: prior_change, current_prompt_only, none. Use conversation for read-only diagnosis and log inspection; do not route normal user prompts to debug_logs.",
 			}, "\n"),
 		},
 		{
@@ -916,6 +916,8 @@ func normalizeRouteEvidenceIntent(value string) string {
 		return "relation_trace"
 	case "refactor", "refactoring", "move", "extract", "split", "rename", "reshape", "reorganize":
 		return "refactor"
+	case "runtime_capability", "runtime-capability", "capability", "tool_surface", "tool-surface":
+		return workerruntime.EvidenceIntentRuntimeCapability
 	case "generic", "general", "none", "unknown":
 		return "generic"
 	default:

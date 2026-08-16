@@ -142,4 +142,27 @@ var _ = ginkgo.Describe("tool invocation", func() {
 			ginkgo.Fail("shell invocation context should defer to the shell tool's internal timeout")
 		}
 	})
+	ginkgo.It("passes the MCP transport into the shared execution envelope", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		manager := NewManager(config.Workspace{Root: root, CWD: root})
+		var envelope ToolExecutionEnvelope
+		manager.SetToolExecutionObserver(func(observed ToolExecutionEnvelope) { envelope = observed })
+		surface := &ConfiguredToolSurface{
+			Manager: manager,
+			PolicyContext: ToolProfilePolicyContext{
+				Workspace: config.Workspace{Root: root, CWD: root},
+			},
+		}
+
+		outcome := surface.InvokeTool(context.Background(), ToolRequest{Tool: ToolNamePwd}, ToolInvocationOptions{
+			Profile:    ToolProfileDefault,
+			Agent:      "mcp",
+			Transport:  "mcp_stdio",
+			PolicyMode: ToolInvocationPolicyProfile,
+		})
+
+		gomega.Expect(outcome.Result.Error).To(gomega.BeEmpty())
+		gomega.Expect(envelope.Transport).To(gomega.Equal("mcp_stdio"))
+		gomega.Expect(envelope.Status).To(gomega.Equal(ToolExecutionCompleted))
+	})
 })

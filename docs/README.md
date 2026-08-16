@@ -22,6 +22,11 @@ patent material are intentionally excluded from the repository.
 - [Security and privacy posture](security-privacy-posture.md)
 - [Sidecar integration proofs](sidecar-integration-proofs.md)
 - [MCP classification parity](mcp-classification-parity.md)
+- [Model capability profile](design-model-capability-profile.md)
+- [Redacted run trace and replay](design-run-trace.md)
+- [Compaction and resume provenance](design-compaction-provenance.md)
+- [Tool-surface policy and evidence parity](design-tool-surface-parity.md)
+- [Optional OS process sandbox](design-os-sandbox.md)
 - [Client demo transcripts](client-demo-transcripts.md)
 
 The repository also carries `security-privacy-posture.matrix.json` because the
