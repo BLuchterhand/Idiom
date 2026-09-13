@@ -12,6 +12,7 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/contracts/toolfacts"
+	conversationevidence "idiom/internal/evidence/conversation"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
@@ -661,6 +662,11 @@ type runnerRunState struct {
 	policy              RunPolicy
 	metrics             runnerMetrics
 	runtimeBrief        workerruntime.WorkerRuntimeBrief
+	// conversationContext is runner-produced scope evidence for the exact
+	// messages supplied to the model. It can authorize only a bounded
+	// user-input handoff in a direct-answer lane; it never satisfies a
+	// workflow, mutation, verification, or delivery obligation.
+	conversationContext conversationevidence.Evidence
 	mutation            runnerMutationState
 	initializationErr   error
 

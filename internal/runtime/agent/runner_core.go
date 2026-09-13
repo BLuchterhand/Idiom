@@ -92,6 +92,7 @@ func newRunExecution(r *Runner, ctx context.Context, messages []llama.ChatMessag
 		state: runnerRunState{
 			ctx:                          ctx,
 			runtimeBrief:                 baseRuntimeBrief,
+			conversationContext:          conversationContextEvidenceForMessages(messages),
 			opts:                         cloneRunChatOptions(opts),
 			collectedResults:             append([]workspace.ToolResult(nil), r.SeedResults...),
 			turnMessages:                 append([]llama.ChatMessage(nil), messages...),
@@ -108,6 +109,7 @@ func newRunExecution(r *Runner, ctx context.Context, messages []llama.ChatMessag
 		},
 		lanePolicySnapshot: lanePolicySnapshot,
 	}
+	run.emitConversationContextEvidence()
 	run.state.bindWorkspaceInvocationAuthority(r)
 	if r.Trace != nil {
 		run.state.ctx = workspace.WithToolExecutionObserver(run.state.ctx, func(envelope workspace.ToolExecutionEnvelope) {

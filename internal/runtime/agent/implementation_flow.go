@@ -953,6 +953,22 @@ func (r *runExecution) evaluateFinalAnswerAcceptance(answer string, results []wo
 
 	if questionProtocolAnswer(answer) {
 		if r != nil && readOnlyDirectAnswerLane(r.state.runtimeBrief) && !runnerBriefRequiresMutation(r.state.runtimeBrief) {
+			conversationContext := r.state.conversationContext
+			if len(r.state.turnMessages) > 0 {
+				conversationContext = conversationContextEvidenceForMessages(r.state.turnMessages)
+			}
+			if conversationContinuityQuestionAnswer(answer, r.state.runtimeBrief, conversationContext) {
+				if readOnlyClosureDecisionForResults(r.state.runtimeBrief, results).Answerable() {
+					// Context uncertainty cannot override answerable evidence already
+					// produced in this turn.
+					return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonAnswerableEvidenceInsufficient)
+				}
+				// This is an explicit user-input handoff, not answerable
+				// evidence. It stops the direct-answer turn while leaving all
+				// workflow/readiness obligations unresolved.
+				return rejectFinalAnswerAcceptance(acceptance, turnViolationUserVisibleBlocker, turnReasonUserVisibleBlocker)
+			}
+
 			// Accept the blocker if the model has gathered source-body
 			// evidence and the blocker names an exact path or claim.
 			// This prevents the dead-end loop where the model can't
