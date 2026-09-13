@@ -449,6 +449,15 @@ type ChatPreset struct {
 	MaxTokens         int
 }
 
+// DefaultShell selects a shell available on a stock supported operating system.
+// Explicit workspace shell settings take precedence over this default.
+func DefaultShell() string {
+	if runtime.GOOS == "windows" {
+		return "powershell.exe"
+	}
+	return "/bin/sh"
+}
+
 func Default() Config {
 	return Config{
 		AppName: "Idiom",
@@ -504,7 +513,7 @@ func Default() Config {
 		Workspace: Workspace{
 			Root:                  "",
 			CWD:                   "",
-			Shell:                 "/bin/zsh",
+			Shell:                 DefaultShell(),
 			CommandTimeoutSeconds: 120,
 			MaxOutputBytes:        65536,
 			MaxFileBytes:          65536,
@@ -1049,8 +1058,8 @@ func (c *Config) applyRuntimeDefaults() {
 		}
 	}
 
-	if c.Workspace.Shell == "" {
-		c.Workspace.Shell = "/bin/zsh"
+	if strings.TrimSpace(c.Workspace.Shell) == "" {
+		c.Workspace.Shell = DefaultShell()
 	}
 
 	if c.Workspace.CommandTimeoutSeconds <= 0 {

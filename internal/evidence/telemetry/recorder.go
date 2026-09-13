@@ -1,7 +1,6 @@
 package telemetry
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,7 +59,7 @@ func Open(opts Options) (*Recorder, error) {
 	}
 
 	dir := telemetryDir(opts.Dir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create telemetry dir: %w", err)
 	}
 
@@ -71,7 +70,7 @@ func Open(opts Options) (*Recorder, error) {
 
 	path := filepath.Join(dir, fmt.Sprintf("%s-%s-%d.jsonl", time.Now().Format("20060102-150405.000"), command, os.Getpid()))
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open telemetry log: %w", err)
 	}
@@ -142,7 +141,7 @@ func (r *Recorder) Log(eventType string, fields map[string]any) error {
 		record[key] = value
 	}
 
-	line, err := json.Marshal(record)
+	line, err := redaction.MarshalJSON(record)
 	if err != nil {
 		return fmt.Errorf("marshal telemetry record: %w", err)
 	}
@@ -237,7 +236,7 @@ func (r *Recorder) CloseWithFields(exitCode int, fields map[string]any) error {
 		record[key] = value
 	}
 
-	line, err := json.Marshal(record)
+	line, err := redaction.MarshalJSON(record)
 	if err != nil {
 		return fmt.Errorf("marshal telemetry process_exit: %w", err)
 	}

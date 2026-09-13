@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"idiom/internal/platform/redaction"
 )
 
 const SchemaVersion = "idiom.run_trace.v1"
@@ -321,11 +323,11 @@ func safeAttributes(attributes map[string]any) map[string]any {
 		}
 		switch typed := value.(type) {
 		case string:
-			out[key] = redactString(typed)
+			out[key] = redactString(redaction.RedactField(key, typed))
 		case int, int64, bool, float64:
 			out[key] = typed
-		default:
-			out[key] = fmt.Sprintf("%v", typed)
+			// Structured values are outside the trace metadata contract. Formatting
+			// them as text would bypass the prompt/content and credential filters.
 		}
 	}
 	return out

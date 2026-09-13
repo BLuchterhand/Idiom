@@ -745,28 +745,47 @@ func commandArgv(spec Spec) (string, []string, error) {
 
 		return spec.Name, append([]string(nil), spec.Args...), nil
 
-	case ModePlainShell:
-		return shellArgv(spec, "-c")
-
-	case ModeLoginShell:
-		return shellArgv(spec, "-lc")
+	case ModePlainShell, ModeLoginShell:
+		return shellArgv(spec)
 
 	default:
 		return "", nil, errors.New("unsupported command execution mode")
 	}
 }
 
-func shellArgv(spec Spec, flag string) (string, []string, error) {
+func shellArgv(spec Spec) (string, []string, error) {
 	shell := strings.TrimSpace(spec.Shell)
 	if shell == "" {
-		shell = "/bin/sh"
+		shell = config.DefaultShell()
 	}
 
 	if strings.TrimSpace(spec.Command) == "" {
 		return "", nil, errors.New("shell command is required")
 	}
 
-	return shell, []string{flag, spec.Command}, nil
+	// Select the shell's invocation protocol from its executable, never from
+	// the host OS: an explicitly configured Unix shell can also run on Windows.
+	name := strings.ToLower(filepath.Base(strings.ReplaceAll(shell, `\`, "/")))
+	switch name {
+	case "powershell", "powershell.exe", "pwsh", "pwsh.exe":
+		args := []string{"-NoLogo", "-NonInteractive"}
+		if spec.Mode == ModePlainShell {
+			args = append(args, "-NoProfile")
+		}
+		return shell, append(args, "-Command", spec.Command), nil
+	case "cmd", "cmd.exe":
+		args := []string{}
+		if spec.Mode == ModePlainShell {
+			args = append(args, "/D")
+		}
+		return shell, append(args, "/S", "/C", spec.Command), nil
+	default:
+		flag := "-c"
+		if spec.Mode == ModeLoginShell {
+			flag = "-lc"
+		}
+		return shell, []string{flag, spec.Command}, nil
+	}
 }
 
 func commandEnv(spec Spec) []string {

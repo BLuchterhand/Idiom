@@ -1,47 +1,37 @@
 # Compaction and Resume Provenance
 
-Status: accepted for implementation
+Status: implemented provenance record and optional resume validation.
 
-## Purpose
+The runtime owns context selection and assembly.
+[`internal/evidence/compaction`](../internal/evidence/compaction) owns the
+`Provenance` record: schema version, source/retained/evicted message counts,
+source/retained/summary hashes, retained and required paths, strategy, reason,
+and reconstruction status.
 
-Context compaction must preserve the facts required to continue safely. A
-summary that merely fits the context window is not sufficient evidence that a
-run can resume correctly.
+## Current Contract
 
-## Authority and boundaries
+Construction normalizes path lists and rejects missing required paths. A record
+is acceptable when it uses the current schema, reports verified reconstruction,
+and represents actual message eviction. The record summarizes path retention;
+it does not prove that every approval, obligation, or source body survived.
 
-- `internal/runtime/agent` owns compaction selection and context assembly.
-- `internal/evidence` owns the durable provenance record.
-- Resume uses the existing invocation and workflow recovery authorities; this
-  feature does not create a second persistence system.
+The runtime creates provenance while compacting its context. A caller may pass
+`SeedContextCompactionProvenance` into `Runner`; a supplied unacceptable record
+blocks initialization. The seed is optional. The API does not itself load the
+latest durable record or require one for every resumed invocation.
 
-## Contract
+Persistence and recovery remain owned by the existing workflow/session callers.
+The provenance type does not introduce another session store. Message IDs,
+profile fingerprints, and budget-before/after fields from the original design
+are not part of the current record.
 
-Each compaction produces a `ContextCompactionProvenance` record containing:
+## Verification
 
-- source message IDs and retained message IDs;
-- evicted message count and character/token estimates;
-- retained evidence paths, obligations, approvals, and verification facts;
-- summary hash and strategy;
-- reason, budget before/after, and profile fingerprint;
-- reconstruction status: `verified`, `degraded`, or `rejected`.
+```bash
+go test ./internal/evidence/compaction
+go test ./internal/runtime/agent
+```
 
-Required facts are selected from the active run contract. A compaction is
-rejected if it cannot retain or accurately summarize required paths, pending
-approvals, active violations, or verification obligations.
-
-## Resume semantics
-
-Resume must load the latest accepted provenance record before accepting a new
-model turn. A stale or rejected record blocks resume and requires fresh context
-assembly. Compaction records are append-only and tied to the invocation ID.
-
-## Tests and end-to-end acceptance
-
-- Unit tests cover retention selection, required-fact loss, hashes, and status
-  transitions.
-- Existing compaction tests gain assertions for provenance and reconstruction.
-- A fake model run forced below its context budget must compact, persist a
-  provenance event, resume, and complete verification.
-- A fixture that drops a required path must fail closed and must not permit a
-  terminal completion.
+The focused provenance package covers retention and acceptance. Runtime coverage
+includes rejection of an invalid resume seed. Durable resume integration should
+be tested at the caller that loads and supplies session evidence.

@@ -2,8 +2,6 @@
 
 ## Backend Is Unavailable
 
-Check the selected profile and required environment variables:
-
 Check the active model in `config.json` first. `idiom backend status` operates
 on the legacy standalone backend file used by explicit backend-management
 commands; it is not the source of the TUI's active model.

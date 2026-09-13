@@ -102,11 +102,14 @@ var _ = ginkgo.Describe("Command execution", ginkgo.Label("integration"), func()
 		gomega.Expect(homeEntries).To(gomega.Equal([]string{"HOME=" + wantHome}))
 	})
 
-	ginkgo.It("runs a plain shell command", func(ctx ginkgo.SpecContext) {
+	ginkgo.It("runs a command through the native default shell", func(ctx ginkgo.SpecContext) {
+		command := "printf shell-mode"
+		if runtime.GOOS == "windows" {
+			command = "[Console]::Write('shell-mode')"
+		}
 		result := Run(ctx, Spec{
 			Mode:           ModePlainShell,
-			Shell:          "/bin/sh",
-			Command:        "printf shell-mode",
+			Command:        command,
 			MaxOutputBytes: 64,
 		})
 		gomega.Expect(result.Err).NotTo(gomega.HaveOccurred())

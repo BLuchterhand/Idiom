@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/onsi/ginkgo/v2"
@@ -11,6 +12,26 @@ import (
 )
 
 var _ = ginkgo.Describe("Telemetry recording", func() {
+	ginkgo.It("redacts nested credentials and exit errors at the persistence boundary", func() {
+		recorder, err := Open(Options{Dir: ginkgo.GinkgoT().TempDir(), Command: "run"})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(recorder.Log("custom", map[string]any{
+			"headers": map[string]string{"Authorization": "unprefixed-private"},
+			"errors":  []string{`{"api_key":"nested-private"}`},
+		})).To(gomega.Succeed())
+		gomega.Expect(recorder.CloseWithFields(1, map[string]any{"error": "token=exit-private"})).To(gomega.Succeed())
+		data, err := os.ReadFile(recorder.Path())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		for _, secret := range []string{"unprefixed-private", "nested-private", "exit-private"} {
+			gomega.Expect(string(data)).NotTo(gomega.ContainSubstring(secret))
+		}
+		gomega.Expect(readTelemetryRecords(recorder.Path())).To(gomega.HaveLen(4))
+		if runtime.GOOS != "windows" {
+			info, err := os.Stat(recorder.Path())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(info.Mode().Perm()).To(gomega.Equal(os.FileMode(0o600)))
+		}
+	})
 	ginkgo.It("writes lifecycle records and redacts sensitive process arguments", func() {
 		dir := ginkgo.GinkgoT().TempDir()
 		recorder, err := Open(Options{

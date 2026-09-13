@@ -1,62 +1,38 @@
-# Redacted Run Trace and Replay
+# Run Trace and Replay
 
-Status: accepted for implementation
+Status: implemented in-memory trace foundation.
 
-## Purpose
+[`internal/evidence/trace`](../internal/evidence/trace) owns trace IDs, spans,
+serialization, and structural replay. The runtime emits model, tool, and related
+events into a recorder. `Recorder.MarshalJSON` exports a document; the caller
+that owns run artifacts remains responsible for persistence.
 
-Idiom has model-call traces, tool telemetry, evidence, and contract replay. This
-feature gives them one stable, privacy-safe causal graph so a run can be
-diagnosed and replayed without reconstructing order from unrelated logs.
+## Current Contract
 
-## Authority and boundaries
+A document contains a schema version, trace/run identity, and spans with parent
+IDs, kinds, status, timing, and attributes. Supported kinds include run, turn,
+model call, tool request/result, policy, evidence, verification, compaction, and
+resume. The recorder rejects additions under a terminal parent.
 
-- `internal/evidence/trace` owns trace IDs, span lifecycle, redaction, and
-  serialization.
-- Runtime packages emit semantic events but do not format trace JSON.
-- `internal/evidence/eval` consumes traces for trajectory assertions.
-- Raw prompts, source bodies, secrets, and unredacted tool payloads are never
-  part of the default trace schema.
+Replay validates trace structure and tool-result relationships without running
+commands or writing the workspace. It does not replay model behavior or prove
+approval, source support, verification sufficiency, and retry budgets. Those
+remain the responsibilities of runtime contracts and evaluation checks.
 
-## Contract
+## Privacy Boundary
 
-The trace is a versioned sequence of immutable spans. Each span has:
+Runtime trace producers should supply only metadata such as IDs, hashes, counts,
+status, and policy codes. A trace is not an approved channel for arbitrary prompt,
+source, command output, or credential values. Review exported artifacts before
+sharing them; the trace does not replace the
+[security and privacy posture](security-privacy-posture.md).
 
-`trace_id`, `span_id`, `parent_span_id`, `run_id`, `kind`, `status`, start and
-duration, and metadata-only attributes.
+## Verification
 
-Span kinds are `run`, `turn`, `model_call`, `tool_request`, `policy_decision`,
-`tool_result`, `evidence`, `verification`, `compaction`, and `resume`.
+```bash
+go test ./internal/evidence/trace
+```
 
-Relationships must form one rooted acyclic graph. A child cannot be written
-without an active parent. Terminal spans cannot receive children.
-
-## Privacy and durability
-
-Trace attributes use the existing evidence vocabulary: IDs, paths, hashes,
-counts, status, policy codes, command labels, token counts, cache counts, and
-durations. Values are redacted before serialization. `Recorder.MarshalJSON`
-provides the stable document boundary; the current runner keeps the recorder
-in memory and leaves durable artifact ownership to the caller that already
-owns the run-event/audit sink. This avoids creating a second persistence
-authority while retaining a factually inspectable trace.
-
-## Replay
-
-Replay consumes a trace plus deterministic fake backend/tool fixtures. Replay
-does not rerun shell commands or write files. It checks trajectory contracts:
-
-- every tool request has a policy decision and result;
-- every admitted mutation has approval or an explicit non-approval policy;
-- every terminal answer has the required evidence and verification;
-- retries, compactions, and cancellations obey their budgets;
-- no span has an invalid parent or duplicate terminal transition.
-
-## Tests and end-to-end acceptance
-
-- Unit tests cover IDs, parent validation, terminal lifecycle, redaction, and
-  deterministic serialization.
-- Contract tests cover incomplete and malformed traces.
-- A CLI fake-backend run must produce a trace containing model, tool, policy,
-  evidence, and verification spans.
-- The same trace must replay successfully without touching the workspace.
-- A deliberately unapproved write and an orphan tool result must fail replay.
+Tests cover recorder relationships, serialization, exclusion of raw run-event
+payloads, and rejection of malformed relationships. Durable trace export and
+full task-trajectory verification require evidence from their owning callers.

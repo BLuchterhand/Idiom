@@ -80,7 +80,7 @@
   "workspace": {
     "root": "..",
     "cwd": ".",
-    "shell": "/bin/zsh",
+    "shell": "",
     "command_timeout_seconds": 120,
     "max_output_bytes": 65536,
     "max_file_bytes": 65536,

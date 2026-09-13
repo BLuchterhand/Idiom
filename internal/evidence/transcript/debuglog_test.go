@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"idiom/internal/contracts/runprofile"
@@ -14,6 +15,43 @@ import (
 )
 
 var _ = ginkgo.Describe("Debug logs", func() {
+	ginkgo.It("redacts tool summaries, errors, and typed metadata at the write boundary", func() {
+		logger, err := NewDebugLogger(DebugLoggerOptions{Dir: ginkgo.GinkgoT().TempDir()})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer logger.Close()
+		gomega.Expect(logger.LogToolResultDetail(ToolResultDetail{
+			Summary:     `{"password":"summary-private"}`,
+			Error:       "SERVICE_API_KEY=error-private",
+			ExtraFields: map[string]any{"context_sources": []string{"token=list-private"}},
+		})).To(gomega.Succeed())
+		gomega.Expect(logger.LogSessionStart(SessionStart{PromptSources: []PromptSource{{DisplayName: "token=name-private"}}})).To(gomega.Succeed())
+		gomega.Expect(logger.Close()).To(gomega.Succeed())
+		data, err := os.ReadFile(logger.Path())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		for _, secret := range []string{"summary-private", "error-private", "list-private", "name-private"} {
+			gomega.Expect(string(data)).NotTo(gomega.ContainSubstring(secret))
+		}
+		gomega.Expect(readDebugLogRecords(logger.Path())).To(gomega.HaveLen(2))
+	})
+
+	ginkgo.It("restricts new and resumed logs to the owner", func() {
+		if runtime.GOOS == "windows" {
+			ginkgo.Skip("Unix file permission bits")
+		}
+		logger, err := NewDebugLogger(DebugLoggerOptions{Dir: ginkgo.GinkgoT().TempDir(), Mode: runprofile.DebugLogModeFull})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(logger.Close()).To(gomega.Succeed())
+		info, err := os.Stat(logger.Path())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(info.Mode().Perm()).To(gomega.Equal(os.FileMode(0o600)))
+		gomega.Expect(os.Chmod(logger.Path(), 0o644)).To(gomega.Succeed())
+		resumed, err := NewDebugLogger(DebugLoggerOptions{ResumePath: logger.Path()})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(resumed.Close()).To(gomega.Succeed())
+		info, err = os.Stat(logger.Path())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(info.Mode().Perm()).To(gomega.Equal(os.FileMode(0o600)))
+	})
 	ginkgo.It("persists privacy-safe typed rejection facts", func() {
 		logger, err := NewDebugLogger(DebugLoggerOptions{
 			Dir:  ginkgo.GinkgoT().TempDir(),

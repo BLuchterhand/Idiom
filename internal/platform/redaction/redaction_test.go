@@ -1,6 +1,7 @@
 package redaction
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/onsi/ginkgo/v2"
@@ -21,7 +22,13 @@ var _ = ginkgo.Describe("Redaction", func() {
 		ginkgo.Entry("no secrets", "hello world", "hello world"),
 		ginkgo.Entry("empty string", "", ""),
 		ginkgo.Entry("api_key assignment", apiKeyName+"=mysecret123", apiKeyName+"=<redacted>"),
-		ginkgo.Entry("apiKey colon with OpenAI key value", `"apiKey": "`+openAIKeyShort+`"`, `"apiKey": "<redacted-secret>"`),
+		ginkgo.Entry("apiKey colon with OpenAI key value", `"apiKey": "`+openAIKeyShort+`"`, `"apiKey": "<redacted>"`),
+		ginkgo.Entry("quoted JSON credential", `{"password":"private value with spaces","ok":true}`, `{"password":"<redacted>","ok":true}`),
+		ginkgo.Entry("quoted assignment", `password="private value with spaces" next`, `password=<redacted> next`),
+		ginkgo.Entry("environment variable", `SERVICE_API_KEY=private-value next`, `SERVICE_API_KEY=<redacted> next`),
+		ginkgo.Entry("modern provider key", `key=`+strings.Join([]string{"sk", "proj", "abcdefghijklmno", "pqrstuvwxyz1234"}, "-"), `key=<redacted-secret>`),
+		ginkgo.Entry("URL credentials", `https://name:private-value@example.test/api`, `https://<redacted>@example.test/api`),
+		ginkgo.Entry("basic authentication", `Authorization: Basic YWJjZGVmZw==`, `Authorization: Basic <redacted>`),
 		ginkgo.Entry("token assignment", `token=abcdef`, `token=<redacted>`),
 		ginkgo.Entry("secret assignment", `secret: value123`, `secret=<redacted>`),
 		ginkgo.Entry("password assignment", `password=hunter2`, `password=<redacted>`),
@@ -36,6 +43,21 @@ var _ = ginkgo.Describe("Redaction", func() {
 		ginkgo.Entry("api-key with dash", `api-key=mykey`, `api-key=<redacted>`),
 		ginkgo.Entry("surrounded by text", `the `+apiKeyName+`=secret123 here`, `the `+apiKeyName+`=<redacted> here`),
 	)
+
+	ginkgo.It("redacts typed JSON collections without mutating input or losing integer precision", func() {
+		type entry struct {
+			Authorization string `json:"authorization"`
+			Count         int64  `json:"count"`
+		}
+		input := map[string]any{"headers": []entry{{Authorization: "private value", Count: 9007199254740993}}, "prompt_tokens": 12}
+		data, err := MarshalJSON(input)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(json.Valid(data)).To(gomega.BeTrue())
+		gomega.Expect(string(data)).NotTo(gomega.ContainSubstring("private value"))
+		gomega.Expect(string(data)).To(gomega.ContainSubstring(`"count":9007199254740993`))
+		gomega.Expect(string(data)).To(gomega.ContainSubstring(`"prompt_tokens":12`))
+		gomega.Expect(input["headers"].([]entry)[0].Authorization).To(gomega.Equal("private value"))
+	})
 
 	ginkgo.Describe("redacted value fingerprints", func() {
 		ginkgo.DescribeTable("uses an empty placeholder for blank input",

@@ -9,8 +9,9 @@ tools, and record audit evidence for each run.
 Before the first tagged release exists, use the source installer:
 
 ```bash
+git clone https://github.com/BLuchterhand/idiom.git
+cd idiom
 ./scripts/install-requirements.sh --all
-make build
 ```
 
 On Windows:
@@ -32,9 +33,19 @@ Hosted example:
 
 ```bash
 export DEEPSEEK_API_KEY=...
-# Explicit legacy backend-management command:
-idiom backend status --profile deepseek-v4-flash
 ```
+
+In the active `config.json`, set `llama_server.kind` to `deepseek`,
+`llama_server.model` to a model available to your account, and
+`llama_server.api_key_env` to `DEEPSEEK_API_KEY`. Set
+`chat.auto_start_server` to `false`. Updating only the legacy backend example
+does not change an ordinary run's selected model.
+
+The source checkout includes a placeholder local-model configuration. Set up
+your private configuration before the first model run. For a separate target
+repository, run `idiom init` there to create project configuration, or use the
+installer-created global configuration when no project file exists. See
+[configuration](configuration.md) for selection rules and path handling.
 
 Local examples need a compatible model server and local model files outside the
 repository.

@@ -1,43 +1,37 @@
-# Tool-Surface Policy and Evidence Parity
+# Tool Execution Evidence
 
-Status: accepted for implementation
+Status: implemented shared envelope and transport parity tests.
 
-## Purpose
+[`internal/capabilities/workspace`](../internal/capabilities/workspace) owns
+request admission, execution, and `ToolExecutionEnvelope`. CLI and MCP adapters
+route requests through that owner. MCP also owns its protocol lifecycle and
+cancellation of pending calls.
 
-Workspace tools, sidecars, and MCP tools must have the same enforceable
-preflight, execution, cancellation, redaction, evidence, and postflight
-contracts. Transport must not change authorization semantics.
+## Envelope Contract
 
-## Authority and boundaries
+An envelope records schema version, invocation ID, transport, a request
+fingerprint, tool name, preflight decision, approval requirement, execution
+status, cancellation, result code/failure, evidence paths, whether evidence was
+produced, and verification status. It contains no request or result body.
 
-- `internal/capabilities/workspace` owns tool request classification and
-  mutation admission.
-- `internal/capabilities/mcp` translates MCP calls into the shared tool
-  contract; it owns protocol lifecycle only.
-- `internal/evidence` owns privacy-safe tool evidence.
-- CLI/TUI/MCP surfaces format shared decisions and do not mint new policy codes.
+The fingerprint covers selected routing fields. It excludes commands and edit
+bodies and must not be used as proof that two mutations are identical.
 
-## Contract
+Execution statuses include received, admitted, denied, approval-required,
+running, completed, failed, and canceled. Evidence production and verification
+are separate fields. Observed verification evidence is reported as `observed`;
+it does not independently establish that the whole task passed verification.
 
-Every tool invocation has a `ToolExecutionEnvelope` with invocation ID, source
-transport, request fingerprint, preflight decision, approval requirement,
-execution status, cancellation status, result classification, evidence IDs,
-and postflight verification status.
+Admission remains workspace policy's responsibility. Envelope validation checks
+schema and required identity fields; it is not a separate lifecycle policy
+engine. A denied or approval-required request must not execute.
 
-The lifecycle is:
+## Verification
 
-`received -> classified -> admitted|denied|approval_required -> running ->
-completed|failed|canceled -> evidenced -> verified|unverified`.
+```bash
+go test ./internal/capabilities/workspace ./internal/capabilities/mcp
+go test ./internal/surfaces/cli/tool ./internal/surfaces/cli/mcp
+```
 
-No transport may bypass classification. A denied or approval-required request
-must not execute. Cancellation must remove pending MCP calls and terminate
-owned subprocesses. Result evidence must use the existing metadata-only policy.
-
-## Tests and end-to-end acceptance
-
-- Unit tests cover lifecycle transitions and invalid transitions.
-- Workspace, sidecar, and MCP fixtures must produce equivalent policy and
-  evidence classifications for the same logical request.
-- CLI and MCP end-to-end tests cover allowed read, denied protected read,
-  approval-required write, cancellation, timeout, and redacted result output.
-- An MCP transport failure must leave no pending call or active trace span.
+See [sidecar integration proofs](sidecar-integration-proofs.md) for replayable
+CLI/MCP fixtures and their limits.

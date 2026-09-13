@@ -1,9 +1,9 @@
 [package]
+license = "GPL-3.0-only"
 name = "idiom-desktop"
 version = "0.1.0"
 description = "Dedicated desktop shell for Idiom"
 authors = ["Idiom"]
-license = "MIT"
 repository = ""
 edition = "2021"
 

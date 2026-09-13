@@ -240,7 +240,7 @@ func NewDebugLogger(opts DebugLoggerOptions) (*DebugLogger, error) {
 
 		filename = opts.ResumePath
 	} else {
-		if err := os.MkdirAll(opts.Dir, 0o755); err != nil {
+		if err := os.MkdirAll(opts.Dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create debug log dir: %w", err)
 		}
 
@@ -252,9 +252,15 @@ func NewDebugLogger(opts DebugLoggerOptions) (*DebugLogger, error) {
 		filename = filepath.Join(opts.Dir, stem+".jsonl")
 	}
 
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open debug log: %w", err)
+	}
+	// Resumed logs may predate private file modes. Restrict the open file before
+	// appending any more conversation content.
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("restrict debug log permissions: %w", err)
 	}
 
 	return &DebugLogger{
@@ -418,8 +424,8 @@ func (l *DebugLogger) LogToolResultDetail(d ToolResultDetail) error {
 		"step":    d.Step,
 		"agent":   d.Agent,
 		"tool":    d.Tool,
-		"summary": d.Summary,
-		"error":   d.Error,
+		"summary": l.sanitizeText(d.Summary),
+		"error":   l.sanitizeText(d.Error),
 	}
 	if d.OutputChars > 0 {
 		record["output_chars"] = d.OutputChars
@@ -730,7 +736,11 @@ func (l *DebugLogger) writeRecord(record map[string]any) error {
 		return nil
 	}
 
-	line, err := json.Marshal(record)
+	marshal := json.Marshal
+	if l.mode != runprofile.DebugLogModeFull {
+		marshal = redaction.MarshalJSON
+	}
+	line, err := marshal(record)
 	if err != nil {
 		return fmt.Errorf("marshal debug log record: %w", err)
 	}
@@ -750,7 +760,11 @@ func (l *DebugLogger) writeMessageRecord(role, content string, record map[string
 		return nil
 	}
 
-	line, err := json.Marshal(record)
+	marshal := json.Marshal
+	if l.mode != runprofile.DebugLogModeFull {
+		marshal = redaction.MarshalJSON
+	}
+	line, err := marshal(record)
 	if err != nil {
 		return fmt.Errorf("marshal debug log record: %w", err)
 	}

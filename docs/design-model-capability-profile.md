@@ -1,72 +1,37 @@
 # Model Capability Profile
 
-Status: accepted for implementation
+Status: implemented foundation with limited discovery.
 
-## Purpose
+[`internal/runtime/llama/model_profile.go`](../internal/runtime/llama/model_profile.go)
+owns `ModelCapabilityProfile`. It records backend, protocol, model identity,
+source, structured-output capabilities, context/output limits, chat-template
+constraints, prompt-cache support, vision, server lifecycle, and a fingerprint.
+Unknown optional capabilities remain `unknown`.
 
-The runtime must select request shaping, tool transport, context budgets, and
-reasoning controls from declared model capabilities. Backend kind is an
-infrastructure detail and is not sufficient to describe a model's actual
-contract.
+## Selection and Discovery
 
-## Authority and boundaries
+`BackendModelCapabilityProfile` projects adapter facts into a profile with
+`source=configured_default`. Context and output limits remain unknown unless
+explicitly supplied. `EffectiveContextLimit` caps a positive configured budget
+when a supported profile limit is present.
 
-- `internal/runtime/llama` owns provider/model capability discovery and the
-  normalized capability profile.
-- `internal/runtime/agent` consumes the profile; it must not infer model
-  behavior from provider strings or model-name substrings.
-- `internal/evidence` records the profile used by a run.
-- A profile is advisory only until readiness has verified the required fields.
+`DiscoverCapabilityProfile` explicitly calls the model-list endpoint and checks
+that the requested model is advertised. It changes the source to
+`models_endpoint`; it does not discover context limits or other optional
+capabilities from that response. Normal runs do not perform this network probe
+implicitly.
 
-## Contract
+The agent consumes the profile for request shaping and records profile metadata.
+A fingerprint identifies the profile fields used; it is not a certification of
+live provider behavior. Backend-specific adapters still own their protocol
+behavior.
 
-`ModelCapabilityProfile` has a stable schema version and contains model ID,
-provider, protocol, context and output limits, native-tool and structured-output
-support, reasoning controls, chat-template constraints, multimodal support,
-prompt-cache accounting, and server lifecycle support.
+## Verification
 
-Unknown capability values are represented as `unknown`, never as `false`.
-Request construction may use a capability only when it is `supported`.
+```bash
+go test ./internal/runtime/llama
+```
 
-The profile is immutable after readiness. A backend change starts a new run
-profile and cannot mutate the profile of an active invocation.
-
-## Discovery
-
-1. Start with configured backend defaults.
-2. A readiness or integration caller may explicitly query the backend model
-   endpoint when available via `DiscoverCapabilityProfile`.
-3. Apply only provider-specific facts that are documented by the adapter.
-4. Validate required limits and protocol compatibility.
-5. Emit the resulting profile as metadata-only evidence.
-
-Discovery failure is fatal when the configured run requires a capability that is
-unknown; it is non-fatal for optional capabilities.
-
-## Invariants
-
-- Native tools are never selected when the profile does not support them.
-- A context budget never exceeds the effective profile limit.
-- Chat-history normalization is selected by a declared template constraint.
-- Profile evidence contains no prompts, file bodies, credentials, or raw model
-  responses.
-- Every model call records the profile schema version and profile fingerprint.
-
-## Tests and end-to-end acceptance
-
-- Table tests cover supported, unsupported, and unknown capabilities.
-- Adapter tests verify MLX/Qwen system-message constraints are represented by
-  the profile rather than an agent-layer special case.
-- A fake model server reports a model profile; `idiom run --json` must record
-  the same fingerprint and use the declared tool transport.
-- A server advertising no native tools must receive a textual-tool request.
-- A context limit smaller than configured policy must produce a bounded request
-  and a recorded readiness fact.
-
-## Failure and rollback
-
-Profile construction is read-only. If it fails, no model request is sent. The
-existing backend fallback remains available only for explicitly configured
-legacy adapters and is recorded as `profile_source=configured_default`. The
-normal run path does not perform a hidden network preflight; callers opt into
-endpoint discovery when they need live model-list evidence.
+Profile tests cover unknown capabilities, context-limit bounding, MLX template
+constraints, and explicit discovery against a fake model endpoint. Live provider
+compatibility and model quality require separate release evidence.

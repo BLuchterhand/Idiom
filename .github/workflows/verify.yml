@@ -1,0 +1,109 @@
+name: source verification
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: test
+        run: go test ./...
+      - name: generated mocks are current
+        run: make verify-mocks
+      - name: hermetic end-to-end tests
+        run: make test-e2e
+      - name: software-development scenarios
+        run: make test-development-scenarios
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Install pinned security tools
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.30.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Validate workflow contracts
+        run: actionlint .github/workflows/*.yml
+      - name: Scan prospective source and reachable history
+        run: bash scripts/check-secrets.sh
+      - name: Check reachable Go vulnerabilities
+        run: govulncheck ./...
+      - name: Verify module checksums
+        run: go mod verify
+      - name: Release asset validator regressions
+        run: python3 scripts/test-release-assets.py
+
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: desktop
+      - run: npm audit --audit-level=moderate
+        working-directory: desktop
+      - run: npm run build
+        working-directory: desktop
+
+  scripted-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: scripted real-binary behavior and lane contracts
+        run: make scripted-contracts-ci
+
+  race-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: concurrency ownership contracts
+        run: make test-race-contracts

@@ -59,7 +59,8 @@ func PoolHeldByAncestor(heldPools, pool string) bool {
 // an unavailable state with a no-op release function and nil error —
 // the caller may proceed un-gated, matching legacy behavior. If the
 // daemon IS reachable, it blocks until a lease is granted; the
-// returned release function closes the lease.
+// returned release function closes the lease. The context bounds admission
+// only; after a grant, the caller owns the slot until it calls Release.
 //
 // Reentrancy: if the IDIOM_QUEUE_HELD_POOLS env var lists ANY pool
 // (the same one OR a different one), an ancestor process already
@@ -111,25 +112,45 @@ func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, s
 		return MaybeAcquireResult{State: queuecontract.AdmissionStateUnavailable, Pool: pool, Reason: string(queuecontract.ReasonClassDaemonUnreachable), Release: func() {}}
 	}
 
-	lease, err := Acquire(ctx, socketPath, pool, label, client)
+	leaseContext, cancelLease := context.WithCancel(context.WithoutCancel(ctx))
+	stopWaitingCancellation := context.AfterFunc(ctx, cancelLease)
+	defer stopWaitingCancellation()
+	lease, err := Acquire(leaseContext, socketPath, pool, label, client)
 	if err != nil {
+		cancelLease()
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		// Reachable but acquire failed (unknown pool, daemon error
 		// mid-handshake). Surface so the caller can decide whether to
 		// fail loud or proceed un-gated; current callers proceed.
 		return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: pool, Reason: err.Error(), Release: func() {}, Err: err}
 	}
+	release := func() {
+		cancelLease()
+		_ = lease.Close()
+	}
+	updates := lease.Updates()
 
 	for {
 		select {
 		case <-lease.Granted():
-			closer := lease
-			return MaybeAcquireResult{State: queuecontract.AdmissionStateAcquired, Pool: lease.Pool, Release: func() { _ = closer.Close() }}
-		case pos := <-lease.Updates():
+			if !stopWaitingCancellation() {
+				release()
+				err := ctx.Err()
+				return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
+			}
+			return MaybeAcquireResult{State: queuecontract.AdmissionStateAcquired, Pool: lease.Pool, Release: release}
+		case pos, ok := <-updates:
+			if !ok {
+				updates = nil
+				continue
+			}
 			if statusOut != nil {
 				fmt.Fprintf(statusOut, "[idiom queue %s] waiting at position %d\n", lease.Pool, pos)
 			}
 		case e := <-lease.Err():
-			_ = lease.Close()
+			release()
 			if e != nil {
 				return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: lease.Pool, Reason: e.Error(), Release: func() {}, Err: e}
 			}
@@ -138,7 +159,7 @@ func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, s
 
 			return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		case <-ctx.Done():
-			_ = lease.Close()
+			release()
 
 			err := ctx.Err()
 

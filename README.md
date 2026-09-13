@@ -9,6 +9,10 @@ contracts, evidence, permissions, and verification.
 
 ## Current Status
 
+Idiom is pre-release software. Configured CI jobs and synthetic fixtures describe
+the intended support matrix; a release still needs recorded results for the
+actual tag, supported platforms, and selected model backends.
+
 Idiom is currently strongest as a headless CLI harness. The terminal UI exists
 and is useful for interactive work, but release-critical workflows should be
 driven through the CLI until the TUI reaches the same coverage level.
@@ -185,6 +189,11 @@ your backend:
 
 Keep real model files, API keys, and machine-local absolute paths out of
 version control.
+
+The source checkout's active configuration contains a placeholder local model.
+Setting an API key alone does not switch that configuration to a hosted backend.
+Follow [getting started](docs/getting-started.md#configure-a-backend) to select
+the backend used by a run.
 
 ## First Run
 
@@ -443,13 +452,23 @@ Operational defaults:
 - model files and caches should stay outside the target repository
 - committed config should not contain real API keys or private model paths
 - workspace writes and shell access can be disabled in config
+- normal CLI runs do not automatically use the optional OS sandbox adapter
 - local audit exports should avoid prompt bodies, file bodies, secrets, and
   customer-identifying content unless explicitly needed for private debugging
 
 See [docs/security-privacy-posture.md](docs/security-privacy-posture.md).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## License
 
 No open-source license has been selected yet. Until a license is added, the
 published source is available for inspection only and is not licensed for reuse,
 redistribution, or modification.
+
+## License
+
+Idiom is open source under the [GNU General Public License v3.0](LICENSE)
+(`GPL-3.0-only`). See [licensing](docs/licensing.md) for distribution and
+third-party notices.

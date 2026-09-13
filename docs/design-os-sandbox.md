@@ -1,54 +1,41 @@
 # Optional OS Process Sandbox
 
-Status: accepted for implementation
+Status: process adapter implemented; not enabled by normal CLI configuration.
 
-## Purpose
+[`internal/platform/commandexec`](../internal/platform/commandexec) owns
+`SandboxProfile` and the platform adapters. A caller can attach a profile to
+`commandexec.Spec`. Workspace policy separately determines whether a command
+may run. Current production call sites do not attach sandbox profiles, so
+ordinary Idiom commands execute with the launching user's host permissions.
 
-Logical workspace policy prevents unauthorized Idiom actions. An optional OS
-profile adds defense in depth when a command executes untrusted repository code.
+## Current Contract
 
-## Authority and boundaries
+A profile contains enforcement mode, read roots, write roots, network mode, and
+a temporary-directory field. Enforcement modes are `disabled`, `advisory`, and
+`enforced`. Active profiles validate absolute roots and known network modes.
+Network defaults to denied for an active profile.
 
-- `internal/platform/commandexec` owns platform-specific process isolation.
-- `internal/contracts` owns the portable sandbox capability and policy model.
-- Workspace policy decides whether a command may run; the OS sandbox restricts
-  what an admitted command can reach.
-- Sandbox setup must not be hidden in shell strings or prompt instructions.
+An enforced profile fails before execution if its launcher is unavailable.
+Advisory mode falls back to ordinary process execution when the platform adapter
+is unavailable. Callers must account for that weaker behavior.
 
-## Contract
+macOS uses `sandbox-exec` with a generated Seatbelt policy. It restricts declared
+write roots and network access but permits broad runtime reads; declared read
+roots are not a read-isolation guarantee. Linux uses bubblewrap and binds read
+roots read-only. Other platforms have no enforcement adapter.
 
-`SandboxProfile` contains filesystem read roots, write roots, network mode,
-temporary-directory policy, inherited environment policy, and enforcement mode.
-Modes are `disabled`, `advisory`, and `enforced`.
+The profile does not contain an environment allowlist. Process environment
+handling follows `commandexec.Spec`; callers must select inherited variables
+explicitly if they need secret isolation. The temporary-directory field is not
+a general guarantee of isolated temporary storage.
 
-The profile is attached to `commandexec.Spec`. An enforced profile that cannot
-be installed fails before process start. Advisory mode records why enforcement
-was unavailable and continues only when the caller explicitly permits it.
+## Verification
 
-macOS uses a generated Seatbelt profile passed to `sandbox-exec` when available.
-Because current macOS `sandbox-exec` requires a broad runtime read closure for
-ordinary dynamically linked tools, the current adapter enforces declared write
-roots and network policy while recording read roots as capability metadata.
-Linux uses a generated bubblewrap invocation when available and binds declared
-read roots read-only. Unsupported platforms return a typed unsupported result.
-The generated policy is derived from canonical paths and never interpolates
-untrusted shell text.
+```bash
+go test ./internal/platform/commandexec
+```
 
-## Security invariants
-
-- The workspace root is not implicitly writable unless declared.
-- Network is denied by default in enforced mode.
-- Secrets are not copied into the sandbox environment by the adapter.
-- The command and sandbox child process share the existing managed process-tree
-  lifecycle and cancellation behavior.
-- Generated profiles are temporary artifacts and are removed after execution.
-
-## Tests and end-to-end acceptance
-
-- Unit tests cover path canonicalization, escaping, network modes, unsupported
-  platforms, and profile validation.
-- macOS E2E executes a harmless command that can read an allowed file but cannot
-  read a denied file or write outside the declared root.
-- Linux E2E performs the equivalent check when bubblewrap is installed and is
-  skipped with an explicit capability result otherwise.
-- Cancellation and timeout tests verify no sandbox child remains.
+Tests cover profile validation, unavailable-launcher failure, and a host sandbox
+smoke when available. A successful smoke is narrower evidence than a complete
+filesystem, network, environment, and cancellation security review. Host-specific
+sandbox coverage is required before exposing this as a supported user feature.

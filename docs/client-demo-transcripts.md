@@ -11,9 +11,8 @@ go test ./internal/evidence/sidecarvalidation -ginkgo.focus='p710 client demo tr
 
 ## Demo Boundary
 
-The demos sell Idiom as a local sidecar trust layer: repo memory, freshness,
-permission contracts, audit fields, readiness, and schema evidence for other
-coding agents. They keep the north-star split intact: the model owns strategy;
+The demos exercise repository memory, freshness, permission contracts, audit
+fields, readiness, and schema evidence for external coding agents. They keep the north-star split intact: the model owns strategy;
 the harness owns contracts.
 
 The transcript set intentionally reuses P7.1-P7.9 primitives:
@@ -23,7 +22,8 @@ The transcript set intentionally reuses P7.1-P7.9 primitives:
 - Discovery-profile denial for mutation, shell, and additive context writes.
 - Shared client-classification metadata from `autonomy.DefaultClientClassifications()`.
 - P7.6 command IDs and P7.9 security/privacy controls.
-- P7.8 integration posture without claiming MCP protocol support before Phase 8.
+- P7.8 integration fixtures; MCP stdio evidence is documented separately in
+  [sidecar integration proofs](sidecar-integration-proofs.md).
 - A privacy-safe local-ops quickstart export for the open-source activation row
   so packet, freshness, candidate-count, verification, and redaction evidence
   are visible without exposing temp workspace roots.
@@ -36,7 +36,7 @@ The transcript set intentionally reuses P7.1-P7.9 primitives:
 | `healthcare` | `p7.10-healthcare-refresh-denial` | `healthcare-redaction-denial` | Regulated proof-only; no HIPAA or PHI-processing claim. |
 | `public-sector` | `p7.10-public-sector-side-effect-denial` | `public-sector-offline-side-effect-denial` | Proof-only; no FedRAMP, DoD, certification, or procurement-readiness claim. |
 | `enterprise-saas` | `p7.10-enterprise-saas-source-sanity` | `enterprise-source-sanity-contract` | Primary buyer-facing local sidecar trust demo; paid buyer signal remains P0.8/P9.7 evidence. |
-| `tooling-vendor` | `p7.10-tooling-vendor-schema-contract` | `tooling-vendor-schema-metadata` | Secondary integration demo; MCP parity and SDK/conformance support remain later scope. |
+| `tooling-vendor` | `p7.10-tooling-vendor-schema-contract` | `tooling-vendor-schema-metadata` | Integration demo; separate stdio fixtures cover MCP parity, while SDK and formal conformance support require their own evidence. |
 | `local-model` | `p7.10-local-model-private-code-readiness` | `local-model-readiness-evidence` | Local/private-code readiness demo; no model-quality or tuning-support claim. |
 | `open-source` | `p7.10-open-source-context-pack` | `open-source-context-pack` | Privacy-safe quickstart evidence export for adoption; not paid enterprise-SaaS demand by itself. |
 

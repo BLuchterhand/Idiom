@@ -12,8 +12,7 @@ import (
 var _ = It("routes assertion-bearing system harnesses through their Ginkgo package", Label("architecture", "system-harness-architecture"), func() {
 	automationPaths := []string{
 		"Makefile",
-		".github/workflows/ci.yml",
-		".github/workflows/release.yml",
+		".github/workflows/release-artifacts.yml",
 	}
 	fixturePaths := []string{
 		"scripts/test-discovery-tools-e2e.py",
@@ -50,6 +49,16 @@ var _ = It("routes assertion-bearing system harnesses through their Ginkgo packa
 				fixturePath,
 			)
 		}
+	}
+})
+
+var _ = It("requires shared source and installer checks for pull requests and release tags", Label("architecture", "system-harness-architecture"), func() {
+	root := systemHarnessRepositoryRoot()
+	for _, path := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
+		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(contents)).To(ContainSubstring("uses: ./.github/workflows/verify.yml"), path)
+		Expect(string(contents)).To(ContainSubstring("uses: ./.github/workflows/release-artifacts.yml"), path)
 	}
 })
 

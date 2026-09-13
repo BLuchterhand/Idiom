@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -513,14 +514,74 @@ var _ = ginkgo.It("default config path honors env override", func() {
 	}
 })
 
-// TestSilentClientIsTimedOut: a client that connects but never sends
-// must not pin a server goroutine indefinitely. The server applies a
-// short read deadline before the first action; after it expires the
-// connection closes with a structured error.
+var _ = ginkgo.It("starting a second daemon preserves the active socket and pool owner", func() {
+	_, sock := startTestServer(DefaultConfig())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	lease, err := Acquire(ctx, sock, "default", "original-owner", "test")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	defer lease.Close()
+	gomega.Eventually(lease.Granted()).Should(gomega.BeClosed())
+
+	second := NewServer(DefaultConfig(), sock)
+	gomega.Expect(second.Start()).To(gomega.MatchError(gomega.ContainSubstring("already listening")))
+	second.Stop()
+	status, err := Status(sock)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(status.InFlight).To(gomega.HaveLen(1))
+	gomega.Expect(status.InFlight[0].ID).To(gomega.Equal(lease.JobID))
+})
+
+var _ = ginkgo.It("concurrent stop callers finish after all leased jobs drain", func() {
+	server, sock := startTestServer(DefaultConfig())
+	lease, err := Acquire(context.Background(), sock, "default", "shutdown", "test")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	defer lease.Close()
+	gomega.Eventually(lease.Granted()).Should(gomega.BeClosed())
+
+	const callers = 32
+	start := make(chan struct{})
+	completed := make(chan struct{}, callers)
+	for range callers {
+		go func() {
+			defer ginkgo.GinkgoRecover()
+			<-start
+			server.Stop()
+			gomega.Expect(server.Snapshot().InFlight).To(gomega.BeEmpty())
+			completed <- struct{}{}
+		}()
+	}
+	close(start)
+	for range callers {
+		gomega.Eventually(completed).Should(gomega.Receive())
+	}
+	_, err = os.Lstat(sock)
+	gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue())
+})
+
+var _ = ginkgo.It("starting a daemon replaces a refused stale socket", func() {
+	dir, err := os.MkdirTemp("", "iq-")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	ginkgo.DeferCleanup(os.RemoveAll, dir)
+	sock := filepath.Join(dir, "q.sock")
+	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: sock, Net: "unix"})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	stale.SetUnlinkOnClose(false)
+	gomega.Expect(stale.Close()).To(gomega.Succeed())
+
+	server := NewServer(DefaultConfig(), sock)
+	gomega.Expect(server.Start()).To(gomega.Succeed())
+	ginkgo.DeferCleanup(server.Stop)
+	_, err = Ping(sock)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+})
+
+// A client that connects but never sends must not pin a server goroutine
+// indefinitely. The first-action deadline closes the connection with an error.
 var _ = ginkgo.It("silent client is timed out", func() {
 	_, sock := startTestServer(DefaultConfig())
 
-	conn, err := dial(sock)
+	conn, err := dial(context.Background(), sock)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("dial: %v", err))
 	defer conn.Close()
 
@@ -548,7 +609,7 @@ var _ = ginkgo.It("silent client is timed out", func() {
 var _ = ginkgo.It("protocol errors on garbage", func() {
 	_, sock := startTestServer(DefaultConfig())
 
-	conn, err := dial(sock)
+	conn, err := dial(context.Background(), sock)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("dial: %v", err))
 	defer conn.Close()
 

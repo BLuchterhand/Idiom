@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -22,6 +23,11 @@ var _ = ginkgo.Describe("Markdown transcripts", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(path).To(gomega.HavePrefix(dir + string(os.PathSeparator)))
 		gomega.Expect(path).To(gomega.HaveSuffix(".md"))
+		if runtime.GOOS != "windows" {
+			info, err := os.Stat(path)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(info.Mode().Perm()).To(gomega.Equal(os.FileMode(0o600)))
+		}
 
 		data, err := os.ReadFile(path)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

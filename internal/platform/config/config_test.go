@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -12,6 +13,18 @@ import (
 )
 
 var _ = ginkgo.Describe("Configuration", func() {
+	ginkgo.It("uses the native shell by default and preserves explicit shell settings", func() {
+		want := "/bin/sh"
+		if runtime.GOOS == "windows" {
+			want = "powershell.exe"
+		}
+		gomega.Expect(Default().Workspace.Shell).To(gomega.Equal(want))
+		for _, body := range []string{`{}`, `{"workspace":{"shell":""}}`, `{"workspace":{"shell":"  "}}`} {
+			gomega.Expect(loadTestConfig(body).Workspace.Shell).To(gomega.Equal(want))
+		}
+		gomega.Expect(loadTestConfig(`{"workspace":{"shell":"/bin/zsh"}}`).Workspace.Shell).To(gomega.Equal("/bin/zsh"))
+		gomega.Expect(loadTestConfig(`{"workspace":{"shell":"pwsh"}}`).Workspace.Shell).To(gomega.Equal("pwsh"))
+	})
 	ginkgo.It("applies defaults and resolves workspace-relative paths", func() {
 		dir := ginkgo.GinkgoT().TempDir()
 		projectRoot := filepath.Join(dir, "project")

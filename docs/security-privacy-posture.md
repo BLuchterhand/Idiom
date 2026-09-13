@@ -13,6 +13,12 @@ documentation set.
 
 ## Evidence Boundary
 
+The P-number labels below identify repository validation fixtures and product
+gates. Passing those fixtures does not establish a deployed system's security
+or compliance. Normal CLI commands do not automatically use the optional OS
+sandbox adapter; shell and external tools execute with the launching user's
+permissions. See [the adapter's limits](design-os-sandbox.md).
+
 Idiom's posture is contract-first:
 
 - The harness owns protected paths, redaction, local artifact scope, telemetry
@@ -30,11 +36,11 @@ Idiom's posture is contract-first:
 
 | Control | Current evidence | MVP limitation |
 | --- | --- | --- |
-| Protected-path denial | `internal/evidence/sidecarvalidation/security_privacy_posture_test.go`, `internal/contracts/autonomy/path_roles_test.go`, and P7.5 denial tests validate protected/forbidden path deny decisions and discovery-profile mutation denial. | CLI and shared resolver evidence are covered; MCP resource parity remains P8.4/P9.9 scope. |
+| Protected-path denial | `internal/evidence/sidecarvalidation/security_privacy_posture_test.go`, `internal/contracts/autonomy/path_roles_test.go`, and P7.5 denial tests validate protected/forbidden path deny decisions and discovery-profile mutation denial. | Tool admission and MCP metadata-resource tests do not provide process-level filesystem isolation. |
 | Redaction and no raw prompt/file body | P7.9 checks denial output and local product-evidence-shaped output for forbidden markers; P7.6 classification examples and telemetry tests reject raw prompt/file-body leakage. | Full debug or historical conversation logs can still be sensitive if explicitly enabled; P7.9 only supports summarized sidecar/local-ops/posture evidence. |
-| Retention and local artifact scope | P7.9 and local-ops quickstart checks record local artifact directory classes, cleanup status, artifact IDs/hashes, and no hosted dependency. | Exact global deletion windows for all logs and graph caches are not fully enforced until P7.11/P9.9. |
+| Retention and local artifact scope | P7.9 and local-ops quickstart checks record local artifact directory classes, cleanup status, artifact IDs/hashes, and no hosted dependency. | There is no universal enforced deletion window for all logs and graph caches. Operators own retention and deletion for their deployment. |
 | Telemetry minimization | Local-ops privacy evidence has `metadata_only:true`, raw prompt/file-body capture flags false, and hosted telemetry defaults false; telemetry argument redaction is tested. | Local diagnostic JSONL can be written when telemetry is enabled; it is not a hosted analytics pipeline or formal DLP system. |
-| Side-effect policy | Discovery profile tests deny writes, shell, destructive/open-world effects, unknown effects, and local context-artifact writes before execution. | CLI sidecar behavior is covered; MCP/app parity remains later review scope. |
+| Side-effect policy | Discovery profile tests deny writes, shell, destructive/open-world effects, unknown effects, and local context-artifact writes before execution. | CLI and MCP fixtures cover their shared policy path; they do not prove every external client or deployment configuration. |
 | MCP/resource containment | MCP integration and classification-parity tests cover stdio replay, roots/resources metadata, protected-resource denial, caller metadata, and CLI/MCP parity evidence without raw protocol body export. | Current evidence supports fixture-level stdio/resource containment only; broader MCP resource body export, non-stdio authorization, and formal conformance remain no-go until reviewed. |
 | Hosted MCP HTTP network containment | HTTP endpoint validation is repeated for redirects and at connection time; the transport dials the validated IP directly, denies private/link-local/loopback destinations unless explicitly enabled, disables unpoliceable environment proxies in deny-private mode, and strips endpoint credentials from cross-origin redirects. MCP pending calls are cleared on cancellation, stream failure, reader termination, and close. | Private endpoints require `allow_private_network`; hosted authorization and formal MCP transport conformance remain deployment-specific. |
 
@@ -51,7 +57,8 @@ CLI example command ID:
   certification claim.
 - `enterprise-saas`: primary MVP buyer posture; retained-use and paid-signal
   claims remain P7.11/P9.7 scope.
-- `tooling-vendor`: integration proof; MCP resource parity remains P8.4/P8.5.
+- `tooling-vendor`: integration proof; MCP metadata-resource parity is covered
+  by the documented stdio fixtures.
 - `local-model`: private-code/local readiness proof; live model quality and
   capacity remain P6/P9.9 scope.
 - `open-source`: activation and adoption wedge; not paid enterprise demand

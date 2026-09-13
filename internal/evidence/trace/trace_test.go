@@ -6,6 +6,20 @@ import (
 )
 
 var _ = Describe("redacted run traces", func() {
+	It("redacts credential attributes before truncation and omits unsupported structured content", func() {
+		attributes := safeAttributes(map[string]any{
+			"error":   "token=error-private",
+			"api_key": "bare-private",
+			"details": map[string]string{"prompt": "nested-private"},
+			"count":   42,
+			"path":    "README.md",
+		})
+		Expect(attributes).To(HaveKeyWithValue("error", "token=<redacted>"))
+		Expect(attributes).To(HaveKeyWithValue("api_key", "<redacted>"))
+		Expect(attributes).NotTo(HaveKey("details"))
+		Expect(attributes).To(HaveKeyWithValue("count", 42))
+		Expect(attributes).To(HaveKeyWithValue("path", "README.md"))
+	})
 	It("records a causal model and tool graph without raw content", func() {
 		recorder := NewRecorder("run-1")
 		recorder.RecordRunEvent("model_call", `{"prompt":"secret"}`)

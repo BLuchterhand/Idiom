@@ -14,15 +14,19 @@ import (
 // not stall a CLI invocation for seconds.
 const dialTimeout = 2 * time.Second
 
-// Status fetches a single snapshot from the daemon. One round trip,
-// connection closes after the reply. Returned StatusPayload is safe
-// to print directly; pools/jobs are pre-sorted by the server.
+// Control requests have no lease lifetime. Bound both writing the request
+// and reading its response so an unresponsive daemon cannot pin CLI callers.
+const controlRequestTimeout = 5 * time.Second
+
 func roundTrip(socketPath string, req Request) (Response, error) {
-	conn, err := dial(socketPath)
+	conn, err := dial(context.Background(), socketPath)
 	if err != nil {
 		return Response{}, err
 	}
 	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(controlRequestTimeout)); err != nil {
+		return Response{}, fmt.Errorf("set %s deadline: %w", req.Action, err)
+	}
 
 	if err := writeJSON(conn, req); err != nil {
 		return Response{}, err
@@ -41,6 +45,7 @@ func roundTrip(socketPath string, req Request) (Response, error) {
 	return resp, nil
 }
 
+// Status fetches one snapshot. Returned pools and jobs are sorted by the server.
 func Status(socketPath string) (StatusPayload, error) {
 	resp, err := roundTrip(socketPath, Request{Action: ActionStatus})
 	if err != nil {
@@ -133,10 +138,14 @@ func Acquire(ctx context.Context, socketPath, pool, label, client string) (*Leas
 		pool = "default"
 	}
 
-	conn, err := dial(socketPath)
+	conn, err := dial(ctx, socketPath)
 	if err != nil {
 		return nil, err
 	}
+	// Cancellation must interrupt the synchronous handshake too, before the
+	// lease reader and its lifetime watcher have been installed.
+	stopHandshakeCancellation := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopHandshakeCancellation()
 
 	if err := writeJSON(conn, Request{
 		Action: ActionAcquire,
@@ -155,6 +164,9 @@ func Acquire(ctx context.Context, socketPath, pool, label, client string) (*Leas
 
 	if err := dec.Decode(&first); err != nil {
 		conn.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 
 		return nil, fmt.Errorf("decode acquire reply: %w", err)
 	}
@@ -249,13 +261,17 @@ func (l *Lease) readLoop(dec *json.Decoder) {
 	}
 }
 
-func dial(socketPath string) (net.Conn, error) {
+func dial(ctx context.Context, socketPath string) (net.Conn, error) {
 	if socketPath == "" {
 		return nil, fmt.Errorf("%w: empty socket path", ErrDaemonUnreachable)
 	}
 
-	conn, err := net.DialTimeout("unix", socketPath, dialTimeout)
+	dialer := net.Dialer{Timeout: dialTimeout}
+	conn, err := dialer.DialContext(ctx, "unix", socketPath)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("%w: %v", ErrDaemonUnreachable, err)
 	}
 

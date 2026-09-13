@@ -2,11 +2,15 @@ package queueadmission
 
 import (
 	"bytes"
+	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"time"
 
 	queuecontract "idiom/internal/contracts/queue"
 	"idiom/internal/platform/config"
+	"idiom/internal/runtime/runner"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -54,6 +58,39 @@ var _ = Describe("Queue admission", func() {
 		Expect(result.Allowed).To(BeFalse())
 		Expect(result.State).To(Equal(queuecontract.AdmissionStateUnavailable))
 		Expect(stdout.String()).To(ContainSubstring(`"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueUnavailable) + `"`))
+	})
+
+	It("holds the admitted slot until release even after the admission timeout", func() {
+		// Keep the Unix socket short enough for macOS's sockaddr_un limit.
+		dir, err := os.MkdirTemp("", "iq-")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(os.RemoveAll, dir)
+		socket := filepath.Join(dir, "q.sock")
+		server := runner.NewServer(runner.Config{Pools: map[string]runner.PoolConfig{
+			"default": {MaxInFlight: 1},
+		}}, socket)
+		Expect(server.Start()).To(Succeed())
+		DeferCleanup(server.Stop)
+		GinkgoT().Setenv("IDIOM_QUEUE_POOL", "default")
+		GinkgoT().Setenv("IDIOM_QUEUE_SOCKET", socket)
+
+		result := Acquire(config.Config{}, Options{Mode: queuecontract.AdmissionModeRequired, WaitTimeout: 100 * time.Millisecond}, nil, io.Discard, io.Discard)
+		DeferCleanup(result.Release)
+		Expect(result.Allowed).To(BeTrue())
+		Expect(result.State).To(Equal(queuecontract.AdmissionStateAcquired))
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		DeferCleanup(cancel)
+		waiting, err := runner.Acquire(ctx, socket, "default", "second", "test")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(waiting.Close)
+		Consistently(waiting.Granted(), 200*time.Millisecond).ShouldNot(BeClosed())
+		timedOut := Acquire(config.Config{}, Options{Mode: queuecontract.AdmissionModeRequired, WaitTimeout: 20 * time.Millisecond}, nil, io.Discard, io.Discard)
+		DeferCleanup(timedOut.Release)
+		Expect(timedOut.Allowed).To(BeFalse())
+		Expect(timedOut.Err).To(MatchError(context.DeadlineExceeded))
+
+		result.Release()
+		Eventually(waiting.Granted()).Should(BeClosed())
 	})
 
 	It("blocks nested cross-pool bypass and emits a degraded event", func() {

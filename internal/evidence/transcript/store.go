@@ -23,7 +23,7 @@ func SaveMarkdown(dir string, messages []Message) (string, error) {
 }
 
 func saveMarkdown(dir string, messages []Message, savedAt time.Time) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create transcript dir: %w", err)
 	}
 
@@ -87,7 +87,7 @@ func newTranscriptFilename(savedAt time.Time) (string, error) {
 
 func publishMarkdown(root *os.Root, filename string, body []byte) (bool, error) {
 	tempName := "." + filename + ".tmp"
-	temp, err := root.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	temp, err := root.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if os.IsExist(err) {
 		return false, nil
 	}

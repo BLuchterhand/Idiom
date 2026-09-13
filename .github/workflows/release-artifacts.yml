@@ -1,0 +1,239 @@
+name: build and install release archives
+
+on:
+  workflow_call:
+    inputs:
+      snapshot:
+        description: Build a development snapshot instead of the current version tag
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Collect dependency license notices
+        run: |
+          go install github.com/google/go-licenses/v2@v2.0.1
+          go install github.com/zricethezav/gitleaks/v8@v8.30.0
+          bash scripts/collect-release-licenses.sh
+          go mod vendor
+
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: v2.18.1
+          args: check
+      - name: goreleaser snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: v2.18.1
+          args: ${{ inputs.snapshot && 'release --snapshot --clean --skip=publish' || 'release --clean --skip=publish' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: validate snapshot assets
+        shell: bash
+        run: python3 scripts/validate-release-assets.py dist
+
+      - name: Build corresponding source without downloading dependencies
+        run: bash scripts/test-release-source.sh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  install-linux:
+    needs: build
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: full install.sh validation from snapshot dist
+        run: |
+          IDIOM_SYSTEM_TARGETED=1 \
+          IDIOM_TEST_DIST="${PWD}/dist" \
+          IDIOM_TEST_GOARCH="${{ matrix.goarch }}" \
+          go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-docker' --fail-on-empty ./internal/systemtests
+
+  install-macos:
+    needs: build
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            goarch: amd64
+          - runner: macos-15
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: full install.sh validation from snapshot dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          IDIOM_TEST_DIST="${PWD}/dist" \
+          IDIOM_TEST_GOARCH="${{ matrix.goarch }}" \
+          IDIOM_INSTALL_DIR="${RUNNER_TEMP}/idiom-bin" \
+          IDIOM_SYSTEM_TARGETED=1 \
+          go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-macos' --fail-on-empty ./internal/systemtests
+
+  install-dependencies-macos:
+    needs: build
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+          - runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: install and validate discovery dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/idiom-bin"
+          IDIOM_INSTALL_DIR="${install_dir}" ./scripts/install-snapshot-from-dist.sh --profile full --no-queue
+          echo "${install_dir}" >> "$GITHUB_PATH"
+          IDIOM_SYSTEM_TARGETED=1 go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-dependencies-unix-live' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-post-install-harness' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-discovery-tools' --fail-on-empty ./internal/systemtests
+
+  install-dependencies-linux:
+    needs: build
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: install and validate discovery dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/idiom-bin"
+          IDIOM_INSTALL_DIR="${install_dir}" ./scripts/install-snapshot-from-dist.sh --profile full --no-queue
+          echo "${install_dir}" >> "$GITHUB_PATH"
+          IDIOM_SYSTEM_TARGETED=1 go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-dependencies-unix-live' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-post-install-harness' --fail-on-empty ./internal/systemtests
+          IDIOM_SYSTEM_TARGETED=1 IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" go tool ginkgo --tags=system_test --fail-fast --label-filter='system-discovery-tools' --fail-on-empty ./internal/systemtests
+
+  install-windows:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: PowerShell install validation from snapshot dist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $archive = @(Get-ChildItem -Path dist -Filter "idiom_*_windows_amd64.zip")
+          if ($archive.Count -ne 1) {
+            throw "expected exactly one windows/amd64 archive, found $($archive.Count)"
+          }
+          $version = $archive[0].Name -replace '^idiom_', '' -replace '_windows_amd64\.zip$', ''
+
+          $server = Start-Process -FilePath python -ArgumentList @("-m", "http.server", "8080", "--bind", "127.0.0.1", "--directory", "dist") -PassThru -WindowStyle Hidden
+          try {
+            for ($i = 0; $i -lt 10; $i++) {
+              try {
+                Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8080/SHA256SUMS" | Out-Null
+                break
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+
+            $installDir = Join-Path $env:RUNNER_TEMP "idiom-bin"
+            $env:IDIOM_VERSION = $version
+            $env:IDIOM_RELEASE_URL_BASE = "http://127.0.0.1:8080"
+            $env:IDIOM_INSTALL_DIR = $installDir
+            ./install.ps1 -Profile Full
+            $env:IDIOM_SYSTEM_TARGETED = "1"
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-windows-integrity' --fail-on-empty ./internal/systemtests
+
+            $env:Path = "$installDir;$env:Path"
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-install-dependencies-powershell-live' --fail-on-empty ./internal/systemtests
+            $env:IDIOM_BIN = Join-Path $installDir "idiom.exe"
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-post-install-harness' --fail-on-empty ./internal/systemtests
+            Remove-Item Env:IDIOM_TOOL_BIN -ErrorAction SilentlyContinue
+            go tool ginkgo --tags=system_test --fail-fast --label-filter='system-discovery-tools' --fail-on-empty ./internal/systemtests
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }

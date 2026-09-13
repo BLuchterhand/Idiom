@@ -1,5 +1,6 @@
 # Build artifacts
 bin/
+/dist/
 /idiom
 /idiom-*
 /idiom.exe
@@ -12,9 +13,7 @@ desktop/dist/
 desktop/node_modules/
 desktop/src-tauri/target/
 
-# Python bytecode (cmd/idiom/brief-preflight.py is the only Python file
-# we ship, but pytest/import runs leave __pycache__ next to it on dev
-# machines).
+# Python bytecode
 __pycache__/
 *.pyc
 
@@ -56,8 +55,9 @@ Thumbs.db
 config.json
 config.*.backup.json
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.sample
 
 # Private book/patent workspaces live outside this repository.
 .patent/
@@ -84,3 +84,7 @@ FEATURE_REQUEST_*.md
 # Agent state
 .qwen/
 .reasonix/
+
+# Generated dependency notices included in release archives
+/third-party-licenses/
+/vendor/

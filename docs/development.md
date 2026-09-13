@@ -2,10 +2,16 @@
 
 ## Build
 
+Install the Go toolchain declared in `go.mod`. A local development build does
+not require model weights or credentials:
+
 ```bash
-make build
 go build ./cmd/idiom
 ```
+
+Use `make build` when you want to update the installed development binary and
+local entrypoints as well. See [getting started](getting-started.md) for the
+full dependency installer.
 
 ## Test
 
@@ -53,6 +59,7 @@ the assertion entrypoint and reports fixture stdout and stderr on failure.
 ## Local Hygiene
 
 Ignored local state can be large and sensitive. Before preparing a release,
-remove generated logs, transcripts, indexes, build outputs, local model files,
-private notes, and one-off working directories. Keep only small sanitized
-fixtures that tests require.
+inspect the tracked source and release archives for generated logs, transcripts,
+indexes, model files, and private notes. Build release artifacts from a clean
+checkout; do not delete a developer's ignored local data as a release step.
+Keep only small sanitized fixtures that tests require.

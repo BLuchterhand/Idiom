@@ -8,9 +8,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -29,8 +31,10 @@ type Server struct {
 	jobs  map[string]*job
 
 	idCounter atomic.Uint64
+	lifecycle sync.Mutex
 	listener  net.Listener
 	closed    chan struct{}
+	stopOnce  sync.Once
 	wg        sync.WaitGroup
 }
 
@@ -74,10 +78,7 @@ type job struct {
 	cancelOnce sync.Once
 }
 
-// NewServer constructs a server with the given config and socket
-// path. It does not bind the socket — call Start for that. Splitting
-// construction from binding lets tests use ServeListener with an
-// arbitrary net.Listener without touching the filesystem.
+// NewServer constructs an unstarted daemon. Call Start to bind its Unix socket.
 func NewServer(cfg Config, socketPath string) *Server {
 	pools := make(map[string]*pool, len(cfg.Pools))
 	for name, pc := range cfg.Pools {
@@ -105,6 +106,16 @@ func NewServer(cfg Config, socketPath string) *Server {
 // path we attempt to remove it — Unix sockets don't auto-cleanup
 // after a crash and a leftover file would block bind.
 func (s *Server) Start() error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	select {
+	case <-s.closed:
+		return errors.New("runner: stopped server cannot be started")
+	default:
+	}
+	if s.listener != nil {
+		return errors.New("runner: server already started")
+	}
 	if s.socketPath == "" {
 		return errors.New("runner: empty socket path")
 	}
@@ -112,15 +123,32 @@ func (s *Server) Start() error {
 	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o755); err != nil {
 		return fmt.Errorf("runner: create socket dir: %w", err)
 	}
+	startupLock, err := acquireSocketStartupLock(s.socketPath)
+	if err != nil {
+		return err
+	}
+	defer startupLock.Close()
 
-	// Best-effort cleanup of a leftover socket file from a prior run.
-	// Unix sockets are filesystem entries; the kernel doesn't remove
-	// them when the listening process dies, so a crashed daemon would
-	// otherwise refuse to restart with EADDRINUSE. We only unlink if
-	// the path is a socket — protects against accidentally deleting
-	// a regular file the operator put at this path.
-	if fi, err := os.Stat(s.socketPath); err == nil && fi.Mode()&os.ModeSocket != 0 {
-		_ = os.Remove(s.socketPath)
+	// Unlink only a refused socket left by a dead daemon. Removing an active
+	// listener would allow two daemons to grant the same pool independently.
+	if fi, err := os.Lstat(s.socketPath); err == nil && fi.Mode()&os.ModeSocket != 0 {
+		conn, dialErr := net.DialTimeout("unix", s.socketPath, dialTimeout)
+		if dialErr == nil {
+			_ = conn.Close()
+			return fmt.Errorf("runner: daemon already listening on %q", s.socketPath)
+		}
+		connectionRefused := syscall.ECONNREFUSED
+		if runtime.GOOS == "windows" {
+			// Winsock returns WSAECONNREFUSED (10061); Go's Windows
+			// syscall.ECONNREFUSED is a different compatibility value.
+			connectionRefused = syscall.Errno(10061)
+		}
+		if !errors.Is(dialErr, connectionRefused) && !errors.Is(dialErr, os.ErrNotExist) {
+			return fmt.Errorf("runner: cannot verify stale socket %q: %w", s.socketPath, dialErr)
+		}
+		if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("runner: remove stale socket %q: %w", s.socketPath, err)
+		}
 	}
 
 	ln, err := net.Listen("unix", s.socketPath)
@@ -141,26 +169,19 @@ func (s *Server) Start() error {
 // Stop closes the listener and waits for in-flight handlers to
 // drain. Holders of slots see their connections closed; from their
 // perspective the daemon disappeared and they should retry. Stop is
-// idempotent — calling twice is a no-op.
+// safe for concurrent callers; every call waits for shutdown to finish.
 func (s *Server) Stop() {
-	select {
-	case <-s.closed:
-		return
-	default:
-	}
-
-	close(s.closed)
-
-	if s.listener != nil {
-		_ = s.listener.Close()
-	}
-
-	s.wg.Wait()
-
-	if s.socketPath != "" {
-		// Best-effort: leftover socket file would block the next start.
-		_ = os.Remove(s.socketPath)
-	}
+	s.stopOnce.Do(func() {
+		s.lifecycle.Lock()
+		close(s.closed)
+		if s.listener != nil {
+			// The Unix listener removes its socket when closed. A second
+			// path removal after draining could unlink a replacement daemon.
+			_ = s.listener.Close()
+		}
+		s.lifecycle.Unlock()
+		s.wg.Wait()
+	})
 }
 
 func (s *Server) serve() {

@@ -12,8 +12,12 @@ evidence freshness, lane boundaries, verification, and final-answer acceptance.
 | --- | --- |
 | `cmd/idiom` | CLI entrypoint and command wiring. |
 | `internal/runtime` | Agent runner, backend routing, readiness, rails, and final-answer handling. |
+| `internal/contracts` | Shared policy, plan, permission, and evidence contracts. |
 | `internal/capabilities/workspace` | Workspace tools, sidecar execution, and tool policy. |
 | `internal/repository` | Repository comprehension, context packets, and graph-backed memory. |
+| `internal/workflows` | Implementation planning, execution, recovery, and product workflows. |
+| `internal/evidence` | Telemetry, audit records, evaluation, and evidence projections. |
+| `internal/platform` | Configuration, filesystem and process adapters. |
 | `internal/surfaces/cli` | CLI surfaces for run, lanes, audit, queue, MCP, and tools. |
 | `internal/surfaces/tui` | Interactive terminal UI. |
 | `prompts/` | Baseline prompt stack and mode/profile instructions. |
@@ -33,6 +37,33 @@ flowchart LR
 
 The key boundary is that tools and audit evidence inform the model, while the
 harness remains responsible for enforcing what the model may do.
+
+## Ownership and Lifecycle
+
+`Runner` holds shared runtime dependencies. A `runExecution` owns invocation
+state and snapshots mutable inputs. Turn state belongs to that invocation;
+approval bindings and cancellation must not leak into a later run. The TUI
+uses a detached `promptExecutionSession` and receives worker events rather than
+letting workers mutate the live UI model.
+
+Workspace owns tool classification, permissions, and execution. CLI and MCP
+translate requests into that boundary. Repository adapters supply facts;
+runtime evidence projections interpret source bodies, candidate paths, and
+verification for the active objective. Display text is not evidence authority.
+
+Workflow persistence owns durable state, leases, journals, and recovery. Surface
+packages present workflow results and collect operator decisions. Move a rule
+to its owning package when callers duplicate its meaning; avoid compatibility
+wrappers that leave a second authority in place.
+
+## Security Boundary
+
+Workspace policy governs admitted tool calls. The process still has the host
+user's permissions, and shell commands can execute repository code. The optional
+[OS sandbox adapter](design-os-sandbox.md) is a process API; normal CLI runs do
+not automatically use it. Hosted backends and external tools receive the data
+sent to them. See the [security posture](security-privacy-posture.md) for tested
+controls and limits.
 
 ## Coding Rule Contracts
 

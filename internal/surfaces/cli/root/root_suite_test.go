@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 
+	"idiom/internal/platform/gotestenv"
+
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 )
@@ -21,6 +23,7 @@ func TestRoot(t *testing.T) {
 		return
 	}
 
+	gotestenv.UseToolchain(t)
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "CLI Root Suite")
 }

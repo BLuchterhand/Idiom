@@ -14,7 +14,7 @@
     {
       "id": "protected_path_denial",
       "claim": "Protected and forbidden paths resolve to host-owned deny decisions before use as editable or evidence paths.",
-      "mvp_limitations": "This proves the generic path-role resolver and discovery-profile denial surfaces. Transport parity for MCP resources remains P8.4/P9.9 scope.",
+      "mvp_limitations": "This proves generic path-role resolution and discovery-profile denials. Tool admission and MCP metadata-resource fixtures do not provide process-level filesystem isolation.",
       "evidence": [
         {
           "kind": "go_test",
@@ -64,7 +64,7 @@
     {
       "id": "retention_local_artifact_scope",
       "claim": "MVP evidence identifies local artifact directories, hashes or IDs, cleanup status, and retention limitations without depending on hosted collection.",
-      "mvp_limitations": "Exact global deletion windows for all logs and graph caches are documented as a limitation until P7.11/P9.9 export and review hardening.",
+      "mvp_limitations": "There is no universal enforced deletion window for all logs and graph caches. Operators own retention and deletion for their deployment.",
       "evidence": [
         {
           "kind": "go_test",
@@ -108,7 +108,7 @@
     {
       "id": "side_effect_policy_read_only_discovery",
       "claim": "The discovery profile is request-aware and denies writes, shell, destructive effects, open-world effects, and local context-artifact writes.",
-      "mvp_limitations": "Discovery-profile checks cover CLI sidecar behavior. MCP resource parity remains P8.4/P8.5/P9.9 scope.",
+      "mvp_limitations": "CLI and MCP fixtures cover their shared discovery policy path; they do not prove every external client or deployment configuration.",
       "evidence": [
         {
           "kind": "go_test",
@@ -253,7 +253,7 @@
         "mcp_resource_containment",
         "mcp_http_network_containment"
       ],
-      "limitation": "MCP resource parity remains P8.4/P8.5/P9.9 scope."
+      "limitation": "MCP metadata-resource parity is covered by stdio fixtures; resource body export and deployment conformance require separate review."
     },
     {
       "classification": "local-model",
