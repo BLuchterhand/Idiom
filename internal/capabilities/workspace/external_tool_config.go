@@ -3,13 +3,16 @@ package workspace
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io"
+	"io/fs"
 	"path/filepath"
 	"slices"
 
 	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/safepath"
 )
 
 // LoadExternalToolsRegistry merges inline workspace config with per-tool JSON
@@ -59,12 +62,18 @@ func externalToolFromConfig(def config.ExternalToolDef) externaltool.Tool {
 }
 
 func loadExternalToolsDir(dir string) ([]externaltool.Tool, error) {
-	entries, err := os.ReadDir(dir)
+	root, err := safepath.OpenRootPath(dir, "external tools directory")
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 
+		return nil, fmt.Errorf("external_tools_dir %q: %w", dir, err)
+	}
+	defer root.Close()
+
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
 		return nil, fmt.Errorf("external_tools_dir %q: %w", dir, err)
 	}
 
@@ -75,9 +84,17 @@ func loadExternalToolsDir(dir string) ([]externaltool.Tool, error) {
 		}
 
 		path := filepath.Join(dir, entry.Name())
-		raw, err := os.ReadFile(path)
+		file, err := safepath.OpenFileFromRoot(root, dir, entry.Name(), "external tool file", safepath.Options{})
 		if err != nil {
 			return nil, fmt.Errorf("external tool file %q: %w", path, err)
+		}
+		raw, readErr := io.ReadAll(file)
+		closeErr := file.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("external tool file %q: %w", path, readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("external tool file %q: %w", path, closeErr)
 		}
 
 		var def config.ExternalToolDef

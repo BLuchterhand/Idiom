@@ -517,6 +517,7 @@ func (m *Manager) auditLanguageTooling() []harnessAuditLanguage {
 		IncludeTypescript: true,
 		IncludeRust:       true,
 		IncludeJava:       true,
+		IncludeGDScript:   true,
 	}))
 	defs := BuildToolDefinitions(nil)
 	schemas := make(map[string]struct{}, len(defs))

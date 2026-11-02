@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"idiom/internal/contracts/toolfacts"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 )
@@ -33,7 +34,7 @@ func (m *Manager) listFiles(ctx context.Context, req ToolRequest) ToolResult {
 	capability, err := m.pathAccess.openReadCapability(ctx, req.executionSessionIdentity, defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		errText := err.Error()
-		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
+		if errors.Is(err, fs.ErrNotExist) && strings.TrimSpace(req.Path) != "" {
 			errText = fmt.Sprintf("directory %q does not exist in this workspace. (os: %s)", req.Path, err.Error())
 		}
 		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to resolve path", Error: errText}
@@ -375,11 +376,22 @@ func (m *Manager) searchFiles(ctx context.Context, req ToolRequest) ToolResult {
 		return nil
 	}
 	if capability.Info().IsDir() {
-		rootFS, fsErr := capability.FS()
-		if fsErr != nil {
-			return ToolResult{Tool: ToolNameSearchFiles, Summary: "File search failed", Error: fsErr.Error()}
-		}
-		if walkErr := fs.WalkDir(rootFS, ".", visit); walkErr != nil {
+		walkErr := safepath.WalkDirUnderRoot(
+			capability.authorization.authorityPath,
+			capability.authorization.canonical,
+			"file search",
+			func(walkPath string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return visit("", entry, walkErr)
+				}
+				relative, err := filepath.Rel(capability.authorization.canonical, walkPath)
+				if err != nil {
+					return err
+				}
+				return visit(filepath.ToSlash(relative), entry, nil)
+			},
+		)
+		if walkErr != nil {
 			return ToolResult{Tool: ToolNameSearchFiles, Summary: "File search failed", Error: walkErr.Error()}
 		}
 	} else {
@@ -760,7 +772,7 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 	}
 	if err != nil {
 		errText := readFileRecoveryError(err.Error())
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			if recoveredErr, ok := m.missingReadParentRecoveryError(req, err.Error()); ok {
 				errText = recoveredErr
 			}
@@ -789,7 +801,7 @@ func (m *Manager) readFile(ctx context.Context, req ToolRequest) ToolResult {
 		if errors.Is(err, errWorkspaceReadLimitExceeded) {
 			errMsg = fmt.Sprintf("file exceeds configured read byte limit %d", readLimit)
 		}
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			if recoveredErr, ok := m.missingReadParentRecoveryError(req, err.Error()); ok {
 				errMsg = recoveredErr
 			}
@@ -1184,79 +1196,76 @@ func (m *Manager) fileStats(ctx context.Context, req ToolRequest) ToolResult {
 
 	report.MaxDepth = maxDepth
 
-	rootFS, err := capability.FS()
-	if err != nil {
-		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file stats", Error: err.Error()}
-	}
-	err = fs.WalkDir(rootFS, ".", func(relative string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		entryPath := target
-		if relative != "." {
-			entryPath = filepath.Join(target, filepath.FromSlash(relative))
-		}
-
-		if relative == "." {
-			return nil
-		}
-
-		depth := pathDepth(relative)
-
-		if entry.IsDir() {
-			if m.shouldSkipListEntry(target, entryPath, true) {
-				return fs.SkipDir
+	err = safepath.WalkDirUnderRoot(
+		capability.authorization.authorityPath,
+		capability.authorization.canonical,
+		"file stats",
+		func(walkPath string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			relative, err := filepath.Rel(capability.authorization.canonical, walkPath)
+			if err != nil {
+				return err
+			}
+			relative = filepath.ToSlash(relative)
+			if relative == "." {
+				return nil
 			}
 
-			if depth > maxDepth {
-				return fs.SkipDir
+			entryPath := filepath.Join(target, filepath.FromSlash(relative))
+
+			depth := pathDepth(relative)
+			if entry.IsDir() {
+				if m.shouldSkipListEntry(target, entryPath, true) {
+					return fs.SkipDir
+
+				}
+				if depth > maxDepth {
+					return fs.SkipDir
+				}
+
+				report.Directories++
+				return nil
 			}
 
-			report.Directories++
-
-			return nil
-		}
-
-		if depth > maxDepth || m.shouldSkipListEntry(target, entryPath, false) {
-			return nil
-		}
-
-		if !fileStatsGlobMatch(report.Glob, relative) {
-			return nil
-		}
-
-		if report.Files >= limit {
-			report.Truncated = true
-			return fs.SkipAll
-		}
-
-		data, openedInfo, readErr := capability.ReadFile(relative)
-		stats := fileStatsEntry{Path: m.pathAccess.DisplayPath(entryPath)}
-		if readErr != nil {
-			stats.Error = readErr.Error()
-			if entryInfo, infoErr := entry.Info(); infoErr == nil {
-				stats.Bytes = entryInfo.Size()
+			if depth > maxDepth || m.shouldSkipListEntry(target, entryPath, false) {
+				return nil
 			}
-		} else {
-			stats = m.fileStatsEntryFromData(entryPath, openedInfo, data)
-		}
-		report.Files++
+			if !fileStatsGlobMatch(report.Glob, relative) {
+				return nil
+			}
+			if report.Files >= limit {
+				report.Truncated = true
+				return fs.SkipAll
+			}
 
-		report.Bytes += stats.Bytes
-		report.Lines += stats.Lines
+			data, openedInfo, readErr := capability.ReadFile(relative)
+			stats := fileStatsEntry{Path: m.pathAccess.DisplayPath(entryPath)}
+			if readErr != nil {
+				stats.Error = readErr.Error()
+				if entryInfo, infoErr := entry.Info(); infoErr == nil {
+					stats.Bytes = entryInfo.Size()
+				}
+			} else {
+				stats = m.fileStatsEntryFromData(entryPath, openedInfo, data)
+			}
+			report.Files++
 
-		if stats.Error != "" {
-			report.LineCountErrors++
-		}
+			report.Bytes += stats.Bytes
+			report.Lines += stats.Lines
+			if stats.Error != "" {
+				report.LineCountErrors++
+			}
 
-		if len(report.Entries) < fileStatsEntryDisplayCap {
-			report.Entries = append(report.Entries, stats)
-		} else {
-			report.EntriesTruncated = true
-		}
-
-		return nil
-	})
+			if len(report.Entries) < fileStatsEntryDisplayCap {
+				report.Entries = append(report.Entries, stats)
+			} else {
+				report.EntriesTruncated = true
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file stats", Error: err.Error()}
 	}
@@ -1294,7 +1303,6 @@ func (m *Manager) addFileStatsLineRange(data []byte, report *fileStatsReport, st
 		report.LineBytesWithNewlines += len([]byte(line)) + 1
 		report.LineCharacterWithBreaks += len([]rune(line)) + 1
 	}
-
 }
 
 func (m *Manager) fileStatsEntryFromData(path string, info os.FileInfo, data []byte) fileStatsEntry {

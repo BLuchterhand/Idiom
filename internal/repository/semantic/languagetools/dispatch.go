@@ -125,6 +125,10 @@ func (m *Manager) dispatch(ctx context.Context, req ToolRequest) ToolResult {
 		return m.pythonDiagnostics(ctx, req)
 	case "python_file_outline":
 		return m.pythonFileOutline(req)
+	case "gdscript_references":
+		return m.gdscriptReferences(ctx, req)
+	case "gdscript_calls_into":
+		return m.gdscriptCallsInto(ctx, req)
 	case "ts_overview":
 		return m.tsOverview()
 	case "ts_entrypoints":

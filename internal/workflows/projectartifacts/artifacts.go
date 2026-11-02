@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
@@ -241,7 +242,7 @@ func currentFingerprint(root string) (fingerprint string, gitHead string, gitDir
 
 	h := sha256.New()
 
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(root, root, "workspace source fingerprint", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -330,7 +331,7 @@ func detectLanguages(root string) []string {
 }
 
 func discoverModules(root string) []ModulePacket {
-	entries, err := os.ReadDir(root)
+	entries, err := safepath.ReadDirUnderRoot(root, root, "workspace project artifacts", safepath.Options{})
 	if err != nil {
 		return nil
 	}
@@ -385,7 +386,7 @@ func discoverModules(root string) []ModulePacket {
 func summarizeDirModule(root string, dir string) (count int, sample []string, langs []string) {
 	languageSet := make(map[string]struct{})
 
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(root, dir, "workspace directory summary", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

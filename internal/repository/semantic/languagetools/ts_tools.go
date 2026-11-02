@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticts "idiom/internal/repository/semantic/typescript"
 )
@@ -38,7 +39,7 @@ func (m *Manager) isTsWorkspace() bool {
 
 	found := false
 
-	_ = filepath.WalkDir(m.Root(), func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(m.Root(), m.Root(), "TypeScript workspace detection", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

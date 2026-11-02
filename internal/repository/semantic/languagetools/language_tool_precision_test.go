@@ -36,10 +36,18 @@ var standardLanguageCapabilities = []language.Capability{
 	language.CapFileOutline,
 }
 
+var languageCapabilityExceptions = map[string][]language.Capability{
+	"gdscript": {language.CapReferences, language.CapCallsInto},
+}
+
 var _ = Describe("Language-tool precision conformance", func() {
-	It("registers every standard capability with the canonical prefix", func() {
+	It("registers every required capability with the canonical prefix", func() {
 		for _, supportedLanguage := range language.LanguageRegistry() {
-			for _, capability := range standardLanguageCapabilities {
+			expected := standardLanguageCapabilities
+			if subset, ok := languageCapabilityExceptions[supportedLanguage.Name]; ok {
+				expected = subset
+			}
+			for _, capability := range expected {
 				tool := supportedLanguage.Tool(capability)
 				Expect(tool).NotTo(BeEmpty(), "%s capability %s", supportedLanguage.Name, capability)
 				Expect(tool).To(HavePrefix(languageToolPrefix(supportedLanguage.Name)))

@@ -201,6 +201,7 @@ func toolSchemaExportProfiles() map[string][]string {
 		{name: "typescript", opts: ToolManifestToolOptions{IncludeTypescript: true}},
 		{name: "rust", opts: ToolManifestToolOptions{IncludeRust: true}},
 		{name: "java", opts: ToolManifestToolOptions{IncludeJava: true}},
+		{name: "gdscript", opts: ToolManifestToolOptions{IncludeGDScript: true}},
 	}
 	profiles := make(map[string][]string)
 
@@ -220,6 +221,7 @@ func toolSchemaExportProfiles() map[string][]string {
 		IncludeTypescript: true,
 		IncludeRust:       true,
 		IncludeJava:       true,
+		IncludeGDScript:   true,
 	}) {
 		if ToolAllowedForProfile(tool, ToolProfileDiscovery).Allowed {
 			profiles[tool] = append(profiles[tool], ToolProfileDiscovery)

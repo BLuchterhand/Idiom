@@ -638,7 +638,8 @@ var _ = ginkgo.Describe("capabilities", func() {
 	})
 	ginkgo.It("read only capability reports unsupported absent confidence", func() {
 		root := ginkgo.GinkgoT().TempDir()
-		writeTestFile(filepath.Join(root, "scripts", "player.gd"), "extends Node\n\nfunc _ready():\n\tpass\n")
+		// GDScript is now a registered language, so this fixture uses a file type that is still unsupported.
+		writeTestFile(filepath.Join(root, "lib", "player.ex"), "defmodule Player do\nend\n")
 
 		mgr := NewManager(config.Workspace{
 			Root:                  root,
@@ -653,7 +654,7 @@ var _ = ginkgo.Describe("capabilities", func() {
 		result := mgr.Execute(context.Background(), ToolRequest{
 			Tool:       ToolNameReadOnlyCapability,
 			Capability: string(ReadOnlyCapabilityDefinition),
-			Path:       filepath.Join("scripts", "player.gd"),
+			Path:       filepath.Join("lib", "player.ex"),
 			Language:   "elixir",
 			Pattern:    "MissingSymbol",
 		})

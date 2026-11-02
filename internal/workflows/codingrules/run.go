@@ -1,14 +1,18 @@
 package codingrules
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	rulescontract "idiom/internal/contracts/codingrules"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 )
 
@@ -33,9 +37,9 @@ func LoadPolicy(projectRoot string, configPath string) (rulescontract.PolicyFile
 		configPath = filepath.Join(projectRoot, ProjectPolicyPath)
 	}
 
-	body, err := os.Open(configPath)
+	body, err := safepath.ReadFileUnderRoot(projectRoot, configPath, "coding rules policy", safepath.Options{})
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			if explicitConfig {
 				return rulescontract.PolicyFile{}, "", false, fmt.Errorf("coding rules: policy %q does not exist", configPath)
 			}
@@ -45,9 +49,7 @@ func LoadPolicy(projectRoot string, configPath string) (rulescontract.PolicyFile
 
 		return rulescontract.PolicyFile{}, "", false, fmt.Errorf("coding rules: read policy %q: %w", configPath, err)
 	}
-	defer body.Close()
-
-	policy, err := rulescontract.DecodePolicy(body)
+	policy, err := rulescontract.DecodePolicy(bytes.NewReader(body))
 	if err != nil {
 		return rulescontract.PolicyFile{}, "", false, fmt.Errorf("coding rules: parse policy %q: %w", configPath, err)
 	}
@@ -69,6 +71,7 @@ func CheckWorkspace(ctx context.Context, opts CheckOptions) (CheckResult, error)
 	if err != nil {
 		return CheckResult{}, err
 	}
+	root = safepath.CleanPath(root)
 
 	var (
 		policy      rulescontract.PolicyFile
@@ -151,7 +154,12 @@ func PolicyExists(projectRoot string, configPath string) bool {
 		configPath = filepath.Join(projectRoot, ProjectPolicyPath)
 	}
 
-	info, err := os.Stat(configPath)
+	file, err := safepath.OpenFileUnderRoot(projectRoot, configPath, "coding rules policy", safepath.Options{})
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	info, err := file.Stat()
 	return err == nil && !info.IsDir()
 }
 
@@ -178,7 +186,7 @@ func goFilesForOptions(root string, paths []string) ([]string, error) {
 	var files []string
 
 	for _, p := range paths {
-		p = strings.TrimSpace(p)
+		p = safepath.CleanPath(strings.TrimSpace(p))
 		if p == "" {
 			continue
 		}
@@ -236,14 +244,14 @@ func goFilesForOptions(root string, paths []string) ([]string, error) {
 }
 
 func pathResolvesUnderRoot(root string, path string) bool {
-	root = filepath.Clean(strings.TrimSpace(root))
-	path = filepath.Clean(strings.TrimSpace(path))
+	root = safepath.CleanPath(strings.TrimSpace(root))
+	path = safepath.CleanPath(strings.TrimSpace(path))
 	if root == "" || path == "" {
 		return false
 	}
 
-	rootEval, rootErr := filepath.EvalSymlinks(root)
-	pathEval, pathErr := filepath.EvalSymlinks(path)
+	rootEval, rootErr := safepath.CanonicalExistingPath(root)
+	pathEval, pathErr := safepath.CanonicalExistingPath(path)
 	if rootErr != nil || pathErr != nil {
 		return false
 	}
@@ -255,7 +263,7 @@ func pathResolvesUnderRoot(root string, path string) bool {
 func discoverGoFiles(root string) ([]string, error) {
 	var files []string
 
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "coding rules source discovery", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

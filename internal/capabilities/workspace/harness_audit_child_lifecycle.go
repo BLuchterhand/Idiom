@@ -7,12 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/safepath"
 )
 
 type harnessAuditChildLifecycle struct {
@@ -62,7 +62,7 @@ type harnessAuditChildLifecycleDecoded struct {
 	verification *autonomy.VerificationAcceptanceRecord
 }
 
-func auditChildLifecycleLogs(paths []string, displayPath func(string) string) *harnessAuditChildLifecycle {
+func auditChildLifecycleLogs(root string, paths []string, displayPath func(string) string) *harnessAuditChildLifecycle {
 	out := &harnessAuditChildLifecycle{}
 	logsHit := map[string]struct{}{}
 	invocations := map[string]harnessAuditChildLifecycleDecoded{}
@@ -75,7 +75,7 @@ func auditChildLifecycleLogs(paths []string, displayPath func(string) string) *h
 	verificationResults := map[string]struct{}{}
 
 	for _, path := range paths {
-		file, err := os.Open(path)
+		file, err := safepath.OpenFileUnderRoot(root, path, "audit log", safepath.Options{})
 		if err != nil {
 			continue
 		}

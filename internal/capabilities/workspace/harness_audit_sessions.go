@@ -2,7 +2,9 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 )
@@ -88,9 +91,9 @@ func buildHarnessAuditLaneHistory(root string, recentLimit int) *harnessAuditLan
 	}
 	path := filepath.Join(root, ".idiom", "lane-history.jsonl")
 
-	body, err := os.ReadFile(path)
+	body, err := safepath.ReadFileUnderRoot(root, path, "lane history", safepath.Options{})
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("read lane history: %v", err))
 		}
 
@@ -161,8 +164,8 @@ func harnessAuditDisplayPath(root, path string) string {
 		return rel
 	}
 
-	realRoot, rootErr := filepath.EvalSymlinks(root)
-	realPath, pathErr := filepath.EvalSymlinks(path)
+	realRoot, rootErr := safepath.CanonicalExistingPath(root)
+	realPath, pathErr := safepath.CanonicalExistingPath(path)
 
 	if rootErr == nil && pathErr == nil {
 		if rel, ok := harnessAuditRelativePath(realRoot, realPath); ok {
@@ -214,7 +217,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 	telemetryByConversationLog := make(map[string]auditedLog)
 
 	for _, path := range paths {
-		facts, err := readHarnessAuditLogFacts(path)
+		facts, err := readHarnessAuditLogFacts(m.cfg.Root, path)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.pathAccess.DisplayPath(path), err))
 			continue
@@ -314,7 +317,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		cleanConversationPath := filepath.Clean(conversationPath)
 
 		for _, candidate := range candidates {
-			candidateFacts, err := readHarnessAuditLogFacts(candidate)
+			candidateFacts, err := readHarnessAuditLogFacts(m.cfg.Root, candidate)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.pathAccess.DisplayPath(candidate), err))
 				continue
@@ -377,7 +380,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 				if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
 					session.ConversationLog = m.pathAccess.DisplayPath(conversationPath)
 
-					conversationFacts, err := readHarnessAuditLogFacts(conversationPath)
+					conversationFacts, err := readHarnessAuditLogFacts(m.cfg.Root, conversationPath)
 					if err != nil {
 						warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", session.ConversationLog, err))
 					} else if !conversationFacts.HasSessionSummary && !facts.HasModelSessionCloseout {
@@ -549,8 +552,8 @@ func harnessAuditSessionTimestampPrefix(sessionID string) string {
 	return sessionID
 }
 
-func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
-	data, err := os.ReadFile(path)
+func readHarnessAuditLogFacts(root string, path string) (harnessAuditLogFacts, error) {
+	data, err := safepath.ReadFileUnderRoot(root, path, "audit log", safepath.Options{})
 	if err != nil {
 		return harnessAuditLogFacts{}, err
 	}
@@ -829,8 +832,8 @@ func (m *Manager) auditDefaultJSONLGlob(pattern string) ([]string, error) {
 		return nil, fmt.Errorf("audit glob %q: %w", pattern, err)
 	}
 
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
+	entries, err := safepath.ReadDirUnderRoot(m.cfg.Root, dir, "read audit directory", safepath.Options{})
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
@@ -892,7 +895,7 @@ func (m *Manager) ensureAuditPathInWorkspace(path string) error {
 func auditJSONLFilesUnder(root string) ([]string, error) {
 	var paths []string
 
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "audit log discovery", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

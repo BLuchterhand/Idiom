@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
@@ -85,7 +86,7 @@ func BuildGoIndexWithOptions(root string, opts semantic.IndexOptions) (*GoIndex,
 
 	errStop := filepath.SkipAll
 	filesParsed := 0
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "Go index", func(path string, d os.DirEntry, walkErr error) error {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
@@ -124,7 +125,12 @@ func BuildGoIndexWithOptions(root string, opts semantic.IndexOptions) (*GoIndex,
 			return nil
 		}
 
-		fileNode, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		content, err := indexsupport.ReadFileUnderRoot(root, path)
+		if err != nil {
+			return nil
+		}
+
+		fileNode, err := parser.ParseFile(fset, path, content, parser.ParseComments)
 		if err != nil {
 			return nil
 		}
@@ -596,7 +602,7 @@ func receiverName(expr ast.Expr) string {
 }
 
 func readGoModule(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	data, err := indexsupport.ReadFileUnderRoot(root, filepath.Join(root, "go.mod"))
 	if err != nil {
 		return ""
 	}

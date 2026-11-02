@@ -164,7 +164,7 @@ var _ = ginkgo.Describe("rooted Go declaration move transaction", ginkgo.Label("
 			base := context.Background()
 			var cancel context.CancelFunc
 			if deadline {
-				base, cancel = context.WithTimeout(base, 10*time.Millisecond)
+				base, cancel = context.WithTimeout(base, time.Second)
 			} else {
 				base, cancel = context.WithCancel(base)
 			}

@@ -11,6 +11,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -175,6 +176,17 @@ type FeedbackStats struct {
 // PerfReport. Parse errors propagate; missing optional events do not.
 func AnalyzeLog(path string) (PerfReport, error) {
 	records, err := LoadRecords(path)
+	if err != nil {
+		return PerfReport{}, err
+	}
+
+	return analyzeRecords(path, records), nil
+}
+
+// AnalyzeLogReader analyzes JSONL records from a caller-owned reader. The path
+// is report metadata; the caller controls how the source was opened.
+func AnalyzeLogReader(path string, reader io.Reader) (PerfReport, error) {
+	records, err := LoadRecordsFromReader(reader)
 	if err != nil {
 		return PerfReport{}, err
 	}

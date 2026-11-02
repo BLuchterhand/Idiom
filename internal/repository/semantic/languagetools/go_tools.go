@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/hosttools"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	semanticgo "idiom/internal/repository/semantic/golang"
 )
@@ -1029,7 +1030,7 @@ func (m *Manager) FileLineCount(path string) (int, bool) {
 		return 0, false
 	}
 
-	data, err := os.ReadFile(resolved)
+	data, err := safepath.ReadFileUnderRoot(m.Root(), resolved, "Go source", safepath.Options{})
 	if err != nil {
 		return 0, false
 	}
@@ -1049,7 +1050,7 @@ func (m *Manager) FileLineCount(path string) (int, bool) {
 }
 
 func (m *Manager) readFileLines(path string, start, end int) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := safepath.ReadFileUnderRoot(m.Root(), path, "Go source", safepath.Options{})
 	if err != nil {
 		return "", err
 	}

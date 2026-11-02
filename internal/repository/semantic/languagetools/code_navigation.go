@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic/language"
@@ -320,7 +321,7 @@ func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec CodeNavigat
 }
 
 func (m *Manager) genericCodeNavigationDirectoryOutline(abs string, spec CodeNavigationSpec, reason string) ToolResult {
-	entries, err := os.ReadDir(abs)
+	entries, err := safepath.ReadDirUnderRoot(m.Root(), abs, "read code navigation directory", safepath.Options{})
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}
 	}
@@ -410,7 +411,7 @@ func (m *Manager) genericCodeNavigationMatches(req ToolRequest) ([]string, bool,
 	truncated := false
 
 	for _, file := range files {
-		lines, err := genericCodeNavigationFileMatches(file, pattern, limit-len(matches))
+		lines, err := genericCodeNavigationFileMatches(m.Root(), file, pattern, limit-len(matches))
 		if err != nil {
 			continue
 		}
@@ -429,7 +430,7 @@ func (m *Manager) genericCodeNavigationMatches(req ToolRequest) ([]string, bool,
 
 func (m *Manager) genericCodeNavigationFiles(root string) ([]string, error) {
 	files := make([]string, 0, codeNavigationFileLimit)
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "code navigation source discovery", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -465,12 +466,12 @@ func (m *Manager) genericCodeNavigationFiles(root string) ([]string, error) {
 	return files, err
 }
 
-func genericCodeNavigationFileMatches(path string, pattern string, remaining int) ([]string, error) {
+func genericCodeNavigationFileMatches(root string, path string, pattern string, remaining int) ([]string, error) {
 	if remaining <= 0 {
 		return nil, nil
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := safepath.ReadFileUnderRoot(root, path, "code navigation source", safepath.Options{})
 	if err != nil {
 		return nil, err
 	}

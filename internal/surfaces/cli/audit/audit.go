@@ -22,6 +22,7 @@ import (
 	"idiom/internal/evidence/auditenum"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/safepath"
 	cmdconfig "idiom/internal/surfaces/cli/config"
 )
 
@@ -1124,7 +1125,7 @@ func collectAuditWatchFiles(root string, paths []string) ([]auditWatchFile, erro
 			continue
 		}
 
-		if err := filepath.WalkDir(abs, func(child string, entry os.DirEntry, walkErr error) error {
+		if err := safepath.WalkDirUnderRoot(abs, abs, "audit watch path", func(child string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}

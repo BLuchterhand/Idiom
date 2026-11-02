@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/safepath"
 )
 
 // PathAccess owns workspace path resolution, mutation serialization, display
@@ -31,6 +32,8 @@ type systemSearchAccessGrant struct {
 }
 
 func NewPathAccess(cfg config.Workspace) PathAccess {
+	cfg.Root = safepath.CleanPath(cfg.Root)
+	cfg.CWD = safepath.CleanPath(cfg.CWD)
 	return PathAccess{cfg: cfg}
 }
 
@@ -55,8 +58,15 @@ func (a *PathAccess) ResolvePath(path string, workdir string) (string, error) {
 	if !a.Enabled() {
 		return "", fmt.Errorf("workspace root is not configured")
 	}
+	if _, err := safepath.CleanPathChecked(a.cfg.Root); err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
 
-	if strings.TrimSpace(path) == "" {
+	path, err := safepath.CleanPathChecked(strings.TrimSpace(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
 
@@ -64,19 +74,19 @@ func (a *PathAccess) ResolvePath(path string, workdir string) (string, error) {
 
 	switch {
 	case filepath.IsAbs(path):
-		candidate = filepath.Clean(path)
+		candidate = safepath.CleanPath(filepath.Clean(path))
 	case workdir != "":
 		base, err := a.ResolveWorkdir(workdir)
 		if err != nil {
 			return "", err
 		}
 
-		candidate = filepath.Clean(filepath.Join(base, path))
+		candidate = safepath.CleanPath(filepath.Clean(filepath.Join(base, path)))
 	default:
-		candidate = filepath.Clean(filepath.Join(a.cfg.CWD, path))
+		candidate = safepath.CleanPath(filepath.Clean(filepath.Join(a.cfg.CWD, path)))
 	}
 
-	rel, err := filepath.Rel(a.cfg.Root, candidate)
+	rel, err := filepath.Rel(safepath.CleanPath(a.cfg.Root), candidate)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
@@ -126,7 +136,7 @@ func (a *PathAccess) inspectSystemSearchCandidate(path string, workdir string) (
 	if err != nil {
 		return "", nil, err
 	}
-	resolved, err := filepath.EvalSymlinks(candidate)
+	resolved, err := safepath.CanonicalExistingPath(candidate)
 	if err != nil {
 		return "", nil, err
 	}
@@ -143,15 +153,21 @@ func (a *PathAccess) candidatePath(identity executionSessionIdentity, path strin
 	if !a.Enabled() {
 		return "", fmt.Errorf("workspace root is not configured")
 	}
+	if _, err := safepath.CleanPathChecked(a.cfg.Root); err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
 
-	path = strings.TrimSpace(path)
+	path, err := safepath.CleanPathChecked(strings.TrimSpace(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
 
 	switch {
 	case filepath.IsAbs(path):
-		return filepath.Clean(path), nil
+		return safepath.CleanPath(filepath.Clean(path)), nil
 	case strings.TrimSpace(workdir) != "":
 		var base string
 		var err error
@@ -164,9 +180,9 @@ func (a *PathAccess) candidatePath(identity executionSessionIdentity, path strin
 			return "", err
 		}
 
-		return filepath.Clean(filepath.Join(base, path)), nil
+		return safepath.CleanPath(filepath.Clean(filepath.Join(base, path))), nil
 	default:
-		return filepath.Clean(filepath.Join(a.cfg.CWD, path)), nil
+		return safepath.CleanPath(filepath.Clean(filepath.Join(a.cfg.CWD, path))), nil
 	}
 }
 
@@ -176,10 +192,10 @@ func (a *PathAccess) DisplayPath(path string) string {
 	}
 
 	if rel, ok := a.RelativeWorkspacePath(path); ok && rel != "." {
-		return rel
+		return filepath.ToSlash(rel)
 	}
 
-	return path
+	return filepath.ToSlash(path)
 }
 
 func (a *PathAccess) PathWithinWorkspace(path string) bool {
@@ -188,8 +204,15 @@ func (a *PathAccess) PathWithinWorkspace(path string) bool {
 }
 
 func (a *PathAccess) RelativeWorkspacePath(path string) (string, bool) {
-	path = filepath.Clean(strings.TrimSpace(path))
-	root := filepath.Clean(strings.TrimSpace(a.cfg.Root))
+	var err error
+	path, err = safepath.CleanPathChecked(strings.TrimSpace(path))
+	if err != nil {
+		return "", false
+	}
+	root, err := safepath.CleanPathChecked(strings.TrimSpace(a.cfg.Root))
+	if err != nil {
+		return "", false
+	}
 
 	if path == "" || root == "" {
 		return "", false
@@ -197,7 +220,7 @@ func (a *PathAccess) RelativeWorkspacePath(path string) (string, bool) {
 
 	lexicalRel, lexicalWithin := workspaceRelativePath(root, path)
 
-	evaluatedRoot, rootErr := filepath.EvalSymlinks(root)
+	evaluatedRoot, rootErr := safepath.CanonicalExistingPath(root)
 	if rootErr != nil {
 		return "", false
 	}
@@ -219,13 +242,13 @@ func (a *PathAccess) RelativeWorkspacePath(path string) (string, bool) {
 }
 
 func resolvePathForWorkspaceContainment(path string) (string, bool) {
-	current := filepath.Clean(path)
+	current := safepath.CleanPath(path)
 	var missingComponents []string
 
 	for {
-		if evaluated, err := filepath.EvalSymlinks(current); err == nil {
+		if evaluated, err := safepath.CanonicalExistingPath(current); err == nil {
 			parts := append([]string{evaluated}, missingComponents...)
-			return filepath.Join(parts...), true
+			return safepath.CleanPath(filepath.Join(parts...)), true
 		} else if !os.IsNotExist(err) {
 			return "", false
 		}
@@ -247,7 +270,7 @@ func resolvePathForWorkspaceContainment(path string) (string, bool) {
 }
 
 func workspaceRelativePath(root string, path string) (string, bool) {
-	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	rel, err := filepath.Rel(safepath.CleanPath(root), safepath.CleanPath(path))
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", false
 	}
@@ -261,7 +284,7 @@ func (a *PathAccess) ProtectedPathKeys(path string) []string {
 		return nil
 	}
 
-	cleaned := filepath.Clean(path)
+	cleaned := safepath.CleanPath(path)
 	keys := []string{normalizePathKey(cleaned)}
 
 	if filepath.IsAbs(cleaned) {
@@ -300,18 +323,18 @@ func (a *PathAccess) canonicalWorkspacePathKeys(path string, workdir string) []s
 	cleanedWorkdir := strings.TrimSpace(workdir)
 	if cleanedWorkdir != "" {
 		if filepath.IsAbs(cleanedWorkdir) {
-			base = filepath.Clean(cleanedWorkdir)
+			base = safepath.CleanPath(filepath.Clean(cleanedWorkdir))
 		} else {
-			base = filepath.Join(base, cleanedWorkdir)
+			base = safepath.CleanPath(filepath.Join(base, cleanedWorkdir))
 		}
 	}
 
-	candidate := filepath.Clean(path)
+	candidate := safepath.CleanPath(filepath.Clean(path))
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(base, candidate)
 	}
 
-	evaluatedRoot, err := filepath.EvalSymlinks(filepath.Clean(a.cfg.Root))
+	evaluatedRoot, err := safepath.CanonicalExistingPath(safepath.CleanPath(a.cfg.Root))
 	if err != nil {
 		return nil
 	}
@@ -448,14 +471,14 @@ func (a *PathAccess) ApprovedSystemSearchScope(identity executionSessionIdentity
 	best := SystemSearchAccessScopeSelected
 
 	for _, grant := range a.ApprovedSystemSearchGrantsSnapshot(identity) {
-		root := filepath.Clean(grant.Path)
+		root := safepath.CleanPath(grant.Path)
 		scope := normalizeSystemSearchAccessScope(grant.Scope)
 		currentRoot, rootErr := inspectFilesystemPathIdentity(root)
 		if rootErr != nil || grant.Identity == nil || !os.SameFile(grant.Identity, currentRoot) {
 			continue
 		}
-		evaluatedRoot, rootErr := filepath.EvalSymlinks(root)
-		evaluatedPath, pathErr := filepath.EvalSymlinks(path)
+		evaluatedRoot, rootErr := safepath.CanonicalExistingPath(root)
+		evaluatedPath, pathErr := safepath.CanonicalExistingPath(path)
 		if rootErr == nil && pathErr == nil {
 			if systemSearchGrantCoversPath(evaluatedRoot, evaluatedPath, scope) {
 				if scope == SystemSearchAccessScopeContents {
@@ -486,7 +509,7 @@ func (a *PathAccess) ApprovedSystemSearchScope(identity executionSessionIdentity
 }
 
 func inspectFilesystemPathIdentity(path string) (os.FileInfo, error) {
-	path = filepath.Clean(strings.TrimSpace(path))
+	path = safepath.CleanPath(strings.TrimSpace(path))
 	if path == "" {
 		return nil, fmt.Errorf("filesystem identity path is empty")
 	}
@@ -504,7 +527,7 @@ func inspectFilesystemPathIdentity(path string) (os.FileInfo, error) {
 
 	var opened os.FileInfo
 	if before.IsDir() {
-		root, err := os.OpenRoot(path)
+		root, err := safepath.OpenRootPath(path, "filesystem identity path")
 		if err != nil {
 			return nil, err
 		}
@@ -514,7 +537,9 @@ func inspectFilesystemPathIdentity(path string) (os.FileInfo, error) {
 			return nil, err
 		}
 	} else {
-		file, err := os.Open(path)
+		file, err := safepath.OpenFileUnderRoot(filepath.Dir(path), path, "filesystem identity path", safepath.Options{
+			RejectSymlinkTarget: true,
+		})
 		if err != nil {
 			return nil, err
 		}

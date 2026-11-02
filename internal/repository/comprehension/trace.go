@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -982,7 +983,7 @@ func loadRecentTraces(root string, limit int) ([]TraceResult, error) {
 		return loadRecentTracesFromManifest(root, manifest, limit)
 	}
 
-	entries, err := os.ReadDir(dir)
+	entries, err := safepath.ReadDirUnderRoot(root, dir, "runtime trace directory", safepath.Options{})
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -998,7 +999,7 @@ func loadRecentTraces(root string, limit int) ([]TraceResult, error) {
 			continue
 		}
 
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		data, err := safepath.ReadFileUnderRoot(root, filepath.Join(dir, entry.Name()), "runtime trace", safepath.Options{})
 		if err != nil {
 			continue
 		}
@@ -1316,7 +1317,7 @@ func traceRelEscapesWorkspace(rel string) bool {
 func resolveTraceBasename(root string, base string) (string, bool) {
 	var matches []string
 
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(root, root, "trace path discovery", func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			if d != nil && d.IsDir() && discoverySkipDirForTrace(root, path, d.Name()) {
 				return filepath.SkipDir
