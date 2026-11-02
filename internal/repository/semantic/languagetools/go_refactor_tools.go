@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"idiom/internal/platform/safepath"
 )
 
 type goParsedFile struct {
@@ -509,7 +511,7 @@ func (p *goMovePlanningSession) plan() (*MutationPlan, []string) {
 }
 
 func (m *Manager) parseGoFileForRefactor(path string) (*goParsedFile, error) {
-	source, err := os.ReadFile(path)
+	source, err := safepath.ReadFileUnderRoot(m.Root(), path, "Go refactor source", safepath.Options{})
 	if err != nil {
 		return nil, err
 	}

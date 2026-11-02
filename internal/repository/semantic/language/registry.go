@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 )
 
@@ -112,6 +113,27 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			return detectWorkspace(root, detectionSpec{
 				markers:        []string{"compile_commands.json"},
 				matchExtension: isCppExtension,
+			})
+		},
+	},
+	{
+		Name:       "gdscript",
+		Extensions: []string{".gd"},
+		Tools: map[Capability]string{
+			CapReferences: "gdscript_references",
+			CapCallsInto:  "gdscript_calls_into",
+		},
+		DecisionGuide: strings.TrimSpace(`
+GDScript capability guide - use syntax-index references and callers for .gd files:
+- References includes class_name uses, resource loads, signal use, and identifier uses.
+- Calls-into includes static and instance method calls, signal emissions, and .connect callbacks.
+The syntax index resolves names by GDScript identifier; dynamic dispatch may remain ambiguous.
+`),
+		Detect: func(root string) bool {
+			return detectWorkspace(root, detectionSpec{
+				markers:    []string{"project.godot"},
+				extensions: []string{".gd"},
+				skipDirs:   []string{".godot", ".import"},
 			})
 		},
 	},
@@ -431,7 +453,7 @@ func detectWorkspace(root string, spec detectionSpec) bool {
 	}
 
 	found := false
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(root, root, "language workspace detection", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

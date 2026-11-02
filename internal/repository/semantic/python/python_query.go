@@ -190,6 +190,37 @@ func (idx *PythonIndex) FindCallsInto(pattern string, limit int) []PythonCallMat
 	return out
 }
 
+func (idx *PythonIndex) FindReferences(pattern string, limit int) []PythonReference {
+	pattern = normalizePythonSymbolPattern(pattern)
+	if dot := strings.LastIndex(pattern, "."); dot >= 0 {
+		pattern = pattern[dot+1:]
+	}
+	if idx == nil || pattern == "" {
+		return nil
+	}
+
+	name := strings.ToLower(pattern)
+	var matches []PythonReference
+	for _, file := range idx.Files {
+		for _, reference := range file.References {
+			if strings.ToLower(reference.Name) == name {
+				matches = append(matches, reference)
+			}
+		}
+	}
+
+	slices.SortFunc(matches, func(a, b PythonReference) int {
+		if c := cmp.Compare(a.Path, b.Path); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Line, b.Line)
+	})
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return matches
+}
+
 // Implementations returns subclass symbols of classes whose name
 // matches pattern. Useful as a lightweight, AST-free implementations
 // query before a real LSP responds.

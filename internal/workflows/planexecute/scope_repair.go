@@ -90,7 +90,7 @@ func uniqueCodeFileByBase(root string, base string) (string, bool) {
 	}
 
 	var matches []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "plan candidate path discovery", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

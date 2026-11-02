@@ -2,22 +2,39 @@ package planartifactstore
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/safepath"
 )
 
-func Load(path string) (planartifact.PlanArtifact, error) {
+func Load(workspaceRoot string, path string) (planartifact.PlanArtifact, error) {
 	baseDir := filepath.Dir(path)
-	root, err := os.OpenRoot(baseDir)
+	root, err := safepath.OpenRootUnderRoot(workspaceRoot, baseDir, "plan artifact directory", safepath.Options{
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
 	if err != nil {
 		return planartifact.PlanArtifact{}, fmt.Errorf("open plan artifact directory %q: %w", baseDir, err)
 	}
 	defer root.Close()
 
-	body, err := root.ReadFile(filepath.Base(path))
+	canonicalBaseDir, err := canonicalArtifactDir(workspaceRoot, baseDir)
+	if err != nil {
+		return planartifact.PlanArtifact{}, fmt.Errorf("resolve plan artifact directory %q: %w", baseDir, err)
+	}
+	file, err := safepath.OpenFileFromRoot(root, canonicalBaseDir, filepath.Base(path), "plan artifact", safepath.Options{
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
+	if err != nil {
+		return planartifact.PlanArtifact{}, err
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
 	if err != nil {
 		return planartifact.PlanArtifact{}, err
 	}
@@ -35,7 +52,7 @@ func Load(path string) (planartifact.PlanArtifact, error) {
 		return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
 	}
 
-	if err := hydrateRefs(root, &artifact); err != nil {
+	if err := hydrateRefs(root, canonicalBaseDir, &artifact); err != nil {
 		return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
 	}
 
@@ -46,7 +63,7 @@ func Load(path string) (planartifact.PlanArtifact, error) {
 	return artifact, nil
 }
 
-func HydrateRefs(baseDir string, artifact *planartifact.PlanArtifact) error {
+func HydrateRefs(workspaceRoot string, baseDir string, artifact *planartifact.PlanArtifact) error {
 	if artifact == nil {
 		return nil
 	}
@@ -59,20 +76,34 @@ func HydrateRefs(baseDir string, artifact *planartifact.PlanArtifact) error {
 		return nil
 	}
 
-	root, err := os.OpenRoot(baseDir)
+	root, err := safepath.OpenRootUnderRoot(workspaceRoot, baseDir, "plan artifact directory", safepath.Options{
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
 	if err != nil {
 		return fmt.Errorf("open plan artifact directory %q: %w", baseDir, err)
 	}
 	defer root.Close()
 
-	return hydrateRefs(root, artifact)
+	canonicalBaseDir, err := canonicalArtifactDir(workspaceRoot, baseDir)
+	if err != nil {
+		return fmt.Errorf("resolve plan artifact directory %q: %w", baseDir, err)
+	}
+	return hydrateRefs(root, canonicalBaseDir, artifact)
 }
 
-func hydrateRefs(root *os.Root, artifact *planartifact.PlanArtifact) error {
+func canonicalArtifactDir(workspaceRoot string, baseDir string) (string, error) {
+	if !filepath.IsAbs(baseDir) {
+		baseDir = filepath.Join(workspaceRoot, baseDir)
+	}
+	return safepath.CanonicalExistingPath(baseDir)
+}
+
+func hydrateRefs(root *os.Root, canonicalBaseDir string, artifact *planartifact.PlanArtifact) error {
 	for i := range artifact.Edits {
 		edit := &artifact.Edits[i]
 		if strings.TrimSpace(edit.NewText) == "" && strings.TrimSpace(edit.NewTextRef) != "" {
-			content, err := readEditBodyRef(root, edit.NewTextRef)
+			content, err := readEditBodyRef(root, canonicalBaseDir, edit.NewTextRef)
 			if err != nil {
 				return fmt.Errorf("edits[%d].new_text_ref: %w", i, err)
 			}
@@ -81,7 +112,7 @@ func hydrateRefs(root *os.Root, artifact *planartifact.PlanArtifact) error {
 		}
 
 		if strings.TrimSpace(edit.Content) == "" && strings.TrimSpace(edit.ContentRef) != "" {
-			content, err := readEditBodyRef(root, edit.ContentRef)
+			content, err := readEditBodyRef(root, canonicalBaseDir, edit.ContentRef)
 			if err != nil {
 				return fmt.Errorf("edits[%d].content_ref: %w", i, err)
 			}
@@ -110,7 +141,7 @@ func validateEditsAndCheckRefHydration(artifact *planartifact.PlanArtifact) (boo
 	return needsHydration, nil
 }
 
-func readEditBodyRef(root *os.Root, ref string) (string, error) {
+func readEditBodyRef(root *os.Root, canonicalBaseDir string, ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return "", fmt.Errorf("empty ref")
@@ -125,7 +156,15 @@ func readEditBodyRef(root *os.Root, ref string) (string, error) {
 		return "", fmt.Errorf("ref escapes plan artifact directory")
 	}
 
-	body, err := root.ReadFile(clean)
+	file, err := safepath.OpenFileFromRoot(root, canonicalBaseDir, clean, "plan artifact reference", safepath.Options{
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
 	if err != nil {
 		return "", err
 	}

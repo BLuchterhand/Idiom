@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	featureplannercontract "idiom/internal/contracts/featureplanner"
 	intentloopcontract "idiom/internal/contracts/intentloop"
+	"idiom/internal/platform/safepath"
 )
 
 type harnessAuditIntentLoop struct {
@@ -87,7 +87,7 @@ func intentLoopAuditEventSet() map[string]struct{} {
 	return out
 }
 
-func auditIntentLoopEvents(paths []string) *harnessAuditIntentLoop {
+func auditIntentLoopEvents(root string, paths []string) *harnessAuditIntentLoop {
 	out := &harnessAuditIntentLoop{
 		EventCounts:          map[string]int{},
 		GapRequirementCounts: map[string]int{},
@@ -97,7 +97,7 @@ func auditIntentLoopEvents(paths []string) *harnessAuditIntentLoop {
 	sessions := map[string]struct{}{}
 
 	for _, path := range paths {
-		body, err := os.ReadFile(path)
+		body, err := safepath.ReadFileUnderRoot(root, path, "audit log", safepath.Options{})
 		if err != nil {
 			continue
 		}
@@ -205,7 +205,7 @@ func featurePlannerAuditEventSet() map[string]struct{} {
 	return out
 }
 
-func auditFeaturePlannerEvents(paths []string, displayPath func(string) string) *harnessAuditFeaturePlanner {
+func auditFeaturePlannerEvents(root string, paths []string, displayPath func(string) string) *harnessAuditFeaturePlanner {
 	out := &harnessAuditFeaturePlanner{
 		EventCounts:          map[string]int{},
 		VerificationStatuses: map[string]int{},
@@ -214,7 +214,7 @@ func auditFeaturePlannerEvents(paths []string, displayPath func(string) string) 
 	logsHit := map[string]struct{}{}
 
 	for _, path := range paths {
-		file, err := os.Open(path)
+		file, err := safepath.OpenFileUnderRoot(root, path, "audit log", safepath.Options{})
 		if err != nil {
 			continue
 		}

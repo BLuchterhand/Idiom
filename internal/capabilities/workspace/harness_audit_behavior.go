@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -14,6 +13,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/evidence/eval"
+	"idiom/internal/platform/safepath"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
@@ -73,9 +73,19 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 
 	reports := make([]eval.PerfReport, 0, len(paths))
 	for _, path := range paths {
-		report, err := eval.AnalyzeLog(path)
+		file, err := safepath.OpenFileUnderRoot(m.cfg.Root, path, "audit log", safepath.Options{})
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", m.pathAccess.DisplayPath(path), err))
+			continue
+		}
+		report, err := eval.AnalyzeLogReader(path, file)
+		closeErr := file.Close()
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", m.pathAccess.DisplayPath(path), err))
+			continue
+		}
+		if closeErr != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", m.pathAccess.DisplayPath(path), closeErr))
 			continue
 		}
 
@@ -93,21 +103,21 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 
 	warnings = append(warnings, contractWarnings...)
 
-	childLifecycle := auditChildLifecycleLogs(paths, m.pathAccess.DisplayPath)
+	childLifecycle := auditChildLifecycleLogs(m.cfg.Root, paths, m.pathAccess.DisplayPath)
 
-	malformedOutput, malformedWarnings := auditMalformedOutputStages(paths)
+	malformedOutput, malformedWarnings := auditMalformedOutputStages(m.cfg.Root, paths)
 
 	for _, warning := range malformedWarnings {
 		warnings = append(warnings, fmt.Sprintf("malformed output stages: %s", warning))
 	}
 
-	intentLoop := auditIntentLoopEvents(paths)
-	featurePlanner := auditFeaturePlannerEvents(paths, m.pathAccess.DisplayPath)
+	intentLoop := auditIntentLoopEvents(m.cfg.Root, paths)
+	featurePlanner := auditFeaturePlannerEvents(m.cfg.Root, paths, m.pathAccess.DisplayPath)
 	aggregate := eval.Aggregate(reports)
 	currentReports := currentHarnessAuditPerfReports(m.cfg.Root, reports)
 	currentAggregate := eval.Aggregate(currentReports)
 	freshnessResolution := auditCurrentFreshnessWindow(m.cfg.Root, currentReports)
-	capabilityMix := auditObservedCapabilityMix(paths, aggregate.LogCount, &warnings, m.pathAccess.DisplayPath)
+	capabilityMix := auditObservedCapabilityMix(m.cfg.Root, paths, aggregate.LogCount, &warnings, m.pathAccess.DisplayPath)
 	behavior := &harnessAuditLogBehavior{
 		LogLimit:            limit,
 		LogsConsidered:      len(paths),
@@ -136,8 +146,8 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 
 	findings = append(findings, historicalLogBehaviorFindings(aggregate, currentAggregate)...)
 	findings = append(findings, childLifecycleFindings(childLifecycle)...)
-	findings = append(findings, historicalTurnPhaseProjectionFindings(paths)...)
-	findings = append(findings, historicalOpenEvidenceFinalAnswerProjectionFindings(paths)...)
+	findings = append(findings, historicalTurnPhaseProjectionFindings(m.cfg.Root, paths)...)
+	findings = append(findings, historicalOpenEvidenceFinalAnswerProjectionFindings(m.cfg.Root, paths)...)
 	findings = append(findings, contractCoverageWarningFindingsWithID("contract_event_invalid", currentContractWarnings)...)
 	findings = append(findings, historicalContractCoverageWarningFindings(contractWarnings, currentContractWarnings)...)
 	findings = append(findings, contractCoverageFindings(currentContractCoverage)...)
@@ -158,7 +168,7 @@ var malformedOutputAuditRoles = map[string]struct{}{
 	"malformed_output_recovery_exhausted": {},
 }
 
-func auditMalformedOutputStages(paths []string) (*harnessAuditMalformedOutput, []string) {
+func auditMalformedOutputStages(root string, paths []string) (*harnessAuditMalformedOutput, []string) {
 	out := &harnessAuditMalformedOutput{
 		EventCounts:            map[string]int{},
 		ValidationResultCounts: map[string]int{},
@@ -173,7 +183,7 @@ func auditMalformedOutputStages(paths []string) (*harnessAuditMalformedOutput, [
 	logsHit := map[string]struct{}{}
 
 	for _, path := range paths {
-		body, err := os.ReadFile(path)
+		body, err := safepath.ReadFileUnderRoot(root, path, "audit log", safepath.Options{})
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", filepath.Base(path), err))
 			continue
@@ -514,7 +524,7 @@ func harnessAuditPerfReportTime(root string, report eval.PerfReport) (time.Time,
 		path = filepath.Join(root, filepath.FromSlash(path))
 	}
 
-	if parsed, ok := harnessAuditLogFirstTimestamp(path); ok {
+	if parsed, ok := harnessAuditLogFirstTimestamp(root, path); ok {
 		return parsed, true
 	}
 
@@ -527,19 +537,23 @@ func harnessAuditPerfReportTime(root string, report eval.PerfReport) (time.Time,
 		}
 	}
 
-	if info, err := os.Stat(path); err == nil {
-		return info.ModTime().UTC(), true
+	file, err := safepath.OpenFileUnderRoot(root, path, "audit log", safepath.Options{})
+	if err == nil {
+		defer file.Close()
+		if info, statErr := file.Stat(); statErr == nil {
+			return info.ModTime().UTC(), true
+		}
 	}
 
 	return time.Time{}, false
 }
 
-func harnessAuditLogFirstTimestamp(path string) (time.Time, bool) {
+func harnessAuditLogFirstTimestamp(root string, path string) (time.Time, bool) {
 	if strings.TrimSpace(path) == "" {
 		return time.Time{}, false
 	}
 
-	file, err := os.Open(path)
+	file, err := safepath.OpenFileUnderRoot(root, path, "audit log", safepath.Options{})
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -748,12 +762,20 @@ func firstAuditTools(in []eval.PerfToolMix, n int) []eval.PerfToolMix {
 	return append([]eval.PerfToolMix(nil), in[:n]...)
 }
 
-func auditObservedCapabilityMix(paths []string, logCount int, warnings *[]string, displayPath func(string) string) []harnessAuditCapabilityMix {
+func auditObservedCapabilityMix(root string, paths []string, logCount int, warnings *[]string, displayPath func(string) string) []harnessAuditCapabilityMix {
 	callsByCapability := make(map[string]int)
 	total := 0
 
 	for _, path := range paths {
-		records, err := eval.LoadRecords(path)
+		file, err := safepath.OpenFileUnderRoot(root, path, "audit log", safepath.Options{})
+		var records []eval.Record
+		if err == nil {
+			records, err = eval.LoadRecordsFromReader(file)
+			closeErr := file.Close()
+			if err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}
 		if err != nil {
 			if warnings != nil {
 				label := path

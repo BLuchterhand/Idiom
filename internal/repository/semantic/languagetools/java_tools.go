@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticjava "idiom/internal/repository/semantic/java"
 )
@@ -30,7 +31,7 @@ func (m *Manager) isJavaWorkspace() bool {
 	// Fall back to a shallow walk for stray `.java` files.
 	found := false
 
-	_ = filepath.WalkDir(m.Root(), func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(m.Root(), m.Root(), "Java workspace detection", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

@@ -36,6 +36,7 @@ type ToolManifestToolOptions struct {
 	IncludeTypescript             bool
 	IncludeRust                   bool
 	IncludeJava                   bool
+	IncludeGDScript               bool
 }
 
 func ToolManifestTools(opts ToolManifestToolOptions) []string {
@@ -91,6 +92,10 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 		tools = appendLanguageManifestTools(tools, "java")
 	}
 
+	if opts.IncludeGDScript {
+		tools = appendLanguageManifestTools(tools, "gdscript")
+	}
+
 	if opts.PlanThenExecutePlannerSurface {
 		tools = filterManifestToolNames(tools, PlanExecutePlannerToolNames()...)
 	}
@@ -144,6 +149,7 @@ func toolManifestToolsAcrossBuiltInSurfaces() []string {
 		IncludeTypescript: true,
 		IncludeRust:       true,
 		IncludeJava:       true,
+		IncludeGDScript:   true,
 	}
 	tools := ToolManifestTools(opts)
 

@@ -2,13 +2,16 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 
 	plancontract "idiom/internal/contracts/plan"
@@ -569,9 +572,9 @@ func loadPlanArtifactAuditPacket(root string, packID string) (comprehension.Pack
 	}
 
 	path := filepath.Join(strings.TrimSpace(root), ".idiom", "comprehension", "views", packID+".json")
-	body, err := os.ReadFile(filepath.Clean(path))
+	body, err := safepath.ReadFileUnderRoot(root, filepath.Clean(path), "plan artifact", safepath.Options{})
 
-	if os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return comprehension.PackResult{}, false, nil
 	}
 

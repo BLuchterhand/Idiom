@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/hosttools"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
 )
@@ -26,7 +27,7 @@ func (m *Manager) isCppWorkspace() bool {
 
 	found := false
 
-	_ = filepath.WalkDir(m.Root(), func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(m.Root(), m.Root(), "C++ workspace detection", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

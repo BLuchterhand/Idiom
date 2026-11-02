@@ -21,7 +21,7 @@ var _ = Describe("Plan artifact reference loading", Label("e2e", "integration", 
 		original := artifact
 		original.Edits = append([]planartifact.PlanEdit(nil), artifact.Edits...)
 
-		Expect(HydrateRefs(baseDir, &artifact)).To(Succeed())
+		Expect(HydrateRefs(filepath.Dir(baseDir), baseDir, &artifact)).To(Succeed())
 		Expect(artifact).To(Equal(original))
 		_, err := os.Stat(baseDir)
 		Expect(err).To(MatchError(os.ErrNotExist))
@@ -31,7 +31,7 @@ var _ = Describe("Plan artifact reference loading", Label("e2e", "integration", 
 		baseDir := filepath.Join(GinkgoT().TempDir(), "missing-plan-artifacts")
 		artifact := refBackedPlanArtifact("assets/body.txt")
 
-		err := HydrateRefs(baseDir, &artifact)
+		err := HydrateRefs(filepath.Dir(baseDir), baseDir, &artifact)
 
 		Expect(err).To(MatchError(ContainSubstring("open plan artifact directory")))
 		Expect(artifact.Edits[0].NewText).To(BeEmpty())
@@ -46,7 +46,7 @@ var _ = Describe("Plan artifact reference loading", Label("e2e", "integration", 
 			ReplaceAll: true,
 		}}}
 
-		err := HydrateRefs(baseDir, &artifact)
+		err := HydrateRefs(filepath.Dir(baseDir), baseDir, &artifact)
 
 		Expect(err).To(MatchError(ContainSubstring("mutually exclusive")))
 		Expect(err.Error()).NotTo(ContainSubstring("open plan artifact directory"))
@@ -79,7 +79,7 @@ var _ = Describe("Plan artifact reference loading", Label("e2e", "integration", 
 			var err error
 			switch entrypoint {
 			case "hydrate":
-				err = HydrateRefs(baseDir, &artifact)
+				err = HydrateRefs(filepath.Dir(baseDir), baseDir, &artifact)
 				Expect(artifact.Edits[0].NewText).To(BeEmpty())
 			case "load":
 				planPath := filepath.Join(baseDir, "plan.json")
@@ -87,7 +87,7 @@ var _ = Describe("Plan artifact reference loading", Label("e2e", "integration", 
 				Expect(marshalErr).NotTo(HaveOccurred())
 				Expect(os.WriteFile(planPath, body, 0o600)).To(Succeed())
 
-				loaded, loadErr := Load(planPath)
+				loaded, loadErr := Load(filepath.Dir(baseDir), planPath)
 				err = loadErr
 				Expect(loaded.Edits).To(BeEmpty())
 			default:
@@ -114,7 +114,7 @@ var _ = Describe("Plan artifact reference loading", Label("e2e", "integration", 
 		planPath := filepath.Join(baseDir, "plan.json")
 		Expect(os.WriteFile(planPath, body, 0o600)).To(Succeed())
 
-		loaded, err := Load(planPath)
+		loaded, err := Load(filepath.Dir(baseDir), planPath)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(loaded.Edits).To(HaveLen(1))
 		Expect(loaded.Edits[0].NewText).To(Equal("planned body\n"))

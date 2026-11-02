@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
@@ -136,7 +137,7 @@ func BuildTsIndexWithOptions(root string, opts semantic.IndexOptions) (*TsIndex,
 	paths := make([]string, 0, 64)
 
 	errStop := filepath.SkipAll
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "TypeScript index", func(path string, d os.DirEntry, walkErr error) error {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
@@ -211,7 +212,7 @@ func BuildTsIndexWithOptions(root string, opts semantic.IndexOptions) (*TsIndex,
 
 		full := filepath.Join(root, filepath.FromSlash(rel))
 
-		contentBytes, err := os.ReadFile(full)
+		contentBytes, err := indexsupport.ReadFileUnderRoot(root, full)
 		if err != nil {
 			continue
 		}

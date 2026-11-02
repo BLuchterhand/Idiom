@@ -73,7 +73,10 @@ func (s *ConfiguredToolSurface) Close() {
 }
 
 func (s *ConfiguredToolSurface) ListToolNamesForProfile(profile string) []string {
-	opts := ToolSurfaceManifestOptions{IncludeGo: true, IncludeCpp: true, IncludePython: true, IncludeTypescript: true, IncludeRust: true, IncludeJava: true}
+	opts := ToolSurfaceManifestOptions{
+		IncludeGo: true, IncludeCpp: true, IncludePython: true,
+		IncludeTypescript: true, IncludeRust: true, IncludeJava: true, IncludeGDScript: true,
+	}
 	snapshot := s.Manager.toolSurface.Snapshot(opts, s.Manager.externalToolBaseDir())
 
 	tools := snapshot.AllowedTools()

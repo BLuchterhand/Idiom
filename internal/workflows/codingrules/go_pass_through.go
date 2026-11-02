@@ -6,12 +6,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	rulescontract "idiom/internal/contracts/codingrules"
+	"idiom/internal/platform/safepath"
 )
 
 const inlineAllowPrefix = "idiom:allow"
@@ -44,7 +44,7 @@ func checkGoPassThroughFile(root string, absPath string, rule rulescontract.Effe
 	}
 	rel = filepath.ToSlash(filepath.Clean(rel))
 
-	body, err := os.ReadFile(absPath)
+	body, err := safepath.ReadFileUnderRoot(root, absPath, "coding rules source", safepath.Options{})
 	if err != nil {
 		return nil, 0, err
 	}
