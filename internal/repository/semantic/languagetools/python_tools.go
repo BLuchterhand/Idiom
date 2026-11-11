@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticpython "idiom/internal/repository/semantic/python"
 )
@@ -41,7 +42,7 @@ func (m *Manager) isPythonWorkspace() bool {
 	// Fallback: any .py under root (skipping the usual vendor dirs).
 	found := false
 
-	_ = filepath.WalkDir(m.Root(), func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(m.Root(), m.Root(), "Python workspace detection", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -176,7 +177,7 @@ func (m *Manager) pythonFindSymbol(req ToolRequest) ToolResult {
 	for _, match := range matches {
 		display, err := m.pythonHandleDisplay(match.Path)
 		if err != nil {
-			continue
+			display = filepath.ToSlash(match.Path)
 		}
 
 		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, pythonDisplayName(match.Qualified, match.Name)))
@@ -355,7 +356,12 @@ func (m *Manager) pythonReferences(ctx context.Context, req ToolRequest) ToolRes
 	}
 
 	pathFilter, err := m.pythonPathFilterForRequest(req)
-	if err == nil {
+	pathAccessible := true
+	if strings.TrimSpace(req.Path) != "" {
+		_, resolveErr := m.resolvePath(req.Path, "")
+		pathAccessible = resolveErr == nil
+	}
+	if err == nil && pathAccessible {
 		if output, lspErr := m.pythonReferencesViaLSP(ctx, match, pathFilter); lspErr == nil && strings.TrimSpace(output) != "" {
 			return ToolResult{
 				Tool:    "python_references",
@@ -372,11 +378,37 @@ func (m *Manager) pythonReferences(ctx context.Context, req ToolRequest) ToolRes
 	}
 	result := m.searchContent(ctx, searchReq, "python_references")
 
-	if result.Error == "" {
+	if result.Error == "" && strings.TrimSpace(result.Output) != "" {
 		result.Summary = "Resolved Python references via semantic/rg fallback"
+		return result
 	}
 
-	return result
+	index, indexErr := m.getPythonIndex()
+	if indexErr != nil {
+		return result
+	}
+	pathFilter = m.pythonPathFilter(req.Path)
+	references := index.FindReferences(match.Name, goResultLimit(req.MaxDepth, 50))
+	lines := make([]string, 0, len(references))
+	for _, reference := range references {
+		if pathFilter != "" && !pathMatchesFilter(reference.Path, pathFilter) {
+			continue
+		}
+		display, displayErr := m.pythonHandleDisplay(reference.Path)
+		if displayErr != nil {
+			display = filepath.ToSlash(reference.Path)
+		}
+		lines = append(lines, fmt.Sprintf("%s:%d %s", display, reference.Line, reference.Name))
+	}
+	if len(lines) == 0 {
+		return result
+	}
+	return ToolResult{
+		Tool:          "python_references",
+		Summary:       fmt.Sprintf("Found %d Python reference(s) from the syntax index after source search failed.", len(lines)),
+		Output:        strings.Join(lines, "\n"),
+		PrecisionTier: PrecisionTierSyntaxIndex,
+	}
 }
 
 func (m *Manager) pythonCallsFrom(ctx context.Context, req ToolRequest) ToolResult {
@@ -705,7 +737,30 @@ func (m *Manager) pythonPathFilter(path string) string {
 
 	resolved, err := m.resolvePath(path, "")
 	if err != nil {
-		return ""
+		cleaned := safepath.CleanPath(path)
+		if filepath.IsAbs(cleaned) {
+			root, rootErr := filepath.Abs(m.Root())
+			if rootErr != nil {
+				return "\x00"
+			}
+			root = safepath.CleanPath(root)
+			if strings.EqualFold(root, cleaned) {
+				return ""
+			}
+			rel, ok := safepath.Rel(root, cleaned)
+			if !ok {
+				return "\x00"
+			}
+			cleaned = rel
+		}
+		cleaned = filepath.ToSlash(filepath.Clean(cleaned))
+		if cleaned == "." {
+			return ""
+		}
+		if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+			return "\x00"
+		}
+		return cleaned
 	}
 
 	if filepath.Clean(resolved) == filepath.Clean(m.Root()) {

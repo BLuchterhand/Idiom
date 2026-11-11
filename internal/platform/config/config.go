@@ -13,6 +13,7 @@ import (
 	"idiom/internal/contracts/mcpidentity"
 	"idiom/internal/contracts/runprofile"
 	"idiom/internal/contracts/toolpolicy"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -1125,7 +1126,7 @@ func canonicalizePathSlice(paths []string) []string {
 // equivalent roots such as "Idiom" and "idiom" from splitting telemetry,
 // caches, or language-server workspace identities.
 func CanonicalizeExistingPath(path string) string {
-	path = strings.TrimSpace(path)
+	path = safepath.CleanPath(strings.TrimSpace(path))
 	if path == "" {
 		return ""
 	}
@@ -1137,8 +1138,8 @@ func CanonicalizeExistingPath(path string) string {
 		}
 	}
 
-	abs = filepath.Clean(abs)
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
+	abs = safepath.CleanPath(filepath.Clean(abs))
+	if real, err := safepath.CanonicalExistingPath(abs); err == nil {
 		return canonicalizeExistingPathCase(real)
 	}
 
@@ -1155,7 +1156,7 @@ func CanonicalizeExistingPath(path string) string {
 		suffix = append([]string{filepath.Base(current)}, suffix...)
 		current = parent
 
-		if real, err := filepath.EvalSymlinks(current); err == nil {
+		if real, err := safepath.CanonicalExistingPath(current); err == nil {
 			parts := append([]string{canonicalizeExistingPathCase(real)}, suffix...)
 			return filepath.Join(parts...)
 		}
@@ -1189,7 +1190,7 @@ func canonicalizeExistingPathCase(abs string) string {
 
 		matched := part
 
-		entries, err := os.ReadDir(current)
+		entries, err := safepath.ReadDirUnderRoot(volume+string(filepath.Separator), current, "canonicalize path case", safepath.Options{})
 		if err != nil {
 			return cleaned
 		}

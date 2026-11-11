@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
@@ -160,7 +161,7 @@ func (m *Manager) notFoundRecoveryHint(path string) string {
 		return ""
 	}
 
-	entries, err := os.ReadDir(parent)
+	entries, err := safepath.ReadDirUnderRoot(m.cfg.Root, parent, "read recovery directory", safepath.Options{})
 	if err != nil {
 		grandparent := filepath.Dir(parent)
 		if grandparent != "" && grandparent != parent {
@@ -444,7 +445,7 @@ func (m *Manager) collectWorkspacePathCandidates() []workspacePathCandidate {
 
 	candidates := make([]workspacePathCandidate, 0, min(scanCap, 4096))
 
-	_ = filepath.WalkDir(m.cfg.Root, func(path string, d os.DirEntry, walkErr error) error {
+	_ = safepath.WalkDirUnderRoot(m.cfg.Root, m.cfg.Root, "workspace path suggestions", func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -602,7 +603,7 @@ func (m *Manager) siblingDirectoriesOfMissingAncestor(queryLower string) []strin
 			continue
 		}
 
-		entries, err := os.ReadDir(ancestorAbs)
+		entries, err := safepath.ReadDirUnderRoot(m.cfg.Root, ancestorAbs, "read workspace directory", safepath.Options{})
 		if err != nil {
 			continue
 		}

@@ -19,6 +19,7 @@ __pycache__/
 
 # Local runtime state
 .cache/
+/.gocache/
 .idiom/*
 !.idiom/backends.json
 !.idiom/config.json

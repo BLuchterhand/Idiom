@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/hosttools"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticrust "idiom/internal/repository/semantic/rust"
 )
@@ -28,7 +29,7 @@ func (m *Manager) isRustWorkspace() bool {
 
 	found := false
 
-	_ = filepath.WalkDir(m.Root(), func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(m.Root(), m.Root(), "Rust workspace detection", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

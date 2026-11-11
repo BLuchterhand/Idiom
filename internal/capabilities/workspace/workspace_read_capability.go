@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -122,12 +123,20 @@ func (a *PathAccess) openReadCapabilityWithAuthority(ctx context.Context, identi
 		authorization: current,
 	}
 	if current.targetIdentity.IsDir() {
-		capability.root, err = os.OpenRoot(current.canonical)
+		if os.SameFile(current.targetIdentity, current.authorityIdentity) {
+			capability.root, err = safepath.OpenRootPath(current.canonical, "read target")
+		} else {
+			capability.root, err = safepath.OpenRootUnderRoot(current.authorityPath, current.canonical, "read target", safepath.Options{})
+		}
 		if err == nil {
 			capability.opened, err = capability.root.Stat(".")
 		}
 	} else {
-		capability.file, err = os.Open(current.canonical)
+		rootPath := current.authorityPath
+		if !current.authorityIdentity.IsDir() {
+			rootPath = filepath.Dir(current.authorityPath)
+		}
+		capability.file, err = safepath.OpenFileUnderRoot(rootPath, current.canonical, "read target", safepath.Options{})
 		if err == nil {
 			capability.opened, err = capability.file.Stat()
 		}
@@ -157,11 +166,11 @@ func (a *PathAccess) authorizeReadTarget(identity executionSessionIdentity, path
 	if err != nil {
 		return workspaceReadAuthorization{}, err
 	}
-	canonical, err := filepath.EvalSymlinks(candidate)
+	canonical, err := safepath.CanonicalExistingPath(candidate)
 	if err != nil {
 		return workspaceReadAuthorization{}, err
 	}
-	canonical = filepath.Clean(canonical)
+	canonical = safepath.CleanPath(canonical)
 	targetIdentity, err := inspectFilesystemPathIdentity(canonical)
 	if err != nil {
 		return workspaceReadAuthorization{}, err
@@ -179,9 +188,9 @@ func (a *PathAccess) authorizeReadTarget(identity executionSessionIdentity, path
 		return authorization, nil
 	}
 
-	workspaceRoot, err := filepath.EvalSymlinks(filepath.Clean(a.cfg.Root))
+	workspaceRoot, err := safepath.CanonicalExistingPath(a.cfg.Root)
 	if err == nil {
-		workspaceRoot = filepath.Clean(workspaceRoot)
+		workspaceRoot = safepath.CleanPath(workspaceRoot)
 		if _, within := workspaceRelativePath(workspaceRoot, canonical); within {
 			rootIdentity, identityErr := inspectFilesystemPathIdentity(workspaceRoot)
 			if identityErr != nil {
@@ -196,12 +205,12 @@ func (a *PathAccess) authorizeReadTarget(identity executionSessionIdentity, path
 	}
 
 	for _, grant := range a.ApprovedSystemSearchGrantsSnapshot(identity) {
-		grantPath := filepath.Clean(grant.Path)
-		grantCanonical, evalErr := filepath.EvalSymlinks(grantPath)
+		grantPath := safepath.CleanPath(grant.Path)
+		grantCanonical, evalErr := safepath.CanonicalExistingPath(grantPath)
 		if evalErr != nil {
 			continue
 		}
-		grantCanonical = filepath.Clean(grantCanonical)
+		grantCanonical = safepath.CleanPath(grantCanonical)
 		grantIdentity, identityErr := inspectFilesystemPathIdentity(grantCanonical)
 		if identityErr != nil || grant.Identity == nil || !os.SameFile(grant.Identity, grantIdentity) {
 			continue
@@ -222,27 +231,27 @@ func (a *PathAccess) authorizeReadTarget(identity executionSessionIdentity, path
 }
 
 func (a *PathAccess) readCandidatePath(path string, workdir string) (string, error) {
-	path = strings.TrimSpace(path)
+	path = safepath.CleanPath(strings.TrimSpace(path))
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
 
 	if filepath.IsAbs(path) {
-		return filepath.Clean(path), nil
+		return safepath.CleanPath(filepath.Clean(path)), nil
 	}
-	base := filepath.Clean(strings.TrimSpace(a.cfg.CWD))
+	base := safepath.CleanPath(strings.TrimSpace(a.cfg.CWD))
 	if base == "." || base == "" {
-		base = filepath.Clean(a.cfg.Root)
+		base = safepath.CleanPath(a.cfg.Root)
 	}
-	if cleanedWorkdir := strings.TrimSpace(workdir); cleanedWorkdir != "" && cleanedWorkdir != "." {
+	if cleanedWorkdir := safepath.CleanPath(strings.TrimSpace(workdir)); cleanedWorkdir != "" && cleanedWorkdir != "." {
 		if filepath.IsAbs(cleanedWorkdir) {
-			base = filepath.Clean(cleanedWorkdir)
+			base = safepath.CleanPath(filepath.Clean(cleanedWorkdir))
 		} else {
-			base = filepath.Join(base, cleanedWorkdir)
+			base = safepath.CleanPath(filepath.Join(base, cleanedWorkdir))
 		}
 	}
 
-	return filepath.Clean(filepath.Join(base, path)), nil
+	return safepath.CleanPath(filepath.Clean(filepath.Join(base, path))), nil
 }
 
 func sameWorkspaceReadAuthorization(expected workspaceReadAuthorization, current workspaceReadAuthorization) bool {
@@ -625,36 +634,22 @@ func (c *workspaceReadCapability) ReadFile(relative string) ([]byte, os.FileInfo
 		return nil, nil, fmt.Errorf("read capability target is not a directory")
 	}
 	relative = cleanReadCapabilityRelative(relative)
-	before, err := c.root.Lstat(relative)
-	if err != nil {
-		return nil, nil, err
-	}
-	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
-		return nil, nil, fmt.Errorf("read target %q must be a regular file and must not be a symlink", filepath.ToSlash(relative))
-	}
-	file, err := c.root.Open(relative)
+	file, err := safepath.OpenFileFromRoot(c.root, c.authorization.canonical, relative, "read target", safepath.Options{
+		RejectSymlinkTarget: true,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
 	defer file.Close()
 	opened, openErr := file.Stat()
-	after, afterErr := c.root.Lstat(relative)
-	if openErr != nil || afterErr != nil || after.Mode()&os.ModeSymlink != 0 || !after.Mode().IsRegular() || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
-		err := errors.Join(openErr, afterErr)
-		if err == nil {
-			err = errors.New("read target changed while opening")
-		}
-		return nil, nil, err
+	if openErr != nil {
+		return nil, nil, openErr
+	}
+	if !opened.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("read target %q must be a regular file", filepath.ToSlash(relative))
 	}
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return nil, nil, err
-	}
-	finalInfo, err := c.root.Lstat(relative)
-	if err != nil || finalInfo.Mode()&os.ModeSymlink != 0 || !finalInfo.Mode().IsRegular() || !os.SameFile(opened, finalInfo) {
-		if err == nil {
-			err = errors.New("read target changed while reading")
-		}
 		return nil, nil, err
 	}
 	if err := c.Validate(); err != nil {

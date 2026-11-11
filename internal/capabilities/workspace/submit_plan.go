@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/planartifactstore"
 )
@@ -208,7 +210,7 @@ func (m *Manager) submitPlan(ctx context.Context, req ToolRequest) ToolResult {
 	if err != nil {
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve plan dir: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
-	if err := planartifactstore.HydrateRefs(refDir, &validationArtifact); err != nil {
+	if err := planartifactstore.HydrateRefs(m.cfg.Root, refDir, &validationArtifact); err != nil {
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.InvalidArgument, reasonPlanSubmissionRejected)
 	}
 
@@ -257,11 +259,24 @@ func (m *Manager) submitPlan(ctx context.Context, req ToolRequest) ToolResult {
 	if err != nil {
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve plan dir: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	workspaceRoot, err := safepath.OpenRootPath(m.cfg.Root, "workspace root")
+	if err != nil {
+		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("open workspace root: %w", err), failures.Internal, reasonToolWriteFailed)
+	}
+	defer workspaceRoot.Close()
+	_, dirRelative, err := safepath.UnderRoot(m.cfg.Root, dir, "plan artifact directory", safepath.Options{
+		AllowMissing:           true,
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
+	if err != nil {
+		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("plan directory must stay under workspace root"), failures.Internal, reasonToolWriteFailed)
+	}
+	if err := workspaceRoot.MkdirAll(filepath.FromSlash(dirRelative), 0o755); err != nil {
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("create plan dir: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
 
-	edits, spilled, err := spillLargePlanEditBodies(m.cfg.Root, dir, stamp, artifact.Edits)
+	edits, spilled, err := spillLargePlanEditBodies(workspaceRoot, dirRelative, stamp, artifact.Edits)
 	if err != nil {
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan failed", err, failures.Internal, reasonToolWriteFailed)
 	}
@@ -275,27 +290,28 @@ func (m *Manager) submitPlan(ctx context.Context, req ToolRequest) ToolResult {
 	})
 
 	if err := planartifact.ValidatePlanArtifact(artifact); err != nil {
-		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
+		cleanupPlanEditBodyRefs(workspaceRoot, dirRelative, artifact.Edits)
 
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.InvalidArgument, reasonPlanArtifactSchemaInvalid)
 	}
 
 	path, _, err := planartifactstore.StoreFilePath(m.cfg.Root, stamp+".plan.json")
 	if err != nil {
-		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
+		cleanupPlanEditBodyRefs(workspaceRoot, dirRelative, artifact.Edits)
 
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve artifact path: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
 
 	body, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
-		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
+		cleanupPlanEditBodyRefs(workspaceRoot, dirRelative, artifact.Edits)
 
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("marshal artifact: %w", err), failures.Internal, reasonToolInternalFailure)
 	}
 
-	if err := atomicfile.WriteFile(path, body, 0o644); err != nil {
-		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
+	artifactRelative := filepath.Join(filepath.FromSlash(dirRelative), filepath.Base(path))
+	if err := atomicfile.WriteFileRoot(workspaceRoot, artifactRelative, body, 0o644); err != nil {
+		cleanupPlanEditBodyRefs(workspaceRoot, dirRelative, artifact.Edits)
 
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("write artifact: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
@@ -305,7 +321,7 @@ func (m *Manager) submitPlan(ctx context.Context, req ToolRequest) ToolResult {
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve plan pointer: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
 
-	_ = atomicfile.WriteFile(pointer, body, 0o644)
+	_ = atomicfile.WriteFileRoot(workspaceRoot, filepath.Join(filepath.FromSlash(dirRelative), filepath.Base(pointer)), body, 0o644)
 
 	return ToolResult{
 		Tool:    ToolNameSubmitPlan,
@@ -613,7 +629,7 @@ func ValidatePlanEditAnchorProvenance(workspaceRoot string, edit planartifact.Pl
 		return fmt.Errorf("anchor provenance path mismatch: edit path %s, provenance path %s", rel, provenance.Path)
 	}
 
-	body, err := os.ReadFile(abs)
+	body, err := safepath.ReadFileUnderRoot(workspaceRoot, abs, "plan edit file", safepath.Options{})
 	if err != nil {
 		return fmt.Errorf("anchor provenance stale for %s: could not read current file: %w", rel, err)
 	}
@@ -656,7 +672,7 @@ func buildPlanEditAnchorProvenance(workspaceRoot string, edit planartifact.PlanE
 		return planartifact.PlanEditAnchorProvenance{}, err
 	}
 
-	body, err := os.ReadFile(abs)
+	body, err := safepath.ReadFileUnderRoot(workspaceRoot, abs, "plan edit file", safepath.Options{})
 	if err != nil {
 		return planartifact.PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not read %s: %w", rel, err)
 	}
@@ -1038,8 +1054,8 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidEditShape, edit, fmt.Errorf("plan edit preflight could not resolve path %q: %w", edit.Path, err))
 	}
 
-	body, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
+	body, err := safepath.ReadFileUnderRoot(m.cfg.Root, path, "plan edit file", safepath.Options{})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("plan edit preflight could not read %s: %w", edit.Path, err))
 	}
 
@@ -1167,9 +1183,9 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 
 		body, ok := projected[path]
 		if !ok {
-			body, err = os.ReadFile(path)
+			body, err = safepath.ReadFileUnderRoot(m.cfg.Root, path, "plan edit file", safepath.Options{})
 			if err != nil {
-				if os.IsNotExist(err) && planEditIsWholeFileWrite(edit) {
+				if errors.Is(err, fs.ErrNotExist) && planEditIsWholeFileWrite(edit) {
 					body = nil
 				} else {
 					return submitPlanEditDiagnosticError(toolfacts.SubmitPlanDiagnosticInvalidAnchor, edit, fmt.Errorf("edits[%d]: plan edit preflight could not read %s: %w", i, edit.Path, err))
@@ -1481,7 +1497,7 @@ func (m *Manager) repairPlanArtifactOldTextAnchors(artifact *planartifact.PlanAr
 			continue
 		}
 
-		body, err := os.ReadFile(path)
+		body, err := safepath.ReadFileUnderRoot(m.cfg.Root, path, "plan edit file", safepath.Options{})
 		if err != nil {
 			continue
 		}
@@ -1696,15 +1712,15 @@ func preferredLineEnding(text string) string {
 	return "\n"
 }
 
-func spillLargePlanEditBodies(root string, dir string, stamp string, edits []planartifact.PlanEdit) ([]planartifact.PlanEdit, int, error) {
+func spillLargePlanEditBodies(root *os.Root, dirRelative string, stamp string, edits []planartifact.PlanEdit) ([]planartifact.PlanEdit, int, error) {
 	out := append([]planartifact.PlanEdit(nil), edits...)
 	spilled := 0
 
 	for i := range out {
 		if shouldSpillPlanInlineText(out[i].NewText) {
-			ref, err := writePlanEditBodyRef(root, dir, stamp, i, "new_text", out[i].NewText)
+			ref, err := writePlanEditBodyRef(root, dirRelative, stamp, i, "new_text", out[i].NewText)
 			if err != nil {
-				cleanupPlanEditBodyRefs(root, dir, out)
+				cleanupPlanEditBodyRefs(root, dirRelative, out)
 
 				return nil, 0, err
 			}
@@ -1716,12 +1732,13 @@ func spillLargePlanEditBodies(root string, dir string, stamp string, edits []pla
 
 		if shouldSpillPlanInlineText(out[i].Content) {
 			if out[i].InsertAfterLine > 0 {
+				cleanupPlanEditBodyRefs(root, dirRelative, out)
 				return nil, 0, fmt.Errorf("edits[%d]: insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions in existing files, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content", i, planInlineTextSpillThreshold)
 			}
 
-			ref, err := writePlanEditBodyRef(root, dir, stamp, i, "content", out[i].Content)
+			ref, err := writePlanEditBodyRef(root, dirRelative, stamp, i, "content", out[i].Content)
 			if err != nil {
-				cleanupPlanEditBodyRefs(root, dir, out)
+				cleanupPlanEditBodyRefs(root, dirRelative, out)
 
 				return nil, 0, err
 			}
@@ -1739,32 +1756,27 @@ func shouldSpillPlanInlineText(value string) bool {
 	return len(value) > planInlineTextSpillThreshold
 }
 
-func cleanupPlanEditBodyRefs(root string, dir string, edits []planartifact.PlanEdit) {
+func cleanupPlanEditBodyRefs(root *os.Root, dirRelative string, edits []planartifact.PlanEdit) {
 	for _, edit := range edits {
 		for _, ref := range []string{edit.NewTextRef, edit.ContentRef} {
-			path, ok := planEditBodyRefPath(root, dir, ref)
+			path, ok := planEditBodyRefPath(dirRelative, ref)
 			if !ok {
 				continue
 			}
 
-			_ = os.Remove(path)
+			_ = root.Remove(path)
 		}
 	}
 }
 
-func writePlanEditBodyRef(root string, dir string, stamp string, index int, field string, content string) (string, error) {
-	assetDir := filepath.Join(dir, "assets")
-	if err := os.MkdirAll(assetDir, 0o755); err != nil {
+func writePlanEditBodyRef(root *os.Root, dirRelative string, stamp string, index int, field string, content string) (string, error) {
+	assetDir := filepath.Join(filepath.FromSlash(dirRelative), "assets")
+	if err := root.MkdirAll(assetDir, 0o755); err != nil {
 		return "", fmt.Errorf("create plan asset dir: %w", err)
 	}
 
 	name := fmt.Sprintf("%s-edit-%03d-%s.txt", stamp, index+1, field)
-	path, _, err := planartifactstore.StoreAssetPath(root, name)
-	if err != nil {
-		return "", fmt.Errorf("resolve plan asset %s: %w", name, err)
-	}
-
-	if err := atomicfile.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := atomicfile.WriteFileRoot(root, filepath.Join(assetDir, name), []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write plan asset %s: %w", name, err)
 	}
 
@@ -1786,10 +1798,27 @@ func (m *Manager) planArtifactDir() (string, error) {
 	return dir, nil
 }
 
-// LoadPlanArtifact reads a plan artifact from disk and returns it.
-// Used by the plan-execute orchestrator's executor phase.
+// LoadPlanArtifact reads a plan artifact from the given path and returns it.
+// Workspace plan paths stay contained by their workspace; other paths use
+// their containing directory as the read root.
 func LoadPlanArtifact(path string) (planartifact.PlanArtifact, error) {
-	artifact, err := planartifactstore.Load(path)
+	root := workspaceRootFromPlanArtifactPath(path)
+	loadPath := path
+	if root == "" {
+		var err error
+		root, err = filepath.Abs(filepath.Dir(path))
+		if err != nil {
+			return planartifact.PlanArtifact{}, fmt.Errorf("resolve plan artifact directory %q: %w", path, err)
+		}
+		loadPath = filepath.Base(path)
+	} else {
+		var err error
+		loadPath, err = filepath.Rel(root, path)
+		if err != nil {
+			return planartifact.PlanArtifact{}, fmt.Errorf("resolve plan artifact path relative to workspace %q: %w", root, err)
+		}
+	}
+	artifact, err := planartifactstore.Load(root, loadPath)
 	if err != nil {
 		return planartifact.PlanArtifact{}, err
 	}
@@ -1869,14 +1898,14 @@ func workspaceRootFromPlanArtifactPath(planPath string) string {
 	}
 
 	root := filepath.Dir(idiomDir)
-	if root == "." || root == string(filepath.Separator) {
+	if root == "" {
 		return ""
 	}
 
 	return root
 }
 
-func planEditBodyRefPath(root string, baseDir string, ref string) (string, bool) {
+func planEditBodyRefPath(dirRelative string, ref string) (string, bool) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" || filepath.IsAbs(ref) {
 		return "", false
@@ -1887,20 +1916,9 @@ func planEditBodyRefPath(root string, baseDir string, ref string) (string, bool)
 		return "", false
 	}
 
-	path := filepath.Join(baseDir, clean)
-	rel, err := filepath.Rel(baseDir, path)
-
-	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+	if filepath.Dir(clean) != "assets" || filepath.Base(clean) == "." {
 		return "", false
 	}
 
-	if filepath.Dir(clean) == "assets" {
-		safePath, _, err := planartifactstore.StoreAssetPath(root, filepath.Base(clean))
-		if err != nil {
-			return "", false
-		}
-		path = safePath
-	}
-
-	return path, true
+	return filepath.Join(filepath.FromSlash(dirRelative), clean), true
 }

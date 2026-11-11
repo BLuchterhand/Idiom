@@ -9,6 +9,7 @@ import (
 
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/safepath"
 )
 
 func ResolveScope(input ScopeInput) ScopeResolution {
@@ -169,7 +170,7 @@ func PlanDocumentBasenameMatches(root string, basename string) []string {
 
 	var matches []string
 
-	_ = filepath.WalkDir(rootAbs, func(path string, entry os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(rootAbs, rootAbs, "implementation document source discovery", func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

@@ -7,7 +7,6 @@ import (
 	"go/parser"
 	goscan "go/scanner"
 	"go/token"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,20 +27,6 @@ type WriteGuard struct {
 
 func NewWriteGuard() WriteGuard {
 	return WriteGuard{editRecoveryRequired: make(map[string]editRecoveryState)}
-}
-
-func (g *WriteGuard) RejectInvalidPlannedWrite(toolName string, summary string, path string, contents []byte, displayPath func(string) string) *ToolResult {
-	if g == nil {
-		return nil
-	}
-
-	before, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		result := toolFailureFromErrorResult(toolName, summary, fmt.Errorf("preflight could not read existing %s: %w", displayPathValue(displayPath, path), err), failures.Internal, reasonToolInternalFailure)
-		return &result
-	}
-
-	return g.RejectPlannedWrite(toolName, summary, path, before, contents, displayPath)
 }
 
 func (g *WriteGuard) RejectPlannedWrite(toolName string, summary string, path string, before []byte, contents []byte, displayPath func(string) string) *ToolResult {

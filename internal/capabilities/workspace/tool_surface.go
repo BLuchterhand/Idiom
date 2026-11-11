@@ -27,6 +27,7 @@ type ToolSurfaceManifestOptions struct {
 	IncludeTypescript bool
 	IncludeRust       bool
 	IncludeJava       bool
+	IncludeGDScript   bool
 }
 
 type ToolSurfaceSnapshot struct {
@@ -337,6 +338,7 @@ func toolManifestOptionsForSurface(opts ToolSurfaceManifestOptions) ToolManifest
 		manifestOpts.IncludeTypescript = opts.IncludeTypescript
 		manifestOpts.IncludeRust = opts.IncludeRust
 		manifestOpts.IncludeJava = opts.IncludeJava
+		manifestOpts.IncludeGDScript = opts.IncludeGDScript
 
 		return manifestOpts
 	}
@@ -351,6 +353,7 @@ func toolManifestOptionsForSurface(opts ToolSurfaceManifestOptions) ToolManifest
 		IncludeTypescript: opts.IncludeTypescript,
 		IncludeRust:       opts.IncludeRust,
 		IncludeJava:       opts.IncludeJava,
+		IncludeGDScript:   opts.IncludeGDScript,
 	}
 }
 

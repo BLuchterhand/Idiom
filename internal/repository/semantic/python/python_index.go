@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
@@ -34,6 +35,7 @@ type PythonFile struct {
 	Imports    []string // resolved relative paths when possible; else raw module names
 	RawImports []string // raw module strings as seen in source (for UI)
 	Symbols    []PythonSymbol
+	References []PythonReference
 	Funcs      int
 	Methods    int
 	Classes    int
@@ -58,6 +60,12 @@ type PythonSymbol struct {
 }
 
 type PythonCall struct {
+	Name string
+	Line int
+}
+
+type PythonReference struct {
+	Path string
 	Name string
 	Line int
 }
@@ -100,7 +108,7 @@ func BuildPythonIndexWithOptions(root string, opts semantic.IndexOptions) (*Pyth
 	paths := make([]string, 0, 64)
 
 	errStop := filepath.SkipAll
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "Python index", func(path string, d os.DirEntry, walkErr error) error {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
@@ -180,7 +188,7 @@ func BuildPythonIndexWithOptions(root string, opts semantic.IndexOptions) (*Pyth
 
 		full := filepath.Join(root, filepath.FromSlash(rel))
 
-		contentBytes, readErr := os.ReadFile(full)
+		contentBytes, readErr := indexsupport.ReadFileUnderRoot(root, full)
 		if readErr != nil {
 			continue
 		}
@@ -193,6 +201,7 @@ func BuildPythonIndexWithOptions(root string, opts semantic.IndexOptions) (*Pyth
 			Imports:    resolved,
 			RawImports: rawImports,
 			Symbols:    symbols,
+			References: parsePythonReferences(rel, content),
 			IsTest:     looksLikePythonTestPath(rel),
 			IsInit:     filepath.Base(rel) == "__init__.py",
 			SourceDir:  indexsupport.TopLevelDir(rel),
@@ -229,6 +238,19 @@ func BuildPythonIndexWithOptions(root string, opts semantic.IndexOptions) (*Pyth
 	}
 
 	return index, nil
+}
+
+var pythonIdentifierTokenRe = regexp.MustCompile(`[A-Za-z_]\w*`)
+
+func parsePythonReferences(path string, content string) []PythonReference {
+	references := make([]PythonReference, 0, 32)
+	for lineNumber, line := range strings.Split(content, "\n") {
+		line = stripPythonComment(line)
+		for _, match := range pythonIdentifierTokenRe.FindAllString(line, -1) {
+			references = append(references, PythonReference{Path: path, Name: match, Line: lineNumber + 1})
+		}
+	}
+	return references
 }
 
 var pythonSkippedDirNames = map[string]struct{}{

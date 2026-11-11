@@ -93,6 +93,7 @@ var _ = ginkgo.Describe("tool manifest", func() {
 			IncludeTypescript: true,
 			IncludeRust:       true,
 			IncludeJava:       true,
+			IncludeGDScript:   true,
 		})
 		seen := make(map[string]int, len(tools))
 
@@ -169,6 +170,13 @@ var _ = ginkgo.Describe("tool manifest", func() {
 				want: []string{
 					"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files", "java_definition",
 					"java_implementations", "java_references", "java_calls_from", "java_calls_into", "java_workspace_symbol", "java_diagnostics", "java_file_outline",
+				},
+			},
+			{
+				name: "gdscript",
+				opts: ToolManifestToolOptions{IncludeGDScript: true},
+				want: []string{
+					"gdscript_references", "gdscript_calls_into",
 				},
 			},
 		}

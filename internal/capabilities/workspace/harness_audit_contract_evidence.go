@@ -3,13 +3,13 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -39,7 +39,7 @@ func (m *Manager) auditContractEventCoverageWithFilter(paths []string, filter fu
 	)
 
 	for _, path := range paths {
-		pathEvents, pathWarnings := readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{})
+		pathEvents, pathWarnings := readHarnessAuditAutonomyEventsWithOptions(m.cfg.Root, path, harnessAuditAutonomyDecodeOptions{})
 		includeWarnings := filter == nil || m.harnessAuditPathIsCurrent(path)
 		if includeWarnings {
 			for _, warning := range pathWarnings {
@@ -65,7 +65,7 @@ func (m *Manager) auditContractEventCoverageWithFilter(paths []string, filter fu
 }
 
 func (m *Manager) harnessAuditPathIsCurrent(path string) bool {
-	if parsed, ok := harnessAuditLogFirstTimestamp(path); ok {
+	if parsed, ok := harnessAuditLogFirstTimestamp(m.cfg.Root, path); ok {
 		return !parsed.Before(harnessAuditContractCoverageIntroducedAt)
 	}
 	for _, value := range []string{
@@ -76,8 +76,12 @@ func (m *Manager) harnessAuditPathIsCurrent(path string) bool {
 			return !parsed.Before(harnessAuditContractCoverageIntroducedAt)
 		}
 	}
-	if info, err := os.Stat(path); err == nil {
-		return !info.ModTime().UTC().Before(harnessAuditContractCoverageIntroducedAt)
+	file, err := safepath.OpenFileUnderRoot(m.cfg.Root, path, "audit log", safepath.Options{})
+	if err == nil {
+		defer file.Close()
+		if info, statErr := file.Stat(); statErr == nil {
+			return !info.ModTime().UTC().Before(harnessAuditContractCoverageIntroducedAt)
+		}
 	}
 
 	return true
@@ -174,8 +178,8 @@ type harnessAuditAutonomyDecodeOptions struct {
 	PreserveLegacyTurnPhaseProjection bool
 }
 
-func readHarnessAuditAutonomyEventsWithOptions(path string, opts harnessAuditAutonomyDecodeOptions) ([]autonomy.Event, []string) {
-	data, err := os.ReadFile(path)
+func readHarnessAuditAutonomyEventsWithOptions(root string, path string, opts harnessAuditAutonomyDecodeOptions) ([]autonomy.Event, []string) {
+	data, err := safepath.ReadFileUnderRoot(root, path, "audit log", safepath.Options{})
 	if err != nil {
 		return nil, []string{err.Error()}
 	}
@@ -426,11 +430,11 @@ func harnessAuditLegacyGateSafeAlternatives(gate autonomy.GateKind) []string {
 	}
 }
 
-func historicalTurnPhaseProjectionFindings(paths []string) []harnessAuditFinding {
+func historicalTurnPhaseProjectionFindings(root string, paths []string) []harnessAuditFinding {
 	var events []autonomy.Event
 
 	for _, path := range paths {
-		pathEvents, _ := readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{
+		pathEvents, _ := readHarnessAuditAutonomyEventsWithOptions(root, path, harnessAuditAutonomyDecodeOptions{
 			PreserveLegacyTurnPhaseProjection: true,
 		})
 
@@ -531,11 +535,11 @@ func legacySurfaceSummaryHasUnexpressibleTool(surface autonomy.TurnPhaseSurfaceS
 	return false
 }
 
-func historicalOpenEvidenceFinalAnswerProjectionFindings(paths []string) []harnessAuditFinding {
+func historicalOpenEvidenceFinalAnswerProjectionFindings(root string, paths []string) []harnessAuditFinding {
 	var count int
 
 	for _, path := range paths {
-		pathEvents, _ := readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{})
+		pathEvents, _ := readHarnessAuditAutonomyEventsWithOptions(root, path, harnessAuditAutonomyDecodeOptions{})
 		for _, event := range pathEvents {
 			if preFixOpenEvidenceFinalAnswerProjectionEvent(event) {
 				count++

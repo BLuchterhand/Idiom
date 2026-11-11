@@ -13,6 +13,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
@@ -1210,7 +1211,7 @@ func hasReadableWorkspaceFiles(root string) bool {
 	found := false
 	inspectedFiles := 0
 	budgetExceeded := false
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "workspace prompt routing", func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if path == root {
 				return walkErr

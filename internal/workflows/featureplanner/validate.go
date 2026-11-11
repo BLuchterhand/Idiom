@@ -18,6 +18,7 @@ import (
 	featureplannercontract "idiom/internal/contracts/featureplanner"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/workflows/productworkflow"
 )
@@ -3187,7 +3188,12 @@ func tddObligationsByID(obligations []TDDObligationBrief) map[string]TDDObligati
 }
 
 func existingPackageDir(workspaceRoot string, dir string) bool {
-	entries, err := os.ReadDir(repoRelativePath(workspaceRoot, dir))
+	packagePath := repoRelativePath(workspaceRoot, dir)
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		root = packagePath
+	}
+	entries, err := safepath.ReadDirUnderRoot(root, packagePath, "feature planner package directory", safepath.Options{})
 	if err != nil {
 		return false
 	}

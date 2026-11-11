@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,11 +17,13 @@ import (
 
 	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
 type lspBaseClient struct {
 	process            *commandexec.Process
+	workspaceRoot      string
 	stdin              io.WriteCloser
 	stdout             *bufio.Reader
 	nextID             int
@@ -135,6 +136,7 @@ func newLSPBaseClient(ctx context.Context, root string, serverName string, binar
 
 	return lspBaseClient{
 		process:            process,
+		workspaceRoot:      root,
 		stdin:              process.Stdin(),
 		stdout:             bufio.NewReader(process.Stdout()),
 		serverName:         serverName,
@@ -317,7 +319,7 @@ func (c *lspBaseClient) readMessage() ([]byte, error) {
 }
 
 func (c *lspBaseClient) openFile(path string, languageID string) error {
-	content, err := os.ReadFile(path)
+	content, err := safepath.ReadFileUnderRoot(c.workspaceRoot, path, "language server source", safepath.Options{})
 	if err != nil {
 		return err
 	}

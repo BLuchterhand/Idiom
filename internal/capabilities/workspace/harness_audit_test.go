@@ -937,7 +937,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 		}
 		writeWorkspaceFile(logPath, strings.Join(lines, "\n")+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.Invocations).To(gomega.BeNumerically("==", 1), fmt.Sprintf("unexpected counts: %#v", report))
 		gomega.Expect(report.Terminals).To(gomega.BeNumerically("==", 1), fmt.Sprintf("unexpected counts: %#v", report))
@@ -963,7 +963,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 		}
 		writeWorkspaceFile(logPath, strings.Join(lines, "\n")+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.MissingPatchArtifacts).To(gomega.HaveLen(1), fmt.Sprintf("expected missing patch artifact, got %#v", report.MissingPatchArtifacts))
 		gomega.Expect(report.AcceptancesWithoutTerminal).To(gomega.HaveLen(1), fmt.Sprintf("expected orphan acceptance terminal, got %#v", report.AcceptancesWithoutTerminal))
@@ -1000,7 +1000,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 		}
 		writeWorkspaceFile(logPath, strings.Join(lines, "\n")+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.MismatchedLinks).NotTo(gomega.BeEmpty(), fmt.Sprintf("expected mismatched patch artifact link, got %#v", report))
 
@@ -1023,7 +1023,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 		}
 		writeWorkspaceFile(logPath, strings.Join(lines, "\n")+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.MismatchedLinks).NotTo(gomega.BeEmpty(), fmt.Sprintf("expected mismatched lifecycle link, got %#v", report))
 
@@ -1042,7 +1042,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 
 		writeWorkspaceFile(logPath, string(line)+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.InvalidRecords).To(gomega.HaveLen(1), fmt.Sprintf("expected invalid record, got %#v", report))
 
@@ -1070,7 +1070,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 
 		writeWorkspaceFile(logPath, mustHarnessAuditChildLifecycleLine("verification_acceptance", record)+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.VerificationAcceptanceViolations).To(gomega.HaveLen(1), fmt.Sprintf("expected verification violation, got %#v", report))
 
@@ -1098,7 +1098,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 
 		writeWorkspaceFile(logPath, mustHarnessAuditChildLifecycleLine("verification_acceptance", record)+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.VerificationAcceptancesWithoutResult).To(gomega.HaveLen(1), fmt.Sprintf("expected missing verification result, got %#v", report))
 
@@ -1140,7 +1140,7 @@ var _ = ginkgo.Describe("harness audit", func() {
 		}
 		writeWorkspaceFile(logPath, strings.Join(lines, "\n")+"\n")
 
-		report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+		report := auditChildLifecycleLogs(filepath.Dir(logPath), []string{logPath}, func(path string) string { return path })
 		gomega.Expect(report).NotTo(gomega.BeNil(), "expected child lifecycle report")
 		gomega.Expect(report.VerificationAcceptancesWithoutResult).To(gomega.BeEmpty(), fmt.Sprintf("did not expect missing verification result, got %#v", report.VerificationAcceptancesWithoutResult))
 

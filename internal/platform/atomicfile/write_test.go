@@ -43,6 +43,16 @@ var _ = ginkgo.Describe("Atomic file writes", func() {
 		})).To(gomega.Succeed())
 	})
 
+	ginkgo.It("treats Windows access denied on directory sync as unsupported", func() {
+		if runtime.GOOS != "windows" {
+			ginkgo.Skip("Windows directory sync behavior")
+		}
+
+		gomega.Expect(syncCommittedDirectory("unused", func(string) error {
+			return syscall.Errno(5)
+		})).To(gomega.Succeed())
+	})
+
 	ginkgo.It("returns operational committed-directory sync failures as post-commit errors", func() {
 		cause := errors.New("disk disappeared")
 		err := syncCommittedDirectory("unused", func(string) error { return cause })

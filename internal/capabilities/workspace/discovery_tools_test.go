@@ -22,6 +22,25 @@ import (
 )
 
 var _ = ginkgo.Describe("discovery tools", func() {
+	ginkgo.It("creates the discovery ignore entry through the Git metadata root", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		output, err := exec.Command("git", "-C", root, "init").CombinedOutput()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("git init failed: %s", strings.TrimSpace(string(output))))
+
+		excludePath, err := gitInfoExcludePath(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(os.RemoveAll(filepath.Dir(excludePath))).To(gomega.Succeed())
+		gomega.Expect(ensureDiscoveryArtifactsIgnored(root)).To(gomega.Succeed())
+		data, err := os.ReadFile(excludePath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(string(data)).To(gomega.ContainSubstring(".idiom/"))
+
+		gomega.Expect(ensureDiscoveryArtifactsIgnored(root)).To(gomega.Succeed())
+		data, err = os.ReadFile(excludePath)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(strings.Count(string(data), ".idiom/")).To(gomega.Equal(1))
+	})
+
 	ginkgo.It("generic discovery tools are advertised", func() {
 		tools := ToolManifestTools(ToolManifestToolOptions{})
 		for _, want := range []string{
@@ -2266,7 +2285,7 @@ var _ = ginkgo.Describe("discovery tools", func() {
 			return finding.ID == "turn_phase_contract_contradiction"
 		})).To(gomega.BeFalse(), fmt.Sprintf("pre-fix residual-blocker projection should not raise current contradiction, got %#v", report.Findings))
 
-		historical := historicalOpenEvidenceFinalAnswerProjectionFindings([]string{path})
+		historical := historicalOpenEvidenceFinalAnswerProjectionFindings(filepath.Dir(path), []string{path})
 		gomega.Expect(slices.ContainsFunc(historical, func(finding harnessAuditFinding) bool {
 			return finding.ID == "historical_open_evidence_final_answer_projection" &&
 				strings.Contains(finding.Evidence, "pre-fix turn-phase projection")

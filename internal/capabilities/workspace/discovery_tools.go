@@ -13,6 +13,7 @@ import (
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/hosttools"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 )
 
@@ -176,7 +177,7 @@ func (m *Manager) historyRange(ctx context.Context, req ToolRequest) ToolResult 
 }
 
 func (m *Manager) defaultHistoryRange(rel string) (int, int) {
-	data, err := os.ReadFile(filepath.Join(m.cfg.Root, filepath.FromSlash(rel)))
+	data, err := safepath.ReadFileUnderRoot(m.cfg.Root, filepath.Join(m.cfg.Root, filepath.FromSlash(rel)), "history file", safepath.Options{})
 	if err != nil {
 		return 1, 200
 	}
@@ -503,7 +504,7 @@ func (m *Manager) regexDependencyGraph(target string, lang string, extensions []
 	lines := make([]string, 0)
 
 	for _, file := range files {
-		data, err := os.ReadFile(file)
+		data, err := safepath.ReadFileUnderRoot(m.cfg.Root, file, "dependency source", safepath.Options{})
 		if err != nil {
 			continue
 		}
@@ -590,7 +591,7 @@ func collectFilesByExtension(root string, target string, extensions []string, li
 
 	var files []string
 
-	_ = filepath.WalkDir(target, func(path string, d os.DirEntry, err error) error {
+	_ = safepath.WalkDirUnderRoot(root, target, "workspace source discovery", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
