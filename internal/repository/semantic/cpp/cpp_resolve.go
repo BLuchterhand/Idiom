@@ -57,23 +57,7 @@ func (idx *CppIndex) ResolveSymbol(pattern string, pathFilter string) CppResolut
 		return resolution
 	}
 
-	// Entries with no scope are in-class declarations or free declarations whose
-	// owner the syntax index cannot see; they never create ambiguity by themselves.
-	if len(groups) > 1 {
-		if bare, ok := groups[name]; ok && !qualified {
-			scoped := false
-
-			for owner := range groups {
-				if owner != name && !isTypeOwner(groups[owner]) {
-					scoped = true
-				}
-			}
-
-			if scoped && !isTypeOwner(bare) {
-				delete(groups, name)
-			}
-		}
-	}
+	reconcileExplicitOwners(groups)
 
 	owners := make([]string, 0, len(groups))
 	for owner := range groups {
@@ -99,22 +83,40 @@ func (idx *CppIndex) ResolveSymbol(pattern string, pathFilter string) CppResolut
 	return resolution
 }
 
+// callSite identifies one call line; several calls to the same name on a line
+// (or a call repeated by overlapping symbols) are reported once.
+type callSite struct {
+	path string
+	line int
+}
+
 // CallsIntoName returns call sites whose callee is exactly name, plus the total
-// found before limit truncation. The syntax index records bare callee names, so
+// found under pathFilter (a path prefix, or empty) before limit truncation. The syntax index records bare callee names, so
 // receiver types are not distinguished.
-func (idx *CppIndex) CallsIntoName(name string, limit int) ([]CppCallMatch, int) {
+func (idx *CppIndex) CallsIntoName(name string, pathFilter string, limit int) ([]CppCallMatch, int) {
 	if idx == nil || name == "" {
 		return nil, 0
 	}
 
 	out := make([]CppCallMatch, 0, 16)
+	seenSites := make(map[callSite]bool)
 
 	for _, file := range idx.Files {
+		if pathFilter != "" && !strings.HasPrefix(file.Path, pathFilter) {
+			continue
+		}
+
 		for _, symbol := range file.Symbols {
 			for _, call := range symbol.Calls {
 				if call.Name != name {
 					continue
 				}
+
+				if seenSites[callSite{file.Path, call.Line}] {
+					continue
+				}
+
+				seenSites[callSite{file.Path, call.Line}] = true
 
 				out = append(out, CppCallMatch{
 					Caller: CppSymbolMatch{
@@ -219,15 +221,44 @@ func cppOwnerKey(symbol CppSymbol) string {
 	return firstCppQualified(symbol)
 }
 
-func isTypeOwner(group []CppSymbolMatch) bool {
+// reconcileExplicitOwners folds an owner made only of out-of-class definitions
+// (void Pool::reset() {} at global scope, whose namespace is implied by a using
+// directive or an enclosing block the parser did not see) into the single
+// namespaced owner it can only mean (ns::Pool::reset). With several candidate
+// namespaces it stays separate, so the request is reported ambiguous.
+func reconcileExplicitOwners(groups map[string][]CppSymbolMatch) {
+	for key, group := range groups {
+		if !allExplicit(group) {
+			continue
+		}
+
+		var target string
+
+		matches := 0
+
+		for other := range groups {
+			if other != key && strings.HasSuffix(other, "::"+key) {
+				target = other
+				matches++
+			}
+		}
+
+		if matches == 1 {
+			groups[target] = append(groups[target], group...)
+
+			delete(groups, key)
+		}
+	}
+}
+
+func allExplicit(group []CppSymbolMatch) bool {
 	for _, match := range group {
-		switch match.Kind {
-		case "class", "struct", "enum", "union", "namespace":
-			return true
+		if !match.Explicit {
+			return false
 		}
 	}
 
-	return false
+	return true
 }
 
 func symbolMatch(path string, symbol CppSymbol) CppSymbolMatch {
@@ -241,5 +272,6 @@ func symbolMatch(path string, symbol CppSymbol) CppSymbolMatch {
 		Column:    symbol.Column,
 		StartLine: symbol.StartLine,
 		EndLine:   symbol.EndLine,
+		Explicit:  symbol.Explicit,
 	}
 }

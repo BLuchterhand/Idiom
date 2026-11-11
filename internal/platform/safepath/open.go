@@ -50,7 +50,7 @@ func OpenRootUnderRoot(root string, path string, label string, opts Options) (*o
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(rootPath, path)
 	}
-	path = CleanPath(filepath.Clean(path))
+	path = rebasePathOntoCanonicalRoot(root, rootPath, CleanPath(filepath.Clean(path)))
 	if !samePath(rootPath, path) {
 		if _, ok := Rel(rootPath, path); !ok {
 			return nil, fmt.Errorf("%s must stay under workspace root", label)
@@ -517,4 +517,31 @@ func canonicalExistingRoot(root string) (string, os.FileInfo, error) {
 		return "", nil, fmt.Errorf("workspace root changed while resolving")
 	}
 	return canonical, canonicalInfo, nil
+}
+
+// rebasePathOntoCanonicalRoot maps an absolute path spelled under the caller's
+// root (for example through macOS /var, a symlink to /private/var, or a Windows
+// junction) onto the canonical root. Only the root prefix is rewritten: every
+// later component stays as written, so symlinks inside the root are still seen
+// by the containment and symlink checks that follow.
+func rebasePathOntoCanonicalRoot(root string, canonicalRoot string, path string) string {
+	rawRoot, err := filepath.Abs(filepath.Clean(strings.TrimSpace(root)))
+	if err != nil {
+		return path
+	}
+
+	rawRoot = CleanPath(rawRoot)
+	if samePath(rawRoot, canonicalRoot) {
+		return path
+	}
+
+	if samePath(rawRoot, path) {
+		return canonicalRoot
+	}
+
+	if rel, ok := Rel(rawRoot, path); ok {
+		return CleanPath(filepath.Join(canonicalRoot, filepath.FromSlash(rel)))
+	}
+
+	return path
 }

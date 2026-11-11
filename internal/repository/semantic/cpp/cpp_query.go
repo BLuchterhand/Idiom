@@ -20,6 +20,7 @@ type CppSymbolMatch struct {
 	StartLine int
 	EndLine   int
 	Score     int
+	Explicit  bool
 }
 
 type CppCallMatch struct {

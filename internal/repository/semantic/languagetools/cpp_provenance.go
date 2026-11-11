@@ -34,6 +34,13 @@ var cppGitPathspecs = []string{
 	"*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx", "*.ipp", "*.inl", "*.tpp",
 }
 
+// What produced an answer: the index in this report, or clangd (whose result is
+// not derived from the index).
+const (
+	cppAnsweredBySyntax = "syntax-index"
+	cppAnsweredByClangd = "clangd"
+)
+
 const (
 	cppCodeBudgetExceeded = "cpp_index_budget_exceeded"
 	cppCodeAmbiguous      = "ambiguous_symbol"
@@ -50,6 +57,7 @@ type cppIndexInfo struct {
 	Commit       string
 	Tree         string
 	DirtyPaths   []string
+	IgnoredPaths []string
 	GitError     string
 	Git          time.Duration
 	Build        semanticcpp.CppBuildTimings
@@ -99,6 +107,26 @@ func cppSnapshot(ctx context.Context, root string) cppIndexInfo {
 	}
 
 	info.DirtyPaths = dirty
+
+	// The walk indexes gitignored C++ files too, so they are part of the identity.
+	ignoredArgs := append([]string{"ls-files", "-o", "-i", "--exclude-standard", "--"}, cppGitPathspecs...)
+
+	ignored, err := gitstate.Output(ctx, root, ignoredArgs...)
+	if err != nil {
+		info.GitError = err.Error()
+		info.Git = time.Since(started)
+
+		return info
+	}
+
+	for _, line := range strings.Split(ignored, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			info.IgnoredPaths = append(info.IgnoredPaths, line)
+		}
+	}
+
+	slices.Sort(info.IgnoredPaths)
+
 	info.Key = cppIndexKey(root, info)
 	info.Git = time.Since(started)
 
@@ -109,16 +137,21 @@ func cppIndexKey(root string, info cppIndexInfo) string {
 	hash := sha256.New()
 	fmt.Fprintf(hash, "%s\n%s\n%s\n", cppCollectorVersion, info.GitCommonDir, info.Tree)
 
-	for _, rel := range info.DirtyPaths {
-		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			fmt.Fprintf(hash, "%s\x00deleted\n", rel)
+	for _, group := range []struct {
+		label string
+		paths []string
+	}{{"dirty", info.DirtyPaths}, {"ignored", info.IgnoredPaths}} {
+		for _, rel := range group.paths {
+			content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+			if err != nil {
+				fmt.Fprintf(hash, "%s\x00%s\x00deleted\n", group.label, rel)
 
-			continue
+				continue
+			}
+
+			sum := sha256.Sum256(content)
+			fmt.Fprintf(hash, "%s\x00%s\x00%x\n", group.label, rel, sum)
 		}
-
-		sum := sha256.Sum256(content)
-		fmt.Fprintf(hash, "%s\x00%x\n", rel, sum)
 	}
 
 	return hex.EncodeToString(hash.Sum(nil))[:16]
@@ -127,7 +160,7 @@ func cppIndexKey(root string, info cppIndexInfo) string {
 // freshness reports what the answer reflects. The index is always built from
 // the live working tree, so dirty files are included rather than overlaid and
 // the answer is never silently stale.
-func (info cppIndexInfo) freshness(query time.Duration, budgetExceeded bool) map[string]any {
+func (info cppIndexInfo) freshness(query time.Duration, budgetExceeded bool, answeredBy string) map[string]any {
 	dirty := info.DirtyPaths
 	if len(dirty) > cppFreshnessPathLimit {
 		dirty = dirty[:cppFreshnessPathLimit]
@@ -139,30 +172,32 @@ func (info cppIndexInfo) freshness(query time.Duration, budgetExceeded bool) map
 	}
 
 	report := map[string]any{
-		"schema":          "idiom.cpp_index.v1",
-		"fresh":           !budgetExceeded && info.GitError == "",
-		"source":          "working_tree",
-		"collector":       cppCollectorVersion,
-		"index_key":       info.Key,
-		"root":            info.Root,
-		"git_common_dir":  info.GitCommonDir,
-		"commit":          info.Commit,
-		"tree":            info.Tree,
-		"working_tree":    "dirty C++ files included",
-		"dirty_cpp_paths": dirty,
-		"dirty_cpp_count": len(info.DirtyPaths),
-		"files":           info.Build.Files,
-		"symbols":         info.Symbols,
-		"bytes":           info.Build.Bytes,
-		"index_build":     build,
+		"schema":            "idiom.cpp_index.v1",
+		"fresh":             !budgetExceeded && info.GitError == "",
+		"source":            "working_tree",
+		"collector":         cppCollectorVersion,
+		"index_key":         info.Key,
+		"root":              info.Root,
+		"git_common_dir":    info.GitCommonDir,
+		"commit":            info.Commit,
+		"tree":              info.Tree,
+		"working_tree":      "dirty and gitignored C++ files included",
+		"dirty_cpp_paths":   dirty,
+		"dirty_cpp_count":   len(info.DirtyPaths),
+		"ignored_cpp_count": len(info.IgnoredPaths),
+		"files":             info.Build.Files,
+		"symbols":           info.Symbols,
+		"bytes":             info.Build.Bytes,
+		"index_build":       build,
 		"phase_ms": map[string]int64{
 			"git":   info.Git.Milliseconds(),
 			"walk":  info.Build.Walk.Milliseconds(),
 			"parse": info.Build.Parse.Milliseconds(),
 			"link":  info.Build.Link.Milliseconds(),
 		},
-		"query_ms":  query.Milliseconds(),
-		"budget_ms": cppIndexBudget.Milliseconds(),
+		"answered_by": answeredBy,
+		"query_ms":    query.Milliseconds(),
+		"budget_ms":   cppIndexBudget.Milliseconds(),
 	}
 	if info.GitError != "" {
 		report["identity_error"] = info.GitError
@@ -190,7 +225,7 @@ func cppBudgetFailure(tool string, summary string, err error, info cppIndexInfo)
 		Code:      cppCodeBudgetExceeded,
 		Summary:   summary,
 		Error:     fmt.Sprintf("%s: %v (budget %s)", cppCodeBudgetExceeded, budget, cppIndexBudget),
-		Freshness: info.freshness(0, true),
+		Freshness: info.freshness(0, true, cppAnsweredBySyntax),
 	}, true
 }
 

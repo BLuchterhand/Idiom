@@ -118,8 +118,10 @@ semgrep --version
 
 ### C++ syntax-index tools: identity, budget and exact results
 
-`cpp_overview`, `cpp_calls_into`, `cpp_calls_from` and `cpp_blast_radius` answer
-from an in-process C++-only syntax index (no Python, GDScript or other
+`cpp_overview`, `cpp_calls_into`, `cpp_calls_from` and `cpp_blast_radius` (the
+direct-CLI tools; the single-symbol tools `cpp_read_symbol`, `cpp_definition`,
+`cpp_declaration`, `cpp_implementations`, `cpp_references` and `cpp_extract_body`
+behave the same through the agent and MCP surfaces) answer from an in-process C++-only syntax index (no Python, GDScript or other
 collectors, no `.idiom/comprehension` graph, no standing indexed worktree). It
 is built from the live working tree on each `idiom tool` call: about 0.3-0.5 s
 for the 237 C++ files of Undermarch's `native/` tree, so a fresh `git worktree
@@ -130,13 +132,16 @@ checkout (the W145 "build the indexes" step), run from that checkout:
 idiom tool cpp_overview --input '{}'
 ```
 
-Every result carries `sidecar.freshness` (`idiom.cpp_index.v1`):
+Queries take `{"pattern": "<name>"}` (plus an optional `path` prefix). Every
+`cpp_overview`, call and blast-radius result, and every successful single-symbol
+result, carries `sidecar.freshness` (`idiom.cpp_index.v1`):
 
 | Field | Meaning |
 |---|---|
-| `index_key` | Hash of collector version, Git common-dir identity, `HEAD^{tree}` and the content of dirty C++ files. Equal keys mean equal index content, across worktrees of one repository. |
+| `index_key` | Hash of collector version, Git common-dir identity, `HEAD^{tree}` and the content of dirty, untracked and gitignored C++ files (the walk indexes ignored files too). Equal keys mean equal index content, across worktrees of one repository. |
 | `commit`, `tree`, `git_common_dir`, `root` | What was indexed and where. |
-| `working_tree` / `dirty_cpp_paths` / `dirty_cpp_count` | Dirty and untracked C++ files are included (the index reads the working tree), and listed. |
+| `working_tree` / `dirty_cpp_paths` / `dirty_cpp_count` / `ignored_cpp_count` | Dirty, untracked and ignored C++ files are included (the index reads the working tree); dirty ones are listed. |
+| `answered_by` | `syntax-index` when the answer came from this index, `clangd` when clangd answered (the index identity then only describes the surrounding workspace). |
 | `phase_ms`, `query_ms`, `budget_ms`, `files`, `symbols`, `index_build` | Cost: Git identity, directory walk, parse, link, the query itself. |
 | `fresh` | `false` when the index budget (10 s) was exceeded or Git identity could not be read. |
 
@@ -148,7 +153,11 @@ Failures are structured in `sidecar.error.code`: `cpp_index_budget_exceeded`
 (with the phase that was running), `ambiguous_symbol` (the name belongs to more
 than one owner; candidates are in `Output`; pass `Owner::name` or a `path`) and
 `symbol_not_found` (nothing is named exactly that; nearest names are in
-`Output`). Summaries echo the requested name and the resolved owner. Call
+`Output`). Qualify by owner: `Owner::name`, or `ns::Owner::name` (a qualified
+request matches any owner whose qualified name ends with it; in-class members
+belong to their enclosing class or namespace by line range, and out-of-class
+`Pool::reset` definitions fold into the one `ns::Pool::reset` they can mean).
+Summaries echo the requested name and the resolved owner. Call
 queries match callee names only (the syntax index does not resolve receiver
 types) and say so in `sidecar.warnings`; the optional clangd call hierarchy is
 attempted within a 5 s budget. `cpp_blast_radius` takes a file name or a symbol:

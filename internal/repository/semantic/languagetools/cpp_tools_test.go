@@ -165,6 +165,10 @@ int main() { helper(); return 0; }
 		Expect(freshness).To(HaveKey("phase_ms"))
 		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/2"))
 
+		overview := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_overview"})
+		Expect(overview.Freshness).To(HaveKeyWithValue("schema", "idiom.cpp_index.v1"))
+		Expect(exact.Freshness).To(HaveKeyWithValue("answered_by", "syntax-index"))
+
 		blast := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_blast_radius", Pattern: "Widget"})
 		Expect(blast.Error).To(BeEmpty())
 		Expect(blast.Summary).To(ContainSubstring(`symbol Widget (requested "Widget")`))
@@ -199,6 +203,9 @@ void helper() {}
 			missing := manager.Execute(context.Background(), workspace.ToolRequest{Tool: tool, Pattern: "offe"})
 			Expect(missing.Code).To(Equal("symbol_not_found"), tool)
 		}
+
+		pathed := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "offer", Path: filepath.Join("src", "pair.cpp")})
+		Expect(pathed.Code).To(Equal("ambiguous_symbol"), "the path-miss fallback must not answer for an ambiguous name")
 
 		read := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "Gadget::offer"})
 		Expect(read.Error).To(BeEmpty())

@@ -61,6 +61,9 @@ type CppSymbol struct {
 	Calls      []CppCall
 	HasBody    bool
 	SourceFile string
+	// Explicit marks a member defined out of class with its own qualifier
+	// (void Pool::reset() {}), whose namespace may be implied by context.
+	Explicit bool
 }
 
 type CppCall struct {
@@ -70,7 +73,7 @@ type CppCall struct {
 
 var (
 	cppIncludeRe       = regexp.MustCompile(`^\s*#include\s+[<"]([^>"]+)`)
-	cppTypeRe          = regexp.MustCompile(`^\s*(?:template\s*<[^>]*>\s*)?(class|struct|enum(?:\s+class)?|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	cppTypeRe          = regexp.MustCompile(`^\s*(?:template\s*<[^>]*>\s*)?(class|struct|enum(?:\s+class)?|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)`)
 	cppNameBeforeParen = regexp.MustCompile(`([A-Za-z_~][A-Za-z0-9_:~]*)\s*$`)
 	cppCallRe          = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^;{}()\n]*>)?\s*\(`)
 )
@@ -426,17 +429,20 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 
 		if pendingStart == 0 {
 			if match := cppTypeRe.FindStringSubmatch(trimmed); len(match) == 3 {
-				end := lineNo
-				if strings.Contains(trimmed, "{") {
-					end = findCppBraceEnd(lines, i)
-				}
-
+				end := cppTypeEnd(lines, i)
 				kind := strings.ReplaceAll(match[1], " ", "_")
 
 				kind = strings.ReplaceAll(kind, "enum_class", "enum")
+
+				name, scope := match[2], ""
+				if cut := strings.LastIndex(name, "::"); cut >= 0 {
+					name, scope = name[cut+2:], name[:cut]
+				}
+
 				symbols = append(symbols, CppSymbol{
-					Name:       match[2],
-					Qualified:  match[2],
+					Name:       name,
+					Qualified:  indexsupport.FirstQualified(scope, name, "::"),
+					Scope:      scope,
 					Kind:       kind,
 					Line:       lineNo,
 					Column:     1,
@@ -496,7 +502,119 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 		)
 	})
 
-	return symbols
+	return attributeCppScopes(symbols)
+}
+
+// cppTypeEnd returns the last line of the type or namespace starting at lines[start]:
+// the matching brace when the body opens on this line or within the next few
+// lines, else the line itself (a forward declaration).
+func cppTypeEnd(lines []string, start int) int {
+	for i := start; i < len(lines) && i < start+6; i++ {
+		clean := indexsupport.StripLineComment(lines[i])
+		if strings.Contains(clean, "{") {
+			return findCppBraceEnd(lines, i)
+		}
+
+		if strings.Contains(clean, ";") {
+			break
+		}
+	}
+
+	return start + 1
+}
+
+// attributeCppScopes gives every symbol its enclosing namespace or class by line
+// range, so in-class members and same-named types in different namespaces stay
+// distinct, and drops signature-shaped call statements that sit inside another
+// function's body. symbols must be sorted by line.
+func attributeCppScopes(symbols []CppSymbol) []CppSymbol {
+	out := make([]CppSymbol, 0, len(symbols))
+	stack := make([]CppSymbol, 0, 8)
+
+	for _, symbol := range symbols {
+		for len(stack) > 0 && stack[len(stack)-1].EndLine < symbol.Line {
+			stack = stack[:len(stack)-1]
+		}
+
+		isType := isCppContainerKind(symbol.Kind)
+
+		insideBody := false
+
+		for _, open := range stack {
+			if !isCppContainerKind(open.Kind) {
+				insideBody = true
+			}
+		}
+
+		if insideBody && !isType {
+			continue
+		}
+
+		symbol = scopeCppSymbol(symbol, stack)
+		out = append(out, symbol)
+
+		if isType && symbol.EndLine > symbol.StartLine || symbol.HasBody && !isType {
+			stack = append(stack, symbol)
+		}
+	}
+
+	return out
+}
+
+func isCppContainerKind(kind string) bool {
+	switch kind {
+	case "class", "struct", "union", "namespace":
+		return true
+	}
+
+	return false
+}
+
+func scopeCppSymbol(symbol CppSymbol, stack []CppSymbol) CppSymbol {
+	innermost, namespace := "", ""
+
+	for i := len(stack) - 1; i >= 0; i-- {
+		if !isCppContainerKind(stack[i].Kind) {
+			continue
+		}
+
+		if innermost == "" {
+			innermost = stack[i].Qualified
+		}
+
+		if namespace == "" && stack[i].Kind == "namespace" {
+			namespace = stack[i].Qualified
+		}
+	}
+
+	switch {
+	case isCppContainerKind(symbol.Kind):
+		symbol.Scope = joinCppScope(innermost, symbol.Scope)
+	case symbol.Scope != "":
+		symbol.Explicit = true
+		symbol.Scope = joinCppScope(namespace, symbol.Scope)
+	case innermost != "":
+		symbol.Scope = innermost
+		if symbol.Kind == "func" && namespace != innermost {
+			symbol.Kind = "method"
+		}
+	}
+
+	symbol.Qualified = indexsupport.FirstQualified(symbol.Scope, symbol.Name, "::")
+
+	return symbol
+}
+
+func joinCppScope(prefix string, scope string) string {
+	if prefix == "" {
+		return scope
+	}
+
+	if scope == "" {
+		return prefix
+	}
+
+	return prefix + "::" + scope
 }
 
 func parseCppFunctionSignature(signature string) (CppSymbol, bool) {

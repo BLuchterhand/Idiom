@@ -96,7 +96,7 @@ template class Box<double>;
 
 		mainCalls, _ := index.CallsFromDefinitions(index.ResolveSymbol("main", "").Definitions, 8)
 		Expect(mainCalls).NotTo(BeEmpty())
-		calls, total := index.CallsIntoName("helper", 8)
+		calls, total := index.CallsIntoName("helper", "", 8)
 		Expect(calls).NotTo(BeEmpty())
 		Expect(total).To(Equal(len(calls)))
 		Expect(index.WhoIncludes("entity_manager.h")).NotTo(BeEmpty())

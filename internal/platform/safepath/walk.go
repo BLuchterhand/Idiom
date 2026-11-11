@@ -33,14 +33,7 @@ func WalkDirUnderRoot(root string, path string, label string, fn fs.WalkDirFunc)
 		targetPath = filepath.Join(canonicalRoot, targetPath)
 	}
 	targetPath = CleanPath(filepath.Clean(targetPath))
-	// An absolute target spelled through a symlinked ancestor (macOS /var and
-	// /tmp, Windows junctions) names the same directory as the canonical root;
-	// compare canonical forms so the containment check below still decides.
-	if filepath.IsAbs(targetPath) && !samePath(canonicalRoot, targetPath) {
-		if resolved, resolveErr := filepath.EvalSymlinks(targetPath); resolveErr == nil {
-			targetPath = CleanPath(filepath.Clean(resolved))
-		}
-	}
+	targetPath = rebasePathOntoCanonicalRoot(root, canonicalRoot, targetPath)
 
 	rootRelative := "."
 	if !samePath(canonicalRoot, targetPath) {
