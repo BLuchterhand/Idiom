@@ -2,6 +2,7 @@ package cpp
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -481,8 +482,8 @@ void unknownPrefix(zz::Kernel& z, godot::Thing& t) {
 		// k.run(11) receiver, run(21) base, ks::Kernel::run(31) qualifier, p->run(41) block alias.
 		Expect(callers).To(ConsistOf(4, 8, 15, 20))
 		Expect(unresolved).To(HaveLen(2))
-		Expect(unresolved[23]).To(ContainSubstring("namespace `zz`"))
-		Expect(unresolved[25]).To(ContainSubstring("namespace `zz`"))
+		Expect(unresolved[23]).To(ContainSubstring("`zz::Kernel` is not an indexed class"))
+		Expect(unresolved[25]).To(ContainSubstring("`zz::Kernel` is not an indexed class"))
 		Expect(unresolved).NotTo(HaveKey(24), "godot::Thing is no indexed class name")
 		Expect(callers).NotTo(ContainElement(11), "run(71) is a brace-initialised local")
 
@@ -496,3 +497,132 @@ void unknownPrefix(zz::Kernel& z, godot::Thing& t) {
 		}
 	})
 })
+
+// The property behind every owner-resolved query: a call with the owner's
+// method name is never dropped unless the resolver proves it reaches another
+// class. Every call form is crossed with every way of writing the type name.
+var _ = Describe("C++ owner-resolved calls never drop a possible caller", func() {
+	type nameCase struct {
+		owner  string // the pattern queried
+		name   string // how the type is written
+		alias  string // a file-scoped namespace alias the name relies on
+		caller bool   // true: must be a caller; false: must be unresolved
+	}
+
+	cases := []nameCase{
+		{"a::Kernel::run", "a::Kernel", "", true},
+		{"a::Kernel::run", "ka::Kernel", "namespace ka = a;", true},
+		{"a::Kernel::run", "ha::Kernel", "", true}, // alias from the included header
+		{"a::Kernel::run", "Kernel", "", false},    // a::Kernel or b::Kernel
+		{"a::Kernel::run", "Mystery", "", false},   // not indexed
+		{"a::Kernel::run", "zz::Kernel", "", false},
+		{"proj::sim::Core::run", "proj::sim::Core", "", true},
+		{"proj::sim::Core::run", "ks::Core", "namespace ks = proj::sim;", true},
+		{"proj::sim::Core::run", "hs::Core", "", true},
+		{"proj::sim::Core::run", "Mystery", "", false},
+		{"proj::sim::Core::run", "zz::Core", "", false},
+	}
+
+	// Each form is a source snippet with N for the type name and D for a class
+	// derived from it; every call line holds one run( call.
+	forms := []string{
+		"void q() {\n    N::run(1);\n}",
+		"void r(N& v) {\n    v.run(2);\n}",
+		"void p(N* v) {\n    v->run(3);\n}",
+		"void s(std::unique_ptr<N> v) {\n    v->run(4);\n}",
+		"class D : public N {\npublic:\n    void go() {\n        run(5);\n    }\n    void go2() {\n        this->run(6);\n    }\n};",
+		"void d(D& v) {\n    v.run(7);\n}",
+		"void e() {\n    D::run(8);\n}",
+	}
+
+	It("reports every call through the owner, an ambiguous, unindexed or aliased name as caller or unresolved", func() {
+		root := GinkgoT().TempDir()
+		mustWriteFile(filepath.Join(root, "k.hpp"), strings.TrimSpace(`
+namespace a {
+class Kernel {
+public:
+    void run(int n);
+};
+}
+namespace b {
+class Kernel {
+public:
+    void run(int n);
+};
+}
+namespace proj {
+namespace sim {
+class Core {
+public:
+    void run(int n);
+};
+}
+}
+`)+"\n")
+		mustWriteFile(filepath.Join(root, "h.hpp"), "namespace ha = a;\nnamespace hs = proj::sim;\n")
+
+		// want[owner][path:line] is true for a required caller, false for a required unresolved call.
+		want := map[string]map[string]bool{}
+
+		for ci, c := range cases {
+			path := "case" + string(rune('a'+ci)) + ".cpp"
+			derived := "D" + string(rune('a'+ci))
+			body := []string{"#include \"k.hpp\"", "#include \"h.hpp\""}
+
+			if c.alias != "" {
+				body = append(body, c.alias)
+			}
+
+			for _, form := range forms {
+				form = strings.ReplaceAll(form, "N", c.name)
+				form = strings.ReplaceAll(form, "D", derived)
+				form = strings.Replace(form, "void ", "void f"+derived, 1) // unique function names
+				body = append(body, strings.Split(form, "\n")...)
+			}
+
+			if want[c.owner] == nil {
+				want[c.owner] = map[string]bool{}
+			}
+
+			for i, line := range body {
+				if strings.Contains(line, "run(") {
+					want[c.owner][path+":"+itoa(i+1)] = c.caller
+				}
+			}
+
+			mustWriteFile(filepath.Join(root, path), strings.Join(body, "\n")+"\n")
+		}
+
+		index, err := BuildCppIndex(root)
+		Expect(err).NotTo(HaveOccurred())
+
+		for owner, expected := range want {
+			res := index.ResolveSymbol(owner, "")
+			Expect(res.Status).To(Equal(ResolutionResolved), owner)
+
+			found := index.CallsInto(res, "", 0)
+			got := map[string]string{}
+
+			for _, call := range found.Callers {
+				got[call.Caller.Path+":"+itoa(call.Line)] = "caller"
+			}
+
+			for _, call := range found.Unresolved {
+				got[call.Caller.Path+":"+itoa(call.Line)] = "unresolved"
+			}
+
+			for site, caller := range expected {
+				wantVerdict := "unresolved"
+				if caller {
+					wantVerdict = "caller"
+				}
+
+				Expect(got[site]).To(Equal(wantVerdict), owner+" at "+site)
+			}
+		}
+	})
+})
+
+func itoa(n int) string {
+	return strconv.Itoa(n)
+}

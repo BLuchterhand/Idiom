@@ -25,7 +25,11 @@ type CppIndex struct {
 	Reverse map[string][]string
 	// Aliases maps `using A = B;` and `typedef B A;` names to their target text.
 	Aliases map[string]string
-	Timings CppBuildTimings
+	// NamespaceAliases maps every `namespace X = Y;` name in the index to its
+	// target ("" when files disagree); call sites expand their own file's
+	// aliases at index time, this map covers aliases from included headers.
+	NamespaceAliases map[string]string
+	Timings          CppBuildTimings
 }
 
 // CppBuildTimings records where a BuildCppIndexWithOptions call spent its time
@@ -136,6 +140,8 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		Forward: make(map[string][]string),
 		Reverse: make(map[string][]string),
 		Aliases: make(map[string]string),
+
+		NamespaceAliases: make(map[string]string),
 	}
 	byName := make(map[string][]string)
 	byRel := make(map[string]string)
@@ -237,6 +243,15 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		symbols := parseCppSymbols(rel, content)
 		namespaces := parseCppNamespaceAliases(content)
 		applyCppNamespaceAliases(symbols, namespaces)
+
+		for name, target := range namespaces {
+			if prior, seen := index.NamespaceAliases[name]; seen && prior != target {
+				target = ""
+			}
+
+			index.NamespaceAliases[name] = target
+		}
+
 		parseCppAliases(content, index.Aliases, namespaces)
 		file := CppFile{
 			Path:      rel,
