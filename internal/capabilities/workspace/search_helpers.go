@@ -437,14 +437,61 @@ func searchContentGlobMatch(glob string, relative string, absolute string) bool 
 	}
 	relative = filepath.ToSlash(filepath.Clean(relative))
 	name := filepath.Base(absolute)
-	if ok, err := path.Match(glob, name); err == nil && ok {
-		return true
+	for _, alternative := range expandGlobBraces(glob) {
+		if ok, err := path.Match(alternative, name); err == nil && ok {
+			return true
+		}
+		if ok, err := path.Match(alternative, relative); err == nil && ok {
+			return true
+		}
+		if ok, err := recursivePathGlobMatch(alternative, relative); err == nil && ok {
+			return true
+		}
 	}
-	if ok, err := path.Match(glob, relative); err == nil && ok {
-		return true
+	return false
+}
+
+// expandGlobBraces expands rg/shell-style alternation ("*.{h,cpp}") into plain
+// globs. path.Match has no brace syntax, and the language reference fallbacks
+// pass brace globs for their source-extension sets; matching them literally
+// silently finds nothing. An unbalanced brace is left as a literal glob.
+func expandGlobBraces(glob string) []string {
+	open := strings.IndexByte(glob, '{')
+	if open < 0 {
+		return []string{glob}
 	}
-	ok, err := recursivePathGlobMatch(glob, relative)
-	return err == nil && ok
+
+	depth := 0
+	start := open + 1
+	alternatives := []string{}
+	for i := open; i < len(glob); i++ {
+		switch glob[i] {
+		case '{':
+			depth++
+		case ',':
+			if depth == 1 {
+				alternatives = append(alternatives, glob[start:i])
+				start = i + 1
+			}
+		case '}':
+			depth--
+			if depth == 0 {
+				alternatives = append(alternatives, glob[start:i])
+				return expandGlobBraceAlternatives(glob[:open], alternatives, glob[i+1:])
+			}
+		}
+	}
+
+	return []string{glob}
+}
+
+func expandGlobBraceAlternatives(prefix string, alternatives []string, suffix string) []string {
+	expanded := make([]string, 0, len(alternatives))
+	for _, alternative := range alternatives {
+		expanded = append(expanded, expandGlobBraces(prefix+alternative+suffix)...)
+	}
+
+	return expanded
 }
 
 func searchContextSnippetFromData(content []byte, lineNumber int, radius int) string {

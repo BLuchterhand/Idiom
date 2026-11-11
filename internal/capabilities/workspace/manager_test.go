@@ -1826,6 +1826,40 @@ var _ = ginkgo.Describe("manager", func() {
 		gomega.Expect(result.Output).To(gomega.ContainSubstring("docs/tui-notes.md"), fmt.Sprintf("zero-hit glob should surface token-matched real paths before generic directories, got:\n%s", result.Output))
 
 	})
+	ginkgo.It("search content expands brace globs and honors word-boundary regexes", func() {
+		// Language reference fallbacks pass globs like "*.{h,cpp}" and
+		// `\bname\b`; a literal brace match used to find nothing at all.
+		dir := ginkgo.GinkgoT().TempDir()
+		writeTestFile(filepath.Join(dir, "core", "include", "handle.h"), "bool is_valid(int h);\n")
+		writeTestFile(filepath.Join(dir, "core", "src", "tick.cpp"), "int tick() { return is_valid(1); }\n")
+		writeTestFile(filepath.Join(dir, "core", "src", "notes.txt"), "is_valid is documented here\n")
+		writeTestFile(filepath.Join(dir, "core", "src", "other.cpp"), "bool is_valid_extended();\n")
+
+		mgr := NewManager(config.Workspace{Root: dir, CWD: dir, MaxDirectoryEntries: 100})
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:    "search_content",
+			Pattern: `\bis_valid\b`,
+			Path:    ".",
+			Glob:    "*.{h,hpp,{c,cpp}}",
+		})
+
+		gomega.Expect(result.Error).To(gomega.BeEmpty())
+		gomega.Expect(result.Summary).To(gomega.ContainSubstring("Found 2 matching line(s)"), result.Output)
+		gomega.Expect(result.Output).To(gomega.ContainSubstring("core/include/handle.h:1:"))
+		gomega.Expect(result.Output).To(gomega.ContainSubstring("core/src/tick.cpp:1:"))
+		gomega.Expect(result.Output).NotTo(gomega.ContainSubstring("notes.txt"))
+		gomega.Expect(result.Output).NotTo(gomega.ContainSubstring("other.cpp"))
+	})
+	ginkgo.DescribeTable("expandGlobBraces",
+		func(glob string, expected []string) {
+			gomega.Expect(expandGlobBraces(glob)).To(gomega.Equal(expected))
+		},
+		ginkgo.Entry("no braces", "*.go", []string{"*.go"}),
+		ginkgo.Entry("one group", "*.{h,cpp}", []string{"*.h", "*.cpp"}),
+		ginkgo.Entry("nested group", "*.{h,{c,cc}}", []string{"*.h", "*.c", "*.cc"}),
+		ginkgo.Entry("two groups", "{src,lib}/*.{c,h}", []string{"src/*.c", "src/*.h", "lib/*.c", "lib/*.h"}),
+		ginkgo.Entry("unbalanced brace stays literal", "*.{h,cpp", []string{"*.{h,cpp"}),
+	)
 	ginkgo.It("search files rejects query when pattern and glob omitted", func() {
 		dir := ginkgo.GinkgoT().TempDir()
 		writeTestFile(filepath.Join(dir, "internal", "surfaces", "tui", "app", "input.go"), "package app\n")

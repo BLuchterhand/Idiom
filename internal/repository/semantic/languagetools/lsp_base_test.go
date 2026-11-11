@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -88,6 +89,86 @@ var _ = Describe("LSP base protocol", func() {
 		),
 	)
 
+	DescribeTable("builds RFC 8089 file URIs",
+		func(path string, expected string) {
+			Expect(LSPFileURI(path)).To(Equal(expected))
+		},
+		Entry("POSIX path", "/tmp/a.cpp", "file:///tmp/a.cpp"),
+		Entry("Windows drive path", "C:/Users/me/repo/a.cpp", "file:///C:/Users/me/repo/a.cpp"),
+	)
+
+	DescribeTable("maps file URIs back to paths",
+		func(uri string, expected string) {
+			path, err := LSPPathFromURI(uri, "test-server")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(filepath.ToSlash(path)).To(Equal(expected))
+		},
+		Entry("POSIX URI", "file:///tmp/a.cpp", "/tmp/a.cpp"),
+		Entry("Windows URI", "file:///C:/Users/me/repo/a.cpp", "C:/Users/me/repo/a.cpp"),
+		Entry("Windows URI with encoded drive colon", "file:///c%3A/Users/me/repo/a.cpp", "c:/Users/me/repo/a.cpp"),
+	)
+
+	It("round-trips a native Windows path through a file URI", func() {
+		if runtime.GOOS != "windows" {
+			Skip("backslash paths are only native on Windows")
+		}
+
+		path := `C:\Users\me\repo\core\src\handle.cpp`
+		Expect(LSPFileURI(path)).To(Equal("file:///C:/Users/me/repo/core/src/handle.cpp"))
+		roundTrip, err := LSPPathFromURI(LSPFileURI(path), "test-server")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(roundTrip).To(Equal(path))
+	})
+
+	It("does not mistake a server request for the response to a client request", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		DeferCleanup(cancel)
+		client, err := newLSPBaseClient(
+			ctx, GinkgoT().TempDir(), "test-lsp", os.Args[0],
+			[]string{"-test.run=TestLSPHelperProcess", "--", "server-request-same-id"}, nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(client.forceClose)
+
+		var result struct {
+			Answer string `json:"answer"`
+		}
+		Expect(client.request(ctx, "test/echo", nil, &result)).To(Succeed())
+		Expect(result.Answer).To(Equal("real response"))
+	})
+
+	It("waits for clangd's background index before answering", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		DeferCleanup(cancel)
+		base, err := newLSPBaseClient(
+			ctx, GinkgoT().TempDir(), "clangd", os.Args[0],
+			[]string{"-test.run=TestLSPHelperProcess", "--", "background-index-progress"}, nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		client := &clangdLSPClient{lspBaseClient: base, queryCtx: ctx}
+		DeferCleanup(client.forceClose)
+
+		// The helper sends the index end only after its progress-token
+		// request is answered.
+		Expect(client.awaitBackgroundIndex(ctx)).To(Succeed())
+	})
+
+	It("gives up on clangd's background index at the deadline", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		DeferCleanup(cancel)
+		base, err := newLSPBaseClient(
+			ctx, GinkgoT().TempDir(), "clangd", os.Args[0],
+			[]string{"-test.run=TestLSPHelperProcess", "--", "quiet"}, nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		client := &clangdLSPClient{lspBaseClient: base, queryCtx: ctx}
+		DeferCleanup(client.forceClose)
+
+		waitCtx, waitCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		DeferCleanup(waitCancel)
+		Expect(client.awaitBackgroundIndex(waitCtx)).To(MatchError(context.DeadlineExceeded))
+	})
+
 	It("includes process stderr when a request read fails", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		DeferCleanup(cancel)
@@ -146,6 +227,10 @@ func TestLSPHelperProcess(t *testing.T) {
 	}
 
 	reader := bufio.NewReader(os.Stdin)
+	if mode == "background-index-progress" {
+		runBackgroundIndexProgressHelper(reader)
+	}
+
 	body, err := readLSPHelperMessage(reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "read request: %v\n", err)
@@ -176,12 +261,59 @@ func TestLSPHelperProcess(t *testing.T) {
 			"result":  map[string]any{"cwd": workingDirectory, "arg": argument},
 		})
 		os.Exit(0)
+	case "server-request-same-id":
+		var request struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			fmt.Fprintf(os.Stderr, "decode request: %v\n", err)
+			os.Exit(2)
+		}
+
+		writeLSPHelperMessage(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      json.RawMessage(request.ID),
+			"method":  "window/workDoneProgress/create",
+			"params":  map[string]any{"token": "backgroundIndexProgress"},
+		})
+		writeLSPHelperMessage(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      json.RawMessage(request.ID),
+			"result":  map[string]any{"answer": "real response"},
+		})
+		_, _ = io.Copy(io.Discard, reader)
+		os.Exit(0)
 	case "quiet":
 		_, _ = io.Copy(io.Discard, reader)
 		os.Exit(0)
 	}
 
 	os.Exit(2)
+}
+
+// runBackgroundIndexProgressHelper mimics clangd: it asks for a progress token,
+// and reports the index end only once the client has answered.
+func runBackgroundIndexProgressHelper(reader *bufio.Reader) {
+	writeLSPHelperMessage(map[string]any{
+		"jsonrpc": "2.0", "id": 0, "method": "window/workDoneProgress/create",
+		"params": map[string]any{"token": "backgroundIndexProgress"},
+	})
+
+	reply, err := readLSPHelperMessage(reader)
+	if err != nil || !strings.Contains(string(reply), `"id":0`) || !strings.Contains(string(reply), `"result"`) {
+		fmt.Fprintf(os.Stderr, "expected progress-token reply, got %q (%v)\n", reply, err)
+		os.Exit(2)
+	}
+
+	for _, kind := range []string{"begin", "report", "end"} {
+		writeLSPHelperMessage(map[string]any{
+			"jsonrpc": "2.0", "method": "$/progress",
+			"params": map[string]any{"token": "backgroundIndexProgress", "value": map[string]any{"kind": kind}},
+		})
+	}
+
+	_, _ = io.Copy(io.Discard, reader)
+	os.Exit(0)
 }
 
 func lspHelperMode() (string, []string, bool) {

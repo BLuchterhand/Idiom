@@ -117,6 +117,9 @@ func (h languageToolHost) SearchContent(ctx context.Context, req languagetools.S
 		Output:  result.Output,
 		Error:   result.Error,
 		Failure: result.Failure,
+		// Facts carry the hit count; reference fallbacks need it to tell real
+		// matches from zero-hit path-name suggestions in Output.
+		Facts: result.Facts,
 	}
 }
 

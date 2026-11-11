@@ -554,19 +554,39 @@ func (m *Manager) cppReferences(ctx context.Context, req ToolRequest) ToolResult
 		return *failure
 	}
 
-	return resolved.annotate(m.cppReferencesMatch(ctx, req, match))
+	references, _ := m.cppReferencesMatch(ctx, req, match)
+
+	return resolved.annotate(references)
 }
 
-func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
+// cppReferenceBackend names the backend that produced reference evidence, so a
+// consumer can tell clangd's index from a name-based text search, and both from
+// no evidence at all.
+type cppReferenceBackend int
+
+const (
+	cppReferencesNoEvidence cppReferenceBackend = iota
+	cppReferencesByClangd
+	cppReferencesByTextSearch
+)
+
+func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) (ToolResult, cppReferenceBackend) {
+	var warnings []string
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.cppReferencesViaClangd(ctx, match, pathFilter); lspErr == nil && strings.TrimSpace(output) != "" {
+		output, lspErr := m.cppReferencesViaClangd(ctx, match, pathFilter)
+		switch {
+		case lspErr != nil:
+			warnings = append(warnings, fmt.Sprintf("clangd references unavailable (%v); answered by name-based text search", lspErr))
+		case strings.TrimSpace(output) != "":
 			return ToolResult{
 				Tool:    "cpp_references",
 				Summary: "Resolved C++ references via clangd",
 				Output:  output,
-			}
+			}, cppReferencesByClangd
+		default:
+			warnings = append(warnings, "clangd returned no references, not even the symbol's own declaration; answered by name-based text search")
 		}
 	}
 
@@ -576,12 +596,25 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 		Glob:    cppSearchGlob(),
 	}
 	result := m.searchContent(ctx, searchReq, "cpp_references")
+	result.Warnings = append(warnings, result.Warnings...)
 
-	if result.Error == "" {
-		result.Summary = "Resolved C++ references via semantic/rg fallback"
+	if result.Error != "" {
+		return result, cppReferencesNoEvidence
 	}
 
-	return result
+	// The symbol was resolved from a file under this scope, so a text search
+	// that finds not even its definition is broken evidence. Path-name
+	// suggestions in its output are not references.
+	if result.Facts == nil || result.Facts.SearchHitCount == 0 {
+		result.Summary = "No C++ references found by any backend"
+		result.Output = ""
+
+		return result, cppReferencesNoEvidence
+	}
+
+	result.Summary = "Resolved C++ references via name-based text search fallback"
+
+	return result, cppReferencesByTextSearch
 }
 
 func (m *Manager) cppCallsFrom(ctx context.Context, req ToolRequest) ToolResult {
@@ -822,31 +855,6 @@ func (m *Manager) cppBlastRadius(ctx context.Context, req ToolRequest) ToolResul
 		Summary:   fmt.Sprintf("Found %d affected C++ translation unit(s) for %s.", len(lines), subject),
 		Output:    strings.Join(lines, "\n"),
 		Freshness: freshness,
-	}
-}
-
-func (m *Manager) cppDeadSymbol(ctx context.Context, req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: "C++ dead-symbol query rejected", Error: "pattern is required"}
-	}
-
-	refs := m.cppReferences(ctx, req)
-	if refs.Error != "" {
-		refs.Tool = "cpp_dead_symbol"
-		refs.Summary = "C++ dead-symbol query failed"
-
-		return refs
-	}
-
-	lines := nonEmptySearchLines(refs.Output)
-	switch len(lines) {
-	case 0:
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("No C++ references matched %q; the symbol is likely dead.", pattern)}
-	case 1:
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("Only one C++ reference matched %q; inspect the definition before removing it.", pattern), Output: strings.Join(lines, "\n")}
-	default:
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("Found %d C++ references to %q; the symbol is not dead.", len(lines), pattern), Output: strings.Join(lines, "\n")}
 	}
 }
 
@@ -1309,7 +1317,13 @@ func nonEmptySearchLines(output string) []string {
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "context:") || strings.HasPrefix(line, "targeted edit template:") {
+		// search_content appends a numbered source snippet after "context:"
+		// for a single hit; snippet lines are not matches.
+		if strings.HasPrefix(line, "context:") {
+			break
+		}
+
+		if line == "" || strings.HasPrefix(line, "targeted edit template:") {
 			continue
 		}
 

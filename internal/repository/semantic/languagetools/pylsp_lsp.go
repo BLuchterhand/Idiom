@@ -249,7 +249,8 @@ func (m *Manager) pythonDiagnosticsViaLSP(ctx context.Context, abs string) ([]py
 	for time.Now().Before(deadline) {
 		// Bounded per-read context so we don't block forever.
 		readCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		body, err := pylspReadWithTimeout(readCtx, client)
+		// On timeout the loop stops: no more diagnostics arrived this beat.
+		body, err := client.readMessageWithin(readCtx)
 
 		cancel()
 
@@ -283,32 +284,6 @@ func (m *Manager) pythonDiagnosticsViaLSP(ctx context.Context, abs string) ([]py
 	}
 
 	return collected, nil
-}
-
-// pylspReadWithTimeout delegates to client.readMessage with a fresh
-// goroutine so that ctx.Done() can unblock us. On timeout we fall
-// through rather than error, signalling "no more diagnostics this
-// beat".
-func pylspReadWithTimeout(ctx context.Context, client *pylspLSPClient) ([]byte, error) {
-	done := make(chan struct{})
-
-	var (
-		body    []byte
-		readErr error
-	)
-
-	go func() {
-		body, readErr = client.readMessage()
-
-		close(done)
-	}()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-done:
-		return body, readErr
-	}
 }
 
 func (m *Manager) pythonLSPPosition(abs string, match semanticpython.PythonSymbolMatch) map[string]any {
