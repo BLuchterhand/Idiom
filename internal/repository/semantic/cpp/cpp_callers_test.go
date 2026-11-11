@@ -2,6 +2,7 @@ package cpp
 
 import (
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -523,16 +524,22 @@ var _ = Describe("C++ owner-resolved calls never drop a possible caller", func()
 		{"proj::sim::Core::run", "zz::Core", "", false},
 	}
 
-	// Each form is a source snippet with N for the type name and D for a class
-	// derived from it; every call line holds one run( call.
+	// Each form is a source snippet with @N for the type name and @D for a
+	// class name unique to the case; every call line holds one run( call, and
+	// a line marked // none must be proven not to reach the owner.
 	forms := []string{
-		"void q() {\n    N::run(1);\n}",
-		"void r(N& v) {\n    v.run(2);\n}",
-		"void p(N* v) {\n    v->run(3);\n}",
-		"void s(std::unique_ptr<N> v) {\n    v->run(4);\n}",
-		"class D : public N {\npublic:\n    void go() {\n        run(5);\n    }\n    void go2() {\n        this->run(6);\n    }\n};",
-		"void d(D& v) {\n    v.run(7);\n}",
-		"void e() {\n    D::run(8);\n}",
+		"void @Dq() {\n    @N::run(1);\n}",
+		"void @Dr(@N& v) {\n    v.run(2);\n}",
+		"void @Dp(@N* v) {\n    v->run(3);\n}",
+		"void @Ds(std::unique_ptr<@N> v) {\n    v->run(4);\n}",
+		"class @D : public @N {\npublic:\n    void go() {\n        run(5);\n    }\n    void go2() {\n        this->run(6);\n    }\n};",
+		"void @Dd(@D& v) {\n    v.run(7);\n}",
+		"void @De() {\n    @D::run(8);\n}",
+		// a using-declaration keeps the base member visible beside an overload
+		"class @DU : public @N {\npublic:\n    using @N::run;\n    void run();\n};\nvoid @Du(@DU& v) {\n    v.run(9);\n}",
+		"template <class T> class @DT : public @N {\npublic:\n    using @N::run;\n    void run(T x);\n};\nvoid @Dt(@DT<int>& v) {\n    v.run(10);\n}",
+		// a local of the same name shadows only after its declaration, in its block
+		"class @DL : public @N {\npublic:\n    void go() {\n        run(11);\n        auto run = [](int) {};\n        run(12); // none\n    }\n    void go2() {\n        { bool run = false; }\n        run(13);\n    }\n};",
 	}
 
 	It("reports every call through the owner, an ambiguous, unindexed or aliased name as caller or unresolved", func() {
@@ -561,8 +568,25 @@ public:
 `)+"\n")
 		mustWriteFile(filepath.Join(root, "h.hpp"), "namespace ha = a;\nnamespace hs = proj::sim;\n")
 
-		// want[owner][path:line] is true for a required caller, false for a required unresolved call.
-		want := map[string]map[string]bool{}
+		// An out-of-class definition after `using namespace b` names W, which is
+		// both a::W and b::W, so it cannot prove a::W hides a::Kernel::run.
+		mustWriteFile(filepath.Join(root, "w.hpp"), strings.TrimSpace(`
+#include "k.hpp"
+namespace a {
+class W : public Kernel {
+};
+}
+namespace b {
+class W : public Kernel {
+public:
+    void run(int n);
+};
+}
+`)+"\n")
+		mustWriteFile(filepath.Join(root, "w.cpp"), "#include \"w.hpp\"\nusing namespace b;\nvoid W::run(int n) {}\nvoid useW(a::W& v) {\n    v.run(14);\n}\n")
+
+		// want[owner][path:line] is the required verdict: caller, unresolved or none.
+		want := map[string]map[string]string{"a::Kernel::run": {"w.cpp:5": "unresolved"}}
 
 		for ci, c := range cases {
 			path := "case" + string(rune('a'+ci)) + ".cpp"
@@ -574,19 +598,27 @@ public:
 			}
 
 			for _, form := range forms {
-				form = strings.ReplaceAll(form, "N", c.name)
-				form = strings.ReplaceAll(form, "D", derived)
-				form = strings.Replace(form, "void ", "void f"+derived, 1) // unique function names
+				form = strings.ReplaceAll(form, "@N", c.name)
+				form = strings.ReplaceAll(form, "@D", derived)
 				body = append(body, strings.Split(form, "\n")...)
 			}
 
 			if want[c.owner] == nil {
-				want[c.owner] = map[string]bool{}
+				want[c.owner] = map[string]string{}
 			}
 
 			for i, line := range body {
-				if strings.Contains(line, "run(") {
-					want[c.owner][path+":"+itoa(i+1)] = c.caller
+				if !callLine.MatchString(line) {
+					continue // declarations such as `void run(T x);`
+				}
+
+				switch {
+				case strings.Contains(line, "// none"):
+					want[c.owner][path+":"+itoa(i+1)] = "none"
+				case c.caller:
+					want[c.owner][path+":"+itoa(i+1)] = "caller"
+				default:
+					want[c.owner][path+":"+itoa(i+1)] = "unresolved"
 				}
 			}
 
@@ -611,17 +643,18 @@ public:
 				got[call.Caller.Path+":"+itoa(call.Line)] = "unresolved"
 			}
 
-			for site, caller := range expected {
-				wantVerdict := "unresolved"
-				if caller {
-					wantVerdict = "caller"
+			for site, verdict := range expected {
+				if verdict == "none" {
+					verdict = ""
 				}
 
-				Expect(got[site]).To(Equal(wantVerdict), owner+" at "+site)
+				Expect(got[site]).To(Equal(verdict), owner+" at "+site)
 			}
 		}
 	})
 })
+
+var callLine = regexp.MustCompile(`run\(\d+\)`)
 
 func itoa(n int) string {
 	return strconv.Itoa(n)

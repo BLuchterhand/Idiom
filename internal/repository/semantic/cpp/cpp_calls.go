@@ -2,6 +2,7 @@ package cpp
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"idiom/internal/repository/semantic/internal/indexsupport"
@@ -377,12 +378,17 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 		}
 
 		for name := range locals {
-			if assignsLocal(text, name) {
+			if at := assignsLocal(text, name); at >= 0 {
 				if vars == nil {
 					vars = make(map[string]string, 4)
 				}
 
-				vars[cppLocalFuncPrefix+name] = "local"
+				span := strconv.Itoa(line) + "-" + strconv.Itoa(localScopeEnd(lines, line, at, endLine))
+				if prior := vars[cppLocalFuncPrefix+name]; prior != "" {
+					span = prior + "," + span
+				}
+
+				vars[cppLocalFuncPrefix+name] = span
 			}
 		}
 	}
@@ -391,8 +397,56 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 }
 
 // cppLocalFuncPrefix keys Vars entries that record a local variable (often a
-// lambda) shadowing a plain call's name, so `run(...)` on it is not a member call.
+// lambda) shadowing a plain call's name, so `run(...)` on it is not a member
+// call. The value lists the line spans where the local is in scope, as
+// "from-to[,from-to...]": from its declaration line to the end of its block.
 const cppLocalFuncPrefix = "fn:"
+
+// localScopeEnd returns the last line of the block that holds a declaration at
+// lines[line-1][at:], i.e. where the brace depth from that point goes negative.
+func localScopeEnd(lines []string, line int, at int, endLine int) int {
+	depth := 0
+
+	for current := line; current <= endLine && current <= len(lines); current++ {
+		text := indexsupport.StripLineComment(lines[current-1])
+		if current == line {
+			text = text[min(at, len(text)):]
+		}
+
+		for i := 0; i < len(text); i++ {
+			switch text[i] {
+			case '{':
+				depth++
+			case '}':
+				if depth--; depth < 0 {
+					return current
+				}
+			}
+		}
+	}
+
+	return endLine
+}
+
+// localInScope reports whether the local spans recorded under
+// cppLocalFuncPrefix cover line.
+func localInScope(spans string, line int) bool {
+	for _, span := range strings.Split(spans, ",") {
+		from, to, ok := strings.Cut(span, "-")
+		if !ok {
+			continue
+		}
+
+		first, errFrom := strconv.Atoi(from)
+		last, errTo := strconv.Atoi(to)
+
+		if errFrom == nil && errTo == nil && line >= first && line <= last {
+			return true
+		}
+	}
+
+	return false
+}
 
 func localFuncNames(calls []CppCall) map[string]bool {
 	var names map[string]bool
@@ -412,13 +466,13 @@ func localFuncNames(calls []CppCall) map[string]bool {
 	return names
 }
 
-// assignsLocal reports whether text initialises a variable called name
-// (`auto name = ...`, `std::function<void()> name{...}`).
-func assignsLocal(text string, name string) bool {
+// assignsLocal returns where text initialises a variable called name
+// (`auto name = ...`, `std::function<void()> name{...}`), or -1.
+func assignsLocal(text string, name string) int {
 	for pos := 0; ; {
 		at := strings.Index(text[pos:], name)
 		if at < 0 {
-			return false
+			return -1
 		}
 
 		start := pos + at
@@ -430,11 +484,11 @@ func assignsLocal(text string, name string) bool {
 
 		rest := strings.TrimLeft(text[pos:], " \t")
 		if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") && declaredTypeBefore(text, start, '=', true) != "" {
-			return true
+			return start
 		}
 
 		if strings.HasPrefix(rest, "{") && declaredTypeBefore(text, start, '{', true) != "" {
-			return true
+			return start
 		}
 	}
 }
@@ -459,13 +513,43 @@ func collectCppFields(lines []string, startLine int, endLine int) map[string]str
 	for line := startLine; line <= endLine && line <= len(lines); line++ {
 		text := indexsupport.StripLineComment(lines[line-1])
 		if depth == 1 && strings.HasSuffix(strings.TrimSpace(text), ";") && !strings.Contains(text, "(") {
-			fields = fieldDeclIn(fields, text)
+			if from, name, ok := usingDeclaration(text); ok {
+				if fields == nil {
+					fields = make(map[string]string, 4)
+				}
+
+				fields[cppUsingPrefix+name] = from
+			} else {
+				fields = fieldDeclIn(fields, text)
+			}
 		}
 
 		depth += strings.Count(text, "{") - strings.Count(text, "}")
 	}
 
 	return fields
+}
+
+// cppUsingPrefix keys class Fields entries that record `using Base::name;`,
+// which brings Base's member into the class instead of hiding it.
+const cppUsingPrefix = "using:"
+
+// usingDeclaration reads `using X::name;` into X and name.
+func usingDeclaration(text string) (string, string, bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "using ") || strings.Contains(text, "=") || strings.HasPrefix(text, "using namespace ") {
+		return "", "", false
+	}
+
+	qualified := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "using "), ";"))
+	qualified = strings.TrimSpace(strings.TrimPrefix(qualified, "typename "))
+
+	cut := strings.LastIndex(qualified, "::")
+	if cut <= 0 {
+		return "", "", false
+	}
+
+	return qualified[:cut], qualified[cut+2:], true
 }
 
 // parseCppBases returns the base class names written in the head of the type

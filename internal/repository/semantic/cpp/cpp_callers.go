@@ -54,7 +54,12 @@ type callResolver struct {
 	sub       []string
 	classes   map[string][]*CppSymbol // last segment -> class symbols
 	methodsOf []string                // scopes that declare a method called name
-	known     map[string]bool         // first namespace segment of every indexed symbol
+	// declarers are the classes methodsOf resolves to; unsureDeclarers are
+	// method scopes that match several classes (an out-of-class definition
+	// after `using namespace`), which never prove hiding.
+	declarers       []string
+	unsureDeclarers []string
+	known           map[string]bool // first namespace segment of every indexed symbol
 	// namespaces maps a namespace's last segment to its qualified names.
 	namespaces map[string][]string
 }
@@ -110,6 +115,17 @@ func newCallResolver(idx *CppIndex, res CppResolution) *callResolver {
 		}
 	}
 
+	for _, scope := range r.methodsOf {
+		switch status, qualified := r.resolveType(scope, ""); status {
+		case typeFound:
+			r.declarers = appendUniqueString(r.declarers, qualified)
+		case typeAmbiguous:
+			r.unsureDeclarers = appendUniqueString(r.unsureDeclarers, scope)
+		default:
+			r.declarers = appendUniqueString(r.declarers, scope)
+		}
+	}
+
 	if r.isType {
 		return r
 	}
@@ -129,7 +145,7 @@ func newCallResolver(idx *CppIndex, res CppResolution) *callResolver {
 		changed = false
 
 		for _, class := range all {
-			if slices.Contains(r.sub, class.Qualified) || r.declaresMethod(class.Qualified) {
+			if declares, unsure := r.declaresMethod(class.Qualified); declares || unsure || slices.Contains(r.sub, class.Qualified) {
 				continue
 			}
 
@@ -155,14 +171,39 @@ func appendUniqueString(list []string, value string) []string {
 	return append(list, value)
 }
 
-func (r *callResolver) declaresMethod(class string) bool {
-	for _, scope := range r.methodsOf {
+// declaresMethod reports whether class declares a member called name, and
+// whether an ambiguous out-of-class definition might (unsure: no proof).
+func (r *callResolver) declaresMethod(class string) (declares bool, unsure bool) {
+	for _, scope := range r.declarers {
 		if scopesCompatible(scope, class) {
-			return true
+			return true, false
 		}
 	}
 
-	return false
+	for _, scope := range r.unsureDeclarers {
+		if scopesCompatible(scope, class) {
+			return false, true
+		}
+	}
+
+	return false, false
+}
+
+// usingVerdict decides a class that brings Base::name in with a using-
+// declaration: its own overloads do not hide Base's, so a call may reach Base.
+func (r *callResolver) usingVerdict(class *CppSymbol, depth int) (callVerdict, string, bool) {
+	from, ok := class.Fields[cppUsingPrefix+r.name]
+	if !ok {
+		return verdictNone, "", false
+	}
+
+	if status, qualified := r.resolveType(from, class.Qualified); status == typeFound {
+		if verdict, _ := r.inheritVerdict(qualified, depth+1); verdict == verdictCaller {
+			return verdictCaller, "", true
+		}
+	}
+
+	return verdictUnresolved, "class `" + class.Qualified + "` brings `" + from + "::" + r.name + "` in with a using-declaration beside its own overloads", true
 }
 
 func firstSegment(qualified string) string {
@@ -326,12 +367,23 @@ func (r *callResolver) inheritVerdict(class string, depth int) (callVerdict, str
 		return verdictCaller, ""
 	}
 
-	if r.declaresMethod(class) {
-		return verdictNone, "" // the class's own member hides any inherited one
-	}
-
 	if depth > 8 {
 		return verdictUnresolved, "class `" + class + "` has a base chain deeper than the resolver follows"
+	}
+
+	for _, symbol := range r.classes[lastSegment(class)] {
+		if symbol.Qualified == class {
+			if verdict, reason, decided := r.usingVerdict(symbol, depth); decided {
+				return verdict, reason
+			}
+		}
+	}
+
+	switch declares, unsure := r.declaresMethod(class); {
+	case unsure:
+		return verdictUnresolved, "an out-of-class `" + r.name + "` definition matches class `" + class + "` and another class of that name"
+	case declares:
+		return verdictNone, "" // the class's own member hides any inherited one
 	}
 
 	verdict, reason := verdictNone, ""
@@ -464,7 +516,8 @@ func (r *callResolver) hasAncestor(class string, ancestor string, depth int) boo
 		}
 
 		for _, base := range symbol.Bases {
-			if scopesCompatible(base, ancestor) && r.declaresMethod(base) || r.hasAncestor(base, ancestor, depth+1) {
+			declares, unsure := r.declaresMethod(base)
+			if scopesCompatible(base, ancestor) && (declares || unsure) || r.hasAncestor(base, ancestor, depth+1) {
 				return true
 			}
 		}
@@ -531,8 +584,8 @@ func (r *callResolver) classify(caller CppSymbol, call CppCall) (callVerdict, st
 		return r.classifyMember(caller, call)
 	}
 
-	if _, local := caller.Vars[cppLocalFuncPrefix+call.Name]; local {
-		return verdictNone, "" // a local variable (lambda) called like a function
+	if spans, local := caller.Vars[cppLocalFuncPrefix+call.Name]; local && localInScope(spans, call.Line) {
+		return verdictNone, "" // a local variable (lambda) in scope, called like a function
 	}
 
 	switch {
@@ -542,8 +595,13 @@ func (r *callResolver) classify(caller CppSymbol, call CppCall) (callVerdict, st
 		return r.callerScopeVerdict(caller.Scope)
 	}
 
-	if caller.Scope != "" && r.declaresMethod(caller.Scope) {
-		return verdictNone, "" // the caller's class member of that name hides the free function
+	if caller.Scope != "" {
+		switch declares, unsure := r.declaresMethod(caller.Scope); {
+		case unsure:
+			return verdictUnresolved, "caller class `" + caller.Scope + "` may declare its own `" + call.Name + "`"
+		case declares:
+			return verdictNone, "" // the caller's class member of that name hides the free function
+		}
 	}
 
 	return verdictCaller, ""
