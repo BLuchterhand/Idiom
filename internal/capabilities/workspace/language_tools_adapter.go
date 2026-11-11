@@ -396,6 +396,9 @@ func toLanguageToolRequest(req ToolRequest) languagetools.ToolRequest {
 func fromLanguageToolResult(result languagetools.ToolResult) ToolResult {
 	converted := ToolResult{
 		Tool:          result.Tool,
+		Code:          result.Code,
+		Freshness:     result.Freshness,
+		Warnings:      append([]string(nil), result.Warnings...),
 		Summary:       result.Summary,
 		Output:        result.Output,
 		Error:         result.Error,
@@ -421,6 +424,9 @@ func toLanguageToolResult(result ToolResult) languagetools.ToolResult {
 	}
 	return languagetools.ToolResult{
 		Tool:          result.Tool,
+		Code:          result.Code,
+		Freshness:     result.Freshness,
+		Warnings:      append([]string(nil), result.Warnings...),
 		Summary:       result.Summary,
 		Output:        result.Output,
 		Error:         result.Error,

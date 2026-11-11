@@ -62,13 +62,13 @@ func (m *Manager) dispatch(ctx context.Context, req ToolRequest) ToolResult {
 	case "go_move_declarations":
 		return m.goMoveDeclarations(req)
 	case "cpp_overview":
-		return m.cppOverview()
+		return m.cppOverview(ctx)
 	case "cpp_entrypoints":
 		return m.cppEntrypoints(req)
 	case "cpp_find_symbol":
 		return m.cppFindSymbol(req)
 	case "cpp_read_symbol":
-		return m.cppReadSymbol(req)
+		return m.cppReadSymbol(ctx, req)
 	case "cpp_related_files":
 		return m.cppRelatedFiles(req)
 	case "cpp_definition":
@@ -84,13 +84,13 @@ func (m *Manager) dispatch(ctx context.Context, req ToolRequest) ToolResult {
 	case "cpp_calls_into":
 		return m.cppCallsInto(ctx, req)
 	case "cpp_extract_body":
-		return m.cppExtractBody(req)
+		return m.cppExtractBody(ctx, req)
 	case "cpp_includes":
 		return m.cppIncludes(req)
 	case "cpp_who_includes":
 		return m.cppWhoIncludes(req)
 	case "cpp_blast_radius":
-		return m.cppBlastRadius(req)
+		return m.cppBlastRadius(ctx, req)
 	case "cpp_dead_symbol":
 		return m.cppDeadSymbol(ctx, req)
 	case "cpp_workspace_symbol":

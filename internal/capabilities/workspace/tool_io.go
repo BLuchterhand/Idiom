@@ -166,6 +166,11 @@ type ToolResult struct {
 	Relationships []ToolRelationship         `json:"relationships,omitempty"`
 	PayloadType   string                     `json:"payload_type,omitempty"`
 	Payload       json.RawMessage            `json:"payload,omitempty"`
+	// Freshness is producer-reported index identity and timing. The sidecar
+	// envelope reports it as `freshness` when the output text is not JSON.
+	Freshness any `json:"freshness,omitempty"`
+	// Warnings are producer-reported caveats surfaced as sidecar warnings.
+	Warnings []string `json:"warnings,omitempty"`
 
 	pendingSystemSearchGrant *systemSearchAccessGrant
 	mutationCommitReceipt    *MutationCommitReceipt

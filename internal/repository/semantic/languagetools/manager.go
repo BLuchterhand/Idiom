@@ -49,7 +49,7 @@ type Manager struct {
 	goIndex        *semanticgo.GoIndex
 	goIndexToken   string
 	cppIndex       *semanticcpp.CppIndex
-	cppIndexToken  string
+	cppIndexInfo   cppIndexInfo
 	rustIndex      *semanticrust.RustIndex
 	rustIndexToken string
 	tsIndex        *semanticts.TsIndex
@@ -264,6 +264,7 @@ type FileMutationPreimage struct {
 
 type ToolResult struct {
 	Tool          string
+	Code          string
 	Summary       string
 	Output        string
 	Error         string
@@ -275,6 +276,10 @@ type ToolResult struct {
 	PrecisionTier string
 	Relationships []ToolRelationship
 	MutationPlan  *MutationPlan
+	// Freshness and Warnings carry producer-reported index identity, timing and
+	// caveats through to the sidecar envelope.
+	Freshness any
+	Warnings  []string
 }
 
 // SourceWindowPlan is an untrusted language-reader claim that the workspace

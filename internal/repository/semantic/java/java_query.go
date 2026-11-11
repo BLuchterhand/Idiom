@@ -110,7 +110,7 @@ func normalizeJavaSymbolPattern(pattern string) string {
 }
 
 // FindCallsFrom returns outgoing call sites from methods matching
-// `pattern` — direct mirror of FindCallsFrom on CppIndex.
+// `pattern`.
 func (idx *JavaIndex) FindCallsFrom(pattern string, limit int) []JavaCallMatch {
 	symbols := idx.FindSymbols(pattern, 4)
 	if len(symbols) == 0 {

@@ -33,6 +33,7 @@ func WalkDirUnderRoot(root string, path string, label string, fn fs.WalkDirFunc)
 		targetPath = filepath.Join(canonicalRoot, targetPath)
 	}
 	targetPath = CleanPath(filepath.Clean(targetPath))
+	targetPath = rebasePathOntoCanonicalRoot(root, canonicalRoot, targetPath)
 
 	rootRelative := "."
 	if !samePath(canonicalRoot, targetPath) {

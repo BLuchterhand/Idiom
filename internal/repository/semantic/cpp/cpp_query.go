@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
@@ -21,6 +20,7 @@ type CppSymbolMatch struct {
 	StartLine int
 	EndLine   int
 	Score     int
+	Explicit  bool
 }
 
 type CppCallMatch struct {
@@ -45,18 +45,9 @@ func (idx *CppIndex) FindSymbols(pattern string, limit int) []CppSymbolMatch {
 				continue
 			}
 
-			matches = append(matches, CppSymbolMatch{
-				Path:      file.Path,
-				Name:      symbol.Name,
-				Qualified: firstCppQualified(symbol),
-				Kind:      symbol.Kind,
-				Scope:     symbol.Scope,
-				Line:      symbol.Line,
-				Column:    symbol.Column,
-				StartLine: symbol.StartLine,
-				EndLine:   symbol.EndLine,
-				Score:     score,
-			})
+			match := symbolMatch(file.Path, symbol)
+			match.Score = score
+			matches = append(matches, match)
 		}
 	}
 
@@ -92,100 +83,34 @@ func normalizeCppSymbolPattern(pattern string) string {
 	return indexsupport.NormalizeSymbolPattern(pattern, cppSymbolPatternExtractors)
 }
 
-func (idx *CppIndex) FindCallsFrom(pattern string, limit int) []CppCallMatch {
-	symbols := idx.FindSymbols(pattern, 4)
-	if len(symbols) == 0 {
-		return nil
-	}
-
+// CallsFromDefinitions returns the call sites inside the given definitions
+// (as returned by ResolveSymbol) plus the total before limit truncation.
+func (idx *CppIndex) CallsFromDefinitions(definitions []CppSymbolMatch, limit int) ([]CppCallMatch, int) {
 	out := make([]CppCallMatch, 0, 16)
 
-	for _, match := range symbols {
+	for _, match := range definitions {
 		file := idx.FileByPath(match.Path)
 		if file == nil {
 			continue
 		}
 
 		for _, symbol := range file.Symbols {
-			if symbol.Line != match.Line || symbol.Name != match.Name || firstCppQualified(symbol) != firstCppQualified(CppSymbol{Qualified: match.Qualified, Scope: match.Scope, Name: match.Name}) {
+			if symbol.Line != match.Line || symbol.Name != match.Name || firstCppQualified(symbol) != match.Qualified {
 				continue
 			}
 
 			for _, call := range symbol.Calls {
-				out = append(out, CppCallMatch{
-					Caller:     match,
-					CalleeName: call.Name,
-					Line:       call.Line,
-					Score:      match.Score,
-				})
+				out = append(out, CppCallMatch{Caller: match, CalleeName: call.Name, Line: call.Line})
 			}
 		}
 	}
 
+	total := len(out)
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
 
-	return out
-}
-
-func (idx *CppIndex) FindCallsInto(pattern string, limit int) []CppCallMatch {
-	targets := idx.FindSymbols(pattern, 8)
-	if len(targets) == 0 {
-		return nil
-	}
-
-	names := make(map[string]CppSymbolMatch, len(targets)*2)
-	for _, target := range targets {
-		names[strings.ToLower(target.Name)] = target
-		if target.Qualified != "" {
-			names[strings.ToLower(target.Qualified)] = target
-		}
-	}
-
-	out := make([]CppCallMatch, 0, 16)
-
-	for _, file := range idx.Files {
-		for _, symbol := range file.Symbols {
-			for _, call := range symbol.Calls {
-				target, ok := names[strings.ToLower(call.Name)]
-				if !ok {
-					continue
-				}
-
-				out = append(out, CppCallMatch{
-					Caller: CppSymbolMatch{
-						Path:      file.Path,
-						Name:      symbol.Name,
-						Qualified: firstCppQualified(symbol),
-						Kind:      symbol.Kind,
-						Scope:     symbol.Scope,
-						Line:      symbol.Line,
-						Column:    symbol.Column,
-						StartLine: symbol.StartLine,
-						EndLine:   symbol.EndLine,
-					},
-					CalleeName: textutil.FirstNonEmpty(target.Qualified, target.Name),
-					Line:       call.Line,
-					Score:      target.Score,
-				})
-			}
-		}
-	}
-
-	slices.SortFunc(out, func(a, b CppCallMatch) int {
-		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
-			return c
-		}
-
-		return cmp.Compare(a.Line, b.Line)
-	})
-
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-
-	return out
+	return out, total
 }
 
 func (idx *CppIndex) Dependencies(pattern string) []string {
@@ -214,7 +139,48 @@ func (idx *CppIndex) Dependencies(pattern string) []string {
 }
 
 func (idx *CppIndex) WhoIncludes(pattern string) []string {
-	targets := idx.findFiles(pattern)
+	return idx.includersOf(idx.findFiles(pattern))
+}
+
+// MatchFiles returns the indexed files a path pattern names.
+func (idx *CppIndex) MatchFiles(pattern string) []string {
+	return idx.findFiles(pattern)
+}
+
+// BlastRadius returns the translation units (non-header files) that include the
+// files the pattern names, directly or transitively.
+func (idx *CppIndex) BlastRadius(pattern string) []string {
+	return idx.BlastRadiusOfFiles(idx.findFiles(pattern), false)
+}
+
+// BlastRadiusOfFiles returns the translation units affected by changing the
+// given files. With includeSelf the non-header targets themselves are included,
+// which is what a change to a symbol defined in a .cpp file affects.
+func (idx *CppIndex) BlastRadiusOfFiles(targets []string, includeSelf bool) []string {
+	files := idx.includersOf(targets)
+	if includeSelf {
+		files = append(files, targets...)
+	}
+
+	out := make([]string, 0, len(files))
+	seen := make(map[string]struct{}, len(files))
+
+	for _, file := range files {
+		if _, ok := seen[file]; ok || isCppHeader(file) {
+			continue
+		}
+
+		seen[file] = struct{}{}
+
+		out = append(out, file)
+	}
+
+	slices.Sort(out)
+
+	return out
+}
+
+func (idx *CppIndex) includersOf(targets []string) []string {
 	if len(targets) == 0 {
 		return nil
 	}
@@ -231,26 +197,6 @@ func (idx *CppIndex) WhoIncludes(pattern string) []string {
 			seen[dep] = struct{}{}
 			out = append(out, dep)
 		}
-	}
-
-	slices.Sort(out)
-
-	return out
-}
-
-func (idx *CppIndex) BlastRadius(pattern string) []string {
-	files := idx.WhoIncludes(pattern)
-	if len(files) == 0 {
-		return nil
-	}
-
-	out := make([]string, 0, len(files))
-	for _, file := range files {
-		if isCppHeader(file) {
-			continue
-		}
-
-		out = append(out, file)
 	}
 
 	slices.Sort(out)

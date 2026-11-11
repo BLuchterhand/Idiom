@@ -91,14 +91,19 @@ func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, pro
 	contract := BuildToolSidecarContract(tool, profile, transport)
 	childContext := normalizeToolSidecarChildContext(opts.ChildContext)
 
+	freshness := toolSidecarFreshness(outputObject)
+	if result.Freshness != nil {
+		freshness = result.Freshness
+	}
+
 	return ToolSidecarEnvelope{
 		SchemaVersion:    ToolSidecarEnvelopeVersion,
 		Tool:             tool,
 		Profile:          profile,
 		Caller:           opts.Caller,
 		Contract:         contract,
-		Freshness:        toolSidecarFreshness(outputObject),
-		Warnings:         toolSidecarWarnings(outputObject),
+		Freshness:        freshness,
+		Warnings:         append(toolSidecarWarnings(outputObject), toolSidecarResultWarnings(result.Warnings)...),
 		AuditEventIDs:    toolSidecarAuditEventIDs(outputObject),
 		StructuredOutput: structuredOutput,
 		Error:            toolSidecarError(result),
@@ -359,6 +364,18 @@ func toolSidecarOutputObject(structuredOutput any) map[string]any {
 	return object
 }
 
+func toolSidecarResultWarnings(messages []string) []ToolSidecarWarning {
+	warnings := make([]ToolSidecarWarning, 0, len(messages))
+
+	for _, message := range messages {
+		if message = strings.TrimSpace(message); message != "" {
+			warnings = append(warnings, ToolSidecarWarning{Code: "tool_warning", Message: message})
+		}
+	}
+
+	return warnings
+}
+
 func toolSidecarFreshness(output map[string]any) any {
 	if output == nil {
 		return nil
@@ -524,7 +541,7 @@ func classifyToolSidecarError(result ToolResult) string {
 
 func classifyToolSidecarResultCode(code string) string {
 	switch strings.TrimSpace(code) {
-	case "profile_denied", "read_only_profile":
+	case "profile_denied", "read_only_profile", "cpp_index_budget_exceeded", "ambiguous_symbol", "symbol_not_found":
 		return strings.TrimSpace(code)
 	default:
 		return ""

@@ -44,6 +44,35 @@ var _ = ginkgo.Describe("tool sidecar envelope", func() {
 		gomega.Expect(envelope.Error).To(gomega.BeNil(), fmt.Sprintf("success envelope should not include error: %#v", envelope.Error))
 
 	})
+	ginkgo.It("surfaces producer freshness, warnings and typed code for text-output tools", func() {
+		result := ToolResult{
+			Tool:      "cpp_calls_into",
+			Code:      "ambiguous_symbol",
+			Summary:   "rejected",
+			Output:    "a.cpp:1 method A::f\nb.cpp:2 method B::f",
+			Error:     "ambiguous_symbol: \"f\" names 2 different symbols",
+			Freshness: map[string]any{"schema": "idiom.cpp_index.v1", "fresh": true},
+			Warnings:  []string{"matched by callee name only", "  "},
+		}
+		envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "cpp_calls_into"}, result, "", ToolSidecarOptions{})
+
+		freshness, ok := envelope.Freshness.(map[string]any)
+		gomega.Expect(ok).To(gomega.BeTrue(), fmt.Sprintf("freshness not carried: %#v", envelope.Freshness))
+		gomega.Expect(freshness["schema"]).To(gomega.Equal("idiom.cpp_index.v1"))
+		gomega.Expect(envelope.Warnings).To(gomega.Equal([]ToolSidecarWarning{{Code: "tool_warning", Message: "matched by callee name only"}}))
+		gomega.Expect(envelope.Error).NotTo(gomega.BeNil())
+		gomega.Expect(envelope.Error.Code).To(gomega.Equal("ambiguous_symbol"))
+
+		plain := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "cpp_calls_into"}, ToolResult{Tool: "cpp_calls_into", Output: "x"}, "", ToolSidecarOptions{})
+		gomega.Expect(plain.Freshness).To(gomega.BeNil())
+		gomega.Expect(plain.Warnings).To(gomega.BeEmpty())
+	})
+	ginkgo.It("lets JSON output freshness stand when the producer reports none", func() {
+		result := ToolResult{Tool: "context_status", Output: `{"freshness":{"policy":"report_only"}}`, Warnings: []string{"extra"}}
+		envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_status"}, result, "", ToolSidecarOptions{})
+		gomega.Expect(envelope.Freshness).To(gomega.HaveKeyWithValue("policy", "report_only"))
+		gomega.Expect(envelope.Warnings).To(gomega.HaveLen(1))
+	})
 	ginkgo.It("build tool sidecar envelope uses shared contract shape", func() {
 		result := ToolResult{
 			Tool:    "context_status",

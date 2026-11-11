@@ -2,12 +2,14 @@ package cpp
 
 import (
 	"cmp"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
@@ -21,6 +23,17 @@ type CppIndex struct {
 	Files   []CppFile
 	Forward map[string][]string
 	Reverse map[string][]string
+	Timings CppBuildTimings
+}
+
+// CppBuildTimings records where a BuildCppIndexWithOptions call spent its time
+// so a slow or budget-exceeded build can name its phase.
+type CppBuildTimings struct {
+	Walk  time.Duration
+	Parse time.Duration
+	Link  time.Duration
+	Files int
+	Bytes int64
 }
 
 type CppFile struct {
@@ -48,6 +61,9 @@ type CppSymbol struct {
 	Calls      []CppCall
 	HasBody    bool
 	SourceFile string
+	// Explicit marks a member defined out of class with its own qualifier
+	// (void Pool::reset() {}), whose namespace may be implied by context.
+	Explicit bool
 }
 
 type CppCall struct {
@@ -57,7 +73,7 @@ type CppCall struct {
 
 var (
 	cppIncludeRe       = regexp.MustCompile(`^\s*#include\s+[<"]([^>"]+)`)
-	cppTypeRe          = regexp.MustCompile(`^\s*(?:template\s*<[^>]*>\s*)?(class|struct|enum(?:\s+class)?|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	cppTypeRe          = regexp.MustCompile(`^\s*(?:template\s*<[^>]*>\s*)?(class|struct|enum(?:\s+class)?|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)`)
 	cppNameBeforeParen = regexp.MustCompile(`([A-Za-z_~][A-Za-z0-9_:~]*)\s*$`)
 	cppCallRe          = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^;{}()\n]*>)?\s*\(`)
 )
@@ -107,6 +123,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	byRel := make(map[string]string)
 	paths := make([]string, 0, 64)
 
+	walkStarted := time.Now()
 	errStop := filepath.SkipAll
 	err := safepath.WalkDirUnderRoot(root, root, "C++ index", func(path string, d os.DirEntry, walkErr error) error {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
@@ -163,6 +180,12 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	}
 
 	if err != nil {
+		if ctxErr := indexsupport.ContextErr(opts.Context); ctxErr != nil && errors.Is(err, ctxErr) {
+			index.Timings.Walk = time.Since(walkStarted)
+
+			return nil, &BudgetError{Phase: "walk", Timings: index.Timings, Cause: err}
+		}
+
 		return nil, err
 	}
 
@@ -172,9 +195,15 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 
 	slices.Sort(paths)
 
+	index.Timings.Walk = time.Since(walkStarted)
+	parseStarted := time.Now()
+
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
-			return nil, err
+			index.Timings.Parse = time.Since(parseStarted)
+			index.Timings.Files = len(index.Files)
+
+			return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
 		}
 
 		full := filepath.Join(root, filepath.FromSlash(rel))
@@ -184,6 +213,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 			continue
 		}
 
+		index.Timings.Bytes += int64(len(contentBytes))
 		content := string(contentBytes)
 		includes := parseCppIncludes(rel, content, byName, byRel)
 		symbols := parseCppSymbols(rel, content)
@@ -214,6 +244,10 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		index.Files = append(index.Files, file)
 	}
 
+	index.Timings.Parse = time.Since(parseStarted)
+	index.Timings.Files = len(index.Files)
+	linkStarted := time.Now()
+
 	slices.SortFunc(index.Files, func(a, b CppFile) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
@@ -228,6 +262,8 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 			index.Reverse[include] = textutil.AppendUnique(index.Reverse[include], file.Path)
 		}
 	}
+
+	index.Timings.Link = time.Since(linkStarted)
 
 	return index, nil
 }
@@ -393,17 +429,20 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 
 		if pendingStart == 0 {
 			if match := cppTypeRe.FindStringSubmatch(trimmed); len(match) == 3 {
-				end := lineNo
-				if strings.Contains(trimmed, "{") {
-					end = findCppBraceEnd(lines, i)
-				}
-
+				end := cppTypeEnd(lines, i)
 				kind := strings.ReplaceAll(match[1], " ", "_")
 
 				kind = strings.ReplaceAll(kind, "enum_class", "enum")
+
+				name, scope := match[2], ""
+				if cut := strings.LastIndex(name, "::"); cut >= 0 {
+					name, scope = name[cut+2:], name[:cut]
+				}
+
 				symbols = append(symbols, CppSymbol{
-					Name:       match[2],
-					Qualified:  match[2],
+					Name:       name,
+					Qualified:  indexsupport.FirstQualified(scope, name, "::"),
+					Scope:      scope,
 					Kind:       kind,
 					Line:       lineNo,
 					Column:     1,
@@ -463,7 +502,119 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 		)
 	})
 
-	return symbols
+	return attributeCppScopes(symbols)
+}
+
+// cppTypeEnd returns the last line of the type or namespace starting at lines[start]:
+// the matching brace when the body opens on this line or within the next few
+// lines, else the line itself (a forward declaration).
+func cppTypeEnd(lines []string, start int) int {
+	for i := start; i < len(lines) && i < start+6; i++ {
+		clean := indexsupport.StripLineComment(lines[i])
+		if strings.Contains(clean, "{") {
+			return findCppBraceEnd(lines, i)
+		}
+
+		if strings.Contains(clean, ";") {
+			break
+		}
+	}
+
+	return start + 1
+}
+
+// attributeCppScopes gives every symbol its enclosing namespace or class by line
+// range, so in-class members and same-named types in different namespaces stay
+// distinct, and drops signature-shaped call statements that sit inside another
+// function's body. symbols must be sorted by line.
+func attributeCppScopes(symbols []CppSymbol) []CppSymbol {
+	out := make([]CppSymbol, 0, len(symbols))
+	stack := make([]CppSymbol, 0, 8)
+
+	for _, symbol := range symbols {
+		for len(stack) > 0 && stack[len(stack)-1].EndLine < symbol.Line {
+			stack = stack[:len(stack)-1]
+		}
+
+		isType := isCppContainerKind(symbol.Kind)
+
+		insideBody := false
+
+		for _, open := range stack {
+			if !isCppContainerKind(open.Kind) {
+				insideBody = true
+			}
+		}
+
+		if insideBody && !isType {
+			continue
+		}
+
+		symbol = scopeCppSymbol(symbol, stack)
+		out = append(out, symbol)
+
+		if isType && symbol.EndLine > symbol.StartLine || symbol.HasBody && !isType {
+			stack = append(stack, symbol)
+		}
+	}
+
+	return out
+}
+
+func isCppContainerKind(kind string) bool {
+	switch kind {
+	case "class", "struct", "union", "namespace":
+		return true
+	}
+
+	return false
+}
+
+func scopeCppSymbol(symbol CppSymbol, stack []CppSymbol) CppSymbol {
+	innermost, namespace := "", ""
+
+	for i := len(stack) - 1; i >= 0; i-- {
+		if !isCppContainerKind(stack[i].Kind) {
+			continue
+		}
+
+		if innermost == "" {
+			innermost = stack[i].Qualified
+		}
+
+		if namespace == "" && stack[i].Kind == "namespace" {
+			namespace = stack[i].Qualified
+		}
+	}
+
+	switch {
+	case isCppContainerKind(symbol.Kind):
+		symbol.Scope = joinCppScope(innermost, symbol.Scope)
+	case symbol.Scope != "":
+		symbol.Explicit = true
+		symbol.Scope = joinCppScope(namespace, symbol.Scope)
+	case innermost != "":
+		symbol.Scope = innermost
+		if symbol.Kind == "func" && namespace != innermost {
+			symbol.Kind = "method"
+		}
+	}
+
+	symbol.Qualified = indexsupport.FirstQualified(symbol.Scope, symbol.Name, "::")
+
+	return symbol
+}
+
+func joinCppScope(prefix string, scope string) string {
+	if prefix == "" {
+		return scope
+	}
+
+	if scope == "" {
+		return prefix
+	}
+
+	return prefix + "::" + scope
 }
 
 func parseCppFunctionSignature(signature string) (CppSymbol, bool) {
