@@ -177,7 +177,7 @@ var cppNonTypeWords = map[string]bool{
 // declaredTypeBefore reads the type written before the declarator name that
 // starts at nameStart ("const Foo* name", "std::vector<Foo>& name"), or "" if
 // the text before the name is not a type.
-func declaredTypeBefore(text string, nameStart int) string {
+func declaredTypeBefore(text string, nameStart int, term byte, body bool) string {
 	i := skipSpacesBack(text, nameStart)
 
 	for {
@@ -229,7 +229,60 @@ func declaredTypeBefore(text string, nameStart int) string {
 		return ""
 	}
 
+	if !atDeclarationBoundary(text, i, term, body) {
+		return ""
+	}
+
 	return text[i:end]
+}
+
+var cppDeclQualifiers = []string{"const", "volatile", "static", "constexpr", "inline", "mutable", "typename", "struct", "class", "register", "thread_local"}
+
+// atDeclarationBoundary reports whether the type starting at typeStart begins a
+// declaration rather than sitting inside an expression (`a && k`, `s * q`).
+// In a function body only statement starts and control-statement heads count;
+// in a signature a parameter may follow `(` or `,`.
+func atDeclarationBoundary(text string, typeStart int, term byte, body bool) bool {
+	i := skipSpacesBack(text, typeStart)
+
+	for stripped := true; stripped; {
+		stripped = false
+
+		for _, word := range cppDeclQualifiers {
+			if strings.HasSuffix(text[:i], word) && (i == len(word) || !isIdentByte(text[i-len(word)-1])) {
+				i = skipSpacesBack(text, i-len(word))
+				stripped = true
+			}
+		}
+	}
+
+	if i == 0 {
+		return true
+	}
+
+	switch text[i-1] {
+	case '{', ';':
+		return true
+	case ',', '<':
+		return !body
+	case '(':
+		if !body {
+			return true
+		}
+
+		head := skipSpacesBack(text, i-1)
+		if head > 0 && text[head-1] == ']' {
+			return true
+		}
+
+		for _, word := range []string{"if", "for", "while", "switch", "catch"} {
+			if strings.HasSuffix(text[:head], word) && (head == len(word) || !isIdentByte(text[head-len(word)-1])) {
+				return term == '=' || term == ':' || term == ';'
+			}
+		}
+	}
+
+	return false
 }
 
 func before(text string, i int) byte {
@@ -240,10 +293,13 @@ func before(text string, i int) byte {
 	return 0
 }
 
+// cppAmbiguousType marks a name declared with conflicting types.
+const cppAmbiguousType = "?"
+
 // declaredVarsIn records the declared type of each wanted name that is
 // declared in text (the name is followed by a declarator terminator).
 // Redeclared names keep the last type; shadowing is not modelled.
-func declaredVarsIn(vars map[string]string, text string, want map[string]bool) map[string]string {
+func declaredVarsIn(vars map[string]string, text string, want map[string]bool, body bool) map[string]string {
 	for name := range want {
 		for pos := 0; pos < len(text); {
 			at := strings.Index(text[pos:], name)
@@ -263,9 +319,15 @@ func declaredVarsIn(vars map[string]string, text string, want map[string]bool) m
 				continue
 			}
 
-			if typeName := declaredTypeBefore(text, start); typeName != "" {
+			if typeName := declaredTypeBefore(text, start, rest[0], body); typeName != "" {
 				if vars == nil {
 					vars = make(map[string]string, 4)
+				}
+
+				// A name declared with two different types (shadowing, or a
+				// look-alike expression) is not trusted to either.
+				if prior, seen := vars[name]; seen && prior != typeName {
+					typeName = cppAmbiguousType
 				}
 
 				vars[name] = typeName
@@ -298,7 +360,7 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 		return nil
 	}
 
-	vars := declaredVarsIn(nil, signature, want)
+	vars := declaredVarsIn(nil, signature, want, false)
 
 	for line := startLine; line <= endLine && line <= len(lines); line++ {
 		text := indexsupport.StripLineComment(lines[line-1])
@@ -306,7 +368,7 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 			continue
 		}
 
-		vars = declaredVarsIn(vars, text, want)
+		vars = declaredVarsIn(vars, text, want, true)
 	}
 
 	return vars
@@ -467,7 +529,7 @@ func fieldDeclIn(fields map[string]string, text string) map[string]string {
 		return fields
 	}
 
-	if typeName := declaredTypeBefore(text, start); typeName != "" {
+	if typeName := declaredTypeBefore(text, start, ';', false); typeName != "" {
 		if fields == nil {
 			fields = make(map[string]string, 4)
 		}

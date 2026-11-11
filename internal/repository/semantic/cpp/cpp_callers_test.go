@@ -208,3 +208,118 @@ void use(Box& b) {
 		Expect(found.UnresolvedTotal).To(BeZero())
 	})
 })
+
+var _ = Describe("C++ owner-resolved calls fail closed", func() {
+	var (
+		index *CppIndex
+		src   []string
+	)
+
+	const header = `
+namespace a {
+class Base {
+public:
+    virtual void run(int n);
+};
+class Kernel : public Base {
+public:
+    void run(int n);
+};
+}
+namespace b {
+class Kernel {
+public:
+    void run(int n);
+};
+}
+template <class T> class Mix : public T {
+public:
+    void go();
+};
+`
+
+	const source = `
+#include "k.hpp"
+void viaBase(a::Base* p) {
+    p->run(21);
+}
+template <typename K> void drive(K& k) {
+    k.run(31);
+}
+void andand(bool on, a::Kernel* k) {
+    if (on && k) k->run(41);
+}
+void mult(int s, a::Kernel* q) {
+    int z = s * q;
+    q->run(51);
+}
+void other(b::Kernel& w) {
+    w.run(61);
+}
+void unk(Unknown& u) {
+    u.run(81);
+}
+void stdtype(std::vector<int>& v) {
+    v.run(91);
+}
+void exprOnly(int s) {
+    int z = s * q;
+    q->run(101);
+}
+template <class T> void Mix<T>::go() {
+    run(111);
+}
+void shadow(a::Kernel& x) {
+    b::Kernel* x2 = nullptr;
+    x.run(121);
+}
+`
+
+	BeforeEach(func() {
+		root := GinkgoT().TempDir()
+		mustWriteFile(filepath.Join(root, "k.hpp"), strings.TrimSpace(header)+"\n")
+		mustWriteFile(filepath.Join(root, "k.cpp"), strings.TrimSpace(source)+"\n")
+
+		src = strings.Split(strings.TrimSpace(source), "\n")
+
+		var err error
+
+		index, err = BuildCppIndex(root)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	tag := func(line int) string {
+		text := src[line-1]
+
+		return text[strings.LastIndex(text, "(")+1 : strings.LastIndex(text, ")")]
+	}
+
+	It("resolves a::Kernel::run and sorts every other receiver into callers or unresolved", func() {
+		res := index.ResolveSymbol("a::Kernel::run", "")
+		Expect(res.Status).To(Equal(ResolutionResolved))
+
+		found := index.CallsInto(res, "", 0)
+		callers := []string{}
+
+		for _, call := range found.Callers {
+			callers = append(callers, tag(call.Line))
+		}
+
+		// 41 and 51 stay readable despite `on && k` and `s * q`; 121 too.
+		Expect(callers).To(ConsistOf("41", "51", "121"))
+
+		reasons := map[string]string{}
+		for _, call := range found.Unresolved {
+			reasons[tag(call.Line)] = call.Reason
+		}
+
+		Expect(reasons).To(HaveLen(5))
+		Expect(reasons["21"]).To(ContainSubstring("virtual dispatch via base"))
+		Expect(reasons["31"]).To(ContainSubstring("not an indexed class"))
+		Expect(reasons["81"]).To(ContainSubstring("not an indexed class"))
+		Expect(reasons["101"]).To(ContainSubstring("unknown"))
+		Expect(reasons["111"]).To(ContainSubstring("not an indexed class"), "CRTP caller class")
+		Expect(reasons).NotTo(HaveKey("61"), "b::Kernel is a different indexed class")
+		Expect(reasons).NotTo(HaveKey("91"), "std types cannot be the owner")
+	})
+})

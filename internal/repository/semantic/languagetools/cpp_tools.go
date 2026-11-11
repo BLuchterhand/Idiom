@@ -607,7 +607,11 @@ func (m *Manager) cppCalls(ctx context.Context, req ToolRequest, incoming bool) 
 	}
 
 	started := time.Now()
-	warnings := []string{cppDeclaredTypeWarning}
+	var warnings []string
+
+	if incoming {
+		warnings = append(warnings, cppDeclaredTypeWarning)
+	}
 
 	clangdCtx, cancel := context.WithTimeout(ctx, cppClangdBudget)
 	payload, lspErr := m.cppCallHierarchyViaClangd(clangdCtx, cppPreferredDefinition(resolution.Definitions), pathFilter, incoming)
@@ -655,7 +659,7 @@ func (m *Manager) cppIncomingResult(res semanticcpp.CppResolution, callers seman
 	for _, call := range callers.Unresolved {
 		display, err := m.cppHandleDisplay(call.Caller.Path)
 		if err != nil {
-			continue
+			display = call.Caller.Path
 		}
 
 		lines = append(lines, fmt.Sprintf("%s:%d -> %s [%s]", display, call.Line, call.CalleeName, call.Reason))

@@ -653,7 +653,7 @@ func parseCppFunctionSignature(signature string) (CppSymbol, bool) {
 	}
 
 	if idx := strings.Index(signature, "("); idx >= 0 {
-		beforeParen := strings.TrimSpace(signature[:idx])
+		beforeParen := stripCppScopeTemplateArgs(strings.TrimSpace(signature[:idx]))
 		match := cppNameBeforeParen.FindStringSubmatch(beforeParen)
 
 		if len(match) != 2 {
@@ -817,4 +817,21 @@ func isCppKeywordName(name string) bool {
 	default:
 		return false
 	}
+}
+
+var cppScopeTemplateArgsRe = regexp.MustCompile(`<[^<>]*>(\s*::)`)
+
+// stripCppScopeTemplateArgs turns `Mix<T>::go` into `Mix::go` so an
+// out-of-class member of a class template keeps its class scope.
+func stripCppScopeTemplateArgs(text string) string {
+	for strings.Contains(text, ">") {
+		next := cppScopeTemplateArgsRe.ReplaceAllString(text, "$1")
+		if next == text {
+			break
+		}
+
+		text = next
+	}
+
+	return text
 }

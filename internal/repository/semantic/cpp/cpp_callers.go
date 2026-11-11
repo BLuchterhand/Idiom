@@ -188,39 +188,147 @@ var cppPointerWrappers = map[string]bool{
 	"intrusive_ptr": true, "scoped_refptr": true, "observer_ptr": true,
 }
 
-// typeIsOwner reports whether an object of declared type typeText dispatches
-// to the owner's method. The second result is true when the type is auto (not
-// readable from syntax).
-func (r *callResolver) typeIsOwner(typeText string, arrow bool) (match bool, auto bool) {
+// cppBuiltinTypes are names that can never be the owner, so a receiver of such
+// a type is not reported as unresolved.
+var cppBuiltinTypes = map[string]bool{
+	"bool": true, "char": true, "short": true, "int": true, "long": true, "float": true, "double": true,
+	"void": true, "unsigned": true, "signed": true, "size_t": true, "int8_t": true, "int16_t": true,
+	"int32_t": true, "int64_t": true, "uint8_t": true, "uint16_t": true, "uint32_t": true, "uint64_t": true,
+}
+
+func (r *callResolver) isBuiltinType(base string) bool {
+	return strings.HasPrefix(base, "std::") || cppBuiltinTypes[base]
+}
+
+// isAncestorOfSub reports whether base is a proper base class of an owner-side
+// class that declares the method, so a call through it may dispatch to the owner.
+func (r *callResolver) isAncestorOfSub(base string) bool {
+	for _, qualified := range r.sub {
+		if r.hasAncestor(qualified, base, 0) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *callResolver) hasAncestor(class string, ancestor string, depth int) bool {
+	if depth > 6 {
+		return false
+	}
+
+	for _, symbol := range r.classes[lastSegment(class)] {
+		if !scopesCompatible(symbol.Qualified, class) {
+			continue
+		}
+
+		for _, base := range symbol.Bases {
+			if scopesCompatible(base, ancestor) && r.declaresMethod(base) || r.hasAncestor(base, ancestor, depth+1) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// typeVerdict says what a declared receiver type means for the owner: a caller
+// when it dispatches to the owner's method, none when it provably does not, and
+// unresolved (with the reason) when the type is not readable or not indexed.
+func (r *callResolver) typeVerdict(receiver string, typeText string, arrow bool) (callVerdict, string) {
+	if typeText == cppAmbiguousType {
+		return verdictUnresolved, "receiver `" + receiver + "` is declared with several different types in the caller"
+	}
+
 	base, args := splitCppType(typeText)
+
+	if r.inSub(base) {
+		return verdictCaller, ""
+	}
+
 	base, args = r.resolveAlias(base, args)
 
 	if arrow && cppPointerWrappers[lastSegment(base)] && args != "" {
-		inner := args
-		depth := 0
+		return r.typeVerdict(receiver, firstTemplateArg(args), false)
+	}
 
-		for i := 0; i < len(args); i++ {
-			switch args[i] {
-			case '<':
-				depth++
-			case '>':
-				depth--
-			case ',':
-				if depth == 0 {
-					inner = args[:i]
-					i = len(args)
-				}
+	switch {
+	case base == "auto" || strings.HasPrefix(base, "decltype"):
+		return verdictUnresolved, "receiver `" + receiver + "` is auto-typed; its type is not readable from syntax"
+	case r.inSub(base):
+		return verdictCaller, ""
+	case r.isAncestorOfSub(base):
+		return verdictUnresolved, "virtual dispatch via base `" + base + "`; the object's dynamic type may be the owner"
+	case len(r.classes[lastSegment(base)]) > 0, r.isBuiltinType(base):
+		return verdictNone, ""
+	}
+
+	return verdictUnresolved, "receiver type `" + base + "` is not an indexed class (template parameter, external type or alias)"
+}
+
+func firstTemplateArg(args string) string {
+	depth := 0
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		case ',':
+			if depth == 0 {
+				return args[:i]
 			}
 		}
-
-		return r.typeIsOwner(inner, false)
 	}
 
-	if base == "auto" || strings.HasPrefix(base, "decltype") {
-		return false, true
+	return args
+}
+
+// unindexedBase returns a base class of scope (or of its bases) that is not an
+// indexed class, such as a template parameter in CRTP; an unqualified or this
+// call in such a class may reach an inherited member the index cannot see.
+func (r *callResolver) unindexedBase(scope string, depth int) string {
+	if scope == "" || depth > 4 {
+		return ""
 	}
 
-	return r.inSub(base), false
+	for _, class := range r.classes[lastSegment(scope)] {
+		if !scopesCompatible(class.Qualified, scope) {
+			continue
+		}
+
+		for _, base := range class.Bases {
+			if len(r.classes[lastSegment(base)]) == 0 && !r.isBuiltinType(base) {
+				return base
+			}
+
+			if inner := r.unindexedBase(base, depth+1); inner != "" {
+				return inner
+			}
+		}
+	}
+
+	return ""
+}
+
+// callerScopeVerdict decides an unqualified or this-> call inside a member of
+// scope: a caller when scope is in the owner's hierarchy, unresolved when an
+// unindexed base could supply the member, otherwise not a call to the owner.
+func (r *callResolver) callerScopeVerdict(scope string) (callVerdict, string) {
+	if scope == "" {
+		return verdictNone, ""
+	}
+
+	if r.inSub(scope) {
+		return verdictCaller, ""
+	}
+
+	if base := r.unindexedBase(scope, 0); base != "" {
+		return verdictUnresolved, "caller class `" + scope + "` has base `" + base + "` that is not an indexed class (template parameter or external type)"
+	}
+
+	return verdictNone, ""
 }
 
 // fieldType finds a data member's declared type in class scope or its bases.
@@ -265,11 +373,7 @@ func (r *callResolver) classify(caller CppSymbol, call CppCall) (callVerdict, st
 	case r.isType:
 		return verdictCaller, ""
 	case r.isMember:
-		if caller.Scope != "" && r.inSub(caller.Scope) {
-			return verdictCaller, ""
-		}
-
-		return verdictNone, ""
+		return r.callerScopeVerdict(caller.Scope)
 	}
 
 	if caller.Scope != "" && r.declaresMethod(caller.Scope) {
@@ -311,11 +415,7 @@ func (r *callResolver) classifyMember(caller CppSymbol, call CppCall) (callVerdi
 	arrow := call.Via == callViaArrow
 
 	if receiver == "this" {
-		if caller.Scope != "" && r.inSub(caller.Scope) {
-			return verdictCaller, ""
-		}
-
-		return verdictNone, ""
+		return r.callerScopeVerdict(caller.Scope)
 	}
 
 	typeText, ok := caller.Vars[receiver]
@@ -327,16 +427,7 @@ func (r *callResolver) classifyMember(caller CppSymbol, call CppCall) (callVerdi
 		return verdictUnresolved, "receiver `" + receiver + "` is not a parameter, local or field of the caller's class; its type is unknown"
 	}
 
-	match, auto := r.typeIsOwner(typeText, arrow)
-	if auto {
-		return verdictUnresolved, "receiver `" + receiver + "` is auto-typed; its type is not readable from syntax"
-	}
-
-	if match {
-		return verdictCaller, ""
-	}
-
-	return verdictNone, ""
+	return r.typeVerdict(receiver, typeText, arrow)
 }
 
 // CallsInto returns the call sites that resolve to the resolved owner's method
