@@ -541,6 +541,10 @@ var _ = Describe("C++ owner-resolved calls never drop a possible caller", func()
 		// a local of the same name shadows only after its declaration, in its block
 		// block comments: trailing on a call line, and spanning lines between methods
 		"class @DC : public @N {\npublic:\n    void go() {\n        run(15); /* trailing */\n    }\n    /* a comment\n       void run(); */\n    void go2() {\n        run(16); /* one */ /* two\n        */\n    }\n};",
+		// a body local of a receiver's name shadows the field only in its block
+		"class @DF {\npublic:\n    void go();\nprivate:\n    @N k_;\n};\nvoid @DF::go() {\n    k_.run(17);\n    {\n        b::Kernel k_;\n        k_.run(18); // none\n    }\n    k_.run(19);\n    { b::Kernel k_; k_.run(20); } // any\n}",
+		// brace characters inside string and character literals
+		"void @Dz(@N& v) {\n    const char* s = \"}\";\n    char c = '{';\n    v.run(21);\n}",
 		"class @DL : public @N {\npublic:\n    void go() {\n        run(11);\n        auto run = [](int) {};\n        run(12); // none\n    }\n    void go2() {\n        { bool run = false; }\n        run(13);\n    }\n};",
 	}
 
@@ -615,6 +619,8 @@ public:
 				}
 
 				switch {
+				case strings.Contains(line, "// any"):
+					continue // either proven elsewhere or unresolved; not a drop either way
 				case strings.Contains(line, "// none"):
 					want[c.owner][path+":"+itoa(i+1)] = "none"
 				case c.caller:

@@ -165,7 +165,13 @@ redeclares the method), `Owner::name(...)` calls, and unqualified calls inside t
 owner's own members. Calls whose receiver type cannot be read (`auto`, a call
 result, an unknown name) are listed in a separate `unresolved` section of `Output`
 with the reason and never counted as callers; static types only, so a call
-through a base-typed pointer is not attributed to an override. The optional
+through a base-typed pointer is not attributed to an override. A call is left out
+only when the resolver proves it reaches another class; ambiguous names, unindexed
+bases, unread namespace aliases and ambiguous out-of-class scopes go to
+`unresolved`. Known limits of the line-based index: a member call split across
+lines (`k.` then `run()` on the next line) is not seen as a call through `k`, and a
+lambda defined at file scope is not recognised as a local, so its calls are
+classified like ordinary function calls. The optional
 clangd call hierarchy is attempted first within a 5 s budget. `cpp_blast_radius` takes a file name or a symbol:
 a symbol resolves to its defining files and reports every translation unit that
 includes them.

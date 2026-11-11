@@ -240,7 +240,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		index.Timings.Bytes += int64(len(contentBytes))
 		content := string(contentBytes)
 		includes := parseCppIncludes(rel, content, byName, byRel)
-		code := blankCppBlockComments(content)
+		code := blankCppCommentsAndLiterals(content)
 		symbols := parseCppSymbols(rel, code)
 		namespaces := parseCppNamespaceAliases(code)
 		applyCppNamespaceAliases(symbols, namespaces)
@@ -552,13 +552,14 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 	return attributeCppScopes(symbols)
 }
 
-// blankCppBlockComments replaces every /* ... */ comment (including one that
-// spans lines) with spaces, keeping newlines so line numbers stay put. The
-// line-based parser would otherwise read `run(1); /* x */` as an unfinished
-// statement and fold the next signature into it. String and character
-// literals and // comments are skipped so a "/*" inside them is not a comment.
-func blankCppBlockComments(content string) string {
-	if !strings.Contains(content, "/*") {
+// blankCppCommentsAndLiterals replaces every /* ... */ comment (including one
+// that spans lines) and the contents of string and character literals with
+// spaces, keeping newlines and quotes so line numbers stay put. The line-based
+// parser would otherwise read `run(1); /* x */` as an unfinished statement and
+// fold the next signature into it, and a "}" or '{' literal would break brace
+// tracking. A "/*" inside a literal or // comment is not a comment.
+func blankCppCommentsAndLiterals(content string) string {
+	if !strings.ContainsAny(content, "\"'") && !strings.Contains(content, "/*") {
 		return content
 	}
 
@@ -567,12 +568,19 @@ func blankCppBlockComments(content string) string {
 	for i := 0; i < len(out); i++ {
 		switch out[i] {
 		case '"', '\'':
+			if out[i] == '\'' && i > 0 && out[i-1] >= '0' && out[i-1] <= '9' {
+				continue // a digit separator (1'000)
+			}
+
 			quote := out[i]
 
 			for i++; i < len(out) && out[i] != quote && out[i] != '\n'; i++ {
-				if out[i] == '\\' {
+				if out[i] == '\\' && i+1 < len(out) && out[i+1] != '\n' {
+					out[i] = ' '
 					i++
 				}
+
+				out[i] = ' '
 			}
 		case '/':
 			if i+1 >= len(out) {

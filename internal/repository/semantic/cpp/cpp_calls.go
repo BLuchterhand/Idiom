@@ -374,7 +374,14 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 		}
 
 		if mentionsAny(text, want) {
-			vars = declaredVarsIn(vars, text, want, true)
+			for name, typeText := range declaredVarsIn(nil, text, want, true) {
+				if vars == nil {
+					vars = make(map[string]string, 4)
+				}
+
+				vars[cppScopedVarPrefix+name] += strconv.Itoa(line) + "-" +
+					strconv.Itoa(localScopeEnd(lines, line, max(0, strings.Index(text, name)), endLine)) + "=" + typeText + "\n"
+			}
 		}
 
 		for name := range locals {
@@ -394,6 +401,32 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 	}
 
 	return vars
+}
+
+// cppScopedVarPrefix keys Vars entries for receivers declared in the body:
+// one "from-to=type" line per declaration, in scope from its line to the end
+// of its block. Parameters stay under the bare name for the whole function.
+const cppScopedVarPrefix = "at:"
+
+// scopedVarType returns the type of the innermost body declaration of a
+// receiver in scope at line; sameLine is true when that declaration sits on
+// the call's own line, where the call may come before it.
+func scopedVarType(entries string, line int) (typeText string, sameLine bool, ok bool) {
+	best := -1
+
+	for _, entry := range strings.Split(strings.TrimSuffix(entries, "\n"), "\n") {
+		span, entryType, found := strings.Cut(entry, "=")
+		if !found || !localInScope(span, line) {
+			continue
+		}
+
+		from, _, _ := strings.Cut(span, "-")
+		if first, err := strconv.Atoi(from); err == nil && first >= best {
+			best, typeText, sameLine, ok = first, entryType, first == line, true
+		}
+	}
+
+	return typeText, sameLine, ok
 }
 
 // cppLocalFuncPrefix keys Vars entries that record a local variable (often a

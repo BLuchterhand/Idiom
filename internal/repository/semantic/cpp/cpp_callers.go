@@ -675,9 +675,19 @@ func (r *callResolver) classifyMember(caller CppSymbol, call CppCall) (callVerdi
 		return r.callerScopeVerdict(caller.Scope)
 	}
 
-	typeText, ok := caller.Vars[receiver]
+	outer, ok := caller.Vars[receiver]
 	if !ok {
-		typeText, ok = r.fieldType(caller.Scope, receiver, 0)
+		outer, ok = r.fieldType(caller.Scope, receiver, 0)
+	}
+
+	typeText := outer
+
+	if local, sameLine, scoped := scopedVarType(caller.Vars[cppScopedVarPrefix+receiver], call.Line); scoped {
+		if sameLine && ok && local != outer {
+			return verdictUnresolved, "receiver `" + receiver + "` is declared on the call's line and also outside it; which one the call uses is not readable"
+		}
+
+		typeText, ok = local, true
 	}
 
 	if !ok {
