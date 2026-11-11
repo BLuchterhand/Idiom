@@ -240,8 +240,9 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		index.Timings.Bytes += int64(len(contentBytes))
 		content := string(contentBytes)
 		includes := parseCppIncludes(rel, content, byName, byRel)
-		symbols := parseCppSymbols(rel, content)
-		namespaces := parseCppNamespaceAliases(content)
+		code := blankCppBlockComments(content)
+		symbols := parseCppSymbols(rel, code)
+		namespaces := parseCppNamespaceAliases(code)
 		applyCppNamespaceAliases(symbols, namespaces)
 
 		for name, target := range namespaces {
@@ -252,7 +253,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 			index.NamespaceAliases[name] = target
 		}
 
-		parseCppAliases(content, index.Aliases, namespaces)
+		parseCppAliases(code, index.Aliases, namespaces)
 		file := CppFile{
 			Path:      rel,
 			Includes:  includes,
@@ -549,6 +550,60 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 	})
 
 	return attributeCppScopes(symbols)
+}
+
+// blankCppBlockComments replaces every /* ... */ comment (including one that
+// spans lines) with spaces, keeping newlines so line numbers stay put. The
+// line-based parser would otherwise read `run(1); /* x */` as an unfinished
+// statement and fold the next signature into it. String and character
+// literals and // comments are skipped so a "/*" inside them is not a comment.
+func blankCppBlockComments(content string) string {
+	if !strings.Contains(content, "/*") {
+		return content
+	}
+
+	out := []byte(content)
+
+	for i := 0; i < len(out); i++ {
+		switch out[i] {
+		case '"', '\'':
+			quote := out[i]
+
+			for i++; i < len(out) && out[i] != quote && out[i] != '\n'; i++ {
+				if out[i] == '\\' {
+					i++
+				}
+			}
+		case '/':
+			if i+1 >= len(out) {
+				continue
+			}
+
+			switch out[i+1] {
+			case '/':
+				for i < len(out) && out[i] != '\n' {
+					i++
+				}
+			case '*':
+				end := strings.Index(content[i+2:], "*/")
+				stop := len(out)
+
+				if end >= 0 {
+					stop = i + 2 + end + 2
+				}
+
+				for j := i; j < stop; j++ {
+					if out[j] != '\n' {
+						out[j] = ' '
+					}
+				}
+
+				i = stop - 1
+			}
+		}
+	}
+
+	return string(out)
 }
 
 // isCppNamespaceAlias reports a `namespace X = Y;` line, which declares no

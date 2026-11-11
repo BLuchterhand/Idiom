@@ -539,6 +539,8 @@ var _ = Describe("C++ owner-resolved calls never drop a possible caller", func()
 		"class @DU : public @N {\npublic:\n    using @N::run;\n    void run();\n};\nvoid @Du(@DU& v) {\n    v.run(9);\n}",
 		"template <class T> class @DT : public @N {\npublic:\n    using @N::run;\n    void run(T x);\n};\nvoid @Dt(@DT<int>& v) {\n    v.run(10);\n}",
 		// a local of the same name shadows only after its declaration, in its block
+		// block comments: trailing on a call line, and spanning lines between methods
+		"class @DC : public @N {\npublic:\n    void go() {\n        run(15); /* trailing */\n    }\n    /* a comment\n       void run(); */\n    void go2() {\n        run(16); /* one */ /* two\n        */\n    }\n};",
 		"class @DL : public @N {\npublic:\n    void go() {\n        run(11);\n        auto run = [](int) {};\n        run(12); // none\n    }\n    void go2() {\n        { bool run = false; }\n        run(13);\n    }\n};",
 	}
 
