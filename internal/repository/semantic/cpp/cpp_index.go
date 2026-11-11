@@ -87,7 +87,8 @@ type CppCall struct {
 	Via string
 	// Qualifier is the written scope of a "::" call ("?" if unreadable).
 	Qualifier string
-	// Receiver is the identifier a "." or "->" call goes through; empty when
+	// Receiver is the identifier a "." or "->" call goes through ("this->name"
+	// for a data member reached through this); empty when
 	// the receiver is a more complex expression.
 	Receiver string
 }

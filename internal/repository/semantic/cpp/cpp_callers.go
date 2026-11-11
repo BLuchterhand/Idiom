@@ -675,6 +675,15 @@ func (r *callResolver) classifyMember(caller CppSymbol, call CppCall) (callVerdi
 		return r.callerScopeVerdict(caller.Scope)
 	}
 
+	if field, isMember := strings.CutPrefix(receiver, cppThisMember); isMember {
+		typeText, ok := r.fieldType(caller.Scope, field, 0)
+		if !ok {
+			return verdictUnresolved, "receiver `this->" + field + "` is not a field of the caller's indexed class; its type is unknown"
+		}
+
+		return r.typeVerdict(receiver, typeText, call.Via == callViaArrow, caller.Scope)
+	}
+
 	outer, ok := caller.Vars[receiver]
 	if !ok {
 		outer, ok = r.fieldType(caller.Scope, receiver, 0)

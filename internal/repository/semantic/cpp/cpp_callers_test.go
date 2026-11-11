@@ -556,6 +556,9 @@ var _ = Describe("C++ owner-resolved calls never drop a possible caller", func()
 		"void @Dc2(b::Kernel& k) {\n    try {\n    } catch (@N& k) {\n        k.run(35);\n    }\n    k.run(36); // none\n}",
 		"void @Dc3(@N& k) {\n    try {\n    }\n    catch (b::Kernel& k)\n    {\n        k.run(37); // none\n    }\n    k.run(38);\n}",
 		"void @Dc4(@N& k) {\n    auto f = [](int n, b::Kernel& k) {\n        k.run(39); // none\n    };\n    k.run(40);\n}",
+		// this->name is the field even when a parameter or local shares its name
+		"class @Dk {\npublic:\n    void go(b::Kernel& kk);\n    void go2();\nprivate:\n    @N kk;\n};\nvoid @Dk::go(b::Kernel& kk) {\n    this->kk.run(42);\n    kk.run(43); // none\n}\nvoid @Dk::go2() {\n    b::Kernel kk;\n    this->kk.run(44);\n}",
+		"class @Dm {\npublic:\n    void go(@N& kk);\n    void go2();\nprivate:\n    b::Kernel kk;\n};\nvoid @Dm::go(@N& kk) {\n    this->kk.run(45); // none\n    kk.run(46);\n}\nvoid @Dm::go2() {\n    @N kk;\n    this->kk.run(47); // none\n}",
 		"class @DL : public @N {\npublic:\n    void go() {\n        run(11);\n        auto run = [](int) {};\n        run(12); // none\n    }\n    void go2() {\n        { bool run = false; }\n        run(13);\n    }\n};",
 	}
 

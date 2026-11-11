@@ -155,7 +155,7 @@ func scanReceiverBack(text string, end int) string {
 		return ""
 	case strings.HasSuffix(text[:before], "->"):
 		if receiverIsThis(text, before-2) {
-			return receiver
+			return cppThisMember + receiver // a data member, never a local or parameter
 		}
 
 		return ""
@@ -165,6 +165,10 @@ func scanReceiverBack(text string, end int) string {
 
 	return receiver
 }
+
+// cppThisMember prefixes a receiver written as this->name, which names the
+// caller's data member even when a local or parameter has the same name.
+const cppThisMember = "this->"
 
 func receiverIsThis(text string, end int) bool {
 	end = skipSpacesBack(text, end)
@@ -425,7 +429,7 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 	var want map[string]bool
 
 	for _, call := range calls {
-		if call.Receiver == "" || call.Receiver == "this" {
+		if call.Receiver == "" || call.Receiver == "this" || strings.HasPrefix(call.Receiver, cppThisMember) {
 			continue
 		}
 
