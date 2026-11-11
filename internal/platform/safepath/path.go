@@ -24,7 +24,10 @@ func UnderRoot(root string, path string, label string, opts Options) (string, st
 		return "", "", err
 	}
 
-	path = strings.TrimSpace(path)
+	path, err = CleanPathChecked(strings.TrimSpace(path))
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %s: %w", label, err)
+	}
 	if path == "" {
 		return "", "", fmt.Errorf("%s is empty", label)
 	}
@@ -36,7 +39,7 @@ func UnderRoot(root string, path string, label string, opts Options) (string, st
 	if err != nil {
 		return "", "", fmt.Errorf("resolve %s: %w", label, err)
 	}
-	absPath = filepath.Clean(absPath)
+	absPath = CleanPath(filepath.Clean(absPath))
 
 	relPath, ok := Rel(absRoot, absPath)
 	if !ok {
@@ -53,11 +56,11 @@ func UnderRoot(root string, path string, label string, opts Options) (string, st
 		}
 	}
 	if !opts.AllowMissing {
-		realPath, err := filepath.EvalSymlinks(absPath)
+		realPath, err := CanonicalExistingPath(absPath)
 		if err != nil {
 			return "", "", fmt.Errorf("resolve real %s: %w", label, err)
 		}
-		realRoot, err := filepath.EvalSymlinks(absRoot)
+		realRoot, err := CanonicalExistingPath(absRoot)
 		if err != nil {
 			return "", "", fmt.Errorf("resolve real workspace root: %w", err)
 		}
@@ -70,7 +73,7 @@ func UnderRoot(root string, path string, label string, opts Options) (string, st
 }
 
 func Rel(absRoot string, absPath string) (string, bool) {
-	rel, err := filepath.Rel(filepath.Clean(absRoot), filepath.Clean(absPath))
+	rel, err := filepath.Rel(CleanPath(absRoot), CleanPath(absPath))
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", false
 	}
@@ -99,7 +102,7 @@ func RejectSymlinkAncestors(absRoot string, absPath string, label string) error 
 		if err != nil {
 			return fmt.Errorf("inspect %s parent: %w", label, err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		if isSymlinkOrReparsePoint(current, info) {
 			return fmt.Errorf("%s must not traverse symlinked directories", label)
 		}
 	}
@@ -108,7 +111,7 @@ func RejectSymlinkAncestors(absRoot string, absPath string, label string) error 
 }
 
 func RejectSymlinkTarget(path string, label string) error {
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+	if info, err := os.Lstat(path); err == nil && isSymlinkOrReparsePoint(path, info) {
 		return fmt.Errorf("%s must not be a symlink", label)
 	} else if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("inspect %s: %w", label, err)
@@ -118,7 +121,11 @@ func RejectSymlinkTarget(path string, label string) error {
 }
 
 func cleanAbsRoot(root string) (string, error) {
-	root = strings.TrimSpace(root)
+	var err error
+	root, err = CleanPathChecked(strings.TrimSpace(root))
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
 	if root == "" {
 		return "", fmt.Errorf("workspace root is empty")
 	}
@@ -127,5 +134,5 @@ func cleanAbsRoot(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve workspace root: %w", err)
 	}
-	return filepath.Clean(absRoot), nil
+	return CleanPath(filepath.Clean(absRoot)), nil
 }

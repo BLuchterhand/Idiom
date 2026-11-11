@@ -266,6 +266,7 @@ func (m *Manager) toolSurfaceManifestOptions(readOnly bool) ToolSurfaceManifestO
 		IncludeTypescript: m.languageDetects("typescript"),
 		IncludeRust:       m.languageDetects("rust"),
 		IncludeJava:       m.languageDetects("java"),
+		IncludeGDScript:   m.languageDetects("gdscript"),
 	}
 }
 

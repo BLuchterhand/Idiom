@@ -27,6 +27,7 @@ import (
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
@@ -4821,7 +4822,7 @@ func copyWorkbranchTree(srcRoot string, dstRoot string) error {
 		return err
 	}
 
-	return filepath.WalkDir(srcAbs, func(path string, entry os.DirEntry, walkErr error) error {
+	return safepath.WalkDirUnderRoot(srcAbs, srcAbs, "workbranch source copy", func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -4852,7 +4853,7 @@ func copyWorkbranchTree(srcRoot string, dstRoot string) error {
 			return nil
 		}
 
-		return copyWorkbranchFile(path, target, info.Mode().Perm())
+		return copyWorkbranchFile(srcAbs, path, target, info.Mode().Perm())
 	})
 }
 
@@ -4866,12 +4867,15 @@ func skipWorkbranchCopyPath(rel string, entry os.DirEntry) bool {
 	}
 }
 
-func copyWorkbranchFile(src string, dst string, mode os.FileMode) error {
+func copyWorkbranchFile(root string, src string, dst string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
 
-	in, err := os.Open(src)
+	in, err := safepath.OpenFileUnderRoot(root, src, "workbranch source file", safepath.Options{
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
 	if err != nil {
 		return err
 	}
@@ -4937,7 +4941,7 @@ func snapshotWorkbranchFiles(root string) (map[string][]byte, error) {
 	}
 
 	files := make(map[string][]byte)
-	err = filepath.WalkDir(rootAbs, func(path string, entry os.DirEntry, walkErr error) error {
+	err = safepath.WalkDirUnderRoot(rootAbs, rootAbs, "workbranch snapshot", func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -4967,7 +4971,10 @@ func snapshotWorkbranchFiles(root string) (map[string][]byte, error) {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := safepath.ReadFileUnderRoot(rootAbs, path, "workbranch snapshot file", safepath.Options{
+			RejectSymlinkAncestors: true,
+			RejectSymlinkTarget:    true,
+		})
 		if err != nil {
 			return err
 		}

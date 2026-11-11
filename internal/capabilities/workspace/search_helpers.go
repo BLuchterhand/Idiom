@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/toolfacts"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -130,8 +131,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolRes
 		if m.shouldSkipSearchEntry(base, entryPath, false, includeLogDirs, explicitHiddenRoot) || !searchContentGlobMatch(req.Glob, relative, entryPath) {
 			return nil
 		}
-		entryInfo, infoErr := entry.Info()
-		if infoErr != nil || !entryInfo.Mode().IsRegular() {
+		if !entry.Type().IsRegular() {
 			return nil
 		}
 		data, _, readErr := capability.ReadFile(relative)
@@ -146,11 +146,22 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolRes
 	}
 
 	if capability.Info().IsDir() {
-		rootFS, fsErr := capability.FS()
-		if fsErr != nil {
-			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: fsErr.Error()}
-		}
-		if walkErr := fs.WalkDir(rootFS, ".", visit); walkErr != nil {
+		walkErr := safepath.WalkDirUnderRoot(
+			capability.authorization.authorityPath,
+			capability.authorization.canonical,
+			"content search",
+			func(walkPath string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return visit("", entry, walkErr)
+				}
+				relative, err := filepath.Rel(capability.authorization.canonical, walkPath)
+				if err != nil {
+					return err
+				}
+				return visit(filepath.ToSlash(relative), entry, nil)
+			},
+		)
+		if walkErr != nil {
 			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: walkErr.Error()}
 		}
 	} else if searchContentGlobMatch(req.Glob, ".", base) {

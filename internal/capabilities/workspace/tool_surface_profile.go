@@ -402,6 +402,7 @@ func toolManifestOptionsForSurfaceProfile(profile ToolSurfaceProfile) ToolManife
 		IncludeTypescript: true,
 		IncludeRust:       true,
 		IncludeJava:       true,
+		IncludeGDScript:   true,
 	}
 
 	spec, ok := toolSurfaceProfileSpecs[profile]

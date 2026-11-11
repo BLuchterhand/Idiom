@@ -3,6 +3,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -782,9 +783,21 @@ func (m Metrics) TotalErrorEvents() int {
 }
 
 func LoadRecords(path string) ([]Record, error) {
+	return loadRecords(func(scan func(json.RawMessage) error) error {
+		return jsonl.ScanFile(filepath.Clean(path), scan, 64*1024*1024)
+	})
+}
+
+func LoadRecordsFromReader(reader io.Reader) ([]Record, error) {
+	return loadRecords(func(scan func(json.RawMessage) error) error {
+		return jsonl.ScanReader(reader, scan, 64*1024*1024)
+	})
+}
+
+func loadRecords(scan func(func(json.RawMessage) error) error) ([]Record, error) {
 	records := make([]Record, 0, 64)
 
-	err := jsonl.ScanFile(filepath.Clean(path), func(raw json.RawMessage) error {
+	err := scan(func(raw json.RawMessage) error {
 		payload := make(map[string]any)
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return fmt.Errorf("decode log record: %w", err)
@@ -793,7 +806,7 @@ func LoadRecords(path string) ([]Record, error) {
 		records = append(records, normalizeLogRecord(payload))
 
 		return nil
-	}, 64*1024*1024)
+	})
 	if err != nil {
 		return nil, err
 	}

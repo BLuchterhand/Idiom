@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/safepath"
 )
 
 var errWorkspaceMutationUnauthorized = errors.New("workspace mutation authorization rejected")
@@ -230,7 +231,7 @@ func (m *Manager) classifyMutationAdmissionPreimages(req ToolRequest, analysis M
 		return analysis, nil
 	}
 
-	root, err := os.OpenRoot(rootPath)
+	root, err := safepath.OpenRootPath(rootPath, "workspace mutation admission root")
 	if err != nil {
 		return analysis, fmt.Errorf("open workspace root for mutation admission: %w", err)
 	}

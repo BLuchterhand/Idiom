@@ -2446,6 +2446,61 @@ var _ = ginkgo.Describe("submit plan", func() {
 		gomega.Expect(loaded.Edits[0].AnchorProvenance).NotTo(gomega.BeNil(), fmt.Sprintf("loaded current artifact should have anchor provenance: %#v", loaded.Edits))
 
 	})
+	ginkgo.It("loads a plan artifact path relative to the workspace root", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		writeSubmitPlanFixture(root, "x.txt", "old\n")
+		planDir := filepath.Join(root, ".idiom", "plans")
+		gomega.Expect(os.MkdirAll(planDir, 0o755)).To(gomega.Succeed())
+		artifact := planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
+			PlanID:        "relative-plan",
+			Created:       "2026-05-20T00:00:00Z",
+			Task:          planartifact.PlanArtifactTask{Summary: "update x"},
+			Contract:      planartifact.PlanArtifactContract{Kind: "implementation"},
+			Packet:        planartifact.PlanArtifactPacket{Status: "not_used"},
+			Paths:         planartifact.PlanArtifactPaths{Editable: []string{"x.txt"}},
+			Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "x.txt", Summary: "current source"}},
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
+				Command: "go test ./...",
+				Kind:    "command",
+			}},
+			Approval: planartifact.PlanArtifactApproval{Status: "approved", ScopeID: "all", ExecutionPermission: "execute_all"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+			Edits:    []planartifact.PlanEdit{{Path: "x.txt", OldText: "old\n", NewText: "new\n", Purpose: "update x"}},
+		}
+		body, err := json.Marshal(artifact)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(os.WriteFile(filepath.Join(planDir, "relative.plan.json"), body, 0o644)).To(gomega.Succeed())
+
+		originalWorkingDirectory, err := os.Getwd()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(os.Chdir(root)).To(gomega.Succeed())
+		defer os.Chdir(originalWorkingDirectory)
+
+		loaded, err := LoadPlanArtifact(filepath.Join(".idiom", "plans", "relative.plan.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("relative plan artifact should load: %v", err))
+		gomega.Expect(loaded.PlanID).To(gomega.Equal("relative-plan"))
+		gomega.Expect(loaded.Edits).To(gomega.HaveLen(1))
+		gomega.Expect(loaded.Edits[0].AnchorProvenance).NotTo(gomega.BeNil())
+	})
+	ginkgo.It("loads a plan artifact path relative to a parent folder when it includes the workspace folder", func() {
+		parent := ginkgo.GinkgoT().TempDir()
+		root := filepath.Join(parent, "repo")
+		planDir := filepath.Join(root, ".idiom", "plans")
+		gomega.Expect(os.MkdirAll(planDir, 0o755)).To(gomega.Succeed())
+		body := []byte(`{"schema_version":"idiom.plan.v1","rationale":"update a file","edits":[{"path":"a.txt","old_text":"before","new_text":"after"}]}`)
+		gomega.Expect(os.WriteFile(filepath.Join(planDir, "parent-relative.plan.json"), body, 0o644)).To(gomega.Succeed())
+
+		originalWorkingDirectory, err := os.Getwd()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(os.Chdir(parent)).To(gomega.Succeed())
+		defer os.Chdir(originalWorkingDirectory)
+
+		loaded, err := LoadPlanArtifact(filepath.Join("repo", ".idiom", "plans", "parent-relative.plan.json"))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("parent-relative plan artifact should load: %v", err))
+		gomega.Expect(loaded.Edits).To(gomega.HaveLen(1))
+		gomega.Expect(loaded.Edits[0].Path).To(gomega.Equal("a.txt"))
+	})
 	ginkgo.It("submit plan accepts substring deletion", func() {
 		mgr, root := newSubmitPlanTestManager()
 		writeSubmitPlanFixture(root, "x.txt", "keep\nremove me\nkeep\n")

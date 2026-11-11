@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/contracts/toolfacts"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	semanticlanguage "idiom/internal/repository/semantic/language"
@@ -169,7 +170,7 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 
 	var targets []string
 
-	err = filepath.WalkDir(target, func(path string, d os.DirEntry, err error) error {
+	err = safepath.WalkDirUnderRoot(m.cfg.Root, target, "source sanity discovery", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -224,7 +225,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 			}
 		}
 
-		fallback, err := genericSourceSanity(absPath)
+		fallback, err := genericSourceSanity(m.cfg.Root, absPath)
 		if err != nil {
 			return sourceSanityOutcome{
 				Path:   rel,
@@ -250,7 +251,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 		}
 	}
 
-	fallback, err := genericSourceSanity(absPath)
+	fallback, err := genericSourceSanity(m.cfg.Root, absPath)
 	if err != nil {
 		return sourceSanityOutcome{
 			Path:   rel,
@@ -322,8 +323,8 @@ func oneLineSourceSanityDetail(result ToolResult) string {
 	return detail
 }
 
-func genericSourceSanity(absPath string) (string, error) {
-	data, err := os.ReadFile(absPath)
+func genericSourceSanity(root string, absPath string) (string, error) {
+	data, err := safepath.ReadFileUnderRoot(root, absPath, "source file", safepath.Options{})
 	if err != nil {
 		return "generic source sanity could not read file", err
 	}

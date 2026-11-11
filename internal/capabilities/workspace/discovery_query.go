@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,7 +17,9 @@ import (
 
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/contracts/toolfacts"
+	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 	semanticlanguage "idiom/internal/repository/semantic/language"
@@ -401,7 +405,7 @@ func (r *discoveryQueryRunner) addContextLayer() {
 
 	path := filepath.Join(r.manager.cfg.Root, ".idiom", "discovery", "context.md")
 
-	data, err := os.ReadFile(path)
+	data, err := safepath.ReadFileUnderRoot(r.manager.cfg.Root, path, "discovery context", safepath.Options{})
 	if err != nil {
 		r.packet.Gaps = append(r.packet.Gaps, ".idiom/discovery/context.md was not present")
 		return
@@ -678,7 +682,20 @@ func (r *discoveryQueryRunner) checkpointArtifact() {
 
 func (r *discoveryQueryRunner) writeArtifact() error {
 	path := filepath.Join(r.manager.cfg.Root, filepath.FromSlash(r.packet.ArtifactPath))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	_, relative, err := safepath.UnderRoot(r.manager.cfg.Root, path, "discovery artifact", safepath.Options{
+		AllowMissing:           true,
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
+	if err != nil {
+		return fmt.Errorf("resolve query artifact path: %w", err)
+	}
+	root, err := safepath.OpenRootPath(r.manager.cfg.Root, "workspace root")
+	if err != nil {
+		return fmt.Errorf("open workspace root: %w", err)
+	}
+	defer root.Close()
+	if err := root.MkdirAll(filepath.Dir(filepath.FromSlash(relative)), 0o755); err != nil {
 		return fmt.Errorf("mkdir query artifact dir: %w", err)
 	}
 
@@ -689,7 +706,7 @@ func (r *discoveryQueryRunner) writeArtifact() error {
 		return fmt.Errorf("encode query packet: %w", err)
 	}
 
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+	if err := atomicfile.WriteFileRoot(root, filepath.FromSlash(relative), append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write query artifact: %w", err)
 	}
 
@@ -946,23 +963,10 @@ func NormalizeDiscoveryQueryPurpose(value string) string {
 func normalizeDiscoveryQueryLanguage(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.TrimPrefix(value, ".")
-
-	switch value {
-	case "go", "golang":
-		return "go"
-	case "ts", "tsx", "mts", "cts", "d.ts", "d.mts", "d.cts", "typescript", "js", "jsx", "mjs", "cjs", "javascript":
-		return "typescript"
-	case "py", "python":
-		return "python"
-	case "cpp", "c++", "cc", "cxx", "c":
-		return "cpp"
-	case "rs", "rust":
-		return "rust"
-	case "java":
-		return "java"
-	default:
-		return ""
+	if lang, ok := semanticlanguage.LanguageForName(value); ok {
+		return lang.Name
 	}
+	return ""
 }
 
 func globForDiscoveryLanguage(language string) string {
@@ -1030,8 +1034,43 @@ func ensureDiscoveryArtifactsIgnored(root string) error {
 		return err
 	}
 
-	data, err := os.ReadFile(excludePath)
-	if err != nil && !os.IsNotExist(err) {
+	gitDir := filepath.Dir(filepath.Dir(excludePath))
+	gitRoot, err := safepath.OpenRootPath(gitDir, "Git metadata directory")
+	if err != nil {
+		return err
+	}
+	defer gitRoot.Close()
+
+	infoRoot, err := gitRoot.OpenRoot("info")
+	if errors.Is(err, fs.ErrNotExist) {
+		if mkdirErr := gitRoot.Mkdir("info", 0o755); mkdirErr != nil && !errors.Is(mkdirErr, fs.ErrExist) {
+			return mkdirErr
+		}
+		infoRoot, err = gitRoot.OpenRoot("info")
+	}
+	if err != nil {
+		return fmt.Errorf("open Git info directory: %w", err)
+	}
+	defer infoRoot.Close()
+
+	canonicalInfoDir, err := safepath.CanonicalExistingPath(filepath.Join(gitDir, "info"))
+	if err != nil {
+		return fmt.Errorf("resolve Git info directory: %w", err)
+	}
+
+	var data []byte
+	file, err := safepath.OpenFileFromRoot(infoRoot, canonicalInfoDir, filepath.Base(excludePath), "Git exclude file", safepath.Options{
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
+	if err == nil {
+		data, err = io.ReadAll(file)
+		closeErr := file.Close()
+		if err == nil {
+			err = closeErr
+		}
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 
@@ -1040,10 +1079,6 @@ func ensureDiscoveryArtifactsIgnored(root string) error {
 		case ".idiom/", "/.idiom/":
 			return nil
 		}
-	}
-
-	if err := os.MkdirAll(filepath.Dir(excludePath), 0o755); err != nil {
-		return err
 	}
 
 	addition := "# Idiom discovery artifacts\n.idiom/\n"
@@ -1057,15 +1092,8 @@ func ensureDiscoveryArtifactsIgnored(root string) error {
 		addition = prefix + addition
 	}
 
-	file, err := os.OpenFile(excludePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = file.WriteString(addition)
-
-	return err
+	updated := append(append([]byte(nil), data...), addition...)
+	return atomicfile.WriteFileRoot(infoRoot, filepath.Base(excludePath), updated, 0o644)
 }
 
 func gitInfoExcludePath(root string) (string, error) {

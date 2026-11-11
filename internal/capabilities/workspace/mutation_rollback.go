@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"idiom/internal/platform/atomicfile"
+	"idiom/internal/platform/safepath"
 )
 
 var errMutationRollbackConsumed = errors.New("workspace mutation rollback was already completed")
@@ -772,7 +773,7 @@ func openMutationRollbackRoot(state *mutationRollbackState) (*os.Root, error) {
 	if err != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.IsDir() || state.rootIdentity == nil || !os.SameFile(pathInfo, state.rootIdentity) {
 		return nil, fmt.Errorf("workspace mutation rollback root identity changed")
 	}
-	root, err := os.OpenRoot(state.rootPath)
+	root, err := safepath.OpenRootPath(state.rootPath, "workspace mutation rollback root")
 	if err != nil {
 		return nil, fmt.Errorf("workspace mutation rollback root is unavailable")
 	}

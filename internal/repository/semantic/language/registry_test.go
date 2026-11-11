@@ -26,6 +26,15 @@ var _ = Describe("Language registry", func() {
 		}
 	})
 
+	It("registers GDScript references and incoming calls", func() {
+		lang, ok := LanguageForName("gdscript")
+		Expect(ok).To(BeTrue())
+		Expect(lang.Extensions).To(ContainElement(".gd"))
+		Expect(lang.Tool(CapReferences)).To(Equal("gdscript_references"))
+		Expect(lang.Tool(CapCallsInto)).To(Equal("gdscript_calls_into"))
+		Expect(lang.Tool(CapCallsFrom)).To(BeEmpty())
+	})
+
 	DescribeTable("resolves aliases and extensions",
 		func(resolve func() (LanguageSupport, bool), expectedName string) {
 			lang, ok := resolve()
@@ -65,6 +74,8 @@ var _ = Describe("Language registry", func() {
 		Entry("Rust extension", "src/lib.rs", "rust"),
 		Entry("Java marker", "pom.xml", "java"),
 		Entry("Java extension", "src/Main.java", "java"),
+		Entry("Godot project marker", "project.godot", "gdscript"),
+		Entry("GDScript extension", "scripts/main.gd", "gdscript"),
 	)
 
 	DescribeTable("ignores hidden files and skipped directories",

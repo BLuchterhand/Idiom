@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/toolpolicy"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -627,7 +628,7 @@ func (m *Manager) validateMissingWorkspaceSnapshotPath(ctx context.Context, pres
 		return fmt.Errorf("workspace snapshot root must be a directory and must not be a symlink")
 	}
 
-	root, err := os.OpenRoot(rootPath)
+	root, err := safepath.OpenRootPath(rootPath, "workspace snapshot root")
 	if err != nil {
 		return err
 	}

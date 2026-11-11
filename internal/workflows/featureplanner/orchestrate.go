@@ -17,6 +17,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -581,7 +582,7 @@ func standaloneWorkspacePromptFiles(root string, limit int) []string {
 	}
 
 	files := make([]string, 0, limit)
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	_ = safepath.WalkDirUnderRoot(root, root, "standalone workspace prompt discovery", func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if entry != nil && entry.IsDir() {
 				return filepath.SkipDir
@@ -2619,7 +2620,7 @@ func standaloneWorkspaceLooksGreenfield(root string) bool {
 	inspected := 0
 	scanLimitExceeded := false
 
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "standalone workspace detection", func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if path == root {
 				return walkErr

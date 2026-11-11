@@ -8,7 +8,18 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"idiom/internal/platform/safepath"
 )
+
+// ReadFileUnderRoot reads an index candidate through a handle bound to the
+// validated file and rejects symlink or reparse-point traversal.
+func ReadFileUnderRoot(root string, filePath string) ([]byte, error) {
+	return safepath.ReadFileUnderRoot(root, filePath, "indexed file", safepath.Options{
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
+}
 
 type ScoredEntry[T any] struct {
 	File  T

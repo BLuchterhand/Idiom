@@ -21,6 +21,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/jsonfile"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
@@ -1015,7 +1016,7 @@ func shouldVisitScopeDir(root string, path string, scope string) bool {
 func collectGenericSourceFiles(ctx context.Context, root string, scope string, language string, maxFiles int, indexedFiles map[string]struct{}) ([]genericSourceFile, error) {
 	files := make([]genericSourceFile, 0)
 	errStop := fmt.Errorf("stop generic source walk")
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "generic source discovery", func(path string, d os.DirEntry, walkErr error) error {
 		if err := checkBuildContext(ctx); err != nil {
 			return err
 		}
@@ -1083,7 +1084,7 @@ func collectGenericSourceFiles(ctx context.Context, root string, scope string, l
 func collectGDScriptProjectFiles(ctx context.Context, root string, scope string, maxFiles int, indexedFiles map[string]struct{}) ([]genericSourceFile, error) {
 	files := make([]genericSourceFile, 0)
 	errStop := fmt.Errorf("stop gdscript project walk")
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err := safepath.WalkDirUnderRoot(root, root, "GDScript project discovery", func(path string, d os.DirEntry, walkErr error) error {
 		if err := checkBuildContext(ctx); err != nil {
 			return err
 		}

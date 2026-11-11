@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/safepath"
 )
 
 var (
@@ -202,7 +203,7 @@ func (a *PathAccess) beginWorkspaceMutation(ctx context.Context, req ToolRequest
 		return nil, fmt.Errorf("workspace mutation root must be a directory and must not be a symlink")
 	}
 
-	root, err := os.OpenRoot(rootPath)
+	root, err := safepath.OpenRootPath(rootPath, "workspace mutation root")
 	if err != nil {
 		return nil, fmt.Errorf("open workspace mutation root: %w", err)
 	}

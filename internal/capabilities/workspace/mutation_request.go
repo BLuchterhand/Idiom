@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace/patching"
+	"idiom/internal/platform/safepath"
 )
 
 // CanonicalWorkspacePath is the workspace-owned identity used for mutation
@@ -110,7 +111,7 @@ func (a *PathAccess) canonicalWorkspacePath(path string, workdir string) (Canoni
 	if !ok {
 		return CanonicalWorkspacePath{}, fmt.Errorf("path %q cannot be resolved safely", path)
 	}
-	physicalRoot, err := filepath.EvalSymlinks(filepath.Clean(a.cfg.Root))
+	physicalRoot, err := safepath.CanonicalExistingPath(safepath.CleanPath(filepath.Clean(a.cfg.Root)))
 	if err != nil {
 		return CanonicalWorkspacePath{}, fmt.Errorf("resolve workspace root: %w", err)
 	}

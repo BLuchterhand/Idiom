@@ -14,6 +14,7 @@ import (
 
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 
 	"idiom/internal/workflows/recovery"
@@ -189,7 +190,7 @@ func (m *Manager) recoveryDecompose(ctx context.Context, req ToolRequest) ToolRe
 		return ToolResult{Tool: "recovery_decompose", Summary: "Recovery decomposition failed", Error: err.Error()}
 	}
 
-	hash, err := fileSHA256(fullPath)
+	hash, err := fileSHA256(m.cfg.Root, fullPath)
 	if err != nil {
 		return ToolResult{Tool: "recovery_decompose", Summary: "Recovery decomposition failed", Error: err.Error()}
 	}
@@ -425,8 +426,8 @@ func (m *Manager) recoveryDisplayPath(path string) string {
 	return filepath.ToSlash(path)
 }
 
-func fileSHA256(path string) (string, error) {
-	body, err := os.ReadFile(path)
+func fileSHA256(root string, path string) (string, error) {
+	body, err := safepath.ReadFileUnderRoot(root, path, "recovery artifact", safepath.Options{})
 	if err != nil {
 		return "", fmt.Errorf("read recovery artifact for hash: %w", err)
 	}

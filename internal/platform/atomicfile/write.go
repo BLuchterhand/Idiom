@@ -307,11 +307,16 @@ func dirSyncUnsupported(err error) bool {
 	if runtime.GOOS == "windows" {
 		return errors.Is(err, syscall.EINVAL) ||
 			errors.Is(err, errors.ErrUnsupported) ||
+			errors.Is(err, windowsAccessDenied) ||
 			errors.Is(err, syscall.EPERM) ||
 			errors.Is(err, syscall.EACCES)
 	}
 	return errors.Is(err, syscall.EINVAL) || errors.Is(err, errors.ErrUnsupported)
 }
+
+// Windows ERROR_ACCESS_DENIED is a Win32 error code rather than syscall.EACCES,
+// which is a synthetic errno on Windows.
+const windowsAccessDenied syscall.Errno = 5
 
 func syncDir(dir string) error {
 	handle, err := os.Open(dir)
