@@ -1,10 +1,12 @@
 ---
+name: orchestrator-workflow
 description: |
-  Orchestrator workflow for using local Qwen / Codex implementer
-  models behind a Claude (or other strong-planner) Opus loop. The
-  planner decomposes work into atoms, dispatches one bounded
-  implementation lane per atom via `idiom lane plan-execute`, and
-  reviews the diff before committing.
+  Plan and execute implementation work through bounded Idiom lanes. Use for
+  greenfield or rearchitecture planning, implementation-plan reviews, atom
+  decomposition, local Qwen or Codex worker dispatch, and final diff review.
+  Require broad plans to define architecture, process topology, technology
+  choices, testing systems, CI/release operations, and evidence-gated decisions
+  before implementation atoms are dispatched.
 ---
 
 # Orchestrator Workflow — Planner Plans, Bounded Workers Execute
@@ -46,6 +48,97 @@ sole responsibility — when a dispatch fails, the planner first
 checks whether the brief was tight enough (anchor discipline), then
 whether the harness has a real gap that should be fixed.
 
+## Implementation-readiness gate
+
+For a greenfield system, broad rearchitecture, or implementation-plan review,
+complete this gate before decomposing work into atoms. Skip it for a narrow
+change whose host architecture and delivery system are already established.
+
+### Architecture and topology
+
+State the chosen architecture rather than leaving it implied. Name the style
+only when the design actually follows it—for example, a modular monolith with
+hexagonal boundaries, not a list of fashionable patterns. Record:
+
+- process, deployment, storage, worker, and external-system topology;
+- module ownership, dependency direction, composition root, and public seams;
+- data ownership, transaction boundaries, consistency, ordering, and recovery;
+- trust, identity, secret, artifact, and external-effect boundaries;
+- expected scale and the conditions that would justify extracting a service,
+  adding remote workers, or changing the storage model.
+
+Use a small context/container/component or deployment diagram when it clarifies
+these connections. Do not choose microservices by default. Require a concrete
+independent deployment, scaling, isolation, or ownership need before accepting
+the operational cost of a network boundary.
+
+### Technology baseline
+
+For each material technology, record the concern, selected default, status,
+alternatives considered, selection evidence, and decision deadline. Status is
+one of `fixed`, `evidence_gated`, or `deferred`.
+
+Cover at least:
+
+- language/runtime and supported versions;
+- metadata database, migrations, transactions, backup, and artifact storage;
+- serialization, canonicalization, schemas, IDs, time, and compatibility;
+- CLI, API transport, UI, component protocol, and SDK boundaries;
+- configuration, credential storage, secret delivery, and identity provider;
+- concurrency, queues, subprocess control, isolation, and network policy;
+- logging, metrics, tracing, diagnostics, and support exports;
+- build, packaging, installation, upgrade, signing, and release distribution.
+
+Prefer the language standard library until a dependency removes demonstrated
+complexity. A framework is an adapter choice, not the architecture. Pin tools
+and dependencies that affect builds, persisted meaning, protocols, or evidence.
+
+### Verification system
+
+Name how each test layer runs; “add tests” is not an implementation plan. For
+each layer, identify the runner or framework, fixture strategy, exact local
+command, CI cadence, supported platforms, and retained failure evidence.
+
+Cover the applicable layers:
+
+- domain/unit and application-use-case tests;
+- persistence, component, adapter, schema, and protocol contract tests;
+- real-dependency integration tests and black-box CLI/API/browser end-to-end
+  tests;
+- fuzz or property tests for parsers, protocols, canonicalization, mappings,
+  and state transitions;
+- race/concurrency, crash/restart, failure-injection, security, migration, and
+  compatibility tests;
+- benchmarks, load tests, soak tests, and platform qualification.
+
+Define the fake and mock policy. Prefer hand-written fakes at owned ports and
+real infrastructure at integration boundaries. Avoid global coverage targets
+that reward shallow assertions; require transition, rejection-path, and
+invariant coverage at the owning boundary.
+
+### Delivery and operations
+
+Specify the CI platform and the PR, main/nightly, and release gates. Define how
+the project produces reproducible artifacts, checks dependencies and licenses,
+creates an SBOM, signs releases, tests installation and upgrades, verifies
+backup/restore, and preserves diagnostics. Name configuration precedence,
+operational health checks, rollback limits, and the first operator runbooks.
+
+### Decision closure and connection review
+
+Classify every unresolved choice as evidence-gated or deferred. Give an
+evidence-gated choice an owner, alternatives, spike or test, deadline, and the
+behavior when no option qualifies. Give deferred work an explicit product
+boundary so it cannot become an accidental first-release dependency. Close any
+choice that can change public syntax, persisted identity, transaction semantics,
+or trust boundaries before implementation crosses that boundary.
+
+Review every system connection using the same questions: who owns the contract,
+what exact data or artifact crosses it, what authority travels with it, how it
+fails or times out, how retry/recovery works, and which executable test proves
+the behavior. A plan passes this gate only when an engineer can choose the next
+atom without inventing architecture, tooling, or verification policy.
+
 ## Brief discipline
 
 A good atom brief is the difference between a lane that converges
@@ -61,6 +154,10 @@ required sections; the most-overlooked are:
 - **Implementation Shape** — for plan-execute, name the edit shape
   (substring / line-range / new-file) so the planner doesn't have
   to infer it.
+- **Constraints, Tests, and Decisions** — cite the applicable architecture and
+  technology choices, use their exact verification commands, and preserve any
+  evidence-gated or deferred boundary. An atom must not silently decide a
+  system-wide technology or cross a boundary the plan left closed.
 
 `idiom brief lint <brief>` runs the canonical preflight on a brief
 before dispatch; pre-merge CI hooks should run it too.

@@ -24,5 +24,13 @@ var _ = ginkgo.Describe("Embedded CLI assets", func() {
 		skillNames, err := SkillNames()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(skillNames).To(gomega.ContainElement("orchestrator-workflow"))
+
+		bodyBytes, err := Skill("orchestrator-workflow")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		skillBody := string(bodyBytes)
+		gomega.Expect(skillBody).To(gomega.ContainSubstring("name: orchestrator-workflow"))
+		gomega.Expect(skillBody).To(gomega.ContainSubstring("## Implementation-readiness gate"))
+		gomega.Expect(skillBody).To(gomega.ContainSubstring("### Technology baseline"))
+		gomega.Expect(skillBody).To(gomega.ContainSubstring("### Verification system"))
 	})
 })
