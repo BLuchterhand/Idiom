@@ -54,6 +54,7 @@ type callResolver struct {
 	sub       []string
 	classes   map[string][]*CppSymbol // last segment -> class symbols
 	methodsOf []string                // scopes that declare a method called name
+	known     map[string]bool         // first namespace segment of every indexed symbol
 }
 
 func lastSegment(qualified string) string {
@@ -72,7 +73,7 @@ func scopesCompatible(a string, b string) bool {
 }
 
 func newCallResolver(idx *CppIndex, res CppResolution) *callResolver {
-	r := &callResolver{idx: idx, name: res.Name, owner: res.Owner, classes: make(map[string][]*CppSymbol)}
+	r := &callResolver{idx: idx, name: res.Name, owner: res.Owner, classes: make(map[string][]*CppSymbol), known: make(map[string]bool)}
 
 	for _, def := range res.Definitions {
 		if isCppContainerKind(def.Kind) {
@@ -88,6 +89,12 @@ func newCallResolver(idx *CppIndex, res CppResolution) *callResolver {
 		symbols := idx.Files[fi].Symbols
 		for si := range symbols {
 			symbol := &symbols[si]
+
+			if symbol.Scope != "" {
+				r.known[firstSegment(symbol.Scope)] = true
+			} else if symbol.Kind == "namespace" || isCppContainerKind(symbol.Kind) {
+				r.known[symbol.Name] = true
+			}
 
 			switch {
 			case symbol.Kind == "class" || symbol.Kind == "struct" || symbol.Kind == "union":
@@ -123,7 +130,7 @@ func newCallResolver(idx *CppIndex, res CppResolution) *callResolver {
 			}
 
 			for _, base := range class.Bases {
-				if r.inSub(base) {
+				if status, qualified := r.resolveType(base, class.Qualified); status == typeFound && slices.Contains(r.sub, qualified) {
 					r.sub = append(r.sub, class.Qualified)
 					changed = true
 
@@ -154,14 +161,65 @@ func (r *callResolver) declaresMethod(class string) bool {
 	return false
 }
 
-func (r *callResolver) inSub(name string) bool {
-	for _, qualified := range r.sub {
-		if scopesCompatible(name, qualified) {
-			return true
+func firstSegment(qualified string) string {
+	qualified = strings.TrimPrefix(qualified, "::")
+	if cut := strings.Index(qualified, "::"); cut >= 0 {
+		return qualified[:cut]
+	}
+
+	return qualified
+}
+
+const (
+	typeNone = iota
+	typeFound
+	typeAmbiguous
+)
+
+// resolveType maps a written class name to one indexed class, preferring the
+// class an enclosing namespace of ctx (the caller's scope) selects. A name that
+// several indexed classes share and no enclosing namespace picks is ambiguous.
+func (r *callResolver) resolveType(name string, ctx string) (int, string) {
+	name = strings.TrimPrefix(name, "::")
+
+	var candidates []string
+
+	for _, class := range r.classes[lastSegment(name)] {
+		if scopesCompatible(class.Qualified, name) {
+			candidates = appendUniqueString(candidates, class.Qualified)
 		}
 	}
 
-	return false
+	switch {
+	case len(candidates) == 0:
+		return typeNone, ""
+	case len(candidates) == 1:
+		return typeFound, candidates[0]
+	case slices.Contains(candidates, name):
+		return typeFound, name
+	}
+
+	for scope := ctx; ; {
+		if want := joinCppScope(scope, name); slices.Contains(candidates, want) {
+			return typeFound, want
+		}
+
+		if scope == "" {
+			break
+		}
+
+		if cut := strings.LastIndex(scope, "::"); cut >= 0 {
+			scope = scope[:cut]
+		} else {
+			scope = ""
+		}
+	}
+
+	return typeAmbiguous, ""
+}
+
+func (r *callResolver) ambiguousReason(name string) string {
+	return "class name `" + name + "` matches several indexed classes and the enclosing namespace does not pick one"
 }
 
 // resolveAlias follows using/typedef names to their target, a few levels deep.
@@ -196,8 +254,14 @@ var cppBuiltinTypes = map[string]bool{
 	"int32_t": true, "int64_t": true, "uint8_t": true, "uint16_t": true, "uint32_t": true, "uint64_t": true,
 }
 
+// isBuiltinType is true for primitives and for names in a namespace that has no
+// indexed symbol (std::, a vendored library), which cannot be the owner.
 func (r *callResolver) isBuiltinType(base string) bool {
-	return strings.HasPrefix(base, "std::") || cppBuiltinTypes[base]
+	if cppBuiltinTypes[base] || strings.HasPrefix(base, "std::") {
+		return true
+	}
+
+	return strings.Contains(base, "::") && !r.known[firstSegment(base)]
 }
 
 // isAncestorOfSub reports whether base is a proper base class of an owner-side
@@ -235,28 +299,30 @@ func (r *callResolver) hasAncestor(class string, ancestor string, depth int) boo
 // typeVerdict says what a declared receiver type means for the owner: a caller
 // when it dispatches to the owner's method, none when it provably does not, and
 // unresolved (with the reason) when the type is not readable or not indexed.
-func (r *callResolver) typeVerdict(receiver string, typeText string, arrow bool) (callVerdict, string) {
+func (r *callResolver) typeVerdict(receiver string, typeText string, arrow bool, ctx string) (callVerdict, string) {
 	if typeText == cppAmbiguousType {
 		return verdictUnresolved, "receiver `" + receiver + "` is declared with several different types in the caller"
 	}
 
 	base, args := splitCppType(typeText)
 
-	if r.inSub(base) {
-		return verdictCaller, ""
+	if verdict, reason, decided := r.subVerdict(base, ctx); decided {
+		return verdict, reason
 	}
 
 	base, args = r.resolveAlias(base, args)
 
+	if verdict, reason, decided := r.subVerdict(base, ctx); decided {
+		return verdict, reason
+	}
+
 	if arrow && cppPointerWrappers[lastSegment(base)] && args != "" {
-		return r.typeVerdict(receiver, firstTemplateArg(args), false)
+		return r.typeVerdict(receiver, firstTemplateArg(args), false, ctx)
 	}
 
 	switch {
 	case base == "auto" || strings.HasPrefix(base, "decltype"):
 		return verdictUnresolved, "receiver `" + receiver + "` is auto-typed; its type is not readable from syntax"
-	case r.inSub(base):
-		return verdictCaller, ""
 	case r.isAncestorOfSub(base):
 		return verdictUnresolved, "virtual dispatch via base `" + base + "`; the object's dynamic type may be the owner"
 	case len(r.classes[lastSegment(base)]) > 0, r.isBuiltinType(base):
@@ -264,6 +330,22 @@ func (r *callResolver) typeVerdict(receiver string, typeText string, arrow bool)
 	}
 
 	return verdictUnresolved, "receiver type `" + base + "` is not an indexed class (template parameter, external type or alias)"
+}
+
+// subVerdict decides a class name against the owner's hierarchy: a caller when
+// it resolves into it, unresolved when the name is ambiguous, undecided when the
+// name is not an indexed class or resolves outside the hierarchy.
+func (r *callResolver) subVerdict(name string, ctx string) (callVerdict, string, bool) {
+	status, qualified := r.resolveType(name, ctx)
+
+	switch {
+	case status == typeAmbiguous:
+		return verdictUnresolved, r.ambiguousReason(name), true
+	case status == typeFound && slices.Contains(r.sub, qualified):
+		return verdictCaller, "", true
+	}
+
+	return verdictNone, "", false
 }
 
 func firstTemplateArg(args string) string {
@@ -320,8 +402,8 @@ func (r *callResolver) callerScopeVerdict(scope string) (callVerdict, string) {
 		return verdictNone, ""
 	}
 
-	if r.inSub(scope) {
-		return verdictCaller, ""
+	if verdict, reason, decided := r.subVerdict(scope, ""); decided {
+		return verdict, reason
 	}
 
 	if base := r.unindexedBase(scope, 0); base != "" {
@@ -360,13 +442,17 @@ func (r *callResolver) fieldType(scope string, field string, depth int) (string,
 func (r *callResolver) classify(caller CppSymbol, call CppCall) (callVerdict, string) {
 	switch call.Via {
 	case callViaQualified:
-		return r.classifyQualified(call)
+		return r.classifyQualified(caller, call)
 	case callViaDot, callViaArrow:
 		if !r.isMember {
 			return verdictNone, ""
 		}
 
 		return r.classifyMember(caller, call)
+	}
+
+	if _, local := caller.Vars[cppLocalFuncPrefix+call.Name]; local {
+		return verdictNone, "" // a local variable (lambda) called like a function
 	}
 
 	switch {
@@ -383,20 +469,28 @@ func (r *callResolver) classify(caller CppSymbol, call CppCall) (callVerdict, st
 	return verdictCaller, ""
 }
 
-func (r *callResolver) classifyQualified(call CppCall) (callVerdict, string) {
+func (r *callResolver) classifyQualified(caller CppSymbol, call CppCall) (callVerdict, string) {
 	if call.Qualifier == "?" {
 		return verdictUnresolved, "qualifier is a template-id the syntax index cannot read"
 	}
 
 	qualifier, _ := r.resolveAlias(call.Qualifier, "")
 
+	if r.isMember {
+		if verdict, reason, decided := r.subVerdict(call.Qualifier, caller.Scope); decided {
+			return verdict, reason
+		}
+
+		if verdict, reason, decided := r.subVerdict(qualifier, caller.Scope); decided {
+			return verdict, reason
+		}
+
+		return verdictNone, ""
+	}
+
 	switch {
 	case r.isType:
 		if scopesCompatible(qualifier+"::"+call.Name, r.owner) {
-			return verdictCaller, ""
-		}
-	case r.isMember:
-		if r.inSub(qualifier) {
 			return verdictCaller, ""
 		}
 	case qualifier == "" && r.scope == "", qualifier != "" && r.scope != "" && scopesCompatible(qualifier, r.scope):
@@ -427,7 +521,7 @@ func (r *callResolver) classifyMember(caller CppSymbol, call CppCall) (callVerdi
 		return verdictUnresolved, "receiver `" + receiver + "` is not a parameter, local or field of the caller's class; its type is unknown"
 	}
 
-	return r.typeVerdict(receiver, typeText, arrow)
+	return r.typeVerdict(receiver, typeText, arrow, caller.Scope)
 }
 
 // CallsInto returns the call sites that resolve to the resolved owner's method

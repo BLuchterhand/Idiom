@@ -323,3 +323,95 @@ void shadow(a::Kernel& x) {
 		Expect(reasons).NotTo(HaveKey("91"), "std types cannot be the owner")
 	})
 })
+
+var _ = Describe("C++ owner-resolved calls with same-named classes", func() {
+	var index *CppIndex
+
+	BeforeEach(func() {
+		root := GinkgoT().TempDir()
+		mustWriteFile(filepath.Join(root, "k.hpp"), strings.TrimSpace(`
+namespace a {
+class Kernel {
+public:
+    void run(int n);
+};
+}
+namespace b {
+class Kernel {
+public:
+    void run(int n);
+};
+}
+`)+"\n")
+		mustWriteFile(filepath.Join(root, "k.cpp"), strings.TrimSpace(`
+#include "k.hpp"
+namespace b {
+void inB(Kernel& k) {
+    k.run(11);
+    Kernel::run(12);
+}
+}
+namespace a {
+void inA(Kernel& k) {
+    k.run(21);
+}
+}
+void outside(Kernel& k) {
+    k.run(31);
+}
+void lambdas(a::Kernel& m, godot::Thing& t) {
+    auto run = [&](int n) { return n; };
+    run(41);
+    t.run(42);
+}
+`)+"\n")
+
+		var err error
+
+		index, err = BuildCppIndex(root)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	lines := func(pattern string) (callers []int, unresolved map[int]string) {
+		res := index.ResolveSymbol(pattern, "")
+		Expect(res.Status).To(Equal(ResolutionResolved), pattern)
+
+		found := index.CallsInto(res, "", 0)
+		unresolved = map[int]string{}
+
+		for _, call := range found.Callers {
+			callers = append(callers, call.Line)
+		}
+
+		for _, call := range found.Unresolved {
+			unresolved[call.Line] = call.Reason
+		}
+
+		return callers, unresolved
+	}
+
+	It("lets the enclosing namespace pick the class and reports the rest as ambiguous", func() {
+		inB, unresolvedB := lines("b::Kernel::run")
+		Expect(inB).To(ConsistOf(4, 5)) // k.run(11), Kernel::run(12) inside namespace b
+		Expect(unresolvedB).To(HaveLen(1))
+		Expect(unresolvedB[14]).To(ContainSubstring("matches several indexed classes"))
+
+		inA, unresolvedA := lines("a::Kernel::run")
+		Expect(inA).To(ConsistOf(10)) // k.run(21)
+		Expect(unresolvedA).To(HaveLen(1))
+		Expect(unresolvedA[14]).To(ContainSubstring("matches several indexed classes"))
+	})
+
+	It("does not read a local lambda call as a member call, and keeps external namespaces quiet", func() {
+		_, unresolved := lines("a::Kernel::run")
+		Expect(unresolved).NotTo(HaveKey(18), "run(41) is a local lambda")
+		Expect(unresolved).NotTo(HaveKey(19), "godot:: has no indexed symbols")
+	})
+
+	It("marks a name aliased to different targets ambiguous", func() {
+		aliases := map[string]string{}
+		parseCppAliases("using Ref = a::Kernel;\n", aliases)
+		parseCppAliases("using Ref = b::Kernel;\n", aliases)
+		Expect(aliases["Ref"]).To(Equal(cppAmbiguousType))
+	})
+})

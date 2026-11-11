@@ -356,7 +356,9 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 		want[call.Receiver] = true
 	}
 
-	if want == nil {
+	locals := localFuncNames(calls)
+
+	if want == nil && locals == nil {
 		return nil
 	}
 
@@ -364,14 +366,71 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 
 	for line := startLine; line <= endLine && line <= len(lines); line++ {
 		text := indexsupport.StripLineComment(lines[line-1])
-		if len(text) < 4 || !mentionsAny(text, want) {
+		if len(text) < 4 {
 			continue
 		}
 
-		vars = declaredVarsIn(vars, text, want, true)
+		if mentionsAny(text, want) {
+			vars = declaredVarsIn(vars, text, want, true)
+		}
+
+		for name := range locals {
+			if assignsLocal(text, name) {
+				if vars == nil {
+					vars = make(map[string]string, 4)
+				}
+
+				vars[cppLocalFuncPrefix+name] = "local"
+			}
+		}
 	}
 
 	return vars
+}
+
+// cppLocalFuncPrefix keys Vars entries that record a local variable (often a
+// lambda) shadowing a plain call's name, so `run(...)` on it is not a member call.
+const cppLocalFuncPrefix = "fn:"
+
+func localFuncNames(calls []CppCall) map[string]bool {
+	var names map[string]bool
+
+	for _, call := range calls {
+		if call.Via != callViaPlain {
+			continue
+		}
+
+		if names == nil {
+			names = make(map[string]bool, 4)
+		}
+
+		names[call.Name] = true
+	}
+
+	return names
+}
+
+// assignsLocal reports whether text initialises a variable called name
+// (`auto name = ...`).
+func assignsLocal(text string, name string) bool {
+	for pos := 0; ; {
+		at := strings.Index(text[pos:], name)
+		if at < 0 {
+			return false
+		}
+
+		start := pos + at
+		pos = start + len(name)
+
+		if start > 0 && isIdentByte(text[start-1]) || start == 0 || pos >= len(text) {
+			continue
+		}
+
+		rest := strings.TrimLeft(text[pos:], " \t")
+		if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") && declaredTypeBefore(text, start, '=', true) != "" {
+			return true
+		}
+	}
 }
 
 func mentionsAny(text string, names map[string]bool) bool {
@@ -504,12 +563,22 @@ func parseCppAliases(content string, aliases map[string]string) {
 	}
 
 	for _, match := range cppAliasUsingRe.FindAllStringSubmatch(content, -1) {
-		aliases[match[1]] = strings.TrimSpace(match[2])
+		addCppAlias(aliases, match[1], strings.TrimSpace(match[2]))
 	}
 
 	for _, match := range cppAliasTypedef.FindAllStringSubmatch(content, -1) {
-		aliases[match[2]] = strings.TrimSpace(match[1])
+		addCppAlias(aliases, match[2], strings.TrimSpace(match[1]))
 	}
+}
+
+// addCppAlias records alias -> target; the map is keyed by bare name, so the
+// same name aliased to different targets is marked ambiguous, not overwritten.
+func addCppAlias(aliases map[string]string, name string, target string) {
+	if prior, seen := aliases[name]; seen && prior != target {
+		target = cppAmbiguousType
+	}
+
+	aliases[name] = target
 }
 
 // fieldDeclIn records the member declared by one `Type name [= init];` line.
