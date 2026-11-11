@@ -118,6 +118,59 @@ void WorkerSystem::process_cycle() {}
 		Expect(outline.Summary).To(ContainSubstring("Outlined"))
 	})
 
+	It("answers exactly, echoes the resolved symbol, and fails closed on ambiguity", func() {
+		root := GinkgoT().TempDir()
+		writeCppFixture(filepath.Join(root, "include", "pair.h"), `
+#pragma once
+struct Widget { void offer(); };
+struct Gadget { void offer(); };
+void helper();
+void helper_extra();
+`)
+		writeCppFixture(filepath.Join(root, "src", "pair.cpp"), `
+#include "pair.h"
+void Widget::offer() { helper(); }
+void Gadget::offer() { helper_extra(); }
+void helper() {}
+void helper_extra() {}
+`)
+		writeCppFixture(filepath.Join(root, "src", "main.cpp"), `
+#include "pair.h"
+int main() { helper(); return 0; }
+`)
+
+		manager := workspace.NewManager(config.Workspace{
+			Root: root, CWD: root, EnableShell: true, EnableWrites: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536,
+		})
+
+		ambiguous := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_into", Pattern: "offer"})
+		Expect(ambiguous.Code).To(Equal("ambiguous_symbol"))
+		Expect(ambiguous.Output).To(ContainSubstring("Widget::offer"))
+		Expect(ambiguous.Output).To(ContainSubstring("Gadget::offer"))
+
+		missing := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_into", Pattern: "help"})
+		Expect(missing.Code).To(Equal("symbol_not_found"))
+
+		exact := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_into", Pattern: "helper"})
+		Expect(exact.Error).To(BeEmpty())
+		Expect(exact.Summary).To(ContainSubstring(`for helper (requested "helper")`))
+		Expect(exact.Output).To(ContainSubstring("pair.cpp"))
+		Expect(exact.Output).To(ContainSubstring("main.cpp"))
+		Expect(exact.Output).NotTo(ContainSubstring("helper_extra"))
+		Expect(strings.Split(exact.Output, "\n")).To(HaveLen(2), "helper has two callers; the helper_extra caller is not one")
+
+		freshness, ok := exact.Freshness.(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(freshness["index_key"]).NotTo(BeNil())
+		Expect(freshness).To(HaveKey("phase_ms"))
+		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/2"))
+
+		blast := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_blast_radius", Pattern: "Widget"})
+		Expect(blast.Error).To(BeEmpty())
+		Expect(blast.Summary).To(ContainSubstring(`symbol Widget (requested "Widget")`))
+		Expect(blast.Output).To(ContainSubstring("main.cpp"))
+	})
+
 	It("uses clangd for precise navigation when available", func() {
 		if _, err := exec.LookPath("clangd"); err != nil {
 			Skip("clangd not installed")

@@ -2,12 +2,14 @@ package cpp
 
 import (
 	"cmp"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
@@ -21,6 +23,17 @@ type CppIndex struct {
 	Files   []CppFile
 	Forward map[string][]string
 	Reverse map[string][]string
+	Timings CppBuildTimings
+}
+
+// CppBuildTimings records where a BuildCppIndexWithOptions call spent its time
+// so a slow or budget-exceeded build can name its phase.
+type CppBuildTimings struct {
+	Walk  time.Duration
+	Parse time.Duration
+	Link  time.Duration
+	Files int
+	Bytes int64
 }
 
 type CppFile struct {
@@ -107,6 +120,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	byRel := make(map[string]string)
 	paths := make([]string, 0, 64)
 
+	walkStarted := time.Now()
 	errStop := filepath.SkipAll
 	err := safepath.WalkDirUnderRoot(root, root, "C++ index", func(path string, d os.DirEntry, walkErr error) error {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
@@ -163,6 +177,12 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	}
 
 	if err != nil {
+		if ctxErr := indexsupport.ContextErr(opts.Context); ctxErr != nil && errors.Is(err, ctxErr) {
+			index.Timings.Walk = time.Since(walkStarted)
+
+			return nil, &BudgetError{Phase: "walk", Timings: index.Timings, Cause: err}
+		}
+
 		return nil, err
 	}
 
@@ -172,9 +192,15 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 
 	slices.Sort(paths)
 
+	index.Timings.Walk = time.Since(walkStarted)
+	parseStarted := time.Now()
+
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
-			return nil, err
+			index.Timings.Parse = time.Since(parseStarted)
+			index.Timings.Files = len(index.Files)
+
+			return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
 		}
 
 		full := filepath.Join(root, filepath.FromSlash(rel))
@@ -184,6 +210,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 			continue
 		}
 
+		index.Timings.Bytes += int64(len(contentBytes))
 		content := string(contentBytes)
 		includes := parseCppIncludes(rel, content, byName, byRel)
 		symbols := parseCppSymbols(rel, content)
@@ -214,6 +241,10 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		index.Files = append(index.Files, file)
 	}
 
+	index.Timings.Parse = time.Since(parseStarted)
+	index.Timings.Files = len(index.Files)
+	linkStarted := time.Now()
+
 	slices.SortFunc(index.Files, func(a, b CppFile) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
@@ -228,6 +259,8 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 			index.Reverse[include] = textutil.AppendUnique(index.Reverse[include], file.Path)
 		}
 	}
+
+	index.Timings.Link = time.Since(linkStarted)
 
 	return index, nil
 }

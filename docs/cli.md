@@ -116,6 +116,45 @@ Add-UserToolPath $pythonUserScripts
 semgrep --version
 ```
 
+### C++ syntax-index tools: identity, budget and exact results
+
+`cpp_overview`, `cpp_calls_into`, `cpp_calls_from` and `cpp_blast_radius` answer
+from an in-process C++-only syntax index (no Python, GDScript or other
+collectors, no `.idiom/comprehension` graph, no standing indexed worktree). It
+is built from the live working tree on each `idiom tool` call: about 0.3-0.5 s
+for the 237 C++ files of Undermarch's `native/` tree, so a fresh `git worktree
+add` answers immediately with nothing to prepare. To build and inspect it for a
+checkout (the W145 "build the indexes" step), run from that checkout:
+
+```bash
+idiom tool cpp_overview --input '{}'
+```
+
+Every result carries `sidecar.freshness` (`idiom.cpp_index.v1`):
+
+| Field | Meaning |
+|---|---|
+| `index_key` | Hash of collector version, Git common-dir identity, `HEAD^{tree}` and the content of dirty C++ files. Equal keys mean equal index content, across worktrees of one repository. |
+| `commit`, `tree`, `git_common_dir`, `root` | What was indexed and where. |
+| `working_tree` / `dirty_cpp_paths` / `dirty_cpp_count` | Dirty and untracked C++ files are included (the index reads the working tree), and listed. |
+| `phase_ms`, `query_ms`, `budget_ms`, `files`, `symbols`, `index_build` | Cost: Git identity, directory walk, parse, link, the query itself. |
+| `fresh` | `false` when the index budget (10 s) was exceeded or Git identity could not be read. |
+
+No on-disk index cache is kept: measured on Undermarch, parsing is about 0.1 s
+of a 0.3-0.4 s build and the directory walk about 0.1 s, so a cache cannot beat
+a rebuild. The `index_key` is the cache identity if one is ever added.
+
+Failures are structured in `sidecar.error.code`: `cpp_index_budget_exceeded`
+(with the phase that was running), `ambiguous_symbol` (the name belongs to more
+than one owner; candidates are in `Output`; pass `Owner::name` or a `path`) and
+`symbol_not_found` (nothing is named exactly that; nearest names are in
+`Output`). Summaries echo the requested name and the resolved owner. Call
+queries match callee names only (the syntax index does not resolve receiver
+types) and say so in `sidecar.warnings`; the optional clangd call hierarchy is
+attempted within a 5 s budget. `cpp_blast_radius` takes a file name or a symbol:
+a symbol resolves to its defining files and reports every translation unit that
+includes them.
+
 ### clangd and C++ compile database
 
 Download the Windows x64 standalone ZIP from the
