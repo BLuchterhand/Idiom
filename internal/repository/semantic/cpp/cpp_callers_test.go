@@ -410,8 +410,89 @@ void lambdas(a::Kernel& m, godot::Thing& t) {
 
 	It("marks a name aliased to different targets ambiguous", func() {
 		aliases := map[string]string{}
-		parseCppAliases("using Ref = a::Kernel;\n", aliases)
-		parseCppAliases("using Ref = b::Kernel;\n", aliases)
+		parseCppAliases("using Ref = a::Kernel;\n", aliases, nil)
+		parseCppAliases("using Ref = b::Kernel;\n", aliases, nil)
 		Expect(aliases["Ref"]).To(Equal(cppAmbiguousType))
+	})
+})
+
+var _ = Describe("C++ owner-resolved calls through namespace aliases", func() {
+	It("expands file and block namespace aliases and fails closed on unknown prefixes", func() {
+		root := GinkgoT().TempDir()
+		mustWriteFile(filepath.Join(root, "k.hpp"), strings.TrimSpace(`
+namespace proj {
+namespace sim {
+class Kernel {
+public:
+    void run(int n);
+};
+}
+}
+`)+"\n")
+		mustWriteFile(filepath.Join(root, "a.cpp"), strings.TrimSpace(`
+#include "k.hpp"
+namespace ks = proj::sim;
+void viaReceiver(ks::Kernel& k) {
+    k.run(11);
+}
+class Wrap : public ks::Kernel {
+public:
+    void go() { run(21); }
+    void lam() {
+        std::function<void(int)> run{[](int) {}};
+        run(71);
+    }
+};
+void viaQualifier() {
+    ks::Kernel::run(31);
+}
+void blockScoped(int x) {
+    namespace kb = proj::sim;
+    kb::Kernel* p = nullptr;
+    p->run(41);
+}
+void unknownPrefix(zz::Kernel& z, godot::Thing& t) {
+    z.run(51);
+    t.run(52);
+    zz::Kernel::run(53);
+}
+`)+"\n")
+		mustWriteFile(filepath.Join(root, "f.hpp"), "namespace proj {\nnamespace sim {\nvoid step(int n);\n}\n}\n")
+		mustWriteFile(filepath.Join(root, "f.cpp"), "#include \"f.hpp\"\nnamespace fs = proj::sim;\nvoid callsStep() {\n    fs::step(81);\n}\n")
+
+		index, err := BuildCppIndex(root)
+		Expect(err).NotTo(HaveOccurred())
+
+		res := index.ResolveSymbol("proj::sim::Kernel::run", "")
+		Expect(res.Status).To(Equal(ResolutionResolved))
+
+		found := index.CallsInto(res, "", 0)
+		callers := []int{}
+
+		for _, call := range found.Callers {
+			callers = append(callers, call.Line)
+		}
+
+		unresolved := map[int]string{}
+		for _, call := range found.Unresolved {
+			unresolved[call.Line] = call.Reason
+		}
+
+		// k.run(11) receiver, run(21) base, ks::Kernel::run(31) qualifier, p->run(41) block alias.
+		Expect(callers).To(ConsistOf(4, 8, 15, 20))
+		Expect(unresolved).To(HaveLen(2))
+		Expect(unresolved[23]).To(ContainSubstring("namespace `zz`"))
+		Expect(unresolved[25]).To(ContainSubstring("namespace `zz`"))
+		Expect(unresolved).NotTo(HaveKey(24), "godot::Thing is no indexed class name")
+		Expect(callers).NotTo(ContainElement(11), "run(71) is a brace-initialised local")
+
+		step := index.CallsInto(index.ResolveSymbol("proj::sim::step", ""), "", 0)
+		Expect(step.Total).To(Equal(1), "fs::step(81): a bare alias qualifier expands too")
+
+		for _, file := range index.Files {
+			for _, symbol := range file.Symbols {
+				Expect(symbol.Kind == "namespace" && (symbol.Name == "ks" || symbol.Name == "kb")).To(BeFalse(), "an alias is not a namespace")
+			}
+		}
 	})
 })

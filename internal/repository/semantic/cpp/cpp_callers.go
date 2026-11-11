@@ -264,6 +264,25 @@ func (r *callResolver) isBuiltinType(base string) bool {
 	return strings.Contains(base, "::") && !r.known[firstSegment(base)]
 }
 
+// unknownQualified is true for a qualified name that resolves to no indexed
+// class but whose last segment names one, under a first segment that is no
+// indexed namespace (an unread alias or include): it may be the owner, so it
+// fails closed instead of reading as external.
+func (r *callResolver) unknownQualified(name string) bool {
+	name = strings.TrimPrefix(name, "::")
+	if !strings.Contains(name, "::") || strings.HasPrefix(name, "std::") || r.known[firstSegment(name)] || len(r.classes[lastSegment(name)]) == 0 {
+		return false
+	}
+
+	status, _ := r.resolveType(name, "")
+
+	return status == typeNone
+}
+
+func unknownQualifiedReason(name string) string {
+	return "`" + name + "` names an indexed class under namespace `" + firstSegment(name) + "`, which is not indexed (unread namespace alias or external)"
+}
+
 // isAncestorOfSub reports whether base is a proper base class of an owner-side
 // class that declares the method, so a call through it may dispatch to the owner.
 func (r *callResolver) isAncestorOfSub(base string) bool {
@@ -325,6 +344,8 @@ func (r *callResolver) typeVerdict(receiver string, typeText string, arrow bool,
 		return verdictUnresolved, "receiver `" + receiver + "` is auto-typed; its type is not readable from syntax"
 	case r.isAncestorOfSub(base):
 		return verdictUnresolved, "virtual dispatch via base `" + base + "`; the object's dynamic type may be the owner"
+	case r.unknownQualified(base):
+		return verdictUnresolved, "receiver `" + receiver + "`: " + unknownQualifiedReason(base)
 	case len(r.classes[lastSegment(base)]) > 0, r.isBuiltinType(base):
 		return verdictNone, ""
 	}
@@ -381,7 +402,7 @@ func (r *callResolver) unindexedBase(scope string, depth int) string {
 		}
 
 		for _, base := range class.Bases {
-			if len(r.classes[lastSegment(base)]) == 0 && !r.isBuiltinType(base) {
+			if len(r.classes[lastSegment(base)]) == 0 && !r.isBuiltinType(base) || r.unknownQualified(base) {
 				return base
 			}
 
@@ -483,6 +504,10 @@ func (r *callResolver) classifyQualified(caller CppSymbol, call CppCall) (callVe
 
 		if verdict, reason, decided := r.subVerdict(qualifier, caller.Scope); decided {
 			return verdict, reason
+		}
+
+		if r.unknownQualified(qualifier) {
+			return verdictUnresolved, "qualifier " + unknownQualifiedReason(qualifier)
 		}
 
 		return verdictNone, ""

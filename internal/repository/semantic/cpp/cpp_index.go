@@ -235,7 +235,9 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		content := string(contentBytes)
 		includes := parseCppIncludes(rel, content, byName, byRel)
 		symbols := parseCppSymbols(rel, content)
-		parseCppAliases(content, index.Aliases)
+		namespaces := parseCppNamespaceAliases(content)
+		applyCppNamespaceAliases(symbols, namespaces)
+		parseCppAliases(content, index.Aliases, namespaces)
 		file := CppFile{
 			Path:      rel,
 			Includes:  includes,
@@ -447,7 +449,7 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 		}
 
 		if pendingStart == 0 {
-			if match := cppTypeRe.FindStringSubmatch(trimmed); len(match) == 3 {
+			if match := cppTypeRe.FindStringSubmatch(trimmed); len(match) == 3 && !isCppNamespaceAlias(match[1], trimmed[len(match[0]):]) {
 				end := cppTypeEnd(lines, i)
 				kind := strings.ReplaceAll(match[1], " ", "_")
 
@@ -532,6 +534,12 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 	})
 
 	return attributeCppScopes(symbols)
+}
+
+// isCppNamespaceAlias reports a `namespace X = Y;` line, which declares no
+// namespace body (parseCppNamespaceAliases reads it).
+func isCppNamespaceAlias(kind string, rest string) bool {
+	return kind == "namespace" && strings.HasPrefix(strings.TrimSpace(rest), "=")
 }
 
 // cppTypeEnd returns the last line of the type or namespace starting at lines[start]:

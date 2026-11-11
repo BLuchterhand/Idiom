@@ -23,6 +23,8 @@ var (
 	cppBaseClauseRe = regexp.MustCompile(`^[^{;:]*?(?:\bfinal\b\s*)?:[^:]([^{;]*)`)
 	cppAliasUsingRe = regexp.MustCompile(`(?m)^\s*using\s+([A-Za-z_]\w*)\s*=\s*([^;]+);`)
 	cppAliasTypedef = regexp.MustCompile(`(?m)^\s*typedef\s+([^;(]+?)\s+([A-Za-z_]\w*)\s*;`)
+	// cppNamespaceAliasRe finds `namespace X = Y;` at file or block scope.
+	cppNamespaceAliasRe = regexp.MustCompile(`^namespace\s+([A-Za-z_]\w*)\s*=\s*((?:::)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*)\s*;`)
 )
 
 // extractCppCalls records every call in lines[startLine..endLine] with the form
@@ -411,7 +413,7 @@ func localFuncNames(calls []CppCall) map[string]bool {
 }
 
 // assignsLocal reports whether text initialises a variable called name
-// (`auto name = ...`).
+// (`auto name = ...`, `std::function<void()> name{...}`).
 func assignsLocal(text string, name string) bool {
 	for pos := 0; ; {
 		at := strings.Index(text[pos:], name)
@@ -428,6 +430,10 @@ func assignsLocal(text string, name string) bool {
 
 		rest := strings.TrimLeft(text[pos:], " \t")
 		if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") && declaredTypeBefore(text, start, '=', true) != "" {
+			return true
+		}
+
+		if strings.HasPrefix(rest, "{") && declaredTypeBefore(text, start, '{', true) != "" {
 			return true
 		}
 	}
@@ -556,18 +562,153 @@ func splitCppType(typeName string) (base string, args string) {
 	return strings.TrimRight(strings.TrimSpace(typeName), "*& "), args
 }
 
-// parseCppAliases reads `using A = B;` and `typedef B A;` into alias -> target.
-func parseCppAliases(content string, aliases map[string]string) {
+// parseCppAliases reads `using A = B;` and `typedef B A;` into alias -> target,
+// with the file's namespace aliases expanded in the target.
+func parseCppAliases(content string, aliases map[string]string, namespaces map[string]string) {
 	if !strings.Contains(content, "using ") && !strings.Contains(content, "typedef ") {
 		return
 	}
 
 	for _, match := range cppAliasUsingRe.FindAllStringSubmatch(content, -1) {
-		addCppAlias(aliases, match[1], strings.TrimSpace(match[2]))
+		addCppAlias(aliases, match[1], expandCppNamespaceAliases(strings.TrimSpace(match[2]), namespaces))
 	}
 
 	for _, match := range cppAliasTypedef.FindAllStringSubmatch(content, -1) {
-		addCppAlias(aliases, match[2], strings.TrimSpace(match[1]))
+		addCppAlias(aliases, match[2], expandCppNamespaceAliases(strings.TrimSpace(match[1]), namespaces))
+	}
+}
+
+// parseCppNamespaceAliases reads one file's `namespace X = Y;` declarations
+// (file or block scope; both apply to the whole file) into X -> Y, with earlier
+// aliases expanded in Y. A name aliased to two targets maps to "" and is left
+// unexpanded, so the resolver fails closed on it.
+func parseCppNamespaceAliases(content string) map[string]string {
+	var aliases map[string]string
+
+	for pos := 0; ; {
+		at := strings.Index(content[pos:], "namespace")
+		if at < 0 {
+			break
+		}
+
+		start := pos + at
+		pos = start + len("namespace")
+
+		// Only run the regex where a `namespace name =` head is present; most
+		// namespace lines open a body and are skipped by this byte scan.
+		if start > 0 && isIdentByte(content[start-1]) || !cppNamespaceAliasHead(content, pos) {
+			continue
+		}
+
+		match := cppNamespaceAliasRe.FindStringSubmatch(content[start:min(len(content), start+512)])
+		if match == nil {
+			continue
+		}
+
+		if aliases == nil {
+			aliases = make(map[string]string, 2)
+		}
+
+		target := strings.TrimPrefix(strings.Join(strings.Fields(match[2]), ""), "::")
+		target = expandCppNamespaceAliases(target, aliases)
+
+		if prior, seen := aliases[match[1]]; seen && prior != target {
+			target = ""
+		}
+
+		aliases[match[1]] = target
+	}
+
+	return aliases
+}
+
+// cppNamespaceAliasHead reports whether content[pos:] reads ` name =`.
+func cppNamespaceAliasHead(content string, pos int) bool {
+	i := pos
+	for i < len(content) && (content[i] == ' ' || content[i] == '\t') {
+		i++
+	}
+
+	if i == pos {
+		return false
+	}
+
+	nameStart := i
+	for i < len(content) && isIdentByte(content[i]) {
+		i++
+	}
+
+	for i < len(content) && (content[i] == ' ' || content[i] == '\t') {
+		i++
+	}
+
+	return i > nameStart && i < len(content) && content[i] == '='
+}
+
+// expandCppNamespaceAliases rewrites every `X::` in text whose X is a namespace
+// alias (and not itself qualified, as in a::X::) to the alias target.
+func expandCppNamespaceAliases(text string, aliases map[string]string) string {
+	for alias, target := range aliases {
+		if target == "" || !strings.Contains(text, alias+"::") {
+			continue
+		}
+
+		var out strings.Builder
+
+		for pos := 0; ; {
+			at := strings.Index(text[pos:], alias+"::")
+			if at < 0 {
+				out.WriteString(text[pos:])
+
+				break
+			}
+
+			start := pos + at
+			out.WriteString(text[pos:start])
+			pos = start + len(alias)
+
+			if start > 0 && (isIdentByte(text[start-1]) || text[start-1] == ':') {
+				out.WriteString(alias)
+			} else {
+				out.WriteString(target)
+			}
+		}
+
+		text = out.String()
+	}
+
+	return text
+}
+
+// applyCppNamespaceAliases expands a file's namespace aliases in the type and
+// scope text its symbols carry (bases, fields, receiver types, call qualifiers),
+// so the resolver sees ks::Kernel as proj::sim::Kernel.
+func applyCppNamespaceAliases(symbols []CppSymbol, aliases map[string]string) {
+	if len(aliases) == 0 {
+		return
+	}
+
+	for si := range symbols {
+		symbol := &symbols[si]
+
+		for i, base := range symbol.Bases {
+			symbol.Bases[i] = expandCppNamespaceAliases(base, aliases)
+		}
+
+		for name, typeText := range symbol.Fields {
+			symbol.Fields[name] = expandCppNamespaceAliases(typeText, aliases)
+		}
+
+		for name, typeText := range symbol.Vars {
+			symbol.Vars[name] = expandCppNamespaceAliases(typeText, aliases)
+		}
+
+		for i := range symbol.Calls {
+			// A qualifier is written without its trailing "::" (occ in occ::f()).
+			if qualifier := symbol.Calls[i].Qualifier; qualifier != "" && qualifier != "?" {
+				symbol.Calls[i].Qualifier = strings.TrimSuffix(expandCppNamespaceAliases(qualifier+"::", aliases), "::")
+			}
+		}
 	}
 }
 
