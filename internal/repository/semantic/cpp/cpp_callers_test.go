@@ -551,6 +551,11 @@ var _ = Describe("C++ owner-resolved calls never drop a possible caller", func()
 		"void @Dl2(@N& k) {\n    auto f = [](b::Kernel& k) {\n        k.run(25); // none\n    };\n    k.run(26);\n}",
 		"void @Dl3(@N& k, std::vector<b::Kernel>& others) {\n    for (b::Kernel& k : others) k.run(27); k.run(28); // some\n    for (b::Kernel& k : others)\n        k.run(29); // any\n    k.run(30);\n}",
 		"void @Dl4(@N& k) {\n    { b::Kernel k; } k.run(31); // some\n}",
+		// catch parameters (same line, reverse, split-line) and a later lambda parameter
+		"void @Dc1(@N& k) {\n    try {\n        k.run(32);\n    } catch (b::Kernel& k) {\n        k.run(33); // none\n    }\n    k.run(34);\n}",
+		"void @Dc2(b::Kernel& k) {\n    try {\n    } catch (@N& k) {\n        k.run(35);\n    }\n    k.run(36); // none\n}",
+		"void @Dc3(@N& k) {\n    try {\n    }\n    catch (b::Kernel& k)\n    {\n        k.run(37); // none\n    }\n    k.run(38);\n}",
+		"void @Dc4(@N& k) {\n    auto f = [](int n, b::Kernel& k) {\n        k.run(39); // none\n    };\n    k.run(40);\n}",
 		"class @DL : public @N {\npublic:\n    void go() {\n        run(11);\n        auto run = [](int) {};\n        run(12); // none\n    }\n    void go2() {\n        { bool run = false; }\n        run(13);\n    }\n};",
 	}
 

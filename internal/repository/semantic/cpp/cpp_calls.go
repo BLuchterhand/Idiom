@@ -268,7 +268,10 @@ func atDeclarationBoundary(text string, typeStart int, term byte, body bool) boo
 	switch text[i-1] {
 	case '{', ';':
 		return true
-	case ',', '<':
+	case ',':
+		// in a body, only a lambda's parameter list declares after a comma
+		return !body || isLambdaParamList(text, i-1)
+	case '<':
 		return !body
 	case '(':
 		if !body {
@@ -282,7 +285,60 @@ func atDeclarationBoundary(text string, typeStart int, term byte, body bool) boo
 
 		for _, word := range []string{"if", "for", "while", "switch", "catch"} {
 			if strings.HasSuffix(text[:head], word) && (head == len(word) || !isIdentByte(text[head-len(word)-1])) {
-				return term == '=' || term == ':' || term == ';'
+				// catch (T name) ends its one declaration with ')'
+				return term == '=' || term == ':' || term == ';' || term == ')' && word == "catch"
+			}
+		}
+	}
+
+	return false
+}
+
+// isLambdaParamList reports whether the comma at text[comma] separates the
+// parameters of a lambda (`[...](A a, B b)` or `[...]<class T>(T a, B b)`).
+func isLambdaParamList(text string, comma int) bool {
+	depth := 0
+
+	for i := comma - 1; i >= 0; i-- {
+		switch text[i] {
+		case ')':
+			depth++
+		case '(':
+			if depth--; depth < 0 {
+				head := skipSpacesBack(text, i)
+
+				return head > 0 && (text[head-1] == ']' || text[head-1] == '>')
+			}
+		}
+	}
+
+	return false
+}
+
+// isParenDeclared reports whether the declaration at lines[line-1][at:] sits in
+// a parenthesised head or parameter list: an unmatched ')' comes before any
+// '{' or '}' that opens or closes a block (a few lines at most).
+func isParenDeclared(lines []string, line int, at int, endLine int) bool {
+	depth := 0
+
+	for current := line; current <= endLine && current <= len(lines) && current < line+4; current++ {
+		text := indexsupport.StripLineComment(lines[current-1])
+		if current == line {
+			text = text[min(at, len(text)):]
+		}
+
+		for i := 0; i < len(text); i++ {
+			switch text[i] {
+			case '(':
+				depth++
+			case ')':
+				if depth--; depth < 0 {
+					return true
+				}
+			case '{', '}':
+				if depth == 0 {
+					return false
+				}
 			}
 		}
 	}
@@ -401,7 +457,7 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 				}
 
 				end := localScopeEnd(lines, line, decl.at, endLine)
-				if strings.Count(text[:decl.at], "(") > strings.Count(text[:decl.at], ")") {
+				if isParenDeclared(lines, line, decl.at, endLine) {
 					end = parenScopeEnd(lines, line, decl.at, endLine)
 				}
 
