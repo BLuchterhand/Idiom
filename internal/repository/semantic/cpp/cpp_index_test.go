@@ -96,9 +96,9 @@ template class Box<double>;
 
 		mainCalls, _ := index.CallsFromDefinitions(index.ResolveSymbol("main", "").Definitions, 8)
 		Expect(mainCalls).NotTo(BeEmpty())
-		calls, total := index.CallsIntoName("helper", "", 8)
-		Expect(calls).NotTo(BeEmpty())
-		Expect(total).To(Equal(len(calls)))
+		callers := index.CallsInto(index.ResolveSymbol("helper", ""), "", 8)
+		Expect(callers.Callers).NotTo(BeEmpty())
+		Expect(callers.Total).To(Equal(len(callers.Callers)))
 		Expect(index.WhoIncludes("entity_manager.h")).NotTo(BeEmpty())
 		Expect(len(index.BlastRadius("entity_manager.h"))).To(BeNumerically(">=", 2))
 		matches = index.FindSymbols("template <typename T> class Box", 8)

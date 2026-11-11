@@ -23,6 +23,8 @@ type CppIndex struct {
 	Files   []CppFile
 	Forward map[string][]string
 	Reverse map[string][]string
+	// Aliases maps `using A = B;` and `typedef B A;` names to their target text.
+	Aliases map[string]string
 	Timings CppBuildTimings
 }
 
@@ -64,11 +66,26 @@ type CppSymbol struct {
 	// Explicit marks a member defined out of class with its own qualifier
 	// (void Pool::reset() {}), whose namespace may be implied by context.
 	Explicit bool
+	// Vars maps parameter and local names in a function body to their declared
+	// type text. Fields does the same for the data members of a class, and
+	// Bases lists a class's base class names.
+	Vars   map[string]string
+	Fields map[string]string
+	Bases  []string
 }
 
+// CppCall is one call site as the syntax index sees it: the callee name plus
+// how it was reached, so a query can tell Owner::run from other::run.
 type CppCall struct {
 	Name string
 	Line int
+	// Via is how the callee was reached: "" (plain), "::", "." or "->".
+	Via string
+	// Qualifier is the written scope of a "::" call ("?" if unreadable).
+	Qualifier string
+	// Receiver is the identifier a "." or "->" call goes through; empty when
+	// the receiver is a more complex expression.
+	Receiver string
 }
 
 var (
@@ -118,6 +135,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		Root:    root,
 		Forward: make(map[string][]string),
 		Reverse: make(map[string][]string),
+		Aliases: make(map[string]string),
 	}
 	byName := make(map[string][]string)
 	byRel := make(map[string]string)
@@ -217,6 +235,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		content := string(contentBytes)
 		includes := parseCppIncludes(rel, content, byName, byRel)
 		symbols := parseCppSymbols(rel, content)
+		parseCppAliases(content, index.Aliases)
 		file := CppFile{
 			Path:      rel,
 			Includes:  includes,
@@ -439,7 +458,7 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 					name, scope = name[cut+2:], name[:cut]
 				}
 
-				symbols = append(symbols, CppSymbol{
+				typeSymbol := CppSymbol{
 					Name:       name,
 					Qualified:  indexsupport.FirstQualified(scope, name, "::"),
 					Scope:      scope,
@@ -449,7 +468,16 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 					StartLine:  lineNo,
 					EndLine:    end,
 					SourceFile: rel,
-				})
+				}
+
+				if kind == "class" || kind == "struct" || kind == "union" {
+					typeSymbol.Bases = parseCppBases(lines, i)
+					if end > lineNo {
+						typeSymbol.Fields = collectCppFields(lines, lineNo, end)
+					}
+				}
+
+				symbols = append(symbols, typeSymbol)
 			}
 		}
 
@@ -485,6 +513,7 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 			if symbol.HasBody {
 				symbol.EndLine = findCppBraceEnd(lines, i)
 				symbol.Calls = filterCppDefinitionCalls(symbol, extractCppCalls(lines, symbol.StartLine, symbol.EndLine))
+				symbol.Vars = collectCppBodyVars(signature, lines, symbol.StartLine, symbol.EndLine, symbol.Calls)
 			}
 
 			symbols = append(symbols, symbol)
@@ -664,12 +693,6 @@ func parseCppFunctionSignature(signature string) (CppSymbol, bool) {
 	}
 
 	return CppSymbol{}, false
-}
-
-func extractCppCalls(lines []string, startLine int, endLine int) []CppCall {
-	return indexsupport.ExtractLineCalls(lines, startLine, endLine, cppCallRe, indexsupport.StripLineComment, isCppKeywordName, func(name string, line int) CppCall {
-		return CppCall{Name: name, Line: line}
-	})
 }
 
 func filterCppDefinitionCalls(symbol CppSymbol, calls []CppCall) []CppCall {

@@ -73,12 +73,13 @@ void free_helper_extra() {
 	})
 
 	It("counts only exact-name callers and reports truncation", func() {
-		calls, total := index.CallsIntoName("free_helper", "", 1)
-		Expect(total).To(Equal(3))
-		Expect(calls).To(HaveLen(1))
+		resolution := index.ResolveSymbol("free_helper", "")
+		limited := index.CallsInto(resolution, "", 1)
+		Expect(limited.Total).To(Equal(3))
+		Expect(limited.Callers).To(HaveLen(1))
 
-		all, _ := index.CallsIntoName("free_helper", "", 0)
-		for _, call := range all {
+		all := index.CallsInto(resolution, "", 0)
+		for _, call := range all.Callers {
 			Expect(call.CalleeName).To(Equal("free_helper"))
 		}
 	})
@@ -90,19 +91,20 @@ void free_helper_extra() {
 		built, err := BuildCppIndex(root)
 		Expect(err).NotTo(HaveOccurred())
 
-		calls, total := built.CallsIntoName("h", "", 0)
-		Expect(calls).To(HaveLen(1))
-		Expect(total).To(Equal(1))
+		calls := built.CallsInto(built.ResolveSymbol("h", ""), "", 0)
+		Expect(calls.Callers).To(HaveLen(1))
+		Expect(calls.Total).To(Equal(1))
 	})
 
 	It("applies the path filter before the cap and counts the filtered total", func() {
-		calls, total := index.CallsIntoName("free_helper", "src/a.cpp", 1)
-		Expect(total).To(Equal(3))
-		Expect(calls).To(HaveLen(1))
+		resolution := index.ResolveSymbol("free_helper", "")
+		calls := index.CallsInto(resolution, "src/a.cpp", 1)
+		Expect(calls.Total).To(Equal(3))
+		Expect(calls.Callers).To(HaveLen(1))
 
-		none, noneTotal := index.CallsIntoName("free_helper", "elsewhere/", 1)
-		Expect(none).To(BeEmpty())
-		Expect(noneTotal).To(BeZero())
+		none := index.CallsInto(resolution, "elsewhere/", 1)
+		Expect(none.Callers).To(BeEmpty())
+		Expect(none.Total).To(BeZero())
 	})
 
 	It("reports the phase when the context budget is exhausted", func() {

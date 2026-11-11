@@ -1,7 +1,6 @@
 package cpp
 
 import (
-	"cmp"
 	"slices"
 	"strings"
 )
@@ -81,76 +80,6 @@ func (idx *CppIndex) ResolveSymbol(pattern string, pathFilter string) CppResolut
 	resolution.Definitions = groups[owners[0]]
 
 	return resolution
-}
-
-// callSite identifies one call line; several calls to the same name on a line
-// (or a call repeated by overlapping symbols) are reported once.
-type callSite struct {
-	path string
-	line int
-}
-
-// CallsIntoName returns call sites whose callee is exactly name, plus the total
-// found under pathFilter (a path prefix, or empty) before limit truncation. The syntax index records bare callee names, so
-// receiver types are not distinguished.
-func (idx *CppIndex) CallsIntoName(name string, pathFilter string, limit int) ([]CppCallMatch, int) {
-	if idx == nil || name == "" {
-		return nil, 0
-	}
-
-	out := make([]CppCallMatch, 0, 16)
-	seenSites := make(map[callSite]bool)
-
-	for _, file := range idx.Files {
-		if pathFilter != "" && !strings.HasPrefix(file.Path, pathFilter) {
-			continue
-		}
-
-		for _, symbol := range file.Symbols {
-			for _, call := range symbol.Calls {
-				if call.Name != name {
-					continue
-				}
-
-				if seenSites[callSite{file.Path, call.Line}] {
-					continue
-				}
-
-				seenSites[callSite{file.Path, call.Line}] = true
-
-				out = append(out, CppCallMatch{
-					Caller: CppSymbolMatch{
-						Path:      file.Path,
-						Name:      symbol.Name,
-						Qualified: firstCppQualified(symbol),
-						Kind:      symbol.Kind,
-						Scope:     symbol.Scope,
-						Line:      symbol.Line,
-						Column:    symbol.Column,
-						StartLine: symbol.StartLine,
-						EndLine:   symbol.EndLine,
-					},
-					CalleeName: name,
-					Line:       call.Line,
-				})
-			}
-		}
-	}
-
-	slices.SortFunc(out, func(a, b CppCallMatch) int {
-		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
-			return c
-		}
-
-		return cmp.Compare(a.Line, b.Line)
-	})
-
-	total := len(out)
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-
-	return out, total
 }
 
 func (idx *CppIndex) exactOwnerGroups(normalized string, name string, qualified bool, pathFilter string) map[string][]CppSymbolMatch {
