@@ -171,6 +171,50 @@ int main() { helper(); return 0; }
 		Expect(blast.Output).To(ContainSubstring("main.cpp"))
 	})
 
+	It("resolves every single-symbol tool exactly and fails closed on ambiguity", func() {
+		root := GinkgoT().TempDir()
+		writeCppFixture(filepath.Join(root, "include", "pair.h"), `
+#pragma once
+struct Widget { void offer(); };
+struct Gadget { void offer(); };
+void helper();
+`)
+		writeCppFixture(filepath.Join(root, "src", "pair.cpp"), `
+#include "pair.h"
+void Widget::offer() { helper(); }
+void Gadget::offer() { helper(); }
+void helper() {}
+`)
+
+		manager := workspace.NewManager(config.Workspace{
+			Root: root, CWD: root, EnableShell: true, EnableWrites: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536,
+		})
+
+		for _, tool := range []string{"cpp_read_symbol", "cpp_definition", "cpp_declaration", "cpp_implementations", "cpp_references", "cpp_extract_body"} {
+			ambiguous := manager.Execute(context.Background(), workspace.ToolRequest{Tool: tool, Pattern: "offer"})
+			Expect(ambiguous.Code).To(Equal("ambiguous_symbol"), tool)
+			Expect(ambiguous.Output).To(ContainSubstring("Widget::offer"), tool)
+			Expect(ambiguous.Output).To(ContainSubstring("Gadget::offer"), tool)
+
+			missing := manager.Execute(context.Background(), workspace.ToolRequest{Tool: tool, Pattern: "offe"})
+			Expect(missing.Code).To(Equal("symbol_not_found"), tool)
+		}
+
+		read := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "Gadget::offer"})
+		Expect(read.Error).To(BeEmpty())
+		Expect(read.Summary).To(ContainSubstring(`[resolved Gadget::offer, requested "Gadget::offer"]`))
+		Expect(read.Output).To(ContainSubstring("Gadget::offer"))
+		Expect(read.Freshness).To(HaveKeyWithValue("collector", "cpp-syntax-index/2"))
+
+		body := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_extract_body", Pattern: "Widget::offer"})
+		Expect(body.Error).To(BeEmpty())
+		Expect(body.Output).To(ContainSubstring("helper();"))
+
+		definition := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_definition", Pattern: "helper"})
+		Expect(definition.Error).To(BeEmpty())
+		Expect(definition.Output).To(ContainSubstring("pair.cpp"))
+	})
+
 	It("uses clangd for precise navigation when available", func() {
 		if _, err := exec.LookPath("clangd"); err != nil {
 			Skip("clangd not installed")

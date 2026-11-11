@@ -145,9 +145,23 @@ func (m *Manager) resolveCppTarget(tool string, rejected string, req ToolRequest
 	return index, resolution, info, pathFilter, nil
 }
 
-// cppPreferredDefinition picks the entry clangd should be positioned on: a
-// function or method in a source file, else the first indexed entry.
+// cppPreferredDefinition picks the indexed entry a single-symbol tool acts on:
+// the type itself, else a function or method with a body in a source file, else
+// a function or method in a source file, else the first entry.
 func cppPreferredDefinition(definitions []semanticcpp.CppSymbolMatch) semanticcpp.CppSymbolMatch {
+	for _, match := range definitions {
+		switch match.Kind {
+		case "class", "struct", "enum", "union", "namespace":
+			return match
+		}
+	}
+
+	for _, match := range definitions {
+		if (match.Kind == "method" || match.Kind == "func") && !cppIsHeaderPath(match.Path) && match.EndLine > match.StartLine {
+			return match
+		}
+	}
+
 	for _, match := range definitions {
 		if (match.Kind == "method" || match.Kind == "func") && !cppIsHeaderPath(match.Path) {
 			return match
@@ -155,6 +169,40 @@ func cppPreferredDefinition(definitions []semanticcpp.CppSymbolMatch) semanticcp
 	}
 
 	return definitions[0]
+}
+
+// cppResolved is the exact resolution a single-symbol tool answered from.
+type cppResolved struct {
+	resolution semanticcpp.CppResolution
+	info       cppIndexInfo
+	started    time.Time
+}
+
+// resolveCppMatch resolves req.Pattern to exactly one owner and returns the
+// entry to act on, or a ready fail-closed result (ambiguous_symbol,
+// symbol_not_found, cpp_index_budget_exceeded) instead of a guessed symbol.
+func (m *Manager) resolveCppMatch(tool string, rejected string, req ToolRequest) (semanticcpp.CppSymbolMatch, cppResolved, *ToolResult) {
+	started := time.Now()
+
+	_, resolution, info, _, failure := m.resolveCppTarget(tool, rejected, req)
+	if failure != nil {
+		return semanticcpp.CppSymbolMatch{}, cppResolved{}, failure
+	}
+
+	return cppPreferredDefinition(resolution.Definitions), cppResolved{resolution: resolution, info: info, started: started}, nil
+}
+
+// annotate echoes the requested and resolved symbol and attaches the index
+// identity to a successful result.
+func (r cppResolved) annotate(result ToolResult) ToolResult {
+	if result.Error != "" {
+		return result
+	}
+
+	result.Summary = fmt.Sprintf("%s [resolved %s, requested %q]", result.Summary, r.resolution.Owner, r.resolution.Requested)
+	result.Freshness = r.info.freshness(time.Since(r.started), false)
+
+	return result
 }
 
 const cppCallResultLimit = 24
@@ -277,14 +325,19 @@ func (m *Manager) cppReadSymbol(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "cpp_read_symbol", Summary: "C++ symbol read rejected", Error: err.Error()}
 	}
 
-	match, err := m.selectCppSymbolMatch(req)
-	if err != nil {
+	match, resolved, failure := m.resolveCppMatch("cpp_read_symbol", "C++ symbol read rejected", req)
+	if failure != nil {
 		if result, ok := m.cppReadSymbolPathMiss(req); ok {
 			return result
 		}
 
-		return ToolResult{Tool: "cpp_read_symbol", Summary: "C++ symbol read rejected", Error: err.Error()}
+		return *failure
 	}
+
+	return resolved.annotate(m.cppReadSymbolMatch(req, match))
+}
+
+func (m *Manager) cppReadSymbolMatch(req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
 
 	abs, err := m.resolvePath(match.Path, "")
 	if err != nil {
@@ -366,10 +419,15 @@ func (m *Manager) cppWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolR
 }
 
 func (m *Manager) cppDefinition(ctx context.Context, req ToolRequest) ToolResult {
-	match, err := m.selectCppSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "cpp_definition", Summary: "C++ definition query rejected", Error: err.Error()}
+	match, resolved, failure := m.resolveCppMatch("cpp_definition", "C++ definition query rejected", req)
+	if failure != nil {
+		return *failure
 	}
+
+	return resolved.annotate(m.cppDefinitionMatch(ctx, req, match))
+}
+
+func (m *Manager) cppDefinitionMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
 
 	if output, err := m.cppDefinitionViaClangd(ctx, match); err == nil && strings.TrimSpace(output) != "" {
 		if !cppLocationOutputOnlyHeaders(output) {
@@ -407,10 +465,15 @@ func (m *Manager) cppDefinition(ctx context.Context, req ToolRequest) ToolResult
 }
 
 func (m *Manager) cppDeclaration(ctx context.Context, req ToolRequest) ToolResult {
-	match, err := m.selectCppSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "cpp_declaration", Summary: "C++ declaration query rejected", Error: err.Error()}
+	match, resolved, failure := m.resolveCppMatch("cpp_declaration", "C++ declaration query rejected", req)
+	if failure != nil {
+		return *failure
 	}
+
+	return resolved.annotate(m.cppDeclarationMatch(ctx, req, match))
+}
+
+func (m *Manager) cppDeclarationMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
 
 	if output, err := m.cppDeclarationViaClangd(ctx, match); err == nil && strings.TrimSpace(output) != "" {
 		return ToolResult{
@@ -440,10 +503,15 @@ func (m *Manager) cppDeclaration(ctx context.Context, req ToolRequest) ToolResul
 }
 
 func (m *Manager) cppImplementations(ctx context.Context, req ToolRequest) ToolResult {
-	match, err := m.selectCppSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "cpp_implementations", Summary: "C++ implementation query rejected", Error: err.Error()}
+	match, resolved, failure := m.resolveCppMatch("cpp_implementations", "C++ implementation query rejected", req)
+	if failure != nil {
+		return *failure
 	}
+
+	return resolved.annotate(m.cppImplementationsMatch(ctx, req, match))
+}
+
+func (m *Manager) cppImplementationsMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	if err == nil {
@@ -468,10 +536,15 @@ func (m *Manager) cppImplementations(ctx context.Context, req ToolRequest) ToolR
 }
 
 func (m *Manager) cppReferences(ctx context.Context, req ToolRequest) ToolResult {
-	match, err := m.selectCppSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "cpp_references", Summary: "C++ reference query rejected", Error: err.Error()}
+	match, resolved, failure := m.resolveCppMatch("cpp_references", "C++ reference query rejected", req)
+	if failure != nil {
+		return *failure
 	}
+
+	return resolved.annotate(m.cppReferencesMatch(ctx, req, match))
+}
+
+func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	if err == nil {
@@ -563,10 +636,15 @@ func (m *Manager) cppCalls(ctx context.Context, req ToolRequest, incoming bool) 
 }
 
 func (m *Manager) cppExtractBody(req ToolRequest) ToolResult {
-	match, err := m.selectCppSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "cpp_extract_body", Summary: "C++ body extraction rejected", Error: err.Error()}
+	match, resolved, failure := m.resolveCppMatch("cpp_extract_body", "C++ body extraction rejected", req)
+	if failure != nil {
+		return *failure
 	}
+
+	return resolved.annotate(m.cppExtractBodyMatch(req, match))
+}
+
+func (m *Manager) cppExtractBodyMatch(req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
 
 	abs, err := m.resolvePath(match.Path, "")
 	if err != nil {
@@ -905,34 +983,6 @@ func (m *Manager) cppDiagnostics(ctx context.Context, req ToolRequest) ToolResul
 	}
 
 	return ToolResult{Tool: "cpp_diagnostics", Summary: fmt.Sprintf("Collected C++ diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n"), Facts: diagnosticToolFacts(files)}
-}
-
-func (m *Manager) selectCppSymbolMatch(req ToolRequest) (semanticcpp.CppSymbolMatch, error) {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return semanticcpp.CppSymbolMatch{}, fmt.Errorf("pattern is required")
-	}
-
-	index, err := m.getCppIndex()
-	if err != nil {
-		return semanticcpp.CppSymbolMatch{}, err
-	}
-
-	pathFilter, err := m.cppPathFilterForRequest(req)
-	if err != nil {
-		return semanticcpp.CppSymbolMatch{}, err
-	}
-
-	matches := filterCppSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
-	if len(matches) == 0 {
-		if pathFilter != "" {
-			return semanticcpp.CppSymbolMatch{}, fmt.Errorf("no C++ symbols matched %q under %s", pattern, pathFilter)
-		}
-
-		return semanticcpp.CppSymbolMatch{}, fmt.Errorf("no C++ symbols matched %q", pattern)
-	}
-
-	return matches[0], nil
 }
 
 func (m *Manager) cppPathFilter(path string) string {
