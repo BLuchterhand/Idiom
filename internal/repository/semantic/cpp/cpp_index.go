@@ -23,7 +23,13 @@ type CppIndex struct {
 	Files   []CppFile
 	Forward map[string][]string
 	Reverse map[string][]string
-	Timings CppBuildTimings
+	// Aliases maps `using A = B;` and `typedef B A;` names to their target text.
+	Aliases map[string]string
+	// NamespaceAliases maps every `namespace X = Y;` name in the index to its
+	// target ("" when files disagree); call sites expand their own file's
+	// aliases at index time, this map covers aliases from included headers.
+	NamespaceAliases map[string]string
+	Timings          CppBuildTimings
 }
 
 // CppBuildTimings records where a BuildCppIndexWithOptions call spent its time
@@ -64,11 +70,27 @@ type CppSymbol struct {
 	// Explicit marks a member defined out of class with its own qualifier
 	// (void Pool::reset() {}), whose namespace may be implied by context.
 	Explicit bool
+	// Vars maps parameter and local names in a function body to their declared
+	// type text. Fields does the same for the data members of a class, and
+	// Bases lists a class's base class names.
+	Vars   map[string]string
+	Fields map[string]string
+	Bases  []string
 }
 
+// CppCall is one call site as the syntax index sees it: the callee name plus
+// how it was reached, so a query can tell Owner::run from other::run.
 type CppCall struct {
 	Name string
 	Line int
+	// Via is how the callee was reached: "" (plain), "::", "." or "->".
+	Via string
+	// Qualifier is the written scope of a "::" call ("?" if unreadable).
+	Qualifier string
+	// Receiver is the identifier a "." or "->" call goes through ("this->name"
+	// for a data member reached through this); empty when
+	// the receiver is a more complex expression.
+	Receiver string
 }
 
 var (
@@ -118,6 +140,9 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		Root:    root,
 		Forward: make(map[string][]string),
 		Reverse: make(map[string][]string),
+		Aliases: make(map[string]string),
+
+		NamespaceAliases: make(map[string]string),
 	}
 	byName := make(map[string][]string)
 	byRel := make(map[string]string)
@@ -216,7 +241,20 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		index.Timings.Bytes += int64(len(contentBytes))
 		content := string(contentBytes)
 		includes := parseCppIncludes(rel, content, byName, byRel)
-		symbols := parseCppSymbols(rel, content)
+		code := blankCppCommentsAndLiterals(content)
+		symbols := parseCppSymbols(rel, code)
+		namespaces := parseCppNamespaceAliases(code)
+		applyCppNamespaceAliases(symbols, namespaces)
+
+		for name, target := range namespaces {
+			if prior, seen := index.NamespaceAliases[name]; seen && prior != target {
+				target = ""
+			}
+
+			index.NamespaceAliases[name] = target
+		}
+
+		parseCppAliases(code, index.Aliases, namespaces)
 		file := CppFile{
 			Path:      rel,
 			Includes:  includes,
@@ -428,7 +466,7 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 		}
 
 		if pendingStart == 0 {
-			if match := cppTypeRe.FindStringSubmatch(trimmed); len(match) == 3 {
+			if match := cppTypeRe.FindStringSubmatch(trimmed); len(match) == 3 && !isCppNamespaceAlias(match[1], trimmed[len(match[0]):]) {
 				end := cppTypeEnd(lines, i)
 				kind := strings.ReplaceAll(match[1], " ", "_")
 
@@ -439,7 +477,7 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 					name, scope = name[cut+2:], name[:cut]
 				}
 
-				symbols = append(symbols, CppSymbol{
+				typeSymbol := CppSymbol{
 					Name:       name,
 					Qualified:  indexsupport.FirstQualified(scope, name, "::"),
 					Scope:      scope,
@@ -449,7 +487,16 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 					StartLine:  lineNo,
 					EndLine:    end,
 					SourceFile: rel,
-				})
+				}
+
+				if kind == "class" || kind == "struct" || kind == "union" {
+					typeSymbol.Bases = parseCppBases(lines, i)
+					if end > lineNo {
+						typeSymbol.Fields = collectCppFields(lines, lineNo, end)
+					}
+				}
+
+				symbols = append(symbols, typeSymbol)
 			}
 		}
 
@@ -485,6 +532,7 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 			if symbol.HasBody {
 				symbol.EndLine = findCppBraceEnd(lines, i)
 				symbol.Calls = filterCppDefinitionCalls(symbol, extractCppCalls(lines, symbol.StartLine, symbol.EndLine))
+				symbol.Vars = collectCppBodyVars(signature, lines, symbol.StartLine, symbol.EndLine, symbol.Calls)
 			}
 
 			symbols = append(symbols, symbol)
@@ -503,6 +551,74 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 	})
 
 	return attributeCppScopes(symbols)
+}
+
+// blankCppCommentsAndLiterals replaces every /* ... */ comment (including one
+// that spans lines) and the contents of string and character literals with
+// spaces, keeping newlines and quotes so line numbers stay put. The line-based
+// parser would otherwise read `run(1); /* x */` as an unfinished statement and
+// fold the next signature into it, and a "}" or '{' literal would break brace
+// tracking. A "/*" inside a literal or // comment is not a comment.
+func blankCppCommentsAndLiterals(content string) string {
+	if !strings.ContainsAny(content, "\"'") && !strings.Contains(content, "/*") {
+		return content
+	}
+
+	out := []byte(content)
+
+	for i := 0; i < len(out); i++ {
+		switch out[i] {
+		case '"', '\'':
+			if out[i] == '\'' && i > 0 && out[i-1] >= '0' && out[i-1] <= '9' {
+				continue // a digit separator (1'000)
+			}
+
+			quote := out[i]
+
+			for i++; i < len(out) && out[i] != quote && out[i] != '\n'; i++ {
+				if out[i] == '\\' && i+1 < len(out) && out[i+1] != '\n' {
+					out[i] = ' '
+					i++
+				}
+
+				out[i] = ' '
+			}
+		case '/':
+			if i+1 >= len(out) {
+				continue
+			}
+
+			switch out[i+1] {
+			case '/':
+				for i < len(out) && out[i] != '\n' {
+					i++
+				}
+			case '*':
+				end := strings.Index(content[i+2:], "*/")
+				stop := len(out)
+
+				if end >= 0 {
+					stop = i + 2 + end + 2
+				}
+
+				for j := i; j < stop; j++ {
+					if out[j] != '\n' {
+						out[j] = ' '
+					}
+				}
+
+				i = stop - 1
+			}
+		}
+	}
+
+	return string(out)
+}
+
+// isCppNamespaceAlias reports a `namespace X = Y;` line, which declares no
+// namespace body (parseCppNamespaceAliases reads it).
+func isCppNamespaceAlias(kind string, rest string) bool {
+	return kind == "namespace" && strings.HasPrefix(strings.TrimSpace(rest), "=")
 }
 
 // cppTypeEnd returns the last line of the type or namespace starting at lines[start]:
@@ -624,7 +740,7 @@ func parseCppFunctionSignature(signature string) (CppSymbol, bool) {
 	}
 
 	if idx := strings.Index(signature, "("); idx >= 0 {
-		beforeParen := strings.TrimSpace(signature[:idx])
+		beforeParen := stripCppScopeTemplateArgs(strings.TrimSpace(signature[:idx]))
 		match := cppNameBeforeParen.FindStringSubmatch(beforeParen)
 
 		if len(match) != 2 {
@@ -664,12 +780,6 @@ func parseCppFunctionSignature(signature string) (CppSymbol, bool) {
 	}
 
 	return CppSymbol{}, false
-}
-
-func extractCppCalls(lines []string, startLine int, endLine int) []CppCall {
-	return indexsupport.ExtractLineCalls(lines, startLine, endLine, cppCallRe, indexsupport.StripLineComment, isCppKeywordName, func(name string, line int) CppCall {
-		return CppCall{Name: name, Line: line}
-	})
 }
 
 func filterCppDefinitionCalls(symbol CppSymbol, calls []CppCall) []CppCall {
@@ -794,4 +904,21 @@ func isCppKeywordName(name string) bool {
 	default:
 		return false
 	}
+}
+
+var cppScopeTemplateArgsRe = regexp.MustCompile(`<[^<>]*>(\s*::)`)
+
+// stripCppScopeTemplateArgs turns `Mix<T>::go` into `Mix::go` so an
+// out-of-class member of a class template keeps its class scope.
+func stripCppScopeTemplateArgs(text string) string {
+	for strings.Contains(text, ">") {
+		next := cppScopeTemplateArgsRe.ReplaceAllString(text, "$1")
+		if next == text {
+			break
+		}
+
+		text = next
+	}
+
+	return text
 }

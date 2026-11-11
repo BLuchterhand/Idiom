@@ -19,7 +19,7 @@ import (
 const (
 	// cppCollectorVersion changes whenever the syntax collector's output changes,
 	// so an index identity never spans two collector behaviours.
-	cppCollectorVersion = "cpp-syntax-index/2"
+	cppCollectorVersion = "cpp-syntax-index/3"
 	// cppIndexBudget bounds one in-process C++ index build; beyond it the tool
 	// fails with cpp_index_budget_exceeded and the phase timings.
 	cppIndexBudget = 10 * time.Second

@@ -212,7 +212,7 @@ func (r cppResolved) annotate(result ToolResult) ToolResult {
 
 const cppCallResultLimit = 24
 
-const cppNameOnlyWarning = "call sites are matched by callee name only (syntax index); receiver types are not resolved, so same-named members of other classes can appear"
+const cppDeclaredTypeWarning = "incoming call sites are resolved from declared types in the syntax index (parameters, locals, fields, base classes); calls whose receiver type cannot be read are listed as unresolved, not as callers"
 
 // cppCallResult formats a call query answer with the resolved owner, the total
 // found and the index identity.
@@ -607,7 +607,11 @@ func (m *Manager) cppCalls(ctx context.Context, req ToolRequest, incoming bool) 
 	}
 
 	started := time.Now()
-	warnings := []string{cppNameOnlyWarning}
+	var warnings []string
+
+	if incoming {
+		warnings = append(warnings, cppDeclaredTypeWarning)
+	}
 
 	clangdCtx, cancel := context.WithTimeout(ctx, cppClangdBudget)
 	payload, lspErr := m.cppCallHierarchyViaClangd(clangdCtx, cppPreferredDefinition(resolution.Definitions), pathFilter, incoming)
@@ -629,18 +633,51 @@ func (m *Manager) cppCalls(ctx context.Context, req ToolRequest, incoming bool) 
 		warnings = append(warnings, fmt.Sprintf("clangd call hierarchy exceeded its %s budget; answered from the syntax index", cppClangdBudget))
 	}
 
-	var (
-		matches []semanticcpp.CppCallMatch
-		total   int
-	)
-
 	if incoming {
-		matches, total = index.CallsIntoName(resolution.Name, pathFilter, cppCallResultLimit)
-	} else {
-		matches, total = index.CallsFromDefinitions(resolution.Definitions, cppCallResultLimit)
+		callers := index.CallsInto(resolution, pathFilter, cppCallResultLimit)
+
+		return m.cppIncomingResult(resolution, callers, info, started, warnings)
 	}
 
+	matches, total := index.CallsFromDefinitions(resolution.Definitions, cppCallResultLimit)
+
 	return m.cppCallResult(tool, direction, resolution, matches, total, info, started, warnings)
+}
+
+// cppIncomingResult formats resolved callers and appends the calls whose
+// receiver could not be resolved as a separate, labelled section.
+func (m *Manager) cppIncomingResult(res semanticcpp.CppResolution, callers semanticcpp.CppCallers, info cppIndexInfo, started time.Time, warnings []string) ToolResult {
+	result := m.cppCallResult("cpp_calls_into", "incoming", res, callers.Callers, callers.Total, info, started, warnings)
+
+	if callers.UnresolvedTotal == 0 {
+		return result
+	}
+
+	lines := make([]string, 0, len(callers.Unresolved)+1)
+	lines = append(lines, fmt.Sprintf("unresolved (%d call(s) to %q whose receiver type is not readable; not counted as callers):", callers.UnresolvedTotal, res.Name))
+
+	for _, call := range callers.Unresolved {
+		display, err := m.cppHandleDisplay(call.Caller.Path)
+		if err != nil {
+			display = call.Caller.Path
+		}
+
+		lines = append(lines, fmt.Sprintf("%s:%d -> %s [%s]", display, call.Line, call.CalleeName, call.Reason))
+	}
+
+	if callers.UnresolvedTotal > len(callers.Unresolved) {
+		lines = append(lines, fmt.Sprintf("... %d more unresolved", callers.UnresolvedTotal-len(callers.Unresolved)))
+	}
+
+	result.Summary += fmt.Sprintf(" %d unresolved (receiver type unknown).", callers.UnresolvedTotal)
+
+	if result.Output != "" {
+		result.Output += "\n\n"
+	}
+
+	result.Output += strings.Join(lines, "\n")
+
+	return result
 }
 
 func (m *Manager) cppExtractBody(ctx context.Context, req ToolRequest) ToolResult {

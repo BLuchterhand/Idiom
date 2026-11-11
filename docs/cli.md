@@ -157,10 +157,22 @@ than one owner; candidates are in `Output`; pass `Owner::name` or a `path`) and
 request matches any owner whose qualified name ends with it; in-class members
 belong to their enclosing class or namespace by line range, and out-of-class
 `Pool::reset` definitions fold into the one `ns::Pool::reset` they can mean).
-Summaries echo the requested name and the resolved owner. Call
-queries match callee names only (the syntax index does not resolve receiver
-types) and say so in `sidecar.warnings`; the optional clangd call hierarchy is
-attempted within a 5 s budget. `cpp_blast_radius` takes a file name or a symbol:
+Summaries echo the requested name and the resolved owner. `cpp_calls_into`
+resolves call sites against the owner from declared types the syntax index can
+read (parameters, locals, fields, base classes, `using` aliases): member calls on
+an object of the owner's type or a type derived from it (unless the derived class
+redeclares the method), `Owner::name(...)` calls, and unqualified calls inside the
+owner's own members. Calls whose receiver type cannot be read (`auto`, a call
+result, an unknown name) are listed in a separate `unresolved` section of `Output`
+with the reason and never counted as callers; static types only, so a call
+through a base-typed pointer is not attributed to an override. A call is left out
+only when the resolver proves it reaches another class; ambiguous names, unindexed
+bases, unread namespace aliases and ambiguous out-of-class scopes go to
+`unresolved`. Known limits of the line-based index: a member call split across
+lines (`k.` then `run()` on the next line) is not seen as a call through `k`, and a
+lambda defined at file scope is not recognised as a local, so its calls are
+classified like ordinary function calls. The optional
+clangd call hierarchy is attempted first within a 5 s budget. `cpp_blast_radius` takes a file name or a symbol:
 a symbol resolves to its defining files and reports every translation unit that
 includes them.
 

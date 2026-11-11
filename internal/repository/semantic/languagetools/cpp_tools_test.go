@@ -163,7 +163,7 @@ int main() { helper(); return 0; }
 		Expect(ok).To(BeTrue())
 		Expect(freshness["index_key"]).NotTo(BeNil())
 		Expect(freshness).To(HaveKey("phase_ms"))
-		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/2"))
+		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/3"))
 
 		overview := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_overview"})
 		Expect(overview.Freshness).To(HaveKeyWithValue("schema", "idiom.cpp_index.v1"))
@@ -211,7 +211,7 @@ void helper() {}
 		Expect(read.Error).To(BeEmpty())
 		Expect(read.Summary).To(ContainSubstring(`[resolved Gadget::offer, requested "Gadget::offer"]`))
 		Expect(read.Output).To(ContainSubstring("Gadget::offer"))
-		Expect(read.Freshness).To(HaveKeyWithValue("collector", "cpp-syntax-index/2"))
+		Expect(read.Freshness).To(HaveKeyWithValue("collector", "cpp-syntax-index/3"))
 
 		body := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_extract_body", Pattern: "Widget::offer"})
 		Expect(body.Error).To(BeEmpty())
