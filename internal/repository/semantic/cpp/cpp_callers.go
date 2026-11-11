@@ -682,12 +682,20 @@ func (r *callResolver) classifyMember(caller CppSymbol, call CppCall) (callVerdi
 
 	typeText := outer
 
-	if local, sameLine, scoped := scopedVarType(caller.Vars[cppScopedVarPrefix+receiver], call.Line); scoped {
-		if sameLine && ok && local != outer {
-			return verdictUnresolved, "receiver `" + receiver + "` is declared on the call's line and also outside it; which one the call uses is not readable"
+	// Several declarations of the receiver: the innermost covering one wins,
+	// unless the call shares a line with that declaration's start or end and
+	// another declaration in scope has a different type (no proof which applies).
+	if decls := scopedVarDecls(caller.Vars[cppScopedVarPrefix+receiver], call.Line); len(decls) > 0 {
+		alternative, hasAlternative := outer, ok
+		if len(decls) > 1 {
+			alternative, hasAlternative = decls[1].typeText, true
 		}
 
-		typeText, ok = local, true
+		if decls[0].boundary && hasAlternative && alternative != decls[0].typeText {
+			return verdictUnresolved, "receiver `" + receiver + "` has several declarations with different types and the call shares a line with a scope boundary; which one applies is not readable"
+		}
+
+		typeText, ok = decls[0].typeText, true
 	}
 
 	if !ok {

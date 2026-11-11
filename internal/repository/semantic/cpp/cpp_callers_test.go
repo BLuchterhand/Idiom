@@ -545,6 +545,12 @@ var _ = Describe("C++ owner-resolved calls never drop a possible caller", func()
 		"class @DF {\npublic:\n    void go();\nprivate:\n    @N k_;\n};\nvoid @DF::go() {\n    k_.run(17);\n    {\n        b::Kernel k_;\n        k_.run(18); // none\n    }\n    k_.run(19);\n    { b::Kernel k_; k_.run(20); } // any\n}",
 		// brace characters inside string and character literals
 		"void @Dz(@N& v) {\n    const char* s = \"}\";\n    char c = '{';\n    v.run(21);\n}",
+		// names declared in parentheses (lambda params, for heads) apply to the
+		// following body or statement only; a shared line fails closed
+		"void @Dl1(@N& k) {\n    auto f = [](b::Kernel& k) { k.run(22); }; k.run(23); // some\n    k.run(24);\n}",
+		"void @Dl2(@N& k) {\n    auto f = [](b::Kernel& k) {\n        k.run(25); // none\n    };\n    k.run(26);\n}",
+		"void @Dl3(@N& k, std::vector<b::Kernel>& others) {\n    for (b::Kernel& k : others) k.run(27); k.run(28); // some\n    for (b::Kernel& k : others)\n        k.run(29); // any\n    k.run(30);\n}",
+		"void @Dl4(@N& k) {\n    { b::Kernel k; } k.run(31); // some\n}",
 		"class @DL : public @N {\npublic:\n    void go() {\n        run(11);\n        auto run = [](int) {};\n        run(12); // none\n    }\n    void go2() {\n        { bool run = false; }\n        run(13);\n    }\n};",
 	}
 
@@ -619,6 +625,8 @@ public:
 				}
 
 				switch {
+				case strings.Contains(line, "// some"):
+					want[c.owner][path+":"+itoa(i+1)] = "some"
 				case strings.Contains(line, "// any"):
 					continue // either proven elsewhere or unresolved; not a drop either way
 				case strings.Contains(line, "// none"):
@@ -652,7 +660,12 @@ public:
 			}
 
 			for site, verdict := range expected {
-				if verdict == "none" {
+				switch verdict {
+				case "some":
+					Expect(got[site]).NotTo(BeEmpty(), owner+" at "+site+" must not be dropped")
+
+					continue
+				case "none":
 					verdict = ""
 				}
 

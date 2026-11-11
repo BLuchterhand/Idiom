@@ -1,7 +1,9 @@
 package cpp
 
 import (
+	"cmp"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -303,6 +305,35 @@ const cppAmbiguousType = "?"
 // declared in text (the name is followed by a declarator terminator).
 // Redeclared names keep the last type; shadowing is not modelled.
 func declaredVarsIn(vars map[string]string, text string, want map[string]bool, body bool) map[string]string {
+	for _, decl := range declarationsIn(text, want, body) {
+		if vars == nil {
+			vars = make(map[string]string, 4)
+		}
+
+		// A name declared with two different types (shadowing, or a
+		// look-alike expression) is not trusted to either.
+		typeName := decl.typeText
+		if prior, seen := vars[decl.name]; seen && prior != typeName {
+			typeName = cppAmbiguousType
+		}
+
+		vars[decl.name] = typeName
+	}
+
+	return vars
+}
+
+// cppDeclaration is one `Type name` declaration found on a line.
+type cppDeclaration struct {
+	name     string
+	typeText string
+	at       int // byte offset of the name in the line
+}
+
+// declarationsIn returns the declarations of the wanted names on one line.
+func declarationsIn(text string, want map[string]bool, body bool) []cppDeclaration {
+	var decls []cppDeclaration
+
 	for name := range want {
 		for pos := 0; pos < len(text); {
 			at := strings.Index(text[pos:], name)
@@ -323,22 +354,12 @@ func declaredVarsIn(vars map[string]string, text string, want map[string]bool, b
 			}
 
 			if typeName := declaredTypeBefore(text, start, rest[0], body); typeName != "" {
-				if vars == nil {
-					vars = make(map[string]string, 4)
-				}
-
-				// A name declared with two different types (shadowing, or a
-				// look-alike expression) is not trusted to either.
-				if prior, seen := vars[name]; seen && prior != typeName {
-					typeName = cppAmbiguousType
-				}
-
-				vars[name] = typeName
+				decls = append(decls, cppDeclaration{name: name, typeText: typeName, at: start})
 			}
 		}
 	}
 
-	return vars
+	return decls
 }
 
 // collectCppBodyVars gathers the declarations of the receivers that calls go
@@ -374,13 +395,17 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 		}
 
 		if mentionsAny(text, want) {
-			for name, typeText := range declaredVarsIn(nil, text, want, true) {
+			for _, decl := range declarationsIn(text, want, true) {
 				if vars == nil {
 					vars = make(map[string]string, 4)
 				}
 
-				vars[cppScopedVarPrefix+name] += strconv.Itoa(line) + "-" +
-					strconv.Itoa(localScopeEnd(lines, line, max(0, strings.Index(text, name)), endLine)) + "=" + typeText + "\n"
+				end := localScopeEnd(lines, line, decl.at, endLine)
+				if strings.Count(text[:decl.at], "(") > strings.Count(text[:decl.at], ")") {
+					end = parenScopeEnd(lines, line, decl.at, endLine)
+				}
+
+				vars[cppScopedVarPrefix+decl.name] += strconv.Itoa(line) + "-" + strconv.Itoa(end) + "=" + decl.typeText + "\n"
 			}
 		}
 
@@ -408,11 +433,23 @@ func collectCppBodyVars(signature string, lines []string, startLine int, endLine
 // of its block. Parameters stay under the bare name for the whole function.
 const cppScopedVarPrefix = "at:"
 
-// scopedVarType returns the type of the innermost body declaration of a
-// receiver in scope at line; sameLine is true when that declaration sits on
-// the call's own line, where the call may come before it.
-func scopedVarType(entries string, line int) (typeText string, sameLine bool, ok bool) {
-	best := -1
+// scopedDecl is one body declaration of a receiver in scope at a line;
+// boundary is true when the line holds its first or last line, where a call
+// may sit before the declaration or after its scope closes.
+type scopedDecl struct {
+	typeText string
+	from     int
+	boundary bool
+}
+
+// scopedVarDecls returns the body declarations of a receiver whose span covers
+// line, innermost (latest) first.
+func scopedVarDecls(entries string, line int) []scopedDecl {
+	if entries == "" {
+		return nil
+	}
+
+	var decls []scopedDecl
 
 	for _, entry := range strings.Split(strings.TrimSuffix(entries, "\n"), "\n") {
 		span, entryType, found := strings.Cut(entry, "=")
@@ -420,13 +457,56 @@ func scopedVarType(entries string, line int) (typeText string, sameLine bool, ok
 			continue
 		}
 
-		from, _, _ := strings.Cut(span, "-")
-		if first, err := strconv.Atoi(from); err == nil && first >= best {
-			best, typeText, sameLine, ok = first, entryType, first == line, true
+		from, to, _ := strings.Cut(span, "-")
+		first, errFrom := strconv.Atoi(from)
+		last, errTo := strconv.Atoi(to)
+
+		if errFrom == nil && errTo == nil {
+			decls = append(decls, scopedDecl{typeText: entryType, from: first, boundary: line == first || line == last})
 		}
 	}
 
-	return typeText, sameLine, ok
+	slices.SortStableFunc(decls, func(a, b scopedDecl) int { return cmp.Compare(b.from, a.from) })
+
+	return decls
+}
+
+// parenScopeEnd returns the last line where a name declared inside parentheses
+// at lines[line-1][at:] is in scope: the {} body or the single statement that
+// follows the closing parenthesis (lambda parameters, for/if/while/catch heads).
+func parenScopeEnd(lines []string, line int, at int, endLine int) int {
+	parens, braces, afterHead := 0, 0, false
+
+	for current := line; current <= endLine && current <= len(lines); current++ {
+		text := indexsupport.StripLineComment(lines[current-1])
+		if current == line {
+			text = text[min(at, len(text)):]
+		}
+
+		for i := 0; i < len(text); i++ {
+			c := text[i]
+
+			switch {
+			case !afterHead && c == '(':
+				parens++
+			case !afterHead && c == ')':
+				if parens--; parens < 0 {
+					afterHead = true
+				}
+			case !afterHead:
+			case c == '{':
+				braces++
+			case c == '}':
+				if braces--; braces <= 0 {
+					return current
+				}
+			case c == ';' && braces == 0:
+				return current
+			}
+		}
+	}
+
+	return endLine
 }
 
 // cppLocalFuncPrefix keys Vars entries that record a local variable (often a
