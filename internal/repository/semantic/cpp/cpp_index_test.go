@@ -1,7 +1,6 @@
 package cpp
 
 import (
-	"idiom/internal/repository/semantic"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,7 +111,7 @@ template class Box<double>;
 		mustWriteFile(filepath.Join(root, "native", "sim.cpp"), "int tick() { return 1; }\n")
 		mustWriteFile(filepath.Join(root, "tools", "tool.cpp"), "int tool() { return 2; }\n")
 
-		index, err := BuildCppIndexWithOptions(root, semantic.IndexOptions{Scope: "native"})
+		index, err := BuildCppIndexWithOptions(root, BuildOptions{Scope: "native"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(index).NotTo(BeNil())
 		Expect(index.Files).To(HaveLen(1))

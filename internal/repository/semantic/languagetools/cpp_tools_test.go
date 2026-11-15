@@ -99,6 +99,7 @@ void WorkerSystem::process_cycle() {}
 			EnableWrites:          true,
 			CommandTimeoutSeconds: 30,
 			MaxFileBytes:          65536,
+			MaxDirectoryEntries:   80,
 		})
 
 		Expect(languageDetects(root, "cpp")).To(BeTrue())
@@ -163,7 +164,7 @@ int main() { helper(); return 0; }
 		Expect(ok).To(BeTrue())
 		Expect(freshness["index_key"]).NotTo(BeNil())
 		Expect(freshness).To(HaveKey("phase_ms"))
-		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/2"))
+		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/3"))
 
 		overview := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_overview"})
 		Expect(overview.Freshness).To(HaveKeyWithValue("schema", "idiom.cpp_index.v1"))
@@ -211,7 +212,7 @@ void helper() {}
 		Expect(read.Error).To(BeEmpty())
 		Expect(read.Summary).To(ContainSubstring(`[resolved Gadget::offer, requested "Gadget::offer"]`))
 		Expect(read.Output).To(ContainSubstring("Gadget::offer"))
-		Expect(read.Freshness).To(HaveKeyWithValue("collector", "cpp-syntax-index/2"))
+		Expect(read.Freshness).To(HaveKeyWithValue("collector", "cpp-syntax-index/3"))
 
 		body := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_extract_body", Pattern: "Widget::offer"})
 		Expect(body.Error).To(BeEmpty())
@@ -223,6 +224,9 @@ void helper() {}
 	})
 
 	It("uses clangd for precise navigation when available", func() {
+		// This spec verifies the optional precision backend, with an explicit
+		// budget rather than the latency-oriented fallback default.
+		GinkgoT().Setenv("IDIOM_CPP_CLANGD_BUDGET", "10s")
 		if _, err := exec.LookPath("clangd"); err != nil {
 			Skip("clangd not installed")
 		}

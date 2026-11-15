@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/repository/semantic"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -112,7 +110,7 @@ void free_helper_extra() {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := BuildCppIndexWithOptions(root, semantic.IndexOptions{Context: ctx})
+		_, err := BuildCppIndexWithOptions(root, BuildOptions{Context: ctx})
 
 		var budget *BudgetError
 		Expect(err).To(HaveOccurred())

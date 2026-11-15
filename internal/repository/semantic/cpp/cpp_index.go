@@ -2,6 +2,9 @@ package cpp
 
 import (
 	"cmp"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,7 +17,6 @@ import (
 	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
-	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
@@ -24,29 +26,49 @@ type CppIndex struct {
 	Forward map[string][]string
 	Reverse map[string][]string
 	Timings CppBuildTimings
+	// Paths and WalkComplete allow a budget-limited build to resume without
+	// repeating discovery. Partial indexes must never be used to answer queries.
+	Paths        []string
+	WalkComplete bool
+}
+
+// BuildOptions permits reuse because symbols are collected independently per
+// file. Includes are always resolved again against the current path set.
+type BuildOptions struct {
+	Scope        string
+	MaxFiles     int
+	Context      context.Context
+	Previous     *CppIndex
+	ChangedPaths map[string]bool
+	Resume       bool
 }
 
 // CppBuildTimings records where a BuildCppIndexWithOptions call spent its time
 // so a slow or budget-exceeded build can name its phase.
 type CppBuildTimings struct {
-	Walk  time.Duration
-	Parse time.Duration
-	Link  time.Duration
-	Files int
-	Bytes int64
+	Walk   time.Duration
+	Parse  time.Duration
+	Link   time.Duration
+	Files  int
+	Bytes  int64
+	Parsed int
+	Reused int
 }
 
 type CppFile struct {
-	Path      string
-	Includes  []string
-	Symbols   []CppSymbol
-	Funcs     int
-	Methods   int
-	Types     int
-	HasMain   bool
-	IsTest    bool
-	IsHeader  bool
-	SourceDir string
+	Path        string
+	RawIncludes []string
+	ContentHash string
+	Bytes       int64
+	Includes    []string
+	Symbols     []CppSymbol
+	Funcs       int
+	Methods     int
+	Types       int
+	HasMain     bool
+	IsTest      bool
+	IsHeader    bool
+	SourceDir   string
 }
 
 type CppSymbol struct {
@@ -103,10 +125,10 @@ var cppHeaderExtensions = map[string]struct{}{
 }
 
 func BuildCppIndex(root string) (*CppIndex, error) {
-	return BuildCppIndexWithOptions(root, semantic.IndexOptions{})
+	return BuildCppIndexWithOptions(root, BuildOptions{})
 }
 
-func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppIndex, error) {
+func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
@@ -125,55 +147,81 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 
 	walkStarted := time.Now()
 	errStop := filepath.SkipAll
-	err := safepath.WalkDirUnderRoot(root, root, "C++ index", func(path string, d os.DirEntry, walkErr error) error {
-		if err := indexsupport.ContextErr(opts.Context); err != nil {
-			return err
+	var err error
+	if opts.Resume && opts.Previous != nil && opts.Previous.WalkComplete {
+		paths = slices.Clone(opts.Previous.Paths)
+	} else if opts.Previous != nil && opts.Previous.WalkComplete && opts.ChangedPaths != nil && opts.Scope == "" && opts.MaxFiles == 0 {
+		// Git's changed-path set plus both dirty/ignored snapshots accounts for
+		// additions and removals. Reuse discovery as well as parsed files.
+		for _, rel := range opts.Previous.Paths {
+			if !opts.ChangedPaths[rel] {
+				paths = append(paths, rel)
+			}
 		}
-
-		if walkErr != nil {
-			return walkErr
+		for rel := range opts.ChangedPaths {
+			if !IsIndexPath(rel) {
+				continue
+			}
+			stat, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			if statErr != nil {
+				return nil, statErr
+			}
+			if !stat.IsDir() {
+				paths = append(paths, rel)
+			}
 		}
-
-		if d.IsDir() {
-			if !indexsupport.ShouldVisitDir(root, path, scope) {
-				return filepath.SkipDir
+	} else {
+		err = safepath.WalkDirUnderRoot(root, root, "C++ index", func(path string, d os.DirEntry, walkErr error) error {
+			if err := indexsupport.ContextErr(opts.Context); err != nil {
+				return err
 			}
 
-			if discovery.ShouldSkipDirName(d.Name()) && path != root {
-				return filepath.SkipDir
+			if walkErr != nil {
+				return walkErr
+			}
+
+			if d.IsDir() {
+				if !indexsupport.ShouldVisitDir(root, path, scope) {
+					return filepath.SkipDir
+				}
+
+				if discovery.ShouldSkipDirName(d.Name()) && path != root {
+					return filepath.SkipDir
+				}
+
+				return nil
+			}
+
+			if !isCppPath(path) {
+				return nil
+			}
+
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return nil
+			}
+
+			rel = filepath.ToSlash(filepath.Clean(rel))
+			if discovery.ShouldSkipRelFile(rel) {
+				return nil
+			}
+
+			if !indexsupport.PathInScope(rel, scope) {
+				return nil
+			}
+
+			paths = append(paths, rel)
+
+			if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
+				return errStop
 			}
 
 			return nil
-		}
-
-		if !isCppPath(path) {
-			return nil
-		}
-
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-
-		rel = filepath.ToSlash(filepath.Clean(rel))
-		if discovery.ShouldSkipRelFile(rel) {
-			return nil
-		}
-
-		if !indexsupport.PathInScope(rel, scope) {
-			return nil
-		}
-
-		paths = append(paths, rel)
-		byName[filepath.Base(rel)] = textutil.AppendUnique(byName[filepath.Base(rel)], rel)
-		byRel[rel] = rel
-
-		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
-			return errStop
-		}
-
-		return nil
-	})
+		})
+	}
 
 	if err == errStop {
 		err = nil
@@ -183,7 +231,14 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 		if ctxErr := indexsupport.ContextErr(opts.Context); ctxErr != nil && errors.Is(err, ctxErr) {
 			index.Timings.Walk = time.Since(walkStarted)
 
-			return nil, &BudgetError{Phase: "walk", Timings: index.Timings, Cause: err}
+			if opts.Previous != nil {
+				for _, file := range opts.Previous.Files {
+					if !opts.ChangedPaths[file.Path] {
+						index.Files = append(index.Files, file)
+					}
+				}
+			}
+			return index, &BudgetError{Phase: "walk", Timings: index.Timings, Cause: err}
 		}
 
 		return nil, err
@@ -194,65 +249,72 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	}
 
 	slices.Sort(paths)
+	index.Paths, index.WalkComplete = paths, true
+	for _, rel := range paths {
+		byName[filepath.Base(rel)] = textutil.AppendUnique(byName[filepath.Base(rel)], rel)
+		byRel[rel] = rel
+	}
+	previous := make(map[string]CppFile)
+	if opts.Previous != nil {
+		for _, file := range opts.Previous.Files {
+			previous[file.Path] = file
+		}
+	}
 
 	index.Timings.Walk = time.Since(walkStarted)
 	parseStarted := time.Now()
-
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
-			index.Timings.Parse = time.Since(parseStarted)
-			index.Timings.Files = len(index.Files)
-
-			return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
+			// Retain unchanged files not reached yet, along with new parses.
+			for _, pending := range paths[len(index.Files):] {
+				if file, ok := previous[pending]; ok && !opts.ChangedPaths[pending] {
+					index.Files = append(index.Files, file)
+				}
+			}
+			index.Timings.Parse, index.Timings.Files = time.Since(parseStarted), len(index.Files)
+			return index, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
 		}
-
-		full := filepath.Join(root, filepath.FromSlash(rel))
-
-		contentBytes, err := indexsupport.ReadFileUnderRoot(root, full)
-		if err != nil {
+		if file, ok := previous[rel]; ok && !opts.ChangedPaths[rel] {
+			index.Files = append(index.Files, file)
+			index.Timings.Bytes += file.Bytes
+			index.Timings.Reused++
 			continue
 		}
-
-		index.Timings.Bytes += int64(len(contentBytes))
-		content := string(contentBytes)
-		includes := parseCppIncludes(rel, content, byName, byRel)
-		symbols := parseCppSymbols(rel, content)
-		file := CppFile{
-			Path:      rel,
-			Includes:  includes,
-			Symbols:   symbols,
-			IsTest:    looksLikeCppTestPath(rel),
-			IsHeader:  isCppHeader(rel),
-			SourceDir: indexsupport.TopLevelDir(rel),
+		file, reused, err := collectCppFile(root, rel, previous[rel])
+		if err != nil {
+			return nil, err
 		}
-
-		for _, symbol := range symbols {
-			switch symbol.Kind {
-			case "func":
-				file.Funcs++
-			case "method":
-				file.Methods++
-			case "class", "struct", "enum", "union", "namespace":
-				file.Types++
-			}
-
-			if symbol.Name == "main" {
-				file.HasMain = true
-			}
-		}
-
 		index.Files = append(index.Files, file)
+		index.Timings.Bytes += file.Bytes
+		if reused {
+			index.Timings.Reused++
+		} else {
+			index.Timings.Parsed++
+		}
 	}
 
 	index.Timings.Parse = time.Since(parseStarted)
 	index.Timings.Files = len(index.Files)
+	if err := indexsupport.ContextErr(opts.Context); err != nil {
+		return index, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
+	}
 	linkStarted := time.Now()
 
 	slices.SortFunc(index.Files, func(a, b CppFile) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
 
-	for _, file := range index.Files {
+	for i := range index.Files {
+		file := &index.Files[i]
+		file.Includes = nil
+		for _, raw := range file.RawIncludes {
+			include := resolveCppInclude(file.Path, raw, byName, byRel)
+			if include == "" {
+				include = raw
+			}
+			file.Includes = textutil.AppendUnique(file.Includes, include)
+		}
+		slices.Sort(file.Includes)
 		if len(file.Includes) == 0 {
 			continue
 		}
@@ -266,6 +328,53 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	index.Timings.Link = time.Since(linkStarted)
 
 	return index, nil
+}
+
+// IsIndexPath applies the syntax collector's file and directory filters to a
+// repository-relative path. Snapshot identities must use the same scope.
+func IsIndexPath(path string) bool {
+	if !filepath.IsLocal(filepath.FromSlash(path)) || !isCppPath(path) || discovery.ShouldSkipRelFile(path) {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for _, part := range parts[:len(parts)-1] {
+		if discovery.ShouldSkipDirName(part) {
+			return false
+		}
+	}
+	return true
+}
+
+func collectCppFile(root, rel string, previous CppFile) (CppFile, bool, error) {
+	contentBytes, err := indexsupport.ReadFileUnderRoot(root, filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return CppFile{}, false, err
+	}
+	sum := sha256.Sum256(contentBytes)
+	hash := hex.EncodeToString(sum[:])
+	if previous.Path == rel && previous.ContentHash == hash {
+		return previous, true, nil
+	}
+	content := string(contentBytes)
+	file := CppFile{
+		Path: rel, RawIncludes: parseCppIncludes(content), ContentHash: hash,
+		Bytes: int64(len(contentBytes)), Symbols: parseCppSymbols(rel, content),
+		IsTest: looksLikeCppTestPath(rel), IsHeader: isCppHeader(rel), SourceDir: indexsupport.TopLevelDir(rel),
+	}
+	for _, symbol := range file.Symbols {
+		switch symbol.Kind {
+		case "func":
+			file.Funcs++
+		case "method":
+			file.Methods++
+		case "class", "struct", "enum", "union", "namespace":
+			file.Types++
+		}
+		if symbol.Name == "main" {
+			file.HasMain = true
+		}
+	}
+	return file, false, nil
 }
 
 func (idx *CppIndex) Summary() string {
@@ -359,7 +468,7 @@ func cppSymbolSearchTerms(symbols []CppSymbol) []string {
 	return terms
 }
 
-func parseCppIncludes(rel string, content string, byName map[string][]string, byRel map[string]string) []string {
+func parseCppIncludes(content string) []string {
 	lines := strings.Split(content, "\n")
 	includes := make([]string, 0, 8)
 
@@ -369,10 +478,7 @@ func parseCppIncludes(rel string, content string, byName map[string][]string, by
 			continue
 		}
 
-		include := resolveCppInclude(rel, match[1], byName, byRel)
-		if include == "" {
-			include = filepath.ToSlash(strings.TrimSpace(match[1]))
-		}
+		include := filepath.ToSlash(strings.TrimSpace(match[1]))
 
 		includes = textutil.AppendUnique(includes, include)
 	}
