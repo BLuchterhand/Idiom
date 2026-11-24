@@ -215,7 +215,10 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 			return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
 		}
 
-		contentBytes, err := safepath.ReadFileFromRoot(rootHandle, canonicalRoot, rel, "indexed file")
+		contentBytes, err := safepath.ReadFileFromRoot(rootHandle, canonicalRoot, rel, "indexed file", safepath.Options{
+			RejectSymlinkAncestors: true,
+			RejectSymlinkTarget:    true,
+		})
 		if err != nil {
 			continue
 		}

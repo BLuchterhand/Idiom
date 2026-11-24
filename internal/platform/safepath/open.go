@@ -218,7 +218,7 @@ func OpenFileFromRoot(root *os.Root, canonicalRoot string, relative string, labe
 // workspace root handle. Callers must pass the canonical root used to open the
 // handle and a root-relative path. The root handle provides the confinement;
 // the opened handle is still validated before its contents are read.
-func ReadFileFromRoot(root *os.Root, canonicalRoot string, relative string, label string) ([]byte, error) {
+func ReadFileFromRoot(root *os.Root, canonicalRoot string, relative string, label string, opts Options) ([]byte, error) {
 	if root == nil {
 		return nil, fmt.Errorf("%s root is not open", label)
 	}
@@ -241,6 +241,19 @@ func ReadFileFromRoot(root *os.Root, canonicalRoot string, relative string, labe
 	targetPath := filepath.Join(canonicalRoot, relative)
 	if err := validateOpenedFile(file, canonicalRoot, targetPath, info, label); err != nil {
 		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file", label)
+	}
+	if opts.RejectSymlinkAncestors {
+		if err := RejectSymlinkAncestors(canonicalRoot, targetPath, label); err != nil {
+			return nil, err
+		}
+	}
+	if opts.RejectSymlinkTarget {
+		if err := RejectSymlinkTarget(targetPath, label); err != nil {
+			return nil, err
+		}
 	}
 
 	return io.ReadAll(file)

@@ -2,6 +2,7 @@ package safepath
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -32,9 +33,71 @@ var _ = ginkgo.Describe("handle-bound paths", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		defer opened.Close()
 
-		data, err := ReadFileFromRoot(opened, canonical, filepath.ToSlash(filepath.Join("nested", "source.go")), "test file")
+		data, err := ReadFileFromRoot(opened, canonical, filepath.ToSlash(filepath.Join("nested", "source.go")), "test file", Options{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(string(data)).To(gomega.Equal("package source\n"))
+	})
+
+	ginkgo.It("rejects a symlinked file even when its target stays in the root", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		target := filepath.Join(root, "real.h")
+		link := filepath.Join(root, "alias.h")
+		mustWriteFile(target, "int real;\n")
+		if err := os.Symlink(target, link); err != nil {
+			ginkgo.Skip(fmt.Sprintf("symlinks unavailable: %v", err))
+		}
+
+		canonical, err := CanonicalExistingPath(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		opened, err := OpenRootPath(canonical, "test root")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer opened.Close()
+
+		_, err = ReadFileFromRoot(opened, canonical, "alias.h", "test file", Options{
+			RejectSymlinkAncestors: true,
+			RejectSymlinkTarget:    true,
+		})
+		gomega.Expect(err).To(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("rejects a symlinked ancestor before opening its file", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		realDir := filepath.Join(root, "real")
+		aliasDir := filepath.Join(root, "alias")
+		gomega.Expect(os.Mkdir(realDir, 0o755)).To(gomega.Succeed())
+		mustWriteFile(filepath.Join(realDir, "source.h"), "int source;\n")
+		if err := os.Symlink(realDir, aliasDir); err != nil {
+			ginkgo.Skip(fmt.Sprintf("symlinks unavailable: %v", err))
+		}
+
+		canonical, err := CanonicalExistingPath(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		opened, err := OpenRootPath(canonical, "test root")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer opened.Close()
+
+		_, err = ReadFileFromRoot(opened, canonical, filepath.ToSlash(filepath.Join("alias", "source.h")), "test file", Options{
+			RejectSymlinkAncestors: true,
+			RejectSymlinkTarget:    true,
+		})
+		gomega.Expect(err).To(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("rejects a FIFO instead of reading it", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		fifo := filepath.Join(root, "source.h")
+		if err := createNamedFIFO(fifo); err != nil {
+			ginkgo.Skip(fmt.Sprintf("named FIFOs unavailable: %v", err))
+		}
+
+		canonical, err := CanonicalExistingPath(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		opened, err := OpenRootPath(canonical, "test root")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer opened.Close()
+
+		_, err = ReadFileFromRoot(opened, canonical, "source.h", "test file", Options{})
+		gomega.Expect(err).To(gomega.HaveOccurred())
 	})
 
 	ginkgo.It("opens a directory through a validated root handle", func() {
