@@ -32,6 +32,10 @@ type clangdLSPClient struct {
 	// not sufficient readiness evidence: clangd can emit it before all shards
 	// needed by a cross-file query are visible.
 	awaitIndex bool
+	// indexIncomplete suppresses repeated bounded probes after a failed
+	// readiness attempt. A watched-file change clears it and starts a fresh
+	// proof; otherwise every warm fallback would pay the probe budget again.
+	indexIncomplete bool
 }
 
 type clangdLSPLease struct {
@@ -47,6 +51,7 @@ func (l *clangdLSPLease) close() {
 
 	l.once.Do(func() {
 		if l.manager != nil && l.client != nil {
+			_ = l.client.closeOpenFiles()
 			l.manager.releaseClangdLSPClient(l.client)
 		}
 	})
@@ -62,6 +67,10 @@ func (l *clangdLSPLease) request(ctx context.Context, method string, params any,
 
 func (l *clangdLSPLease) awaitIndexFor(ctx context.Context, path string, symbol string) error {
 	return l.client.awaitIndexFor(ctx, path, symbol)
+}
+
+func (l *clangdLSPLease) syncWatchedFiles(paths []string) ([]string, error) {
+	return l.client.syncWatchedFiles(paths)
 }
 
 func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, error) {
@@ -90,6 +99,10 @@ func (m *Manager) newClangdLSPClientWithContexts(processCtx context.Context, req
 		queryCtx:      requestCtx,
 		awaitIndex:    compileDir != "",
 	}
+	client.onWatchedFileChange = func() {
+		client.awaitIndex = true
+		client.indexIncomplete = false
+	}
 
 	params := map[string]any{
 		"processId": os.Getpid(),
@@ -115,7 +128,7 @@ func (m *Manager) newClangdLSPClientWithContexts(processCtx context.Context, req
 
 	var initResult map[string]any
 
-	if err := client.request(requestCtx, "initialize", params, &initResult); err != nil {
+	if err := client.requestWithin(requestCtx, "initialize", params, &initResult); err != nil {
 		client.forceClose()
 
 		return nil, fmt.Errorf("clangd initialize failed: %w", err)
@@ -131,6 +144,24 @@ func (m *Manager) newClangdLSPClientWithContexts(processCtx context.Context, req
 }
 
 func (m *Manager) acquireClangdLSPClient(ctx context.Context) (*clangdLSPLease, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	m.clangdMu.Lock()
+	if m.clangdLease == nil {
+		m.clangdLease = make(chan struct{}, 1)
+		m.clangdLease <- struct{}{}
+	}
+	leaseGate := m.clangdLease
+	m.clangdMu.Unlock()
+
+	select {
+	case <-leaseGate:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	m.clangdMu.Lock()
 	if m.clangd != nil && m.clangd.process != nil && m.clangd.process.Alive() {
 		if m.clangdIdleTimer != nil {
@@ -138,8 +169,10 @@ func (m *Manager) acquireClangdLSPClient(ctx context.Context) (*clangdLSPLease, 
 			m.clangdIdleTimer = nil
 		}
 		m.clangdGeneration++
+		client := m.clangd
+		m.clangdMu.Unlock()
 
-		return &clangdLSPLease{client: m.clangd, manager: m}, nil
+		return &clangdLSPLease{client: client, manager: m}, nil
 	}
 
 	if m.clangd != nil {
@@ -162,12 +195,14 @@ func (m *Manager) acquireClangdLSPClient(ctx context.Context) (*clangdLSPLease, 
 	}
 	if err != nil {
 		m.clangdMu.Unlock()
+		leaseGate <- struct{}{}
 
 		return nil, err
 	}
 
 	m.clangd = client
 	m.clangdGeneration++
+	m.clangdMu.Unlock()
 
 	return &clangdLSPLease{client: client, manager: m}, nil
 }
@@ -177,8 +212,15 @@ func (m *Manager) releaseClangdLSPClient(client *clangdLSPClient) {
 		return
 	}
 
+	var leaseGate chan struct{}
+	m.clangdMu.Lock()
+	leaseGate = m.clangdLease
 	if m.clangd != client {
 		m.clangdMu.Unlock()
+		if leaseGate != nil {
+			leaseGate <- struct{}{}
+		}
+
 		return
 	}
 
@@ -187,6 +229,9 @@ func (m *Manager) releaseClangdLSPClient(client *clangdLSPClient) {
 		m.clangdGeneration++
 		m.clangdMu.Unlock()
 		client.forceClose()
+		if leaseGate != nil {
+			leaseGate <- struct{}{}
+		}
 
 		return
 	}
@@ -200,6 +245,9 @@ func (m *Manager) releaseClangdLSPClient(client *clangdLSPClient) {
 		m.shutdownIdleClangd(client, generation)
 	})
 	m.clangdMu.Unlock()
+	if leaseGate != nil {
+		leaseGate <- struct{}{}
+	}
 }
 
 func (m *Manager) shutdownIdleClangd(client *clangdLSPClient, generation uint64) {
@@ -229,6 +277,9 @@ func (c *clangdLSPClient) openFile(path string) error {
 // not readiness evidence: clangd's dynamic index always contains that file.
 // A second location proves that the background index has exposed a using file.
 func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, symbol string) error {
+	if c.indexIncomplete {
+		return fmt.Errorf("clangd cross-file semantic index remains incomplete")
+	}
 	if !c.awaitIndex {
 		return nil
 	}
@@ -239,6 +290,7 @@ func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, 
 	for {
 		var symbols []LSPSymbolInfo
 		if err := c.requestWithin(probeCtx, "workspace/symbol", map[string]any{"query": symbol}, &symbols); err != nil {
+			c.indexIncomplete = true
 			c.forceClose()
 
 			return fmt.Errorf("clangd readiness probe failed: %w", err)
@@ -256,6 +308,7 @@ func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, 
 					"position":     candidate.Location.Range.Start,
 					"context":      map[string]any{"includeDeclaration": true},
 				}, &raw); err != nil {
+					c.indexIncomplete = true
 					c.forceClose()
 
 					return fmt.Errorf("clangd cross-file readiness probe failed: %w", err)
@@ -272,6 +325,7 @@ func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, 
 					}
 
 					c.awaitIndex = false
+					c.indexIncomplete = false
 
 					return nil
 				}
@@ -280,6 +334,7 @@ func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, 
 
 		select {
 		case <-probeCtx.Done():
+			c.indexIncomplete = true
 			return fmt.Errorf("clangd cross-file semantic index did not expose a using file for %s in %s: %w", symbol, targetPath, probeCtx.Err())
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -441,22 +496,55 @@ func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semanti
 	}, "textDocument/implementation", nil, pathFilter, m.maxDirectoryEntries(), false)
 }
 
-func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, pathFilter string) (string, error) {
-	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
-		serverName: "clangd",
-		newClient: func(ctx context.Context) (managedLSPClient, error) {
-			return m.acquireClangdLSPClient(ctx)
-		},
-		fileURI: LSPFileURI,
-		prepare: func(ctx context.Context, client managedLSPClient, abs string) error {
-			return client.(*clangdLSPLease).awaitIndexFor(ctx, abs, match.Name)
-		},
-		format: m.formatClangdLocations,
-	}, match.Path, func(abs string) map[string]any {
-		return m.cppLSPPosition(abs, match)
-	}, "textDocument/references", map[string]any{
-		"context": map[string]any{"includeDeclaration": true},
-	}, pathFilter, m.maxDirectoryEntries(), true)
+func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, pathFilter string, indexedPaths []string) (string, error) {
+	client, err := m.acquireClangdLSPClient(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer client.close()
+
+	changedPaths, err := client.syncWatchedFiles(indexedPaths)
+	if err != nil {
+		return "", err
+	}
+	for _, path := range changedPaths {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if err := client.openFile(path); err != nil {
+			return "", err
+		}
+	}
+
+	return m.cppReferencesViaClangdClient(ctx, client, match, pathFilter)
+}
+
+func (m *Manager) cppReferencesViaClangdClient(ctx context.Context, client *clangdLSPLease, match semanticcpp.CppSymbolMatch, pathFilter string) (string, error) {
+	abs, err := m.resolvePath(match.Path, "")
+	if err != nil {
+		return "", err
+	}
+	if err := client.openFile(abs); err != nil {
+		return "", err
+	}
+	if err := client.awaitIndexFor(ctx, abs, match.Name); err != nil {
+		return "", err
+	}
+
+	var raw json.RawMessage
+	if err := client.request(ctx, "textDocument/references", map[string]any{
+		"textDocument": map[string]any{"uri": LSPFileURI(abs)},
+		"position":     m.cppLSPPosition(abs, match),
+		"context":      map[string]any{"includeDeclaration": true},
+	}, &raw); err != nil {
+		return "", err
+	}
+	locations, err := parseClangdLocations(raw)
+	if err != nil {
+		return "", err
+	}
+
+	return m.formatClangdLocations(locations, pathFilter, m.maxDirectoryEntries(), true), nil
 }
 
 func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {

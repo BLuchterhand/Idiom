@@ -172,6 +172,7 @@ func main() {
 `)
 
 	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+	DeferCleanup(mgr.Close)
 
 	return languagePrecisionFixture{
 		name:    "go",
@@ -225,6 +226,7 @@ int main() {
 	writeCppCompileCommands(root, []string{filepath.Join("src", "worker_system.cpp"), filepath.Join("src", "main.cpp")})
 
 	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+	DeferCleanup(mgr.Close)
 
 	return languagePrecisionFixture{
 		name:    "cpp",

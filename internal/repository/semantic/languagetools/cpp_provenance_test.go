@@ -55,6 +55,30 @@ func TestCppSnapshotKeyCoversDirtyAndIgnoredFiles(t *testing.T) {
 		t.Fatal("key is not stable for an unchanged tree")
 	}
 
+	writeFile(t, filepath.Join(root, "new.cpp"), "int new_symbol() { return 1; }\n")
+	withNew := key()
+	if withNew == clean {
+		t.Fatal("a new untracked C++ file does not change the key")
+	}
+	if err := os.Remove(filepath.Join(root, "new.cpp")); err != nil {
+		t.Fatal(err)
+	}
+	if got := key(); got != clean {
+		t.Fatalf("deleting the new C++ file did not restore the key: got %q want %q", got, clean)
+	}
+
+	if err := os.Remove(filepath.Join(root, "a.cpp")); err != nil {
+		t.Fatal(err)
+	}
+	withoutTracked := key()
+	if withoutTracked == clean {
+		t.Fatal("deleting a tracked C++ file does not change the key")
+	}
+	writeFile(t, filepath.Join(root, "a.cpp"), "int a() { return 1; }\n")
+	if got := key(); got != clean {
+		t.Fatalf("restoring the deleted C++ file did not restore the key: got %q want %q", got, clean)
+	}
+
 	writeFile(t, filepath.Join(root, "ign", "x.h"), "int x();\n")
 
 	withIgnored := key()

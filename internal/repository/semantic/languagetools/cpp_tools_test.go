@@ -91,6 +91,15 @@ void WorkerSystem::process_cycle() {}
 			filepath.Join("src", "system_base.cpp"),
 			filepath.Join("src", "worker_system.cpp"),
 		})
+		for _, args := range [][]string{
+			{"init", "-q"},
+			{"add", "."},
+			{"-c", "user.name=idiom-test", "-c", "user.email=idiom-test@example.invalid", "commit", "-q", "-m", "fixture"},
+		} {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = root
+			Expect(cmd.Run()).To(Succeed(), args)
+		}
 
 		manager := workspace.NewManager(config.Workspace{
 			Root:                  root,
@@ -100,9 +109,13 @@ void WorkerSystem::process_cycle() {}
 			CommandTimeoutSeconds: 30,
 			MaxFileBytes:          65536,
 		})
+		DeferCleanup(manager.Close)
 
 		Expect(languageDetects(root, "cpp")).To(BeTrue())
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_overview"}), "Indexed 7 C/C++ files")
+		warmOverview := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_overview"})
+		expectToolSuccess(warmOverview, "Indexed 7 C/C++ files")
+		Expect(warmOverview.Freshness).To(HaveKeyWithValue("index_build", "memoized"))
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_find_symbol", Pattern: "tick"}), "entity_manager.cpp")
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_find_symbol", Pattern: "struct EntityManager"}), "EntityManager")
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "struct EntityManager"}), "struct EntityManager")
@@ -142,6 +155,7 @@ int main() { helper(); return 0; }
 		manager := workspace.NewManager(config.Workspace{
 			Root: root, CWD: root, EnableShell: true, EnableWrites: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536,
 		})
+		DeferCleanup(manager.Close)
 
 		ambiguous := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_into", Pattern: "offer"})
 		Expect(ambiguous.Code).To(Equal("ambiguous_symbol"))
@@ -193,6 +207,7 @@ void helper() {}
 		manager := workspace.NewManager(config.Workspace{
 			Root: root, CWD: root, EnableShell: true, EnableWrites: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536,
 		})
+		DeferCleanup(manager.Close)
 
 		for _, tool := range []string{"cpp_read_symbol", "cpp_definition", "cpp_declaration", "cpp_implementations", "cpp_references", "cpp_extract_body"} {
 			ambiguous := manager.Execute(context.Background(), workspace.ToolRequest{Tool: tool, Pattern: "offer"})
@@ -293,6 +308,7 @@ void WorkerSystem::process_cycle() {}
 			CommandTimeoutSeconds: 30,
 			MaxFileBytes:          65536,
 		})
+		DeferCleanup(manager.Close)
 
 		workspaceSymbols := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_workspace_symbol", Pattern: "EntityManager"})
 		expectToolSuccess(workspaceSymbols, "entity_manager.h")
@@ -304,6 +320,24 @@ void WorkerSystem::process_cycle() {}
 		references := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
 		expectToolSuccess(references, "helper();", "src/main.cpp")
 		Expect(references.Summary).To(ContainSubstring("clangd"))
+		writeCppFixture(filepath.Join(root, "src", "main.cpp"), `
+#include "entity_manager.h"
+
+int helper();
+
+int main() {
+    EntityManager manager;
+    manager.tick();
+    return helper();
+}
+
+int another_entrypoint() {
+    return helper();
+}
+`)
+		updatedReferences := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
+		expectToolSuccess(updatedReferences, "src/main.cpp:12")
+		Expect(updatedReferences.Summary).To(ContainSubstring("clangd"))
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_implementations", Pattern: "SystemBase::process_cycle"}), "worker_system.cpp")
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_from", Pattern: "EntityManager::tick"}), "helper")
 		incoming := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_into", Pattern: "helper"})
@@ -346,11 +380,12 @@ namespace bentech { int tick(int h) { return is_valid(h) ? 1 : 0; } }
 int bind_tick() { return bentech::is_valid(1); }
 `)
 		manager := workspace.NewManager(config.Workspace{Root: root, CWD: root, MaxFileBytes: 65536, MaxDirectoryEntries: 100})
+		DeferCleanup(manager.Close)
 
 		references := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_references", Pattern: "is_valid", Path: "."})
 		expectToolSuccess(references, "core/src/tick.cpp:2:", "bindings/src/binding.cc:2:", "core/include/handle.h:3:")
 		Expect(references.Summary).To(ContainSubstring("text search"))
-		Expect(references.Warnings).To(ContainElement(ContainSubstring("clangd references unavailable")))
+		Expect(references.Warnings).To(ContainElement(ContainSubstring("no compile_commands.json")))
 
 		used := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_dead_symbol", Pattern: "is_valid", Path: "."})
 		Expect(used.Error).To(BeEmpty())

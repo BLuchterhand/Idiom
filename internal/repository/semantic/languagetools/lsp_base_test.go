@@ -2,6 +2,7 @@ package languagetools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -224,6 +225,40 @@ var _ = Describe("LSP base protocol", func() {
 		Expect(client.request(ctx, "test/echo", nil, &result)).To(Succeed())
 		Expect(filepath.Clean(result.CWD)).To(Equal(filepath.Clean(root)))
 		Expect(result.Arg).To(Equal("arg-ok"))
+	})
+
+	It("uses incrementing document versions and watched-file changes", func() {
+		root := GinkgoT().TempDir()
+		path := filepath.Join(root, "caller.cpp")
+		writeLSPTestFile(path, "int caller() { return 1; }\n")
+		var wire bytes.Buffer
+		changed := false
+		client := &lspBaseClient{
+			workspaceRoot: root,
+			stdin:         bufferWriteCloser{Buffer: &wire},
+			onWatchedFileChange: func() {
+				changed = true
+			},
+		}
+
+		Expect(client.openFile(path, "cpp")).To(Succeed())
+		writeLSPTestFile(path, "int caller() { return 2; }\n")
+		Expect(client.openFile(path, "cpp")).To(Succeed())
+		_, err := client.syncWatchedFiles([]string{path})
+		Expect(err).NotTo(HaveOccurred())
+		writeLSPTestFile(path, "int caller() { return 3; }\n")
+		_, err = client.syncWatchedFiles([]string{path})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.closeOpenFiles()).To(Succeed())
+
+		Expect(changed).To(BeTrue())
+		wireText := wire.String()
+		Expect(wireText).To(ContainSubstring(`"method":"textDocument/didOpen"`))
+		Expect(wireText).To(ContainSubstring(`"method":"textDocument/didChange"`))
+		Expect(wireText).To(ContainSubstring(`"version":2`))
+		Expect(wireText).To(ContainSubstring(`"version":3`))
+		Expect(wireText).To(ContainSubstring(`"method":"workspace/didChangeWatchedFiles"`))
+		Expect(wireText).To(ContainSubstring(`"method":"textDocument/didClose"`))
 	})
 
 	It("forces close when a server ignores shutdown", func() {
@@ -450,6 +485,18 @@ func writeLSPHelperMessage(payload any) {
 		os.Exit(2)
 	}
 	fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
+}
+
+type bufferWriteCloser struct {
+	*bytes.Buffer
+}
+
+func (bufferWriteCloser) Close() error { return nil }
+
+func writeLSPTestFile(path string, content string) {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		panic(err)
+	}
 }
 
 func marshalTestJSON(value any) string {

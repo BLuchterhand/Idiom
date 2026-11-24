@@ -101,6 +101,7 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 
 	info.Build = index.Timings
 	for _, file := range index.Files {
+		info.IndexedPaths = append(info.IndexedPaths, file.Path)
 		info.Symbols += len(file.Symbols)
 	}
 
@@ -556,7 +557,7 @@ func (m *Manager) cppReferences(ctx context.Context, req ToolRequest) ToolResult
 		return *failure
 	}
 
-	references, _ := m.cppReferencesMatch(ctx, req, match)
+	references, _ := m.cppReferencesMatch(ctx, req, match, resolved.info)
 
 	return resolved.annotate(references)
 }
@@ -572,19 +573,30 @@ const (
 	cppReferencesByTextSearch
 )
 
-func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) (ToolResult, cppReferenceBackend) {
+func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch, info cppIndexInfo) (ToolResult, cppReferenceBackend) {
 	var warnings []string
 	partial := false
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	compileDir := m.compileCommandsDir()
 	if err == nil && compileDir != "" {
-		output, lspErr := m.cppReferencesViaClangd(ctx, match, pathFilter)
+		clangdCtx, cancel := context.WithTimeout(ctx, cppReferencesClangdBudget)
+		watchedPaths := append(append([]string(nil), info.DirtyPaths...), info.IgnoredPaths...)
+		if info.Key == "" {
+			watchedPaths = info.IndexedPaths
+		}
+		output, lspErr := m.cppReferencesViaClangd(clangdCtx, match, pathFilter, watchedPaths)
+		timedOut := clangdCtx.Err() != nil
+		cancel()
 		switch {
 		case lspErr != nil:
 			partial = true
 			warnings = append(warnings, "partial: index incomplete; clangd references were not ready")
-			warnings = append(warnings, fmt.Sprintf("clangd references unavailable (%v); answered by name-based text search", lspErr))
+			if timedOut {
+				warnings = append(warnings, fmt.Sprintf("clangd references exceeded the %s budget; answered by name-based text search", cppReferencesClangdBudget))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("clangd references unavailable (%v); answered by name-based text search", lspErr))
+			}
 		case strings.TrimSpace(output) != "":
 			return ToolResult{
 				Tool:    "cpp_references",

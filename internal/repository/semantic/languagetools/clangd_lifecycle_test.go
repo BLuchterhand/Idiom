@@ -88,4 +88,18 @@ var _ = Describe("clangd workspace lifecycle", func() {
 		manager.Close()
 		Eventually(client.process.Alive, time.Second).Should(BeFalse())
 	})
+
+	It("bounds a second lease when the first lease is never closed", func() {
+		manager, _ := newTestManager()
+		first, err := manager.acquireClangdLSPClient(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		DeferCleanup(cancel)
+		_, err = manager.acquireClangdLSPClient(ctx)
+		Expect(err).To(MatchError(context.DeadlineExceeded))
+
+		first.close()
+		manager.Close()
+	})
 })

@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"idiom/internal/platform/safepath"
@@ -101,6 +103,8 @@ var cppHeaderExtensions = map[string]struct{}{
 	".inl": {},
 	".tpp": {},
 }
+
+const cppParseWorkerFloor = 64
 
 func BuildCppIndex(root string) (*CppIndex, error) {
 	return BuildCppIndexWithOptions(root, semantic.IndexOptions{})
@@ -201,57 +205,132 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	if err != nil {
 		return nil, err
 	}
-	rootHandle, err := safepath.OpenRootPath(canonicalRoot, "C++ index")
-	if err != nil {
-		return nil, err
+	type parsedFile struct {
+		file  CppFile
+		bytes int64
+		ok    bool
 	}
-	defer rootHandle.Close()
+	parsed := make([]parsedFile, len(paths))
+	jobs := make(chan int)
+	// Parsing is dominated by independent rooted file reads and regex scans, so
+	// a small fixed floor keeps the cold path from underusing fast workstations
+	// whose Go scheduler reports a conservative effective CPU count.
+	workerCount := min(len(paths), max(runtime.GOMAXPROCS(0), cppParseWorkerFloor))
+	var workers sync.WaitGroup
+	var errMu sync.Mutex
+	var workerErr error
 
-	for _, rel := range paths {
-		if err := indexsupport.ContextErr(opts.Context); err != nil {
-			index.Timings.Parse = time.Since(parseStarted)
-			index.Timings.Files = len(index.Files)
-
-			return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
+	setWorkerErr := func(err error) {
+		if err == nil {
+			return
 		}
+		errMu.Lock()
+		if workerErr == nil {
+			workerErr = err
+		}
+		errMu.Unlock()
+	}
 
-		contentBytes, err := safepath.ReadFileFromRoot(rootHandle, canonicalRoot, rel, "indexed file", safepath.Options{
-			RejectSymlinkAncestors: true,
-			RejectSymlinkTarget:    true,
-		})
-		if err != nil {
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+
+			workerRoot, err := safepath.OpenRootPath(canonicalRoot, "C++ index")
+			if err != nil {
+				setWorkerErr(err)
+
+				return
+			}
+			defer workerRoot.Close()
+
+			for indexPath := range jobs {
+				if err := indexsupport.ContextErr(opts.Context); err != nil {
+					setWorkerErr(err)
+
+					return
+				}
+
+				rel := paths[indexPath]
+				contentBytes, err := safepath.ReadFileFromRoot(workerRoot, canonicalRoot, rel, "indexed file", safepath.Options{
+					RejectSymlinkAncestors: true,
+					RejectSymlinkTarget:    true,
+				})
+				if err != nil {
+					continue
+				}
+
+				content := string(contentBytes)
+				symbols := parseCppSymbols(rel, content)
+				file := CppFile{
+					Path:      rel,
+					Includes:  parseCppIncludes(rel, content, byName, byRel),
+					Symbols:   symbols,
+					IsTest:    looksLikeCppTestPath(rel),
+					IsHeader:  isCppHeader(rel),
+					SourceDir: indexsupport.TopLevelDir(rel),
+				}
+
+				for _, symbol := range symbols {
+					switch symbol.Kind {
+					case "func":
+						file.Funcs++
+					case "method":
+						file.Methods++
+					case "class", "struct", "enum", "union", "namespace":
+						file.Types++
+					}
+
+					if symbol.Name == "main" {
+						file.HasMain = true
+					}
+				}
+
+				parsed[indexPath] = parsedFile{file: file, bytes: int64(len(contentBytes)), ok: true}
+			}
+		}()
+	}
+
+dispatch:
+	for indexPath := range paths {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
+			break
+		}
+		if opts.Context == nil {
+			jobs <- indexPath
 			continue
 		}
+		select {
+		case jobs <- indexPath:
+		case <-opts.Context.Done():
+			break dispatch
+		}
+	}
+	close(jobs)
+	workers.Wait()
 
-		index.Timings.Bytes += int64(len(contentBytes))
-		content := string(contentBytes)
-		includes := parseCppIncludes(rel, content, byName, byRel)
-		symbols := parseCppSymbols(rel, content)
-		file := CppFile{
-			Path:      rel,
-			Includes:  includes,
-			Symbols:   symbols,
-			IsTest:    looksLikeCppTestPath(rel),
-			IsHeader:  isCppHeader(rel),
-			SourceDir: indexsupport.TopLevelDir(rel),
+	if workerErr != nil {
+		index.Timings.Parse = time.Since(parseStarted)
+		index.Timings.Files = len(index.Files)
+		if ctxErr := indexsupport.ContextErr(opts.Context); ctxErr != nil {
+			return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: ctxErr}
 		}
 
-		for _, symbol := range symbols {
-			switch symbol.Kind {
-			case "func":
-				file.Funcs++
-			case "method":
-				file.Methods++
-			case "class", "struct", "enum", "union", "namespace":
-				file.Types++
-			}
+		return nil, workerErr
+	}
+	if err := indexsupport.ContextErr(opts.Context); err != nil {
+		index.Timings.Parse = time.Since(parseStarted)
+		index.Timings.Files = len(index.Files)
 
-			if symbol.Name == "main" {
-				file.HasMain = true
-			}
+		return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
+	}
+
+	for _, result := range parsed {
+		if !result.ok {
+			continue
 		}
-
-		index.Files = append(index.Files, file)
+		index.Timings.Bytes += result.bytes
+		index.Files = append(index.Files, result.file)
 	}
 
 	index.Timings.Parse = time.Since(parseStarted)

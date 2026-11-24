@@ -1,0 +1,84 @@
+G626 round 3 C++ semantic result sets
+Date: 2026-11-24
+Branch: g626-warm
+Binary: C:\Users\benlu\Documents\GitHub\idiom-g626\bin\idiom.exe
+Workspace: C:\Users\benlu\Documents\GitHub\BenTech
+BenTech HEAD: 3dc88c4100788ede69709b90f0d4e041fa5f07ae
+
+Query list
+1. cpp_references pattern=chamfer_pass path=core/worldgen limit=5
+2. cpp_references pattern=water_runs path=core/worldgen limit=5
+3. cpp_references pattern=is_coast_land_cell path=core/worldgen limit=5
+4. cpp_references pattern=laplacian_mm path=core/worldgen limit=5
+5. cpp_references pattern=rock_unit_below_ground path=core/worldgen limit=5
+6. cpp_references pattern=flank_height_mm path=core/worldgen limit=5
+7. cpp_references pattern=volcano_height_mm path=core/worldgen limit=5
+8. cpp_references pattern=make_layers path=core/worldgen limit=5
+9. cpp_references pattern=make_weather_layers path=core/worldgen limit=5
+10. cpp_references pattern=pool_shape path=core/worldgen limit=5
+
+Final-binary timing evidence
+The first fresh-sidecar cpp_references call was chamfer_pass. It built the
+syntax index and returned in query_ms=6490, with index_build=built and
+phase_ms git=653, walk=1697, parse=2141, link=5. The index contained 1922
+files and 30119 symbols. A separate fresh cpp_overview build returned in
+query_ms=5023 with phase_ms git=858, walk=1682, parse=2196, link=4.
+
+The same final binary then answered the warm pass with index_build=memoized:
+
+Query                         warm query_ms
+chamfer_pass                         1240
+water_runs                           1206
+is_coast_land_cell                   1249
+laplacian_mm                         1213
+rock_unit_below_ground               1348
+flank_height_mm                      1174
+volcano_height_mm                    1282
+make_layers                          1262
+make_weather_layers                  1247
+pool_shape                           1397
+
+Result sets, normalized to workspace-relative paths
+1. chamfer_pass
+   core/worldgen/climate.cpp:78, :107, :108
+2. water_runs
+   core/worldgen/channel_plan.cpp:105, :169, :170
+3. is_coast_land_cell
+   core/worldgen/coast.cpp:139, :219; core/worldgen/coast.h:65
+4. laplacian_mm
+   core/worldgen/cliff_bands.cpp:42, :76
+5. rock_unit_below_ground
+   core/worldgen/hydrology.cpp:385; core/worldgen/placement/placement.cpp:230;
+   core/worldgen/resources/site_traits.cpp:33;
+   core/worldgen/rock_exposure.cpp:48, :88;
+   core/worldgen/rock_exposure.h:27
+6. flank_height_mm
+   core/worldgen/volcanoes.cpp:27, :118
+7. volcano_height_mm
+   core/worldgen/relief_shapes.cpp:47; core/worldgen/relief_shapes.h:42;
+   core/worldgen/volcanoes.cpp:31
+8. make_layers
+   core/worldgen/wind_build.cpp:139, :216
+9. make_weather_layers
+   core/worldgen/local_climate.cpp:31, :204, :294
+10. pool_shape
+    core/worldgen/column/small_water_kernel.cpp:98;
+    core/worldgen/small_waters.cpp:186; core/worldgen/small_waters.h:49;
+    core/worldgen/v4/small_bodies.cpp:323;
+    core/worldgen/v4/small_bodies.h:135 comment;
+    core/worldgen/water_ice_chunk.cpp:164
+
+The required Mac-review references are present: coast.h:65, hydrology.cpp:385,
+relief_shapes.h:42, volcanoes.cpp:31, and small_waters.h:49.
+
+Replay selection and stall accounting
+The exact 50-record selection came from
+BenTech/.claude/worktrees/pc-dup-review/docs/engineering/duplicate-logic-review/core-sim-pass2.txt:
+the first 50 records with tool cpp_references or context_query, exit=1, and a
+reason containing timed out or index refresh failed. The selection is 36
+cpp_references and 14 context_query records.
+
+The mixed replay was not completed on this Windows run. The first selected
+context_query stalled, so it was stopped safely; observed stalls=1 before
+stop and no aggregate cold/warm totals are claimed. The independent final-
+binary ten-query run above completed all ten calls with 0 stalls.

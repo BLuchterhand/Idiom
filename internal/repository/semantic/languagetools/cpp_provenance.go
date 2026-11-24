@@ -30,6 +30,10 @@ const (
 	// cppClangdBudget bounds the optional clangd call-hierarchy attempt so it can
 	// never consume the tool's whole timeout before the syntax index answers.
 	cppClangdBudget = 5 * time.Second
+	// cppReferencesClangdBudget bounds the optional cross-file readiness probe;
+	// name-search fallback must retain visible time within the sidecar deadline
+	// even on the first call that also builds the syntax index.
+	cppReferencesClangdBudget = 1500 * time.Millisecond
 	// cppFreshnessPathLimit caps the dirty paths echoed in a freshness report.
 	cppFreshnessPathLimit = 20
 )
@@ -65,6 +69,7 @@ type cppIndexInfo struct {
 	GitError     string
 	Git          time.Duration
 	Build        semanticcpp.CppBuildTimings
+	IndexedPaths []string
 	Symbols      int
 	Memoized     bool
 }

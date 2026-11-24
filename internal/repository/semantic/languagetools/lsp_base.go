@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"idiom/internal/platform/commandexec"
@@ -22,13 +23,24 @@ import (
 )
 
 type lspBaseClient struct {
-	process            *commandexec.Process
-	workspaceRoot      string
-	stdin              io.WriteCloser
-	stdout             *bufio.Reader
-	nextID             int
-	serverName         string
-	handleNotification lspNotificationHandler
+	process             *commandexec.Process
+	workspaceRoot       string
+	stdin               io.WriteCloser
+	stdout              *bufio.Reader
+	nextID              int
+	serverName          string
+	handleNotification  lspNotificationHandler
+	documentMu          sync.Mutex
+	documents           map[string]*lspDocumentState
+	watchInitialized    bool
+	onWatchedFileChange func()
+}
+
+type lspDocumentState struct {
+	version int
+	content []byte
+	exists  bool
+	active  bool
 }
 
 type LSPEnvelope struct {
@@ -372,16 +384,144 @@ func (c *lspBaseClient) openFile(path string, languageID string) error {
 		return err
 	}
 
-	params := map[string]any{
+	path = filepath.Clean(path)
+	c.documentMu.Lock()
+	defer c.documentMu.Unlock()
+	if c.documents == nil {
+		c.documents = make(map[string]*lspDocumentState)
+	}
+
+	state := c.documents[path]
+	if state == nil {
+		state = &lspDocumentState{}
+		c.documents[path] = state
+	}
+	if state.active {
+		if bytes.Equal(state.content, content) {
+			return nil
+		}
+
+		state.version++
+		if err := c.notify("textDocument/didChange", map[string]any{
+			"textDocument":   map[string]any{"uri": LSPFileURI(path), "version": state.version},
+			"contentChanges": []map[string]any{{"text": string(content)}},
+		}); err != nil {
+			return err
+		}
+		state.content = append(state.content[:0], content...)
+
+		return nil
+	}
+
+	state.version++
+	if err := c.notify("textDocument/didOpen", map[string]any{
 		"textDocument": map[string]any{
 			"uri":        LSPFileURI(path),
 			"languageId": languageID,
-			"version":    1,
+			"version":    state.version,
 			"text":       string(content),
 		},
+	}); err != nil {
+		state.version--
+		return err
+	}
+	state.content = append(state.content[:0], content...)
+	state.exists = true
+	state.active = true
+
+	return nil
+}
+
+// syncWatchedFiles sends file-watch notifications for indexed files whose
+// on-disk contents changed since the last request. The first call seeds the
+// observations without emitting events; later calls report created, changed,
+// and deleted paths so clangd can refresh its background index.
+func (c *lspBaseClient) syncWatchedFiles(paths []string) ([]string, error) {
+	c.documentMu.Lock()
+	defer c.documentMu.Unlock()
+	if c.documents == nil {
+		c.documents = make(map[string]*lspDocumentState)
 	}
 
-	return c.notify("textDocument/didOpen", params)
+	changedPaths := make([]string, 0)
+	for _, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(c.workspaceRoot, path)
+		}
+		content, err := safepath.ReadFileUnderRoot(c.workspaceRoot, path, "language server watched file", safepath.Options{})
+		exists := err == nil
+		state := c.documents[path]
+		if state == nil {
+			state = &lspDocumentState{}
+			c.documents[path] = state
+		}
+		if !c.watchInitialized {
+			state.content = append(state.content[:0], content...)
+			state.exists = exists
+			continue
+		}
+
+		changeType := 2 // Changed
+		if !state.exists && exists {
+			changeType = 1 // Created
+		} else if state.exists && !exists {
+			changeType = 3 // Deleted
+		} else if !exists || bytes.Equal(state.content, content) {
+			continue
+		}
+		if err := c.notify("workspace/didChangeWatchedFiles", map[string]any{
+			"changes": []map[string]any{{"uri": LSPFileURI(path), "type": changeType}},
+		}); err != nil {
+			return nil, err
+		}
+		changedPaths = append(changedPaths, path)
+		if state.active && exists {
+			state.version++
+			if err := c.notify("textDocument/didChange", map[string]any{
+				"textDocument":   map[string]any{"uri": LSPFileURI(path), "version": state.version},
+				"contentChanges": []map[string]any{{"text": string(content)}},
+			}); err != nil {
+				return nil, err
+			}
+		}
+		if changeType == 1 || changeType == 2 || changeType == 3 {
+			// A watched-file event invalidates the cross-file readiness proof;
+			// the next semantic query must establish it again.
+			if c.onWatchedFileChange != nil {
+				c.onWatchedFileChange()
+			}
+		}
+		state.content = append(state.content[:0], content...)
+		state.exists = exists
+	}
+
+	c.watchInitialized = true
+
+	return changedPaths, nil
+}
+
+func (c *lspBaseClient) closeOpenFiles() error {
+	c.documentMu.Lock()
+	defer c.documentMu.Unlock()
+
+	var firstErr error
+	for path, state := range c.documents {
+		if !state.active {
+			continue
+		}
+		if err := c.notify("textDocument/didClose", map[string]any{
+			"textDocument": map[string]any{"uri": LSPFileURI(path)},
+		}); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		state.active = false
+	}
+
+	return firstErr
 }
 
 func (m *Manager) lspLocationQuery(ctx context.Context, cfg lspLocationQueryConfig, sourcePath string, position func(string) map[string]any, method string, extraParams map[string]any, pathFilter string, limit int, includeLineText bool) (string, error) {

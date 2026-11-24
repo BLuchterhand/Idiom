@@ -61,6 +61,7 @@ type Manager struct {
 	goplsChecked   bool
 
 	clangdMu            sync.Mutex
+	clangdLease         chan struct{}
 	clangd              *clangdLSPClient
 	clangdIdleTimer     *time.Timer
 	clangdGeneration    uint64
@@ -69,7 +70,10 @@ type Manager struct {
 }
 
 func NewManager(host Host) *Manager {
-	return &Manager{host: host, clangdIdleTimeout: clangdIdleTimeout}
+	lease := make(chan struct{}, 1)
+	lease <- struct{}{}
+
+	return &Manager{host: host, clangdIdleTimeout: clangdIdleTimeout, clangdLease: lease}
 }
 
 // Close releases language-server processes owned by this workspace session.
