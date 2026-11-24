@@ -13,8 +13,11 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/toolfacts"
+	"idiom/internal/platform/commandexec"
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/discovery"
 )
 
 func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolResult {
@@ -146,23 +149,31 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolRes
 	}
 
 	if capability.Info().IsDir() {
-		walkErr := safepath.WalkDirUnderRoot(
-			capability.authorization.authorityPath,
-			capability.authorization.canonical,
-			"content search",
-			func(walkPath string, entry fs.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					return visit("", entry, walkErr)
-				}
-				relative, err := filepath.Rel(capability.authorization.canonical, walkPath)
-				if err != nil {
-					return err
-				}
-				return visit(filepath.ToSlash(relative), entry, nil)
-			},
+		usedRipgrep, ripgrepErr := m.searchContentWithRipgrep(
+			parent, req, pattern, base, capability, includeLogDirs, explicitHiddenRoot, matchFile,
 		)
-		if walkErr != nil {
-			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: walkErr.Error()}
+		if ripgrepErr != nil {
+			return ToolResult{Tool: toolName, Summary: "Content search failed", Error: ripgrepErr.Error()}
+		}
+		if !usedRipgrep {
+			walkErr := safepath.WalkDirUnderRoot(
+				capability.authorization.authorityPath,
+				capability.authorization.canonical,
+				"content search",
+				func(walkPath string, entry fs.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return visit("", entry, walkErr)
+					}
+					relative, err := filepath.Rel(capability.authorization.canonical, walkPath)
+					if err != nil {
+						return err
+					}
+					return visit(filepath.ToSlash(relative), entry, nil)
+				},
+			)
+			if walkErr != nil {
+				return ToolResult{Tool: toolName, Summary: "Content search failed", Error: walkErr.Error()}
+			}
 		}
 	} else if searchContentGlobMatch(req.Glob, ".", base) {
 		data, readErr := capability.ReadAll()
@@ -297,6 +308,109 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest) ToolRes
 		Output:  strings.Join(formatted, "\n"),
 		Facts:   facts,
 	}
+}
+
+// searchContentWithRipgrep uses rg only as a safe file prefilter. Matching
+// lines still pass through matchFile, which preserves Go regexp semantics,
+// ranking, snippets, and the existing display cap. A false or incomplete rg
+// result therefore falls back to the capability-backed walker.
+func (m *Manager) searchContentWithRipgrep(
+	parent context.Context,
+	req ToolRequest,
+	pattern string,
+	base string,
+	capability *workspaceReadCapability,
+	includeLogDirs bool,
+	explicitHiddenRoot bool,
+	matchFile func(string, []byte),
+) (bool, error) {
+	if includeLogDirs || explicitHiddenRoot {
+		return false, nil
+	}
+	if bin := hosttools.FirstAvailable("rg"); bin != "" {
+		args := []string{
+			"--files-with-matches",
+			"--hidden",
+			"--no-ignore",
+			"--no-messages",
+		}
+		if req.FixedStrings {
+			args = append(args, "--fixed-strings")
+		}
+		for _, glob := range discovery.RipgrepExcludeGlobs() {
+			args = append(args, "--glob", glob)
+		}
+		for _, glob := range expandGlobBraces(req.Glob) {
+			if strings.TrimSpace(glob) != "" {
+				args = append(args, "--glob", glob)
+			}
+		}
+		args = append(args, "--", pattern, ".")
+
+		result := m.runCommandResult(parent, commandexec.Spec{
+			Mode: commandexec.ModeArgv,
+			Dir:  base,
+			Name: bin,
+			Args: args,
+		})
+		if result.ExitCode <= 1 && !result.TimedOut && !result.CommandNotFound && !result.StdoutTruncated {
+			seen := make(map[string]struct{})
+			for _, rawPath := range strings.Split(result.Stdout, "\n") {
+				relative := filepath.ToSlash(strings.TrimSpace(rawPath))
+				if relative == "" {
+					continue
+				}
+				relative = strings.TrimPrefix(relative, "./")
+				if relative == "." || filepath.IsAbs(filepath.FromSlash(relative)) || strings.HasPrefix(relative, "../") {
+					return false, nil
+				}
+				entryPath := filepath.Join(base, filepath.FromSlash(relative))
+				if _, ok := seen[entryPath]; ok {
+					continue
+				}
+				seen[entryPath] = struct{}{}
+				if shouldSkipRipgrepSearchFile(base, entryPath) || m.shouldSkipSearchEntry(base, entryPath, false, includeLogDirs, explicitHiddenRoot) || !searchContentGlobMatch(req.Glob, relative, entryPath) {
+					continue
+				}
+				info, err := os.Lstat(entryPath)
+				if err != nil {
+					return false, nil
+				}
+				if !info.Mode().IsRegular() {
+					return false, nil
+				}
+				data, _, readErr := capability.ReadFile(relative)
+				if readErr != nil {
+					return false, nil
+				}
+				matchFile(entryPath, data)
+			}
+
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func shouldSkipRipgrepSearchFile(base string, path string) bool {
+	relative, err := filepath.Rel(base, path)
+	if err != nil {
+		return true
+	}
+	relative = filepath.ToSlash(filepath.Clean(relative))
+	if discovery.ShouldSkipRelFile(relative) {
+		return true
+	}
+
+	parts := strings.Split(relative, "/")
+	for _, part := range parts[:max(0, len(parts)-1)] {
+		if discovery.ShouldSkipDirName(part) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func searchPatternRankingTerms(pattern string) []*regexp.Regexp {
