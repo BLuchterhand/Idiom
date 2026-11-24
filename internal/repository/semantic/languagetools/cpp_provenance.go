@@ -26,7 +26,7 @@ const (
 	cppCollectorVersion = "cpp-syntax-index/2"
 	// cppIndexBudget bounds one in-process C++ index build; beyond it the tool
 	// fails with cpp_index_budget_exceeded and the phase timings.
-	cppIndexBudget = 15 * time.Second
+	cppIndexBudget = 10 * time.Second
 	// cppClangdBudget bounds the optional clangd call-hierarchy attempt so it can
 	// never consume the tool's whole timeout before the syntax index answers.
 	cppClangdBudget = 5 * time.Second
