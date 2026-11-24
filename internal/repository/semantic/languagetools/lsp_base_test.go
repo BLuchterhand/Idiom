@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -169,6 +170,26 @@ var _ = Describe("LSP base protocol", func() {
 		Expect(client.awaitBackgroundIndex(waitCtx)).To(MatchError(context.DeadlineExceeded))
 	})
 
+	It("waits for a using file before declaring the cross-file index ready", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		DeferCleanup(cancel)
+		root := GinkgoT().TempDir()
+		target := filepath.Join(root, "definition.cpp")
+		caller := filepath.Join(root, "caller.cpp")
+		base, err := newLSPBaseClient(
+			ctx, root, "clangd", os.Args[0],
+			[]string{"-test.run=TestLSPHelperProcess", "--", "cross-file-index-delayed", target, caller}, nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		client := &clangdLSPClient{lspBaseClient: base, awaitIndex: true}
+		DeferCleanup(client.forceClose)
+
+		started := time.Now()
+		Expect(client.awaitIndexFor(ctx, target, "helper")).To(Succeed())
+		Expect(time.Since(started)).To(BeNumerically(">=", 100*time.Millisecond))
+		Expect(client.awaitIndex).To(BeFalse())
+	})
+
 	It("includes process stderr when a request read fails", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		DeferCleanup(cancel)
@@ -229,6 +250,9 @@ func TestLSPHelperProcess(t *testing.T) {
 	reader := bufio.NewReader(os.Stdin)
 	if mode == "background-index-progress" {
 		runBackgroundIndexProgressHelper(reader)
+	}
+	if mode == "cross-file-index-delayed" {
+		runCrossFileIndexDelayedHelper(reader, args)
 	}
 
 	body, err := readLSPHelperMessage(reader)
@@ -304,6 +328,58 @@ func TestLSPHelperProcess(t *testing.T) {
 	}
 
 	os.Exit(2)
+}
+
+func runCrossFileIndexDelayedHelper(reader *bufio.Reader, args []string) {
+	if len(args) != 2 {
+		fmt.Fprintln(os.Stderr, "cross-file helper requires target and caller paths")
+		os.Exit(2)
+	}
+	targetURI := LSPFileURI(args[0])
+	callerURI := LSPFileURI(args[1])
+	readyAt := time.Now().Add(150 * time.Millisecond)
+	var referenceProbes atomic.Int32
+
+	for {
+		body, err := readLSPHelperMessage(reader)
+		if err != nil {
+			return
+		}
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			continue
+		}
+
+		switch request.Method {
+		case "workspace/symbol":
+			writeLSPHelperMessage(map[string]any{
+				"jsonrpc": "2.0", "id": json.RawMessage(request.ID), "result": []map[string]any{{
+					"name": "helper", "location": map[string]any{
+						"uri": targetURI, "range": map[string]any{
+							"start": map[string]int{"line": 0, "character": 0},
+							"end":   map[string]int{"line": 0, "character": 6},
+						},
+					},
+				}},
+			})
+		case "textDocument/references":
+			referenceProbes.Add(1)
+			locations := []map[string]any{{"uri": targetURI, "range": map[string]any{
+				"start": map[string]int{"line": 0, "character": 0}, "end": map[string]int{"line": 0, "character": 6},
+			}}}
+			if time.Now().After(readyAt) {
+				locations = append(locations, map[string]any{"uri": callerURI, "range": map[string]any{
+					"start": map[string]int{"line": 1, "character": 4}, "end": map[string]int{"line": 1, "character": 10},
+				}})
+			}
+			writeLSPHelperMessage(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(request.ID), "result": locations})
+		default:
+			writeLSPHelperMessage(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(request.ID), "result": nil})
+		}
+	}
 }
 
 // runBackgroundIndexProgressHelper mimics clangd: it asks for a progress token,

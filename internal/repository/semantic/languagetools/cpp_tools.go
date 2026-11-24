@@ -574,12 +574,16 @@ const (
 
 func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) (ToolResult, cppReferenceBackend) {
 	var warnings []string
+	partial := false
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
-	if err == nil {
+	compileDir := m.compileCommandsDir()
+	if err == nil && compileDir != "" {
 		output, lspErr := m.cppReferencesViaClangd(ctx, match, pathFilter)
 		switch {
 		case lspErr != nil:
+			partial = true
+			warnings = append(warnings, "partial: index incomplete; clangd references were not ready")
 			warnings = append(warnings, fmt.Sprintf("clangd references unavailable (%v); answered by name-based text search", lspErr))
 		case strings.TrimSpace(output) != "":
 			return ToolResult{
@@ -588,8 +592,13 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 				Output:  output,
 			}, cppReferencesByClangd
 		default:
+			partial = true
+			warnings = append(warnings, "partial: index incomplete; clangd returned no cross-file references")
 			warnings = append(warnings, "clangd returned no references, not even the symbol's own declaration; answered by name-based text search")
 		}
+	} else if err == nil {
+		partial = true
+		warnings = append(warnings, "partial: index incomplete; no compile_commands.json was found")
 	}
 
 	searchReq := ToolRequest{
@@ -615,6 +624,9 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 	}
 
 	result.Summary = "Resolved C++ references via name-based text search fallback"
+	if partial {
+		result.Summary = "Partial: index incomplete; " + result.Summary
+	}
 
 	return result, cppReferencesByTextSearch
 }

@@ -224,10 +224,10 @@ func (c *clangdLSPClient) openFile(path string) error {
 	return c.lspBaseClient.openFile(path, clangdLanguageID(path))
 }
 
-// awaitIndexFor waits for a semantic workspace/symbol probe to find the
-// requested symbol in the opened file. This is stronger than a single
-// backgroundIndexProgress end notification, which only reports one clangd
-// activity and is not a cross-file readiness guarantee.
+// awaitIndexFor waits for a semantic workspace/symbol probe followed by a
+// cross-file references probe. Finding the symbol in the file just opened is
+// not readiness evidence: clangd's dynamic index always contains that file.
+// A second location proves that the background index has exposed a using file.
 func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, symbol string) error {
 	if !c.awaitIndex {
 		return nil
@@ -250,18 +250,45 @@ func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, 
 				continue
 			}
 			if candidate.Name == symbol || strings.TrimSuffix(candidate.Name, "()") == symbol || strings.HasSuffix(candidate.Name, "::"+symbol) {
-				c.awaitIndex = false
+				var raw json.RawMessage
+				if err := c.requestWithin(probeCtx, "textDocument/references", map[string]any{
+					"textDocument": map[string]any{"uri": LSPFileURI(targetPath)},
+					"position":     candidate.Location.Range.Start,
+					"context":      map[string]any{"includeDeclaration": true},
+				}, &raw); err != nil {
+					c.forceClose()
 
-				return nil
+					return fmt.Errorf("clangd cross-file readiness probe failed: %w", err)
+				}
+
+				locations, err := parseClangdLocations(raw)
+				if err != nil {
+					return fmt.Errorf("clangd cross-file readiness probe returned invalid locations: %w", err)
+				}
+				for _, location := range locations {
+					path, err := clangdPathFromURI(location.URI)
+					if err != nil || filepath.Clean(path) == filepath.Clean(targetPath) || !clangdPathWithinRoot(c.workspaceRoot, path) {
+						continue
+					}
+
+					c.awaitIndex = false
+
+					return nil
+				}
 			}
 		}
 
 		select {
 		case <-probeCtx.Done():
-			return fmt.Errorf("clangd semantic index did not expose %s in %s: %w", symbol, targetPath, probeCtx.Err())
+			return fmt.Errorf("clangd cross-file semantic index did not expose a using file for %s in %s: %w", symbol, targetPath, probeCtx.Err())
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+func clangdPathWithinRoot(root string, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (c *clangdLSPClient) awaitBackgroundIndex(ctx context.Context) error {
