@@ -1,9 +1,9 @@
 # G626 round 4 report
 
-Date: 2026-11-24  
-Branch: `g626-warm`  
-Implementation commit: `2fbfc0f882a612d78357a545fca9bbae6ccb87e5`  
-Final binary: `bin/idiom.exe`  
+Date: 2026-11-24
+Branch: `g626-warm`
+Implementation commit: `2fbfc0f882a612d78357a545fca9bbae6ccb87e5`
+Final binary: `bin/idiom.exe`
 BenTech HEAD: `3dc88c4100788ede69709b90f0d4e041fa5f07ae`
 
 ## Outcome
