@@ -286,6 +286,21 @@ func TestLSPHelperProcess(t *testing.T) {
 	case "quiet":
 		_, _ = io.Copy(io.Discard, reader)
 		os.Exit(0)
+	case "lifecycle":
+		var request struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			fmt.Fprintf(os.Stderr, "decode lifecycle request: %v\n", err)
+			os.Exit(2)
+		}
+		writeLSPHelperMessage(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      json.RawMessage(request.ID),
+			"result":  nil,
+		})
+		_, _ = io.Copy(io.Discard, reader)
+		os.Exit(0)
 	}
 
 	os.Exit(2)

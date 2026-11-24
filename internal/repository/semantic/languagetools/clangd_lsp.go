@@ -9,10 +9,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
+	clangdIdleTimeout   = 30 * time.Second
+	clangdStartupBudget = 15 * time.Second
 	// clangdIndexProbeBudget bounds the semantic readiness probe. It does not
 	// start another index; it waits for the persistent server to expose the
 	// requested symbol in the requested file.
@@ -31,25 +34,60 @@ type clangdLSPClient struct {
 	awaitIndex bool
 }
 
+type clangdLSPLease struct {
+	client  *clangdLSPClient
+	manager *Manager
+	once    sync.Once
+}
+
+func (l *clangdLSPLease) close() {
+	if l == nil {
+		return
+	}
+
+	l.once.Do(func() {
+		if l.manager != nil && l.client != nil {
+			l.manager.releaseClangdLSPClient(l.client)
+		}
+	})
+}
+
+func (l *clangdLSPLease) openFile(path string) error {
+	return l.client.openFile(path)
+}
+
+func (l *clangdLSPLease) request(ctx context.Context, method string, params any, result any) error {
+	return l.client.request(ctx, method, params, result)
+}
+
+func (l *clangdLSPLease) awaitIndexFor(ctx context.Context, path string, symbol string) error {
+	return l.client.awaitIndexFor(ctx, path, symbol)
+}
+
 func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, error) {
+	return m.newClangdLSPClientWithContexts(ctx, ctx)
+}
+
+func (m *Manager) newClangdLSPClientWithContexts(processCtx context.Context, requestCtx context.Context) (*clangdLSPClient, error) {
 	clangd := m.clangdBinary()
 	if clangd == "" {
 		return nil, fmt.Errorf("clangd is not installed")
 	}
 
-	args := []string{"--log=error"}
+	args := []string{"--log=error", "--background-index"}
 	compileDir := m.compileCommandsDir()
 	if compileDir != "" {
 		args = append(args, "--compile-commands-dir="+compileDir)
 	}
 
-	base, err := newLSPBaseClient(ctx, m.Root(), "clangd", clangd, args, nil)
+	base, err := newLSPBaseClient(processCtx, m.Root(), "clangd", clangd, args, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	client := &clangdLSPClient{
 		lspBaseClient: base,
+		queryCtx:      requestCtx,
 		awaitIndex:    compileDir != "",
 	}
 
@@ -77,7 +115,7 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 
 	var initResult map[string]any
 
-	if err := client.request(ctx, "initialize", params, &initResult); err != nil {
+	if err := client.request(requestCtx, "initialize", params, &initResult); err != nil {
 		client.forceClose()
 
 		return nil, fmt.Errorf("clangd initialize failed: %w", err)
@@ -90,6 +128,93 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 	}
 
 	return client, nil
+}
+
+func (m *Manager) acquireClangdLSPClient(ctx context.Context) (*clangdLSPLease, error) {
+	m.clangdMu.Lock()
+	if m.clangd != nil && m.clangd.process != nil && m.clangd.process.Alive() {
+		if m.clangdIdleTimer != nil {
+			m.clangdIdleTimer.Stop()
+			m.clangdIdleTimer = nil
+		}
+		m.clangdGeneration++
+
+		return &clangdLSPLease{client: m.clangd, manager: m}, nil
+	}
+
+	if m.clangd != nil {
+		m.clangd = nil
+	}
+	if m.clangdIdleTimer != nil {
+		m.clangdIdleTimer.Stop()
+		m.clangdIdleTimer = nil
+	}
+
+	startupCtx, cancel := context.WithTimeout(ctx, clangdStartupBudget)
+	defer cancel()
+	factory := m.clangdClientFactory
+	var client *clangdLSPClient
+	var err error
+	if factory != nil {
+		client, err = factory(context.Background(), startupCtx)
+	} else {
+		client, err = m.newClangdLSPClientWithContexts(context.Background(), startupCtx)
+	}
+	if err != nil {
+		m.clangdMu.Unlock()
+
+		return nil, err
+	}
+
+	m.clangd = client
+	m.clangdGeneration++
+
+	return &clangdLSPLease{client: client, manager: m}, nil
+}
+
+func (m *Manager) releaseClangdLSPClient(client *clangdLSPClient) {
+	if m == nil || client == nil {
+		return
+	}
+
+	if m.clangd != client {
+		m.clangdMu.Unlock()
+		return
+	}
+
+	if client.process == nil || !client.process.Alive() {
+		m.clangd = nil
+		m.clangdGeneration++
+		m.clangdMu.Unlock()
+		client.forceClose()
+
+		return
+	}
+
+	m.clangdGeneration++
+	generation := m.clangdGeneration
+	if m.clangdIdleTimer != nil {
+		m.clangdIdleTimer.Stop()
+	}
+	m.clangdIdleTimer = time.AfterFunc(m.clangdIdleTimeout, func() {
+		m.shutdownIdleClangd(client, generation)
+	})
+	m.clangdMu.Unlock()
+}
+
+func (m *Manager) shutdownIdleClangd(client *clangdLSPClient, generation uint64) {
+	m.clangdMu.Lock()
+	if m.clangd != client || m.clangdGeneration != generation {
+		m.clangdMu.Unlock()
+
+		return
+	}
+	m.clangd = nil
+	m.clangdIdleTimer = nil
+	m.clangdGeneration++
+	m.clangdMu.Unlock()
+
+	client.close()
 }
 
 // openFile opens the document. Readiness is checked by awaitIndexFor once the
@@ -113,7 +238,9 @@ func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, 
 
 	for {
 		var symbols []LSPSymbolInfo
-		if err := c.request(probeCtx, "workspace/symbol", map[string]any{"query": symbol}, &symbols); err != nil {
+		if err := c.requestWithin(probeCtx, "workspace/symbol", map[string]any{"query": symbol}, &symbols); err != nil {
+			c.forceClose()
+
 			return fmt.Errorf("clangd readiness probe failed: %w", err)
 		}
 
@@ -196,7 +323,7 @@ func clangdLanguageID(path string) string {
 func (m *Manager) cppWorkspaceSymbolsViaClangd(ctx context.Context, pattern string, pathFilter string, limit int) (string, error) {
 	return m.lspWorkspaceSymbolQuery(ctx, lspWorkspaceSymbolQueryConfig{
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
-			return m.newClangdLSPClient(ctx)
+			return m.acquireClangdLSPClient(ctx)
 		},
 		fileURI: LSPFileURI,
 		candidates: func(pattern string, budget int) ([]string, error) {
@@ -227,7 +354,7 @@ func (m *Manager) cppDeclarationViaClangd(ctx context.Context, match semanticcpp
 }
 
 func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, method string, declarationFallback bool) (string, error) {
-	client, err := m.newClangdLSPClient(ctx)
+	client, err := m.acquireClangdLSPClient(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -275,11 +402,11 @@ func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semanti
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "clangd",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
-			return m.newClangdLSPClient(ctx)
+			return m.acquireClangdLSPClient(ctx)
 		},
 		fileURI: LSPFileURI,
 		prepare: func(ctx context.Context, client managedLSPClient, abs string) error {
-			return client.(*clangdLSPClient).awaitIndexFor(ctx, abs, match.Name)
+			return client.(*clangdLSPLease).awaitIndexFor(ctx, abs, match.Name)
 		},
 		format: m.formatClangdLocations,
 	}, match.Path, func(abs string) map[string]any {
@@ -291,11 +418,11 @@ func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semanticcpp.
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "clangd",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
-			return m.newClangdLSPClient(ctx)
+			return m.acquireClangdLSPClient(ctx)
 		},
 		fileURI: LSPFileURI,
 		prepare: func(ctx context.Context, client managedLSPClient, abs string) error {
-			return client.(*clangdLSPClient).awaitIndexFor(ctx, abs, match.Name)
+			return client.(*clangdLSPLease).awaitIndexFor(ctx, abs, match.Name)
 		},
 		format: m.formatClangdLocations,
 	}, match.Path, func(abs string) map[string]any {
@@ -306,7 +433,7 @@ func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semanticcpp.
 }
 
 func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
-	client, err := m.newClangdLSPClient(ctx)
+	client, err := m.acquireClangdLSPClient(ctx)
 	if err != nil {
 		return callHierarchyResult{}, err
 	}

@@ -66,9 +66,16 @@ func ConfigureToolSurface(ctx context.Context, cfg config.Config, opts Configure
 }
 
 func (s *ConfiguredToolSurface) Close() {
+	if s == nil {
+		return
+	}
+
 	if s.MCPRegistry != nil {
 		_ = s.MCPRegistry.Close()
 		s.MCPRegistry = nil
+	}
+	if s.Manager != nil {
+		s.Manager.Close()
 	}
 }
 

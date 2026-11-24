@@ -198,6 +198,16 @@ func (c *lspBaseClient) notify(method string, params any) error {
 }
 
 func (c *lspBaseClient) request(ctx context.Context, method string, params any, result any) error {
+	return c.requestWithReader(ctx, method, params, result, func(context.Context) ([]byte, error) {
+		return c.readMessage()
+	})
+}
+
+func (c *lspBaseClient) requestWithin(ctx context.Context, method string, params any, result any) error {
+	return c.requestWithReader(ctx, method, params, result, c.readMessageWithin)
+}
+
+func (c *lspBaseClient) requestWithReader(ctx context.Context, method string, params any, result any, read func(context.Context) ([]byte, error)) error {
 	id := c.nextID + 1
 
 	c.nextID = id
@@ -218,7 +228,7 @@ func (c *lspBaseClient) request(ctx context.Context, method string, params any, 
 			return err
 		}
 
-		body, err := c.readMessage()
+		body, err := read(ctx)
 		if err != nil {
 			var stderr string
 			if c.process != nil {

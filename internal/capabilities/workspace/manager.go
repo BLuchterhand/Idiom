@@ -110,6 +110,18 @@ func NewManager(cfg config.Workspace) *Manager {
 	return m
 }
 
+// Close releases session-owned language-server processes and other resources.
+// It is safe to call more than once.
+func (m *Manager) Close() {
+	if m == nil {
+		return
+	}
+
+	if languageTools := m.languageTools.Load(); languageTools != nil {
+		languageTools.Close()
+	}
+}
+
 // MutationEpoch reports the workspace generation used to invalidate ephemeral
 // source windows after any harness-observed mutation.
 func (m *Manager) MutationEpoch() uint64 {

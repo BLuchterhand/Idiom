@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/failures"
@@ -58,10 +59,38 @@ type Manager struct {
 	javaIndexToken string
 	goplsPath      string
 	goplsChecked   bool
+
+	clangdMu            sync.Mutex
+	clangd              *clangdLSPClient
+	clangdIdleTimer     *time.Timer
+	clangdGeneration    uint64
+	clangdIdleTimeout   time.Duration
+	clangdClientFactory func(context.Context, context.Context) (*clangdLSPClient, error)
 }
 
 func NewManager(host Host) *Manager {
-	return &Manager{host: host}
+	return &Manager{host: host, clangdIdleTimeout: clangdIdleTimeout}
+}
+
+// Close releases language-server processes owned by this workspace session.
+func (m *Manager) Close() {
+	if m == nil {
+		return
+	}
+
+	m.clangdMu.Lock()
+	client := m.clangd
+	m.clangd = nil
+	m.clangdGeneration++
+	if m.clangdIdleTimer != nil {
+		m.clangdIdleTimer.Stop()
+		m.clangdIdleTimer = nil
+	}
+	m.clangdMu.Unlock()
+
+	if client != nil {
+		client.close()
+	}
 }
 
 func (m *Manager) Enabled() bool {

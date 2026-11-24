@@ -132,6 +132,7 @@ func RunWithTelemetryAndVersion(args []string, stdout io.Writer, stderr io.Write
 
 		return 1
 	}
+	defer server.toolSurface.Close()
 
 	if err := server.Serve(context.Background(), os.Stdin, stdout); err != nil {
 		fmt.Fprintf(stderr, "mcp serve: %v\n", err)
