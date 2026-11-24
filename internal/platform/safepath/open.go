@@ -228,23 +228,7 @@ func ReadFileFromRoot(root *os.Root, canonicalRoot string, relative string, labe
 		return nil, fmt.Errorf("%s must name a file under its root", label)
 	}
 
-	file, err := root.Open(relative)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", label, err)
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("inspect opened %s: %w", label, err)
-	}
 	targetPath := filepath.Join(canonicalRoot, relative)
-	if err := validateOpenedFile(file, canonicalRoot, targetPath, info, label); err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s must be a regular file", label)
-	}
 	if opts.RejectSymlinkAncestors {
 		if err := RejectSymlinkAncestors(canonicalRoot, targetPath, label); err != nil {
 			return nil, err
@@ -255,6 +239,17 @@ func ReadFileFromRoot(root *os.Root, canonicalRoot string, relative string, labe
 			return nil, err
 		}
 	}
+
+	expected, err := os.Stat(targetPath)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", label, err)
+	}
+
+	file, err := openRegularRootFile(root, relative, expected, canonicalRoot, targetPath, label)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
 
 	return io.ReadAll(file)
 }
@@ -481,18 +476,37 @@ func openPreparedFile(root *os.Root, target openTarget) (*os.File, error) {
 		}
 		return nil, fmt.Errorf("%s root changed while opening", target.label)
 	}
-
-	file, err := root.Open(target.rootRelative)
+	listed, err := root.Lstat(target.rootRelative)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", target.label, err)
+		return nil, fmt.Errorf("inspect %s before opening: %w", target.label, err)
 	}
-	opened, err := file.Stat()
-	if err != nil || !os.SameFile(target.targetInfo, opened) {
-		_ = file.Close()
-		if err != nil {
-			return nil, fmt.Errorf("inspect opened %s: %w", target.label, err)
+
+	if !target.targetInfo.Mode().IsRegular() {
+		if !target.targetInfo.IsDir() {
+			return nil, fmt.Errorf("%s must be a regular file or directory", target.label)
 		}
-		return nil, fmt.Errorf("%s changed while opening", target.label)
+		if !listed.IsDir() {
+			return nil, fmt.Errorf("%s changed while opening", target.label)
+		}
+
+		file, err := root.Open(target.rootRelative)
+		if err != nil {
+			return nil, fmt.Errorf("open %s: %w", target.label, err)
+		}
+		if err := validateOpenedFile(file, target.rootPath, target.targetPath, target.targetInfo, target.label); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+
+		return file, nil
+	}
+	if !listed.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file", target.label)
+	}
+
+	file, err := openRegularRootFile(root, target.rootRelative, target.targetInfo, target.rootPath, target.targetPath, target.label)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateOpenedFile(file, target.rootPath, target.targetPath, target.targetInfo, target.label); err != nil {
 		_ = file.Close()
@@ -510,6 +524,31 @@ func openPreparedFile(root *os.Root, target openTarget) (*os.File, error) {
 			return nil, err
 		}
 	}
+	return file, nil
+}
+
+// openRegularRootFile performs the shared pre-open type check and post-open
+// identity check used by both rooted read paths. Lstat is deliberately done
+// through the established root before opening: opening a FIFO for reading can
+// block forever on POSIX, so a Stat-after-open check is too late.
+func openRegularRootFile(root *os.Root, relative string, expected os.FileInfo, canonicalRoot string, targetPath string, label string) (*os.File, error) {
+	listed, err := root.Lstat(relative)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s before opening: %w", label, err)
+	}
+	if !listed.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file", label)
+	}
+
+	file, err := root.OpenFile(relative, safeReadOpenFlags(), 0)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", label, err)
+	}
+	if err := validateOpenedFile(file, canonicalRoot, targetPath, expected, label); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+
 	return file, nil
 }
 

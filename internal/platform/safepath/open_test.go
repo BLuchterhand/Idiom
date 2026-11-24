@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -83,7 +84,7 @@ var _ = ginkgo.Describe("handle-bound paths", func() {
 		gomega.Expect(err).To(gomega.HaveOccurred())
 	})
 
-	ginkgo.It("rejects a FIFO instead of reading it", func() {
+	ginkgo.It("rejects a FIFO instead of reading it", ginkgo.SpecTimeout(2*time.Second), func(ginkgo.SpecContext) {
 		root := ginkgo.GinkgoT().TempDir()
 		fifo := filepath.Join(root, "source.h")
 		if err := createNamedFIFO(fifo); err != nil {
