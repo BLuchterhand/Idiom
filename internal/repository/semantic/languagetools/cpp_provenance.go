@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/safepath"
 	"idiom/internal/repository/discovery"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
@@ -236,6 +238,93 @@ func cppNonIgnoredPaths(ctx context.Context, root string) ([]string, error) {
 // syntax index actually walks. It deliberately does not ask Git to classify
 // them: both ignored and non-ignored files are inputs to the live index.
 func cppUntrackedIndexedPaths(ctx context.Context, root string, tracked map[string]struct{}, dirty []string) ([]string, error) {
+	if rg := hosttools.FirstAvailable("rg"); rg != "" {
+		if paths, ok := cppUntrackedIndexedPathsByRipgrep(ctx, root, rg, tracked, dirty); ok {
+			return paths, nil
+		}
+	}
+
+	return cppUntrackedIndexedPathsByWalk(ctx, root, tracked, dirty)
+}
+
+// cppUntrackedIndexedPathsByRipgrep enumerates the same C++ scope without
+// asking Git to visit ignored worktree forests. ripgrep does not follow
+// symlinked directories by default; every returned path is still checked
+// against the safe root before it enters provenance.
+func cppUntrackedIndexedPathsByRipgrep(ctx context.Context, root string, rg string, tracked map[string]struct{}, dirty []string) ([]string, bool) {
+	args := []string{"--files", "--hidden", "--no-ignore", "--no-messages"}
+	for _, glob := range discovery.RipgrepExcludeGlobs() {
+		args = append(args, "--glob", glob)
+	}
+	for _, extension := range cppGitPathspecs {
+		args = append(args, "--glob", extension)
+	}
+	args = append(args, "--", ".")
+
+	result := commandexec.Run(ctx, commandexec.Spec{
+		Name:           rg,
+		Args:           args,
+		Dir:            root,
+		MaxOutputBytes: 64 * 1024 * 1024,
+	})
+	if result.TimedOut || result.ExitCode > 1 || (result.Err != nil && strings.TrimSpace(result.Stdout) == "") {
+		return nil, false
+	}
+
+	dirtySet := make(map[string]struct{}, len(dirty))
+	for _, path := range dirty {
+		dirtySet[filepath.ToSlash(filepath.Clean(path))] = struct{}{}
+	}
+
+	paths := make([]string, 0, 16)
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		rel := filepath.ToSlash(filepath.Clean(strings.TrimSpace(line)))
+		rel = strings.TrimPrefix(rel, "./")
+		if rel == "" || rel == "." || cppSnapshotPathSkipped(rel) {
+			continue
+		}
+		if _, ok := tracked[rel]; ok {
+			continue
+		}
+		if _, ok := dirtySet[rel]; ok {
+			continue
+		}
+
+		abs, _, err := safepath.UnderRoot(root, filepath.Join(root, filepath.FromSlash(rel)), "C++ snapshot", safepath.Options{
+			RejectSymlinkAncestors: true,
+			RejectSymlinkTarget:    true,
+		})
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(abs)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		paths = append(paths, rel)
+	}
+
+	slices.Sort(paths)
+
+	return paths, true
+}
+
+func cppSnapshotPathSkipped(rel string) bool {
+	if discovery.ShouldSkipRelFile(rel) {
+		return true
+	}
+
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(rel)), "/")
+	for _, part := range parts[:max(0, len(parts)-1)] {
+		if discovery.ShouldSkipDirName(part) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func cppUntrackedIndexedPathsByWalk(ctx context.Context, root string, tracked map[string]struct{}, dirty []string) ([]string, error) {
 	dirtySet := make(map[string]struct{}, len(dirty))
 	for _, path := range dirty {
 		dirtySet[filepath.ToSlash(filepath.Clean(path))] = struct{}{}
