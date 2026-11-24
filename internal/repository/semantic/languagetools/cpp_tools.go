@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/safepath"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
@@ -71,10 +74,12 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 		return nil, cppIndexInfo{}, fmt.Errorf("c++-specific tools require a workspace with C/C++ source files or compile_commands.json")
 	}
 
+	// Snapshot provenance is bounded by the caller's tool context. The build
+	// budget applies to walking and parsing, not to Git identity work; otherwise
+	// a slow Windows worktree can consume the parse budget before indexing starts.
+	info := cppSnapshot(parent, m.Root())
 	ctx, cancel := context.WithTimeout(parent, cppIndexBudget)
 	defer cancel()
-
-	info := cppSnapshot(ctx, m.Root())
 
 	m.mu.Lock()
 
@@ -549,14 +554,206 @@ func (m *Manager) cppImplementationsMatch(ctx context.Context, req ToolRequest, 
 }
 
 func (m *Manager) cppReferences(ctx context.Context, req ToolRequest) ToolResult {
+	if runtime.GOOS == "windows" && m.cppReferenceWorkspaceIsLarge(ctx) {
+		return m.cppReferencesByTextSearch(ctx, req, "large Windows workspace")
+	}
+
 	match, resolved, failure := m.resolveCppMatch(ctx, "cpp_references", "C++ reference query rejected", req)
 	if failure != nil {
 		return *failure
 	}
 
-	references, _ := m.cppReferencesMatch(ctx, req, match)
+	references, _ := m.cppReferencesMatch(ctx, req, match, resolved.info.Build.Files <= cppReferencesClangdFileThreshold)
 
 	return resolved.annotate(references)
+}
+
+// cppReferenceWorkspaceIsLarge is a bounded preflight for the Windows path.
+// A large cold workspace cannot amortize its syntax-index build when this
+// query already has a supported name-search backend. Count only until the
+// threshold; the full semantic index remains available to other C++ tools.
+func (m *Manager) cppReferenceWorkspaceIsLarge(ctx context.Context) bool {
+	count := 0
+	err := safepath.WalkDirUnderRoot(m.Root(), m.Root(), "C++ reference preflight", func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if discovery.ShouldSkipDirName(d.Name()) && path != m.Root() {
+				return filepath.SkipDir
+			}
+
+			return nil
+		}
+		if !isCppExtension(filepath.Ext(path)) {
+			return nil
+		}
+
+		rel, err := filepath.Rel(m.Root(), path)
+		if err != nil || discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
+
+		count++
+		if count > cppReferencesClangdFileThreshold {
+			return filepath.SkipAll
+		}
+
+		return nil
+	})
+
+	return err == nil && count > cppReferencesClangdFileThreshold
+}
+
+func (m *Manager) cppReferencesByTextSearch(ctx context.Context, req ToolRequest, scope string) ToolResult {
+	if strings.TrimSpace(req.Pattern) == "" {
+		return ToolResult{Tool: "cpp_references", Summary: "C++ reference query rejected", Error: "pattern is required"}
+	}
+
+	var result ToolResult
+	if scope == "large Windows workspace" {
+		result = m.cppReferencesViaRipgrep(ctx, req)
+	} else {
+		result = m.searchContent(ctx, ToolRequest{
+			Pattern: cppReferencePattern(req.Pattern),
+			Path:    defaultString(req.Path, "."),
+			Glob:    cppSearchGlob(),
+		}, "cpp_references")
+	}
+	if scope != "" {
+		result.Warnings = append([]string{"semantic owner resolution skipped; answered by name-based text search for " + scope}, result.Warnings...)
+	}
+
+	if result.Error != "" {
+		return result
+	}
+	if result.Facts == nil || result.Facts.SearchHitCount == 0 {
+		result.Summary = "No C++ references found by name-based text search"
+		result.Output = ""
+
+		return result
+	}
+
+	result.Summary = "Resolved C++ references via name-based text search"
+
+	return result
+}
+
+func (m *Manager) cppReferencesViaRipgrep(ctx context.Context, req ToolRequest) ToolResult {
+	tool := "cpp_references"
+	path := defaultString(req.Path, ".")
+	abs, err := m.resolvePath(path, req.Workdir)
+	if err != nil {
+		return ToolResult{Tool: tool, Summary: "C++ reference search rejected", Error: err.Error()}
+	}
+
+	rel, ok := m.relativeWorkspacePath(abs)
+	if !ok {
+		return ToolResult{Tool: tool, Summary: "C++ reference search rejected", Error: "search path is outside the workspace"}
+	}
+	if rel == "" {
+		rel = "."
+	}
+	rel = filepath.ToSlash(rel)
+
+	args := []string{
+		"--line-number", "--no-heading", "--color", "never",
+		"--glob", cppSearchGlob(),
+	}
+	for _, exclude := range discovery.RipgrepExcludeGlobs() {
+		args = append(args, "--glob", exclude)
+	}
+	args = append(args, "--", cppReferencePattern(req.Pattern), rel)
+	command := m.runCommandResult(ctx, m.Root(), nil, "rg", args...)
+	if command.Err != nil && strings.TrimSpace(command.Output) == "" {
+		if ctx.Err() != nil {
+			return ToolResult{Tool: tool, Summary: "C++ reference search failed", Error: ctx.Err().Error()}
+		}
+
+		// rg uses exit status 1 for a successful zero-hit search.
+		if !strings.Contains(strings.ToLower(command.Err.Error()), "executable file not found") {
+			return ToolResult{Tool: tool, Summary: "No C++ references found by name-based text search"}
+		}
+
+		return ToolResult{Tool: tool, Summary: "C++ reference search failed", Error: command.Err.Error()}
+	}
+
+	type hit struct {
+		path string
+		line int
+		text string
+	}
+	hits := make([]hit, 0, 16)
+	for _, raw := range strings.Split(strings.TrimSpace(command.Output), "\n") {
+		parts := strings.SplitN(strings.TrimSuffix(raw, "\r"), ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+
+		line, err := strconv.Atoi(parts[1])
+		if err != nil || line < 1 {
+			continue
+		}
+
+		hits = append(hits, hit{path: filepath.FromSlash(strings.TrimPrefix(parts[0], "./")), line: line, text: parts[2]})
+	}
+
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].path != hits[j].path {
+			return hits[i].path < hits[j].path
+		}
+
+		return hits[i].line < hits[j].line
+	})
+
+	const displayCap = 50
+	formatted := make([]string, 0, min(len(hits), displayCap)+1)
+	candidates := make([]string, 0, min(len(hits), displayCap))
+	seenCandidates := make(map[string]struct{})
+	for _, match := range hits {
+		if len(formatted) >= displayCap {
+			break
+		}
+
+		absPath := filepath.Join(m.Root(), match.path)
+		display := filepath.ToSlash(m.displayPath(absPath))
+		formatted = append(formatted, fmt.Sprintf("%s %s:%d:%s", m.rememberPath(absPath), display, match.line, textutil.TruncateBytes(match.text, cppReferenceLineCap, "...")))
+		candidate := filepath.ToSlash(match.path)
+		if _, exists := seenCandidates[candidate]; !exists {
+			seenCandidates[candidate] = struct{}{}
+			candidates = append(candidates, candidate)
+		}
+	}
+
+	if len(hits) == 0 {
+		return ToolResult{Tool: tool, Summary: "No C++ references found by name-based text search"}
+	}
+	if len(hits) > displayCap {
+		formatted = append(formatted, fmt.Sprintf("... and %d more matching line(s) omitted.", len(hits)-displayCap))
+	}
+
+	facts := &toolfacts.ToolResultFacts{
+		CandidatePaths:        candidates,
+		HasDiscoveryTargets:   len(candidates) > 0,
+		DiscoveryStrength:     toolfacts.DiscoveryStrengthSourceOwner,
+		SourceOwnerFound:      len(candidates) > 0,
+		SearchHitCount:        len(hits),
+		SearchHighCardinality: len(hits) >= displayCap,
+	}
+	if len(hits) >= displayCap {
+		facts.DiscoveryStrength = toolfacts.DiscoveryStrengthCandidateOnly
+		facts.SourceOwnerFound = false
+	}
+
+	return ToolResult{
+		Tool:    tool,
+		Summary: fmt.Sprintf("Found %d C++ reference line(s) by name-based text search.", len(hits)),
+		Output:  strings.Join(formatted, "\n"),
+		Facts:   facts,
+	}
 }
 
 // cppReferenceBackend names the backend that produced reference evidence, so a
@@ -570,12 +767,14 @@ const (
 	cppReferencesByTextSearch
 )
 
-func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) (ToolResult, cppReferenceBackend) {
+func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch, tryClangd bool) (ToolResult, cppReferenceBackend) {
 	var warnings []string
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
-	if err == nil {
-		output, lspErr := m.cppReferencesViaClangd(ctx, match, pathFilter)
+	if tryClangd && err == nil {
+		clangdCtx, cancel := context.WithTimeout(ctx, cppReferencesClangdBudget)
+		output, lspErr := m.cppReferencesViaClangd(clangdCtx, match, pathFilter)
+		cancel()
 		switch {
 		case lspErr != nil:
 			warnings = append(warnings, fmt.Sprintf("clangd references unavailable (%v); answered by name-based text search", lspErr))
@@ -588,14 +787,11 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 		default:
 			warnings = append(warnings, "clangd returned no references, not even the symbol's own declaration; answered by name-based text search")
 		}
+	} else if !tryClangd {
+		warnings = append(warnings, fmt.Sprintf("clangd reference lookup skipped for C++ indexes larger than %d files; answered by name-based text search", cppReferencesClangdFileThreshold))
 	}
 
-	searchReq := ToolRequest{
-		Pattern: cppReferencePattern(match.Name),
-		Path:    defaultString(req.Path, "."),
-		Glob:    cppSearchGlob(),
-	}
-	result := m.searchContent(ctx, searchReq, "cpp_references")
+	result := m.cppReferencesByTextSearch(ctx, ToolRequest{Pattern: match.Name, Path: req.Path}, "")
 	result.Warnings = append(warnings, result.Warnings...)
 
 	if result.Error != "" {

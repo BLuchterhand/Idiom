@@ -25,7 +25,7 @@ func (m *Manager) cppDeadSymbol(ctx context.Context, req ToolRequest) ToolResult
 		return *failure
 	}
 
-	references, backend := m.cppReferencesMatch(ctx, req, match)
+	references, backend := m.cppReferencesMatch(ctx, req, match, true)
 	if references.Error != "" {
 		references.Tool = cppDeadSymbolTool
 		references.Summary = "C++ dead-symbol query failed"

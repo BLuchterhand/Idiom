@@ -21,6 +21,22 @@ var _ = ginkgo.Describe("handle-bound paths", func() {
 		gomega.Expect(string(data)).To(gomega.Equal("package source\n"))
 	})
 
+	ginkgo.It("reads a file through an established root handle", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		filePath := filepath.Join(root, "nested", "source.go")
+		mustWriteFile(filePath, "package source\n")
+
+		canonical, err := CanonicalExistingPath(root)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		opened, err := OpenRootPath(canonical, "test root")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer opened.Close()
+
+		data, err := ReadFileFromRoot(opened, canonical, filepath.ToSlash(filepath.Join("nested", "source.go")), "test file")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(string(data)).To(gomega.Equal("package source\n"))
+	})
+
 	ginkgo.It("opens a directory through a validated root handle", func() {
 		root := ginkgo.GinkgoT().TempDir()
 		directory := filepath.Join(root, "nested")
