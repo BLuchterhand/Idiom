@@ -1,0 +1,67 @@
+G626 round 2 C++ semantic result sets
+Date: 2026-11-23
+Branch: g626-warm
+Workspace: C:\Users\benlu\Documents\GitHub\BenTech
+
+Query list (exactly the ten cold/warm measurements)
+1. cpp_references pattern=chamfer_pass path=core/worldgen limit=5
+2. cpp_references pattern=water_runs path=core/worldgen limit=5
+3. cpp_references pattern=is_coast_land_cell path=core/worldgen limit=5
+4. cpp_references pattern=laplacian_mm path=core/worldgen limit=5
+5. cpp_references pattern=rock_unit_below_ground path=core/worldgen limit=5
+6. cpp_references pattern=flank_height_mm path=core/worldgen limit=5
+7. cpp_references pattern=volcano_height_mm path=core/worldgen limit=5
+8. cpp_references pattern=make_layers path=core/worldgen limit=5
+9. cpp_references pattern=make_weather_layers path=core/worldgen limit=5
+10. cpp_references pattern=pool_shape path=core/worldgen limit=5
+
+The tool-side elapsed times below are milliseconds from the same MCP sidecar.
+Each result set is sorted by the complete provenance record. All ten results
+were resolved by semantic clangd; no Windows name-search branch was used.
+
+1. chamfer_pass  cold_ms=13033  warm_ms=1778
+   f1 core/worldgen/climate.cpp core/worldgen/climate.cpp:107:        const bool a = chamfer_pass(g, d, true);
+   f1 core/worldgen/climate.cpp core/worldgen/climate.cpp:108:        const bool b = chamfer_pass(g, d, false);
+   f1 core/worldgen/climate.cpp core/worldgen/climate.cpp:78:bool chamfer_pass(const GridShape& g, std::vector<uint32_t>& d, bool forward) {
+
+2. water_runs  cold_ms=12848  warm_ms=1955
+   f1 core/worldgen/channel_plan.cpp core/worldgen/channel_plan.cpp:105:void water_runs(const HydrologyMap& h, const GridShape& g, int64_t dx, int64_t dz, std::vector<uint16_t>& runs) {
+   f1 core/worldgen/channel_plan.cpp core/worldgen/channel_plan.cpp:169:        water_runs(h, g, axis[0], axis[1], forward);
+   f1 core/worldgen/channel_plan.cpp core/worldgen/channel_plan.cpp:170:        water_runs(h, g, -axis[0], -axis[1], backward);
+
+3. is_coast_land_cell  cold_ms=12913  warm_ms=1953
+   f1 core/worldgen/coast.cpp core/worldgen/coast.cpp:139:            if (is_coast_land_cell(b.landform, b.hydrology, i)) classify_cell(b, i, cx, cz);
+   f1 core/worldgen/coast.cpp core/worldgen/coast.cpp:219:bool is_coast_land_cell(const LandformMap& landform, const HydrologyMap& hydrology, size_t cell) {
+   f2 core/worldgen/coast.h core/worldgen/coast.h:65:bool is_coast_land_cell(const LandformMap& landform, const HydrologyMap& hydrology, size_t cell);
+
+4. laplacian_mm  cold_ms=11610  warm_ms=1498
+   f1 core/worldgen/cliff_bands.cpp core/worldgen/cliff_bands.cpp:42:int64_t laplacian_mm(const LandformMap& map, const GridShape& g, int64_t cx, int64_t cz) {
+   f1 core/worldgen/cliff_bands.cpp core/worldgen/cliff_bands.cpp:76:            const int64_t spur = Q16_ONE - ramp_q16(laplacian_mm(map, g, cx, cz), 0, s.cliff_hollow_full_mm);
+
+5. rock_unit_below_ground  cold_ms=11589  warm_ms=1982
+   f1 core/worldgen/rock_exposure.cpp core/worldgen/rock_exposure.cpp:48:uint16_t rock_unit_below_ground(const LandformMap& m, const GeologyTable& g, size_t cell, int64_t below_ground_mm) {
+   f1 core/worldgen/rock_exposure.cpp core/worldgen/rock_exposure.cpp:88:    const uint16_t exposed = rock_unit_below_ground(m, g, cell, 0);
+   f1 core/worldgen/hydrology.cpp core/worldgen/hydrology.cpp:385:    for (size_t i = 0; i < n; ++i) exposed_units[i] = rock_unit_below_ground(m, geology, i, 0);
+   f2 core/worldgen/rock_exposure.h core/worldgen/rock_exposure.h:27:uint16_t rock_unit_below_ground(const LandformMap& landform, const GeologyTable& geology, size_t cell, int64_t below_ground_mm);
+
+6. flank_height_mm  cold_ms=11708  warm_ms=1724
+   f1 core/worldgen/volcanoes.cpp core/worldgen/volcanoes.cpp:118:                const int64_t rise = flank_height_mm(v, noise, vs, d, dx, dz, r);
+   f1 core/worldgen/volcanoes.cpp core/worldgen/volcanoes.cpp:27:int64_t flank_height_mm(const Volcano& v, const FlankNoise& f, const VolcanoSettings& vs, const WorldDims& d, int64_t dx,
+
+7. volcano_height_mm  cold_ms=11948  warm_ms=2579
+   f1 core/worldgen/relief_shapes.cpp core/worldgen/relief_shapes.cpp:47:int64_t volcano_height_mm(const VolcanoShape& v, int64_t r_m) {
+   f2 core/worldgen/relief_shapes.h core/worldgen/relief_shapes.h:42:int64_t volcano_height_mm(const VolcanoShape& v, int64_t r_m);
+   f3 core/worldgen/volcanoes.cpp core/worldgen/volcanoes.cpp:31:    int64_t rise = volcano_height_mm(v.shape, r);
+
+8. make_layers  cold_ms=12931  warm_ms=1725
+   f1 core/worldgen/wind_build.cpp core/worldgen/wind_build.cpp:139:void make_layers(WindMap& out) {
+   f1 core/worldgen/wind_build.cpp core/worldgen/wind_build.cpp:216:    make_layers(out);
+
+9. make_weather_layers  cold_ms=13799  warm_ms=3107
+   f1 core/worldgen/local_climate.cpp core/worldgen/local_climate.cpp:204:    if (need_noise && context_usable(ctx)) q.layers = make_weather_layers(ctx.landform->seed, ctx.climate->dims.width_m, clock.day_length_ticks);
+   f1 core/worldgen/local_climate.cpp core/worldgen/local_climate.cpp:294:    return noise_at(make_weather_layers(seed, width_m, c.day_length_ticks), x_m, z_m, world_tick);
+   f1 core/worldgen/local_climate.cpp core/worldgen/local_climate.cpp:31:WeatherLayers make_weather_layers(uint64_t seed, int64_t width_m, int64_t day_ticks) {
+
+10. pool_shape  cold_ms=13237  warm_ms=1723
+   f1 core/worldgen/small_waters.cpp core/worldgen/small_waters.cpp:186:PoolShape pool_shape(const LandformMap& m, const HydrologyMap& h, size_t cell, int64_t cell_x, int64_t cell_z) {
+   f2 core/worldgen/small_waters.h core/worldgen/small_waters.h:49:PoolShape pool_shape(const LandformMap& landform, const HydrologyMap& hydrology, size_t cell, int64_t cell_x, int64_t cell_z);
