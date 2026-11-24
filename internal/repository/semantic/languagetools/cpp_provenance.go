@@ -165,7 +165,7 @@ func cppSnapshot(ctx context.Context, root string) cppIndexInfo {
 // cppChangedTrackedPaths returns tracked C++ paths changed from HEAD. Unlike
 // git status with untracked-files=all, this does not enumerate ignored files.
 func cppChangedTrackedPaths(ctx context.Context, root string) ([]string, error) {
-	args := append([]string{"diff", "--name-only", "--diff-filter=ACMRD", "HEAD", "--"}, cppGitPathspecs...)
+	args := append([]string{"diff", "--name-only", "--diff-filter=ACMRDTU", "HEAD", "--"}, cppGitPathspecs...)
 	output, err := gitstate.Output(ctx, root, args...)
 	if err != nil {
 		return nil, err
