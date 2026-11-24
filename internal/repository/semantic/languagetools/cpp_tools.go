@@ -1,7 +1,9 @@
 package languagetools
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,6 +69,9 @@ func (m *Manager) getCppIndex() (*semanticcpp.CppIndex, error) {
 // identity and cost. A build is bounded by cppIndexBudget; the index is reused
 // only while the Git identity and dirty C++ file contents are unchanged.
 func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, cppIndexInfo, error) {
+	m.cppBuildMu.Lock()
+	defer m.cppBuildMu.Unlock()
+
 	if !m.isCppWorkspace() {
 		return nil, cppIndexInfo{}, fmt.Errorf("c++-specific tools require a workspace with C/C++ source files or compile_commands.json")
 	}
@@ -74,21 +79,25 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 	// Snapshot provenance is bounded by the caller's tool context. The build
 	// budget applies to walking and parsing, not to Git identity work; otherwise
 	// a slow Windows worktree can consume the parse budget before indexing starts.
-	info := cppSnapshot(parent, m.Root())
-	ctx, cancel := context.WithTimeout(parent, cppIndexBudget)
-	defer cancel()
-
 	m.mu.Lock()
 
 	cached, cachedInfo := m.cppIndex, m.cppIndexInfo
+	probe := m.cppSnapshotProbe
 	m.mu.Unlock()
 
-	if cached != nil && info.Key != "" && info.Key == cachedInfo.Key {
-		cachedInfo.Memoized = true
-		cachedInfo.Git = info.Git
+	if cached != nil && probe != nil {
+		unchanged, probeCost, probeErr := cppSnapshotFastUnchanged(parent, m.Root(), probe)
+		if probeErr == nil && unchanged {
+			cachedInfo.Memoized = true
+			cachedInfo.Git = probeCost
 
-		return cached, cachedInfo, nil
+			return cached, cachedInfo, nil
+		}
 	}
+
+	info := cppSnapshot(parent, m.Root())
+	ctx, cancel := context.WithTimeout(parent, cppIndexBudget)
+	defer cancel()
 
 	index, err := semanticcpp.BuildCppIndexWithOptions(m.Root(), semantic.IndexOptions{Context: ctx})
 	if err != nil {
@@ -109,6 +118,11 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 
 	m.cppIndex = index
 	m.cppIndexInfo = info
+	if snapshotProbe, probeErr := newCppSnapshotProbe(parent, m.Root(), info); probeErr == nil {
+		m.cppSnapshotProbe = snapshotProbe
+	} else {
+		m.cppSnapshotProbe = nil
+	}
 	m.mu.Unlock()
 
 	return index, info, nil
@@ -579,6 +593,13 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	compileDir := m.compileCommandsDir()
+	compileDisplay := "none"
+	if compileDir != "" {
+		compileDisplay = m.compileCommandsDisplay(compileDir)
+		warnings = append(warnings, "compile database: "+compileDisplay)
+	} else {
+		warnings = append(warnings, "compile database: none")
+	}
 	if err == nil && compileDir != "" {
 		clangdCtx, cancel := context.WithTimeout(ctx, cppReferencesClangdBudget)
 		watchedPaths := append(append([]string(nil), info.DirtyPaths...), info.IgnoredPaths...)
@@ -599,9 +620,10 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 			}
 		case strings.TrimSpace(output) != "":
 			return ToolResult{
-				Tool:    "cpp_references",
-				Summary: fmt.Sprintf("Resolved C++ references via clangd (compile database: %s)", m.compileCommandsDisplay(compileDir)),
-				Output:  output,
+				Tool:     "cpp_references",
+				Summary:  fmt.Sprintf("Resolved C++ references via clangd (compile database: %s)", compileDisplay),
+				Output:   output,
+				Warnings: warnings,
 			}, cppReferencesByClangd
 		default:
 			partial = true
@@ -635,7 +657,7 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 		return result, cppReferencesNoEvidence
 	}
 
-	result.Summary = "Resolved C++ references via name-based text search fallback"
+	result.Summary = fmt.Sprintf("Resolved C++ references via name-based text search fallback (compile database: %s)", compileDisplay)
 	if partial {
 		result.Summary = "Partial: index incomplete; " + result.Summary
 	}
@@ -1375,29 +1397,109 @@ func compileCommandsDirForRoot(root string) string {
 		filepath.Join(root, "native"),
 		filepath.Join(root, "native", "build"),
 	}
-	for _, dir := range candidates {
-		if info, err := os.Stat(filepath.Join(dir, "compile_commands.json")); err == nil && !info.IsDir() {
-			return dir
+	buildRoot := filepath.Join(root, "build")
+	if entries, err := os.ReadDir(buildRoot); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				candidates = append(candidates, filepath.Join(buildRoot, entry.Name()))
+			}
 		}
 	}
 
-	buildRoot := filepath.Join(root, "build")
-	entries, err := os.ReadDir(buildRoot)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	seen := make(map[string]struct{}, len(candidates))
+	valid := make([]compileCommandsCandidate, 0, len(candidates))
+	for _, dir := range candidates {
+		dir = filepath.Clean(dir)
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+
+		database := filepath.Join(dir, "compile_commands.json")
+		info, err := os.Stat(database)
+		if err != nil || info.IsDir() {
 			continue
 		}
 
-		dir := filepath.Join(buildRoot, entry.Name())
-		if info, err := os.Stat(filepath.Join(dir, "compile_commands.json")); err == nil && !info.IsDir() {
-			return dir
+		valid = append(valid, compileCommandsCandidate{
+			directory:   dir,
+			coreSources: compileCommandsCoreSources(root, dir, database),
+			modTime:     info.ModTime(),
+		})
+	}
+
+	slices.SortFunc(valid, func(left, right compileCommandsCandidate) int {
+		if left.coreSources != right.coreSources {
+			return cmp.Compare(right.coreSources, left.coreSources)
+		}
+		if !left.modTime.Equal(right.modTime) {
+			if left.modTime.After(right.modTime) {
+				return -1
+			}
+			return 1
+		}
+
+		return cmp.Compare(filepath.ToSlash(left.directory), filepath.ToSlash(right.directory))
+	})
+
+	if len(valid) == 0 {
+		return ""
+	}
+
+	return valid[0].directory
+}
+
+type compileCommandsCandidate struct {
+	directory   string
+	coreSources int
+	modTime     time.Time
+}
+
+type compileCommandEntry struct {
+	Directory string `json:"directory"`
+	File      string `json:"file"`
+}
+
+// compileCommandsCoreSources implements the database selection rule: prefer
+// the database covering the most workspace-relative core/ sources, then the
+// newest database, then the lexicographically smallest directory.
+func compileCommandsCoreSources(root string, databaseDir string, database string) int {
+	content, err := os.ReadFile(database)
+	if err != nil {
+		return -1
+	}
+
+	var entries []compileCommandEntry
+	if err := json.Unmarshal(content, &entries); err != nil {
+		return -1
+	}
+
+	seen := make(map[string]struct{})
+	for _, entry := range entries {
+		file := strings.TrimSpace(entry.File)
+		if file == "" {
+			continue
+		}
+		if !filepath.IsAbs(file) {
+			base := strings.TrimSpace(entry.Directory)
+			if base == "" {
+				base = databaseDir
+			} else if !filepath.IsAbs(base) {
+				base = filepath.Join(databaseDir, base)
+			}
+			file = filepath.Join(base, file)
+		}
+		rel, err := filepath.Rel(root, file)
+		if err != nil {
+			continue
+		}
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		if rel == "core" || strings.HasPrefix(rel, "core/") {
+			seen[rel] = struct{}{}
 		}
 	}
 
-	return ""
+	return len(seen)
 }
 
 func (m *Manager) compileCommandsDisplay(dir string) string {

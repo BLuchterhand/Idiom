@@ -4,6 +4,8 @@ import (
 	"idiom/internal/repository/semantic"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,6 +28,34 @@ func BenchmarkBuildCppIndex(b *testing.B) {
 		if index == nil {
 			b.Fatal("index is nil")
 		}
+		b.ReportMetric(float64(index.Timings.Workers), "workers")
+		b.ReportMetric(float64(index.Timings.Parse.Microseconds())/1000, "parse_ms")
+		b.ReportMetric(float64(index.Timings.Calibration.Microseconds())/1000, "calibration_ms")
+		b.ReportMetric(float64(index.Timings.ParseIO.Microseconds())/1000, "parse_io_ms")
+		b.ReportMetric(float64(index.Timings.ParseCPU.Microseconds())/1000, "parse_cpu_ms")
+	}
+}
+
+func BenchmarkBuildCppIndexWorkerCurve(b *testing.B) {
+	root := os.Getenv("IDIOM_CPP_BENCH_ROOT")
+	if root == "" {
+		b.Skip("set IDIOM_CPP_BENCH_ROOT to benchmark a real workspace")
+	}
+
+	for _, workers := range []int{1, 2, 4, 8, 16, 32, 48, 64} {
+		b.Run(strconv.Itoa(workers), func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				index, err := BuildCppIndexWithOptions(root, semantic.IndexOptions{WorkerCount: workers})
+				if err != nil {
+					b.Fatal(err)
+				}
+				if index == nil {
+					b.Fatal("index is nil")
+				}
+				b.ReportMetric(float64(index.Timings.Parse.Microseconds())/1000, "parse_ms")
+			}
+		})
 	}
 }
 
@@ -137,6 +167,23 @@ template class Box<double>;
 		Expect(index.Files).To(HaveLen(1))
 		Expect(index.Files[0].Path).To(Equal("native/sim.cpp"))
 		Expect(index.FindSymbols("tool", 8)).To(BeEmpty())
+	})
+
+	It("produces identical content for every worker count", func() {
+		root := GinkgoT().TempDir()
+		mustWriteFile(filepath.Join(root, "include", "shared.h"), "struct Shared { int value; };\n")
+		mustWriteFile(filepath.Join(root, "src", "one.cpp"), "#include \"shared.h\"\nint one() { return 1; }\n")
+		mustWriteFile(filepath.Join(root, "src", "two.cpp"), "#include \"shared.h\"\nint two() { return 2; }\n")
+
+		baseline, err := BuildCppIndexWithOptions(root, semantic.IndexOptions{WorkerCount: 1})
+		Expect(err).NotTo(HaveOccurred())
+		for _, workers := range []int{2, 4, 8} {
+			index, buildErr := BuildCppIndexWithOptions(root, semantic.IndexOptions{WorkerCount: workers})
+			Expect(buildErr).NotTo(HaveOccurred())
+			Expect(reflect.DeepEqual(index.Files, baseline.Files)).To(BeTrue(), "worker count %d changed indexed files", workers)
+			Expect(reflect.DeepEqual(index.Forward, baseline.Forward)).To(BeTrue(), "worker count %d changed forward edges", workers)
+			Expect(reflect.DeepEqual(index.Reverse, baseline.Reverse)).To(BeTrue(), "worker count %d changed reverse edges", workers)
+		}
 	})
 })
 

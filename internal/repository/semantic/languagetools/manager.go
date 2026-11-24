@@ -46,19 +46,21 @@ type Host interface {
 type Manager struct {
 	host Host
 
-	mu             sync.Mutex
-	goIndex        *semanticgo.GoIndex
-	goIndexToken   string
-	cppIndex       *semanticcpp.CppIndex
-	cppIndexInfo   cppIndexInfo
-	rustIndex      *semanticrust.RustIndex
-	rustIndexToken string
-	tsIndex        *semanticts.TsIndex
-	tsIndexToken   string
-	javaIndex      *semanticjava.JavaIndex
-	javaIndexToken string
-	goplsPath      string
-	goplsChecked   bool
+	mu               sync.Mutex
+	cppBuildMu       sync.Mutex
+	goIndex          *semanticgo.GoIndex
+	goIndexToken     string
+	cppIndex         *semanticcpp.CppIndex
+	cppIndexInfo     cppIndexInfo
+	cppSnapshotProbe *cppSnapshotProbe
+	rustIndex        *semanticrust.RustIndex
+	rustIndexToken   string
+	tsIndex          *semanticts.TsIndex
+	tsIndexToken     string
+	javaIndex        *semanticjava.JavaIndex
+	javaIndexToken   string
+	goplsPath        string
+	goplsChecked     bool
 
 	clangdMu            sync.Mutex
 	clangdLease         chan struct{}

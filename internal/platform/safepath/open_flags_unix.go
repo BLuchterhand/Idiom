@@ -2,8 +2,11 @@
 
 package safepath
 
-import "os"
+import (
+	"os"
+	"syscall"
+)
 
 func safeReadOpenFlags() int {
-	return os.O_RDONLY | os.O_NONBLOCK
+	return os.O_RDONLY | syscall.O_NONBLOCK
 }

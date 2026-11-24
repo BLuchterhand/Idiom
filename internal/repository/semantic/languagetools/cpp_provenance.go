@@ -59,19 +59,20 @@ const (
 // The identity (Key) names the content, not the checkout: two worktrees of one
 // repository at the same tree with the same dirty C++ files share a key.
 type cppIndexInfo struct {
-	Key          string
-	Root         string
-	GitCommonDir string
-	Commit       string
-	Tree         string
-	DirtyPaths   []string
-	IgnoredPaths []string
-	GitError     string
-	Git          time.Duration
-	Build        semanticcpp.CppBuildTimings
-	IndexedPaths []string
-	Symbols      int
-	Memoized     bool
+	Key               string
+	Root              string
+	GitCommonDir      string
+	Commit            string
+	Tree              string
+	TrackedDirtyPaths []string
+	DirtyPaths        []string
+	IgnoredPaths      []string
+	GitError          string
+	Git               time.Duration
+	Build             semanticcpp.CppBuildTimings
+	IndexedPaths      []string
+	Symbols           int
+	Memoized          bool
 }
 
 // cppSnapshot reads the Git identity of the workspace and a content hash of the
@@ -118,6 +119,7 @@ func cppSnapshot(ctx context.Context, root string) cppIndexInfo {
 	}
 
 	info.DirtyPaths = dirty
+	info.TrackedDirtyPaths = append([]string(nil), dirty...)
 
 	// The index skips the same noisy directories as repository discovery. Do not
 	// ask Git to enumerate ignored files across those directories: on Windows an
@@ -442,11 +444,15 @@ func (info cppIndexInfo) freshness(query time.Duration, budgetExceeded bool, ans
 		"bytes":             info.Build.Bytes,
 		"index_build":       build,
 		"phase_ms": map[string]int64{
-			"git":   info.Git.Milliseconds(),
-			"walk":  info.Build.Walk.Milliseconds(),
-			"parse": info.Build.Parse.Milliseconds(),
-			"link":  info.Build.Link.Milliseconds(),
+			"git":         info.Git.Milliseconds(),
+			"walk":        info.Build.Walk.Milliseconds(),
+			"parse":       info.Build.Parse.Milliseconds(),
+			"link":        info.Build.Link.Milliseconds(),
+			"calibration": info.Build.Calibration.Milliseconds(),
+			"parse_io":    info.Build.ParseIO.Milliseconds(),
+			"parse_cpu":   info.Build.ParseCPU.Milliseconds(),
 		},
+		"workers":     info.Build.Workers,
 		"answered_by": answeredBy,
 		"query_ms":    query.Milliseconds(),
 		"budget_ms":   cppIndexBudget.Milliseconds(),

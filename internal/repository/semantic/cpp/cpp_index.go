@@ -2,6 +2,7 @@ package cpp
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"math"
 	"os"
@@ -32,15 +33,15 @@ type CppIndex struct {
 // CppBuildTimings records where a BuildCppIndexWithOptions call spent its time
 // so a slow or budget-exceeded build can name its phase.
 type CppBuildTimings struct {
-	Walk          time.Duration
-	Parse         time.Duration
-	Link          time.Duration
-	Calibration   time.Duration
-	ParseIO       time.Duration
-	ParseCPU      time.Duration
-	Workers       int
-	Files         int
-	Bytes         int64
+	Walk        time.Duration
+	Parse       time.Duration
+	Link        time.Duration
+	Calibration time.Duration
+	ParseIO     time.Duration
+	ParseCPU    time.Duration
+	Workers     int
+	Files       int
+	Bytes       int64
 }
 
 type CppFile struct {
@@ -111,7 +112,7 @@ var cppHeaderExtensions = map[string]struct{}{
 
 const (
 	cppParseMeasurementFiles = 8
-	cppParseMaxWorkerFactor  = 4
+	cppParseMaxWorkerFactor  = 2
 )
 
 func BuildCppIndex(root string) (*CppIndex, error) {
@@ -433,8 +434,11 @@ func cppParseWorkerCount(fileCount int, gomaxprocs int, ioTime time.Duration, cp
 	}
 
 	factor := 1.0
-	if cpuTime > 0 {
-		factor += float64(ioTime) / float64(cpuTime)
+	if total := ioTime + cpuTime; total > 0 {
+		// Only the I/O fraction can overlap CPU work. Using io/cpu directly
+		// overstates the useful parallelism when rooted reads are individually
+		// small and turns a 32-CPU host into an unnecessarily large worker pool.
+		factor += float64(ioTime) / float64(total)
 	}
 	factor = min(factor, float64(cppParseMaxWorkerFactor))
 
