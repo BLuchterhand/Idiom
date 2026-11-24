@@ -1,0 +1,118 @@
+BenTech HEAD: 3dc88c4100788ede69709b90f0d4e041fa5f07ae
+Idiom branch: g626-warm
+Implementation commit: 2fbfc0f882a612d78357a545fca9bbae6ccb87e5
+Final binary: C:\Users\benlu\Documents\GitHub\idiom-g626\bin\idiom.exe
+Replay workspace: C:\Users\benlu\Documents\GitHub\BenTech\.claude\worktrees\pc-dup-review
+
+G626 round 4 final-binary results
+
+Replay selection source:
+C:\Users\benlu\Documents\GitHub\BenTech\.claude\worktrees\pc-dup-review\docs\engineering\duplicate-logic-review\core-sim-pass2.txt
+
+Selection rule: first 50 records with tool cpp_references or context_query,
+exit=1, and reason containing "timed out" or "index refresh failed".
+Selection count: 36 cpp_references, 14 context_query.
+
+Selected records:
+01 context_query body air shelter wind radiant temperature
+02 cpp_references felt_wind_milli_kmh
+03 cpp_references wind_for_air_milli_kmh
+04 cpp_references felt_air_mc
+05 context_query digestion hydration stomach capacity water intake
+06 cpp_references intake_room_j
+07 cpp_references water_room_ul
+08 cpp_references advance_stores
+09 context_query continuous body effects thresholds health visuals
+10 cpp_references body_effects
+11 cpp_references death_cause_of
+12 cpp_references body_state_valid
+13 context_query rate integration saturation remainder
+14 cpp_references settle_needs
+15 context_query food sickness risk duration dry spoil days
+16 cpp_references sickness_chance_ppm
+17 cpp_references water_risk_ppm
+18 cpp_references game_minutes_to_ticks
+19 context_query food spoiled expiry merge storage temperature
+20 cpp_references life_fraction_pm
+21 cpp_references game_minutes_of
+22 cpp_references settle_stack
+23 context_query food drying heat preservation rates
+24 cpp_references dry_rate_q16
+25 cpp_references rescale_ticks_left
+26 cpp_references row_rate_q16
+27 context_query campfire light fuel air rain exposure and burn time
+28 cpp_references fire_output
+29 cpp_references rain_douses
+30 cpp_references is_lit
+31 cpp_references starter_light_ticks
+32 context_query fire geometry attenuation ray shelter
+33 cpp_references transmission_pm
+34 cpp_references radiant_transmission_pm
+35 cpp_references isqrt
+36 context_query snow pack interpolation checkpoint sample replay
+37 cpp_references advance_day
+38 cpp_references integrate_rate
+39 cpp_references precipitation_between
+40 context_query snow serialization checksum hash
+41 cpp_references snow_table_hash
+42 cpp_references ecology_checksum
+43 context_query weather air snow phase rain visibility
+44 cpp_references weather_at
+45 cpp_references precipitation_at
+46 cpp_references daylight_q16
+47 context_query fireflies ramp and season
+48 cpp_references firefly_air_pm
+49 cpp_references firefly_habitat_pm
+50 context_query ecology debt stage crossing settle and decay
+
+Replay timing from the final bin/idiom.exe:
+pass        records  total_ms  max_ms  stalls
+cold        50       495098    39576   0
+warm        50       456888    32358   0
+
+Replay answer provenance:
+Every cpp_references answer in the duplicate worktree named
+"compile database: none". The main BenTech checkout was not modified. The
+compile database unit fixture selected build/alpha by unique core-source
+coverage, newest mtime, and lexical tie-break.
+
+Snapshot benchmarks:
+BenchmarkCppSnapshot                 675.7 ms/op
+BenchmarkCppSnapshotCachedHit        220.9 ms/op; probe_ms=220.9;
+                                     probe_files=1922 probe_dirs=256 probe_rules=1
+
+Worker curve, final worker implementation:
+workers  total_ms/op  parse_ms
+1        11126.7       9343
+2         6250.1       4779
+4         5811.3       4197
+8         5399.0       3749
+16        4822.3       3230
+32        5123.8       3452
+48        4354.4       2901
+64        4805.9       3163
+
+Default repeated benchmark (2 iterations):
+4778.5 ms/op; workers=26; parse=3010 ms; calibration=35.3 ms;
+parse_io=26.2 ms; parse_cpu=6.9 ms.
+
+Focused verification:
+go test ./internal/repository/semantic/cpp -count=1: PASS
+targeted provenance/compile database/probe tests: PASS
+clangd workspace/lifecycle focus: 10 passed, 0 failed
+LSP/readiness focus: 20 passed, 0 failed
+GOOS=darwin go vet ./...: existing lspBaseClient copylock diagnostics
+GOOS=linux go vet ./...: existing lspBaseClient copylock diagnostics
+go build -o bin/idiom.exe ./cmd/idiom: PASS
+Safepath: 18 passed, 4 existing Windows symlink-privilege failures, 9 skipped
+go test ./...: safely interrupted after about two minutes without completion
+
+Break checks:
+cpp_index_test.go:183 inverted assertion failed at worker count 2: PASS evidence.
+cpp_provenance_test.go:163 inverted stable-probe assertion failed: PASS evidence.
+
+Preflight:
+bash scripts/preflight.sh --since origin/main
+FAIL test-affected: no test_affected.sh stamp for the BenTech tree.
+The test-affected script was not run because it writes BenTech stamps/logs and
+the brief requires BenTech to remain read-only.
