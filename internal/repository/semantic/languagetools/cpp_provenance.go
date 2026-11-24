@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/safepath"
+	"idiom/internal/repository/discovery"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
 )
 
@@ -26,6 +28,14 @@ const (
 	// cppClangdBudget bounds the optional clangd call-hierarchy attempt so it can
 	// never consume the tool's whole timeout before the syntax index answers.
 	cppClangdBudget = 5 * time.Second
+	// cppReferencesClangdBudget bounds clangd's optional background-index wait.
+	// Reference queries already have a name-search fallback, so a cold clangd
+	// index must not consume the outer tool deadline.
+	cppReferencesClangdBudget = 3 * time.Second
+	// Large cold workspaces make clangd's per-query background-index startup
+	// substantially more expensive than the existing text-search fallback.
+	cppReferencesClangdFileThreshold = 512
+	cppReferenceLineCap              = 240
 	// cppFreshnessPathLimit caps the dirty paths echoed in a freshness report.
 	cppFreshnessPathLimit = 20
 )
@@ -65,8 +75,10 @@ type cppIndexInfo struct {
 	Memoized     bool
 }
 
-// cppSnapshot reads the Git identity of the workspace and a content hash of its
-// dirty C++ files. It is the only per-call Git work and is cheap (two commands).
+// cppSnapshot reads the Git identity of the workspace and a content hash of the
+// C++ files that the syntax index can see. Git only supplies the repository
+// identity and tracked diff; the bounded walk supplies untracked files without
+// descending into discovery-excluded directories.
 func cppSnapshot(ctx context.Context, root string) cppIndexInfo {
 	started := time.Now()
 	info := cppIndexInfo{Root: root}
@@ -98,7 +110,7 @@ func cppSnapshot(ctx context.Context, root string) cppIndexInfo {
 
 	info.GitCommonDir, info.Commit, info.Tree = filepath.ToSlash(common), lines[1], lines[2]
 
-	dirty, err := gitstate.DirtyPaths(ctx, root, gitstate.DirtyPathOptions{Pathspecs: cppGitPathspecs, Sort: true})
+	dirty, err := cppChangedTrackedPaths(ctx, root)
 	if err != nil {
 		info.GitError = err.Error()
 		info.Git = time.Since(started)
@@ -108,10 +120,10 @@ func cppSnapshot(ctx context.Context, root string) cppIndexInfo {
 
 	info.DirtyPaths = dirty
 
-	// The walk indexes gitignored C++ files too, so they are part of the identity.
-	ignoredArgs := append([]string{"ls-files", "-o", "-i", "--exclude-standard", "--"}, cppGitPathspecs...)
-
-	ignored, err := gitstate.Output(ctx, root, ignoredArgs...)
+	// The index skips the same noisy directories as repository discovery. Do not
+	// ask Git to enumerate ignored files across those directories: on Windows an
+	// ignored worktree forest can take longer than the whole C++ index budget.
+	tracked, err := cppTrackedPaths(ctx, root)
 	if err != nil {
 		info.GitError = err.Error()
 		info.Git = time.Since(started)
@@ -119,18 +131,172 @@ func cppSnapshot(ctx context.Context, root string) cppIndexInfo {
 		return info
 	}
 
-	for _, line := range strings.Split(ignored, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			info.IgnoredPaths = append(info.IgnoredPaths, line)
-		}
+	untracked, err := cppUntrackedIndexedPaths(ctx, root, tracked, info.DirtyPaths)
+	if err != nil {
+		info.GitError = err.Error()
+		info.Git = time.Since(started)
+
+		return info
 	}
 
+	nonIgnored, err := cppNonIgnoredPaths(ctx, root)
+	if err != nil {
+		info.GitError = err.Error()
+		info.Git = time.Since(started)
+
+		return info
+	}
+	nonIgnoredSet := make(map[string]struct{}, len(nonIgnored))
+	for _, path := range nonIgnored {
+		nonIgnoredSet[path] = struct{}{}
+	}
+	for _, path := range untracked {
+		if _, ok := nonIgnoredSet[path]; ok {
+			info.DirtyPaths = append(info.DirtyPaths, path)
+
+			continue
+		}
+
+		info.IgnoredPaths = append(info.IgnoredPaths, path)
+	}
+	slices.Sort(info.DirtyPaths)
 	slices.Sort(info.IgnoredPaths)
 
 	info.Key = cppIndexKey(root, info)
 	info.Git = time.Since(started)
 
 	return info
+}
+
+// cppChangedTrackedPaths returns tracked C++ paths changed from HEAD. Unlike
+// git status with untracked-files=all, this does not enumerate ignored files.
+func cppChangedTrackedPaths(ctx context.Context, root string) ([]string, error) {
+	args := append([]string{"diff", "--name-only", "--diff-filter=ACMRD", "HEAD", "--"}, cppGitPathspecs...)
+	output, err := gitstate.Output(ctx, root, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]string, 0, 16)
+	for _, line := range strings.Split(output, "\n") {
+		path := strings.TrimSpace(line)
+		if path == "" {
+			continue
+		}
+
+		paths = append(paths, filepath.ToSlash(filepath.Clean(path)))
+	}
+
+	slices.Sort(paths)
+
+	return paths, nil
+}
+
+// cppTrackedPaths returns the tracked C++ paths without asking Git to descend
+// through ignored directories. The latter collapses ignored directories into
+// directory entries, but still scans all of their contents on Windows.
+func cppTrackedPaths(ctx context.Context, root string) (map[string]struct{}, error) {
+	args := append([]string{"ls-files", "--cached", "--"}, cppGitPathspecs...)
+	output, err := gitstate.Output(ctx, root, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	tracked := make(map[string]struct{})
+	for _, line := range strings.Split(output, "\n") {
+		path := strings.TrimSpace(line)
+		if path == "" {
+			continue
+		}
+
+		tracked[filepath.ToSlash(filepath.Clean(path))] = struct{}{}
+	}
+
+	return tracked, nil
+}
+
+// cppNonIgnoredPaths returns non-ignored untracked C++ paths without asking
+// Git to enumerate ignored descendants. The index-scope walk still supplies
+// ignored paths, which are the files the provenance key must also cover.
+func cppNonIgnoredPaths(ctx context.Context, root string) ([]string, error) {
+	args := append([]string{"ls-files", "-o", "--exclude-standard", "--"}, cppGitPathspecs...)
+	output, err := gitstate.Output(ctx, root, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]string, 0, 16)
+	for _, line := range strings.Split(output, "\n") {
+		path := strings.TrimSpace(line)
+		if path == "" {
+			continue
+		}
+
+		paths = append(paths, filepath.ToSlash(filepath.Clean(path)))
+	}
+
+	slices.Sort(paths)
+
+	return paths, nil
+}
+
+// cppUntrackedIndexedPaths finds untracked C++ files in the same scope the
+// syntax index actually walks. It deliberately does not ask Git to classify
+// them: both ignored and non-ignored files are inputs to the live index.
+func cppUntrackedIndexedPaths(ctx context.Context, root string, tracked map[string]struct{}, dirty []string) ([]string, error) {
+	dirtySet := make(map[string]struct{}, len(dirty))
+	for _, path := range dirty {
+		dirtySet[filepath.ToSlash(filepath.Clean(path))] = struct{}{}
+	}
+
+	paths := make([]string, 0, 16)
+	err := safepath.WalkDirUnderRoot(root, root, "C++ snapshot", func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if d.IsDir() {
+			if discovery.ShouldSkipDirName(d.Name()) && path != root {
+				return filepath.SkipDir
+			}
+
+			return nil
+		}
+
+		if !isCppExtension(filepath.Ext(path)) {
+			return nil
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
+		if _, ok := tracked[rel]; ok {
+			return nil
+		}
+		if _, ok := dirtySet[rel]; ok {
+			return nil
+		}
+
+		paths = append(paths, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	slices.Sort(paths)
+
+	return paths, nil
 }
 
 func cppIndexKey(root string, info cppIndexInfo) string {

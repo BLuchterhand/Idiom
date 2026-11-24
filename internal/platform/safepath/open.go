@@ -214,6 +214,38 @@ func OpenFileFromRoot(root *os.Root, canonicalRoot string, relative string, labe
 	return openPreparedFile(root, target)
 }
 
+// ReadFileFromRoot reads an already-discovered file through an established
+// workspace root handle. Callers must pass the canonical root used to open the
+// handle and a root-relative path. The root handle provides the confinement;
+// the opened handle is still validated before its contents are read.
+func ReadFileFromRoot(root *os.Root, canonicalRoot string, relative string, label string) ([]byte, error) {
+	if root == nil {
+		return nil, fmt.Errorf("%s root is not open", label)
+	}
+
+	relative = filepath.Clean(filepath.FromSlash(strings.TrimSpace(relative)))
+	if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return nil, fmt.Errorf("%s must name a file under its root", label)
+	}
+
+	file, err := root.Open(relative)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", label, err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect opened %s: %w", label, err)
+	}
+	targetPath := filepath.Join(canonicalRoot, relative)
+	if err := validateOpenedFile(file, canonicalRoot, targetPath, info, label); err != nil {
+		return nil, err
+	}
+
+	return io.ReadAll(file)
+}
+
 // ReadFileUnderRoot opens and reads one file without reopening its pathname.
 func ReadFileUnderRoot(root string, path string, label string, opts Options) ([]byte, error) {
 	file, err := OpenFileUnderRoot(root, path, label, opts)

@@ -5,10 +5,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+func BenchmarkBuildCppIndex(b *testing.B) {
+	root := os.Getenv("IDIOM_CPP_BENCH_ROOT")
+	if root == "" {
+		b.Skip("set IDIOM_CPP_BENCH_ROOT to benchmark a real workspace")
+	}
+
+	b.ReportAllocs()
+	for range b.N {
+		index, err := BuildCppIndex(root)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if index == nil {
+			b.Fatal("index is nil")
+		}
+	}
+}
 
 var _ = Describe("C++ semantic index", func() {
 	It("indexes declarations, calls, includes, templates, and blast radius", func() {

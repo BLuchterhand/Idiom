@@ -71,10 +71,12 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 		return nil, cppIndexInfo{}, fmt.Errorf("c++-specific tools require a workspace with C/C++ source files or compile_commands.json")
 	}
 
+	// Snapshot provenance is bounded by the caller's tool context. The build
+	// budget applies to walking and parsing, not to Git identity work; otherwise
+	// a slow Windows worktree can consume the parse budget before indexing starts.
+	info := cppSnapshot(parent, m.Root())
 	ctx, cancel := context.WithTimeout(parent, cppIndexBudget)
 	defer cancel()
-
-	info := cppSnapshot(ctx, m.Root())
 
 	m.mu.Lock()
 

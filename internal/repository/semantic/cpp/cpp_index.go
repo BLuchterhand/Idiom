@@ -197,6 +197,15 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 
 	index.Timings.Walk = time.Since(walkStarted)
 	parseStarted := time.Now()
+	canonicalRoot, err := safepath.CanonicalExistingPath(root)
+	if err != nil {
+		return nil, err
+	}
+	rootHandle, err := safepath.OpenRootPath(canonicalRoot, "C++ index")
+	if err != nil {
+		return nil, err
+	}
+	defer rootHandle.Close()
 
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts.Context); err != nil {
@@ -206,9 +215,7 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 			return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
 		}
 
-		full := filepath.Join(root, filepath.FromSlash(rel))
-
-		contentBytes, err := indexsupport.ReadFileUnderRoot(root, full)
+		contentBytes, err := safepath.ReadFileFromRoot(rootHandle, canonicalRoot, rel, "indexed file")
 		if err != nil {
 			continue
 		}

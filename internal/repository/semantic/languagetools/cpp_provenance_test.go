@@ -68,11 +68,32 @@ func TestCppSnapshotKeyCoversDirtyAndIgnoredFiles(t *testing.T) {
 		t.Fatal("editing a gitignored C++ file does not change the key")
 	}
 
+	beforeSkipped := key()
+	writeFile(t, filepath.Join(root, ".claude", "skip.h"), "int skipped();\n")
+	if key() != beforeSkipped {
+		t.Fatal("a C++ file under a discovery-excluded directory changed the key")
+	}
+
 	before := key()
 
 	writeFile(t, filepath.Join(root, "a.cpp"), "int a() { return 2; }\n")
 
 	if key() == before {
 		t.Fatal("editing a tracked C++ file does not change the key")
+	}
+}
+
+func BenchmarkCppSnapshot(b *testing.B) {
+	root := os.Getenv("IDIOM_CPP_BENCH_ROOT")
+	if root == "" {
+		b.Skip("set IDIOM_CPP_BENCH_ROOT to benchmark a real workspace")
+	}
+
+	b.ReportAllocs()
+	for range b.N {
+		info := cppSnapshot(context.Background(), root)
+		if info.GitError != "" || info.Key == "" {
+			b.Fatal(info.GitError)
+		}
 	}
 }
