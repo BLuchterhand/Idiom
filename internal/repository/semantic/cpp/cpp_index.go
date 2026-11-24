@@ -3,6 +3,7 @@ package cpp
 import (
 	"cmp"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,11 +32,15 @@ type CppIndex struct {
 // CppBuildTimings records where a BuildCppIndexWithOptions call spent its time
 // so a slow or budget-exceeded build can name its phase.
 type CppBuildTimings struct {
-	Walk  time.Duration
-	Parse time.Duration
-	Link  time.Duration
-	Files int
-	Bytes int64
+	Walk          time.Duration
+	Parse         time.Duration
+	Link          time.Duration
+	Calibration   time.Duration
+	ParseIO       time.Duration
+	ParseCPU      time.Duration
+	Workers       int
+	Files         int
+	Bytes         int64
 }
 
 type CppFile struct {
@@ -104,7 +109,10 @@ var cppHeaderExtensions = map[string]struct{}{
 	".tpp": {},
 }
 
-const cppParseWorkerFloor = 64
+const (
+	cppParseMeasurementFiles = 8
+	cppParseMaxWorkerFactor  = 4
+)
 
 func BuildCppIndex(root string) (*CppIndex, error) {
 	return BuildCppIndexWithOptions(root, semantic.IndexOptions{})
@@ -212,10 +220,31 @@ func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppInde
 	}
 	parsed := make([]parsedFile, len(paths))
 	jobs := make(chan int)
-	// Parsing is dominated by independent rooted file reads and regex scans, so
-	// a small fixed floor keeps the cold path from underusing fast workstations
-	// whose Go scheduler reports a conservative effective CPU count.
-	workerCount := min(len(paths), max(runtime.GOMAXPROCS(0), cppParseWorkerFloor))
+	workerCount := opts.WorkerCount
+	if workerCount <= 0 {
+		calibrationStarted := time.Now()
+		ioTime, cpuTime, err := measureCppParseProfile(canonicalRoot, root, paths, byName, byRel, opts.Context)
+		index.Timings.Calibration = time.Since(calibrationStarted)
+		index.Timings.ParseIO = ioTime
+		index.Timings.ParseCPU = cpuTime
+		if err != nil {
+			index.Timings.Parse = time.Since(parseStarted)
+
+			if ctxErr := indexsupport.ContextErr(opts.Context); ctxErr != nil {
+				return nil, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: ctxErr}
+			}
+
+			return nil, err
+		}
+
+		workerCount = cppParseWorkerCount(len(paths), runtime.GOMAXPROCS(0), ioTime, cpuTime)
+	}
+	workerCount = min(len(paths), max(1, workerCount))
+	index.Timings.Workers = workerCount
+	// The calibration is intentionally small and deterministic. Its only role
+	// is to estimate how much rooted I/O can overlap the CPU-bound parser; the
+	// result is not part of the index, so every worker count must produce the
+	// same ordered files and symbols.
 	var workers sync.WaitGroup
 	var errMu sync.Mutex
 	var workerErr error
@@ -355,6 +384,61 @@ dispatch:
 	index.Timings.Link = time.Since(linkStarted)
 
 	return index, nil
+}
+
+func measureCppParseProfile(root string, displayRoot string, paths []string, byName map[string][]string, byRel map[string]string, ctx context.Context) (time.Duration, time.Duration, error) {
+	sampleCount := min(len(paths), cppParseMeasurementFiles)
+	if sampleCount == 0 {
+		return 0, 0, nil
+	}
+
+	rootHandle, err := safepath.OpenRootPath(root, "C++ index calibration")
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rootHandle.Close()
+
+	var ioTime, cpuTime time.Duration
+	for _, rel := range paths[:sampleCount] {
+		if err := indexsupport.ContextErr(ctx); err != nil {
+			return ioTime, cpuTime, err
+		}
+
+		started := time.Now()
+		contentBytes, err := safepath.ReadFileFromRoot(rootHandle, displayRoot, rel, "indexed file calibration", safepath.Options{
+			RejectSymlinkAncestors: true,
+			RejectSymlinkTarget:    true,
+		})
+		ioTime += time.Since(started)
+		if err != nil {
+			continue
+		}
+
+		started = time.Now()
+		_ = parseCppSymbols(rel, string(contentBytes))
+		_ = parseCppIncludes(rel, string(contentBytes), byName, byRel)
+		cpuTime += time.Since(started)
+	}
+
+	return ioTime, cpuTime, nil
+}
+
+func cppParseWorkerCount(fileCount int, gomaxprocs int, ioTime time.Duration, cpuTime time.Duration) int {
+	if fileCount <= 0 {
+		return 0
+	}
+
+	if gomaxprocs < 1 {
+		gomaxprocs = 1
+	}
+
+	factor := 1.0
+	if cpuTime > 0 {
+		factor += float64(ioTime) / float64(cpuTime)
+	}
+	factor = min(factor, float64(cppParseMaxWorkerFactor))
+
+	return min(fileCount, max(1, int(math.Ceil(float64(gomaxprocs)*factor))))
 }
 
 func (idx *CppIndex) Summary() string {
