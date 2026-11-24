@@ -588,7 +588,7 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 		case strings.TrimSpace(output) != "":
 			return ToolResult{
 				Tool:    "cpp_references",
-				Summary: "Resolved C++ references via clangd",
+				Summary: fmt.Sprintf("Resolved C++ references via clangd (compile database: %s)", m.compileCommandsDisplay(compileDir)),
 				Output:  output,
 			}, cppReferencesByClangd
 		default:
@@ -1352,12 +1352,16 @@ func (m *Manager) clangdBinary() string {
 }
 
 func (m *Manager) compileCommandsDir() string {
+	return compileCommandsDirForRoot(m.Root())
+}
+
+func compileCommandsDirForRoot(root string) string {
 	candidates := []string{
-		m.Root(),
-		filepath.Join(m.Root(), "build"),
-		filepath.Join(m.Root(), "out"),
-		filepath.Join(m.Root(), "native"),
-		filepath.Join(m.Root(), "native", "build"),
+		root,
+		filepath.Join(root, "build"),
+		filepath.Join(root, "out"),
+		filepath.Join(root, "native"),
+		filepath.Join(root, "native", "build"),
 	}
 	for _, dir := range candidates {
 		if info, err := os.Stat(filepath.Join(dir, "compile_commands.json")); err == nil && !info.IsDir() {
@@ -1365,7 +1369,32 @@ func (m *Manager) compileCommandsDir() string {
 		}
 	}
 
+	buildRoot := filepath.Join(root, "build")
+	entries, err := os.ReadDir(buildRoot)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		dir := filepath.Join(buildRoot, entry.Name())
+		if info, err := os.Stat(filepath.Join(dir, "compile_commands.json")); err == nil && !info.IsDir() {
+			return dir
+		}
+	}
+
 	return ""
+}
+
+func (m *Manager) compileCommandsDisplay(dir string) string {
+	rel, err := filepath.Rel(m.Root(), dir)
+	if err != nil || rel == "." {
+		return "workspace root"
+	}
+
+	return filepath.ToSlash(rel)
 }
 
 func (m *Manager) runClangdCheck(ctx context.Context, compileDir string, rel string) (string, error) {

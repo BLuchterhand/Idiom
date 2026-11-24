@@ -83,6 +83,17 @@ func TestCppSnapshotKeyCoversDirtyAndIgnoredFiles(t *testing.T) {
 	}
 }
 
+func TestCompileCommandsDirFindsDeterministicPerBuildDatabase(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "build", "zeta", "compile_commands.json"), "[]\n")
+	writeFile(t, filepath.Join(root, "build", "alpha", "compile_commands.json"), "[]\n")
+
+	want := filepath.Join(root, "build", "alpha")
+	if got := compileCommandsDirForRoot(root); got != want {
+		t.Fatalf("compile database directory = %q, want %q", got, want)
+	}
+}
+
 func BenchmarkCppSnapshot(b *testing.B) {
 	root := os.Getenv("IDIOM_CPP_BENCH_ROOT")
 	if root == "" {
