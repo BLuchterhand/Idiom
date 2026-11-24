@@ -28,14 +28,6 @@ const (
 	// cppClangdBudget bounds the optional clangd call-hierarchy attempt so it can
 	// never consume the tool's whole timeout before the syntax index answers.
 	cppClangdBudget = 5 * time.Second
-	// cppReferencesClangdBudget bounds clangd's optional background-index wait.
-	// Reference queries already have a name-search fallback, so a cold clangd
-	// index must not consume the outer tool deadline.
-	cppReferencesClangdBudget = 3 * time.Second
-	// Large cold workspaces make clangd's per-query background-index startup
-	// substantially more expensive than the existing text-search fallback.
-	cppReferencesClangdFileThreshold = 512
-	cppReferenceLineCap              = 240
 	// cppFreshnessPathLimit caps the dirty paths echoed in a freshness report.
 	cppFreshnessPathLimit = 20
 )

@@ -116,6 +116,7 @@ type lspLocationQueryConfig struct {
 	serverName string
 	newClient  func(context.Context) (managedLSPClient, error)
 	fileURI    func(string) string
+	prepare    func(context.Context, managedLSPClient, string) error
 	format     func([]LSPLocation, string, int, bool) string
 }
 
@@ -240,6 +241,12 @@ func (c *lspBaseClient) request(ctx context.Context, method string, params any, 
 		// Server requests carry their own ids (clangd starts at 0), so they must
 		// never be matched against our pending request id.
 		if env.Method != "" {
+			if len(env.ID) > 0 && env.Method == "window/workDoneProgress/create" {
+				if err := c.writeMessage(map[string]any{"jsonrpc": "2.0", "id": env.ID, "result": nil}); err != nil {
+					return err
+				}
+			}
+
 			if c.handleNotification != nil && len(env.ID) == 0 {
 				c.handleNotification(env.Method, env.Params)
 			}
@@ -381,6 +388,11 @@ func (m *Manager) lspLocationQuery(ctx context.Context, cfg lspLocationQueryConf
 
 	if err := client.openFile(abs); err != nil {
 		return "", err
+	}
+	if cfg.prepare != nil {
+		if err := cfg.prepare(ctx, client, abs); err != nil {
+			return "", err
+		}
 	}
 
 	params := map[string]any{

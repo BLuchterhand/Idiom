@@ -13,26 +13,21 @@ import (
 )
 
 const (
-	// clangdBackgroundIndexBudget bounds the wait for clangd's background index.
-	// Loading cached shards takes well under a second; a first full index of a
-	// large tree can exceed it, and the query then reports clangd unavailable
-	// instead of answering from the opened file alone.
-	clangdBackgroundIndexBudget = 30 * time.Second
+	// clangdIndexProbeBudget bounds the semantic readiness probe. It does not
+	// start another index; it waits for the persistent server to expose the
+	// requested symbol in the requested file.
+	clangdIndexProbeBudget = 15 * time.Second
 
 	clangdBackgroundIndexToken = "backgroundIndexProgress"
 )
 
 type clangdLSPClient struct {
 	lspBaseClient
+	queryCtx context.Context // retained for protocol test clients; query budgets use call contexts
 
-	// queryCtx is the context the client was created for. openFile has no
-	// context parameter (managedLSPClient), but the index wait it performs must
-	// stay inside the caller's budget.
-	queryCtx context.Context
-
-	// awaitIndex is set when a compile database exists: clangd then builds a
-	// background index on the first didOpen, and cross-file references and
-	// call hierarchy only exist once that index has loaded.
+	// awaitIndex is set when a compile database exists. A progress end event is
+	// not sufficient readiness evidence: clangd can emit it before all shards
+	// needed by a cross-file query are visible.
 	awaitIndex bool
 }
 
@@ -55,7 +50,6 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 
 	client := &clangdLSPClient{
 		lspBaseClient: base,
-		queryCtx:      ctx,
 		awaitIndex:    compileDir != "",
 	}
 
@@ -98,32 +92,49 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 	return client, nil
 }
 
-// openFile opens the document and, on the first open with a compile database,
-// waits for clangd's background index. Querying before it loads answers only
-// from the opened file, which silently drops every cross-file reference.
+// openFile opens the document. Readiness is checked by awaitIndexFor once the
+// caller supplies the symbol being queried; didOpen alone has no useful
+// cross-file readiness predicate.
 func (c *clangdLSPClient) openFile(path string) error {
-	if err := c.lspBaseClient.openFile(path, clangdLanguageID(path)); err != nil {
-		return err
-	}
+	return c.lspBaseClient.openFile(path, clangdLanguageID(path))
+}
 
+// awaitIndexFor waits for a semantic workspace/symbol probe to find the
+// requested symbol in the opened file. This is stronger than a single
+// backgroundIndexProgress end notification, which only reports one clangd
+// activity and is not a cross-file readiness guarantee.
+func (c *clangdLSPClient) awaitIndexFor(ctx context.Context, targetPath string, symbol string) error {
 	if !c.awaitIndex {
 		return nil
 	}
 
-	c.awaitIndex = false
-
-	ctx, cancel := context.WithTimeout(c.queryCtx, clangdBackgroundIndexBudget)
+	probeCtx, cancel := context.WithTimeout(ctx, clangdIndexProbeBudget)
 	defer cancel()
 
-	if err := c.awaitBackgroundIndex(ctx); err != nil {
-		// A read may still be blocked on clangd's stdout; killing the process
-		// releases it so no reader is left racing later requests.
-		c.forceClose()
+	for {
+		var symbols []LSPSymbolInfo
+		if err := c.request(probeCtx, "workspace/symbol", map[string]any{"query": symbol}, &symbols); err != nil {
+			return fmt.Errorf("clangd readiness probe failed: %w", err)
+		}
 
-		return fmt.Errorf("clangd background index not ready, cross-file results unavailable: %w", err)
+		for _, candidate := range symbols {
+			path, err := clangdPathFromURI(candidate.Location.URI)
+			if err != nil || filepath.Clean(path) != filepath.Clean(targetPath) {
+				continue
+			}
+			if candidate.Name == symbol || strings.TrimSuffix(candidate.Name, "()") == symbol || strings.HasSuffix(candidate.Name, "::"+symbol) {
+				c.awaitIndex = false
+
+				return nil
+			}
+		}
+
+		select {
+		case <-probeCtx.Done():
+			return fmt.Errorf("clangd semantic index did not expose %s in %s: %w", symbol, targetPath, probeCtx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-
-	return nil
 }
 
 func (c *clangdLSPClient) awaitBackgroundIndex(ctx context.Context) error {
@@ -267,7 +278,10 @@ func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semanti
 			return m.newClangdLSPClient(ctx)
 		},
 		fileURI: LSPFileURI,
-		format:  m.formatClangdLocations,
+		prepare: func(ctx context.Context, client managedLSPClient, abs string) error {
+			return client.(*clangdLSPClient).awaitIndexFor(ctx, abs, match.Name)
+		},
+		format: m.formatClangdLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.cppLSPPosition(abs, match)
 	}, "textDocument/implementation", nil, pathFilter, m.maxDirectoryEntries(), false)
@@ -280,7 +294,10 @@ func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semanticcpp.
 			return m.newClangdLSPClient(ctx)
 		},
 		fileURI: LSPFileURI,
-		format:  m.formatClangdLocations,
+		prepare: func(ctx context.Context, client managedLSPClient, abs string) error {
+			return client.(*clangdLSPClient).awaitIndexFor(ctx, abs, match.Name)
+		},
+		format: m.formatClangdLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.cppLSPPosition(abs, match)
 	}, "textDocument/references", map[string]any{
@@ -300,8 +317,19 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semanticc
 		return callHierarchyResult{}, err
 	}
 
-	items, err := prepareLSPCallHierarchy(ctx, client, LSPFileURI, abs, m.cppLSPPosition(abs, match))
-	if err != nil {
+	if err := client.openFile(abs); err != nil {
+		return callHierarchyResult{}, err
+	}
+	if err := client.awaitIndexFor(ctx, abs, match.Name); err != nil {
+		return callHierarchyResult{}, err
+	}
+
+	params := map[string]any{
+		"textDocument": map[string]any{"uri": LSPFileURI(abs)},
+		"position":     m.cppLSPPosition(abs, match),
+	}
+	var items []LSPCallHierarchyItem
+	if err := client.request(ctx, "textDocument/prepareCallHierarchy", params, &items); err != nil {
 		return callHierarchyResult{}, err
 	}
 
@@ -325,10 +353,20 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semanticc
 						continue
 					}
 
-					if fallbackItems, prepErr := prepareLSPCallHierarchy(ctx, client, LSPFileURI, targetAbs, map[string]any{
-						"line":      location.Range.Start.Line,
-						"character": location.Range.Start.Character,
-					}); prepErr == nil && len(fallbackItems) > 0 {
+					if err := client.openFile(targetAbs); err != nil {
+						continue
+					}
+					if err := client.awaitIndexFor(ctx, targetAbs, match.Name); err != nil {
+						continue
+					}
+					var fallbackItems []LSPCallHierarchyItem
+					if prepErr := client.request(ctx, "textDocument/prepareCallHierarchy", map[string]any{
+						"textDocument": map[string]any{"uri": LSPFileURI(targetAbs)},
+						"position": map[string]any{
+							"line":      location.Range.Start.Line,
+							"character": location.Range.Start.Character,
+						},
+					}, &fallbackItems); prepErr == nil && len(fallbackItems) > 0 {
 						items = fallbackItems
 						break
 					}
