@@ -48,6 +48,8 @@ type sqlitePatchCounts struct {
 	FilesIndexed   int
 	SymbolsIndexed int
 	EdgesIndexed   int
+
+	CollectorReports []CollectorReport
 }
 
 func storageBackends(root string, activeKind string) []StoreBackendReport {
@@ -354,7 +356,7 @@ func saveSQLiteGraph(root string, graph Graph) error {
 	return writeSQLiteMetadata(root, metadata)
 }
 
-func patchSQLiteGraphScope(root string, graph Graph, scope string, existing StatusReport) (sqlitePatchCounts, error) {
+func patchSQLiteGraphScope(root string, graph Graph, scope string, repoID string, existing StatusReport) (sqlitePatchCounts, error) {
 	if err := os.MkdirAll(filepath.Dir(sqliteGraphPath(root)), 0o755); err != nil {
 		return sqlitePatchCounts{}, err
 	}
@@ -427,6 +429,13 @@ func patchSQLiteGraphScope(root string, graph Graph, scope string, existing Stat
 	graph.ID = indexID
 	graph.Languages = languages
 
+	summaryReport, err := regenerateSQLiteSummaries(tx, graph, repoID)
+	if err != nil {
+		return sqlitePatchCounts{}, err
+	}
+
+	graph.CollectorReports = append(collectorReportsExcept(graph.CollectorReports, summaryReport.Name), summaryReport)
+
 	if err := updateSQLiteGraphMetadata(tx, graph); err != nil {
 		return sqlitePatchCounts{}, err
 	}
@@ -470,7 +479,68 @@ func patchSQLiteGraphScope(root string, graph Graph, scope string, existing Stat
 		FilesIndexed:   filesIndexed,
 		SymbolsIndexed: symbolsIndexed,
 		EdgesIndexed:   edgesIndexed,
+
+		CollectorReports: graph.CollectorReports,
 	}, nil
+}
+
+// regenerateSQLiteSummaries rebuilds the derived summary nodes from the
+// patched graph with the same builder a full build uses, so an incremental
+// refresh and a cold rebuild store the same summaries. The patch deleted the
+// old ones, which describe file and symbol counts that just changed.
+func regenerateSQLiteSummaries(tx *sql.Tx, graph Graph, repoID string) (CollectorReport, error) {
+	nodes, err := readSQLiteNodes(tx)
+	if err != nil {
+		return CollectorReport{}, err
+	}
+
+	edges, err := readSQLiteEdges(tx)
+	if err != nil {
+		return CollectorReport{}, err
+	}
+
+	builder := graphBuilder{
+		now:     graph.GeneratedAt,
+		gitHead: graph.GitHead,
+		nodes:   make(map[string]Node, len(nodes)),
+		edges:   make(map[string]Edge, len(edges)),
+	}
+
+	for _, node := range nodes {
+		builder.nodes[node.ID] = node
+	}
+
+	for _, edge := range edges {
+		builder.edges[edge.ID] = edge
+	}
+
+	report := builder.addSummaryIndex(repoID, graph.Languages)
+
+	var summaryNodes []Node
+
+	for _, node := range sortedNodes(builder.nodes) {
+		if node.Collector == report.Name {
+			summaryNodes = append(summaryNodes, node)
+		}
+	}
+
+	var summaryEdges []Edge
+
+	for _, edge := range sortedEdges(builder.edges) {
+		if edge.Collector == report.Name {
+			summaryEdges = append(summaryEdges, edge)
+		}
+	}
+
+	if err := upsertSQLiteGraphNodes(tx, summaryNodes); err != nil {
+		return CollectorReport{}, err
+	}
+
+	if err := upsertSQLiteGraphEdges(tx, summaryEdges); err != nil {
+		return CollectorReport{}, err
+	}
+
+	return report, nil
 }
 
 func graphNodeIDs(nodes []Node) map[string]struct{} {
@@ -1712,7 +1782,13 @@ func graphFromSQLiteMetadata(values map[string]string) (Graph, error) {
 	}, nil
 }
 
-func readSQLiteNodes(db *sql.DB) ([]Node, error) {
+// sqlRowQuerier is the read surface shared by *sql.DB and *sql.Tx, so a patch
+// can read the graph it is about to commit.
+type sqlRowQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+func readSQLiteNodes(db sqlRowQuerier) ([]Node, error) {
 	rows, err := db.Query(`SELECT
 		id, kind, COALESCE(path, ''), COALESCE(language, ''),
 		COALESCE(qualified_name, ''), COALESCE(start_line, 0), COALESCE(end_line, 0),
@@ -1761,7 +1837,7 @@ func readSQLiteNodes(db *sql.DB) ([]Node, error) {
 	return nodes, rows.Err()
 }
 
-func readSQLiteEdges(db *sql.DB) ([]Edge, error) {
+func readSQLiteEdges(db sqlRowQuerier) ([]Edge, error) {
 	rows, err := db.Query(`SELECT
 		id, source_id, target_id, kind, collector, confidence,
 		COALESCE(evidence_json, ''), COALESCE(properties_json, ''), created_at, updated_at

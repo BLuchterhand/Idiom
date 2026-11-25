@@ -361,13 +361,15 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		graph.ID = textutil.FirstNonEmpty(statusBefore.IndexID, graphID(graph))
 		graph.CollectorReports = collectorReportsExcept(statusBefore.CollectorReports, "summary_index")
 
-		counts, err := patchSQLiteGraphScope(root, graph, scope, statusBefore)
+		counts, err := patchSQLiteGraphScope(root, graph, scope, repoID, statusBefore)
 		if err != nil {
 			return BuildReport{}, err
 		}
 
-		// Scoped SQLite patches delete derived summary nodes instead of
-		// leaving stale package/repository summaries behind.
+		graph.CollectorReports = counts.CollectorReports
+
+		// Scoped SQLite patches regenerate the derived summary nodes, so the
+		// stored summaries match what a full rebuild would write.
 		_, _ = MarkAllViewsStale(root)
 
 		backends := storageBackends(root, sqliteStoreKind)
