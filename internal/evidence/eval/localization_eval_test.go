@@ -154,7 +154,7 @@ var _ = ginkgo.Describe("localization eval split and gates", func() {
 	})
 
 	ginkgo.It("judges small no-regression subsets by the sign test and passes an unchanged one", func() {
-		noReg := LocalizationEvalGateSpec{Metric: "recall_capped", MinMean: -0.01, Confidence: LocalizationEvalDevConfidence, LowerBoundFloor: -0.01}
+		noReg := LocalizationEvalGateSpec{Metric: "recall_capped", MinMean: -0.01, Confidence: LocalizationEvalDevConfidence, LowerBoundFloor: -0.01, NoRegression: true}
 
 		unchanged := EvaluateLocalizationEvalGate(noReg, wrapDeltas(repeatDeltas(8, 0)))
 		gomega.Expect(unchanged.Pass).To(gomega.BeTrue(), "%v", unchanged.Reasons)
@@ -178,6 +178,12 @@ var _ = ginkgo.Describe("localization eval split and gates", func() {
 		gomega.Expect(got.LowerBoundFloor).To(gomega.Equal(LocalizationEvalNoRegressionFloor))
 		gomega.Expect(got.MinMean).To(gomega.Equal(LocalizationEvalNoRegressionFloor))
 		gomega.Expect(EffectiveLocalizationEvalGateSpec("", asked)).To(gomega.Equal(asked))
+
+		looser := asked
+		looser.MinMean = -0.5
+		clamped := EffectiveLocalizationEvalGateSpec(LocalizationEvalGateNoRegression, looser)
+		gomega.Expect(clamped.MinMean).To(gomega.Equal(LocalizationEvalNoRegressionFloor), "a looser --min-mean must not win")
+		gomega.Expect(clamped.NoRegression).To(gomega.BeTrue())
 	})
 
 	ginkgo.It("pairs two runs by case id and skips errored cases", func() {

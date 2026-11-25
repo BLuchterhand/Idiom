@@ -146,6 +146,7 @@ func compare(args []string) error {
 	metric := fs.String("metric", "recall_capped", "metric name")
 	split := fs.String("split", "dev", "dev, holdout or all")
 	minMean := fs.Float64("min-mean", 0, "target mean delta")
+	noReg := fs.Bool("no-regression", false, "guard against loss only (implied by a no_regression corpus)")
 	floor := fs.Float64("floor", 0, "lower bound must exceed this (-0.01 for no-regression phases)")
 	_ = fs.Parse(args)
 
@@ -165,7 +166,7 @@ func compare(args []string) error {
 	}
 
 	spec := eval.EffectiveLocalizationEvalGateSpec(a.Gate, eval.LocalizationEvalGateSpec{
-		Metric: *metric, MinMean: *minMean, Confidence: confidence, LowerBoundFloor: *floor,
+		Metric: *metric, MinMean: *minMean, Confidence: confidence, LowerBoundFloor: *floor, NoRegression: *noReg,
 	})
 	verdict := eval.EvaluateLocalizationEvalGate(spec, eval.PairLocalizationEvalDeltas(b, a, *metric, *split))
 

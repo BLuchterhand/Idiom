@@ -56,7 +56,10 @@ type LocalizationEvalGateSpec struct {
 	MinMean         float64
 	Confidence      float64
 	LowerBoundFloor float64
-	MaxWorstDrop    float64
+	// NoRegression marks a gate that only guards against loss: small subsets
+	// use the "significantly worse" sign test and an unchanged subset passes.
+	NoRegression bool
+	MaxWorstDrop float64
 }
 
 // LocalizationEvalGateNoRegression marks corpora that may only guard against
@@ -71,7 +74,11 @@ const LocalizationEvalNoRegressionFloor = -0.01
 // no-regression corpus never gates a gain, whatever was asked for.
 func EffectiveLocalizationEvalGateSpec(gate string, spec LocalizationEvalGateSpec) LocalizationEvalGateSpec {
 	if gate == LocalizationEvalGateNoRegression {
-		spec.MinMean = min(spec.MinMean, LocalizationEvalNoRegressionFloor)
+		spec.NoRegression = true
+	}
+
+	if spec.NoRegression {
+		spec.MinMean = LocalizationEvalNoRegressionFloor
 		spec.LowerBoundFloor = LocalizationEvalNoRegressionFloor
 	}
 
@@ -147,7 +154,7 @@ func EvaluateLocalizationEvalGate(spec LocalizationEvalGateSpec, deltas []Locali
 
 	// A small no-regression subset is judged by the sign test below; a bare
 	// loss count would fail it on one unlucky case.
-	smallNoRegression := spec.LowerBoundFloor < 0 && len(deltas) < LocalizationEvalMinSubset
+	smallNoRegression := spec.NoRegression && len(deltas) < LocalizationEvalMinSubset
 	if v.Losses > v.Wins && !smallNoRegression {
 		fail("losses %d exceed wins %d", v.Losses, v.Wins)
 	}
@@ -159,7 +166,7 @@ func EvaluateLocalizationEvalGate(spec LocalizationEvalGateSpec, deltas []Locali
 	if len(deltas) < LocalizationEvalMinSubset {
 		v.Method = "sign_test"
 
-		if spec.LowerBoundFloor < 0 {
+		if spec.NoRegression {
 			// No-regression: pass unless the subset is significantly worse.
 			// An unchanged subset (no wins, no losses) is a pass.
 			v.SignP = LocalizationEvalSignTestP(v.Losses, v.Wins)

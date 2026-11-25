@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "note": "Phase 2 gate: default vs format=compact, same cold indexes, fixed worktree path, idiom binary at phase-2 commit. Paired capped recall@8 delta is 0 on every case (dev and hold-out, both corpora).",
+ "note": "Phase 2 gate: default vs format=compact, same cold indexes, fixed worktree path, idiom binary at phase-2 commit. Paired capped recall@8 delta is 0 on every case (dev and hold-out, both corpora). MRR and ordering deltas reflect the default impact_scope order (files interleaved with symbol items by rank) versus the compact pack order (files only, ranker order); the top-8 file sets are identical in all 135 cases, so capped recall is unchanged.",
  "runs": {
   "bentech-default": {
    "schema": 1,

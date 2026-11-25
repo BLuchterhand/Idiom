@@ -44,6 +44,23 @@ var _ = ginkgo.Describe("context_impact compact format", func() {
 		gomega.Expect(len(got)).To(gomega.BeNumerically("<=", budgetBytes))
 	})
 
+	ginkgo.It("stays under 1.5 KB with multi-byte truncated reasons", func() {
+		var files []comprehension.PackFile
+		for i := range 8 {
+			files = append(files, comprehension.PackFile{
+				Path: "internal/repository/comprehension/some_long_file_name_" + string(rune('a'+i)) + ".go",
+				Kind: comprehension.PackFileKindCaller,
+				Why:  strings.Repeat("w", comprehension.PackWhyMaxChars-1) + "…",
+			})
+		}
+
+		const budgetBytes = 1536
+
+		got := renderContextImpactCompact(comprehension.PackResult{IndexID: "0123456789abcdef", CandidateFiles: files}, 8)
+		gomega.Expect(len(got)).To(gomega.BeNumerically("<=", budgetBytes))
+		gomega.Expect(strings.Count(got, "…")).To(gomega.Equal(8))
+	})
+
 	ginkgo.It("accepts default, json and compact formats and rejects others", func() {
 		for _, ok := range []string{"", "json", "compact"} {
 			gomega.Expect(validContextImpactFormat(ok)).To(gomega.BeTrue(), ok)
