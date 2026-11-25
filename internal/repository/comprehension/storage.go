@@ -357,7 +357,13 @@ func saveSQLiteGraph(root string, graph Graph) error {
 		metadata.CreatedAt = existing.CreatedAt
 	}
 
-	return writeSQLiteMetadata(root, metadata)
+	if err := writeSQLiteMetadata(root, metadata); err != nil {
+		return err
+	}
+
+	syncDenseIndexBestEffort(root)
+
+	return nil
 }
 
 func patchSQLiteGraphScope(root string, graph Graph, scope string, repoID string, existing StatusReport) (sqlitePatchCounts, error) {
@@ -480,6 +486,8 @@ func patchSQLiteGraphScope(root string, graph Graph, scope string, repoID string
 	if err := writeSQLiteMetadata(root, metadata); err != nil {
 		return sqlitePatchCounts{}, err
 	}
+
+	syncDenseIndexBestEffort(root)
 
 	return sqlitePatchCounts{
 		IndexID:        indexID,

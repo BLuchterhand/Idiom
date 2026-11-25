@@ -41,6 +41,9 @@ type languagePolicy struct {
 	// Channel admits files of this language from the graph symbol/path
 	// channel into the fusion.
 	Channel bool
+	// Dense is the weight of the embedding channel's reciprocal-rank share
+	// for files of this language; 0 keeps them out of it.
+	Dense float64
 }
 
 // languagePolicies are the dev-split choices; defaultPolicy covers any other
@@ -52,9 +55,19 @@ type languagePolicy struct {
 //     the channel on the C++ pool cost .056 against BM25 alone).
 //   - everything else: no hop, channel off (no dev difference on Go, a gain
 //     on the mixed BenTech tree).
+//
+// Dense (phase 6, qwen3-embedding:0.6b, dev recall@8 / hit / MRR; weights are
+// the RRF share of the embedding list against 1 for each other list):
+//   - go: weight 1 was the dev optimum (0.5 .476/.841/.602, 1 .481/.841/.641,
+//     1.5 .471/.864/.620, 2 .453/.864/.621, all-languages 1 the same as go 1;
+//     off .447/.818/.549). Not enabled: it fails the ship rule on the old
+//     Idiom hold-out (MRR .771 to .694), so the channel is built and off.
+//   - cpp and everything else: off. Every dense weight tried lowered BenTech
+//     dev recall (off .402/.745/.450; all 1 .387/.725/.498, all .5 .378,
+//     all .25 .376, cpp 1 .316, default 1 .356, default 2 .236).
 var languagePolicies = map[string]languagePolicy{
-	"go":  {Hop: hopCalls, Channel: true},
-	"cpp": {Hop: hopAll, Channel: false},
+	"go":  {Hop: hopCalls, Channel: true, Dense: 0},
+	"cpp": {Hop: hopAll, Channel: false, Dense: 0},
 }
 
 var defaultPolicy = languagePolicy{Hop: hopNone, Channel: false}
@@ -65,6 +78,20 @@ func policyFor(language string) languagePolicy {
 	}
 
 	return defaultPolicy
+}
+
+// denseEnabled reports whether any language gives the embedding channel
+// weight; tests replace it.
+var denseEnabled = denseEnabledByPolicy
+
+func denseEnabledByPolicy() bool {
+	for _, p := range languagePolicies {
+		if p.Dense > 0 {
+			return true
+		}
+	}
+
+	return defaultPolicy.Dense > 0
 }
 
 var edgeHopKind = map[string]hopKinds{"imports": hopImports, "calls": hopCalls, "tests": hopTests, "extends": hopExtends}

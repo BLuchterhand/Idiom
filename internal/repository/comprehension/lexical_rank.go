@@ -16,6 +16,9 @@ type LexicalHit struct {
 	// Via names the matched file a graph hop reached this one from; empty
 	// for files that matched the task themselves.
 	Via string
+	// Sources names the retrievers whose lists held this file after fusion
+	// (empty before it).
+	Sources []string
 }
 
 // RankLexical scores every file that shares a query term with BM25 and
@@ -115,6 +118,10 @@ func topTerms(shares []termShare) []string {
 type rankedList struct {
 	Source string
 	Hits   []LexicalHit
+	// Weight scales a hit's reciprocal-rank share by its path (per-language
+	// channel weights); nil means 1 for every file, and a weight of 0 or less
+	// drops the hit.
+	Weight func(path string) float64
 }
 
 const (
@@ -126,22 +133,30 @@ const (
 	fusionDepth = 24
 )
 
-// fuseRankedLists combines retrievers by reciprocal rank fusion with equal
-// weights: a file scores the sum of 1/(rrfK+rank) over the lists that hold it
-// in their first fusionDepth entries. Ties break by path. Matched terms come
+// fuseRankedLists combines retrievers by weighted reciprocal rank fusion: a
+// file scores the sum of weight/(rrfK+rank) over the lists that hold it in
+// their first fusionDepth entries (weight 1 unless the list sets Weight). Ties break by path. Matched terms come
 // from whichever list carried them.
 func fuseRankedLists(lists ...rankedList) []LexicalHit {
 	byPath := map[string]*LexicalHit{}
 
 	for _, list := range lists {
 		for rank, hit := range list.Hits[:min(fusionDepth, len(list.Hits))] {
+			weight := 1.0
+			if list.Weight != nil {
+				if weight = list.Weight(hit.Path); weight <= 0 {
+					continue
+				}
+			}
+
 			fused := byPath[hit.Path]
 			if fused == nil {
 				fused = &LexicalHit{Path: hit.Path}
 				byPath[hit.Path] = fused
 			}
 
-			fused.Score += 1 / float64(rrfK+rank+1)
+			fused.Score += weight / float64(rrfK+rank+1)
+			fused.Sources = append(fused.Sources, list.Source)
 
 			if len(fused.Terms) == 0 {
 				fused.Terms = hit.Terms

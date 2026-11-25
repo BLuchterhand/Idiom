@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -43,10 +44,15 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 	languageOf := func(p string) string { return ctx.nodesByID[fileNodeID(p)].Language }
 	lexical := HopLexical(RankLexical(corpus, terms, include), buildHopGraph(ctx.graph, ctx.nodesByID), languageOf, include)
 
-	hits := fuseRankedLists(
-		rankedList{Source: "bm25", Hits: lexical},
-		rankedList{Source: "graph", Hits: graphRankedHits(graphRanked, include, languageOf)},
-	)
+	lists := []rankedList{
+		{Source: "bm25", Hits: lexical},
+		{Source: "graph", Hits: graphRankedHits(graphRanked, include, languageOf)},
+	}
+	if dense, ok := denseRankedList(ctx, include, languageOf); ok {
+		lists = append(lists, dense)
+	}
+
+	hits := fuseRankedLists(lists...)
 	if len(hits) == 0 {
 		return nil, false
 	}
@@ -78,6 +84,30 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 	}
 
 	return selected, true
+}
+
+// denseRankedList is the embedding channel: files by meaning, restricted to
+// the languages whose policy gives it weight. It reports false when no
+// language uses it or it could not run (the reason joins the pack's unknowns).
+func denseRankedList(ctx *packContext, include func(string) bool, languageOf func(string) string) (rankedList, bool) {
+	weight := func(path string) float64 { return policyFor(languageOf(path)).Dense }
+
+	if !denseEnabled() {
+		return rankedList{}, false
+	}
+
+	outcome := denseHits(ctx.requestContext, ctx.root, ctx.task, func(p string) bool { return include(p) && weight(p) > 0 })
+	if outcome.Note != "" {
+		ctx.denseNotes = append(ctx.denseNotes, outcome.Note)
+	}
+
+	ctx.denseTransient = ctx.denseTransient || outcome.Transient
+
+	if len(outcome.Hits) == 0 {
+		return rankedList{}, false
+	}
+
+	return rankedList{Source: "dense", Hits: outcome.Hits, Weight: weight}, true
 }
 
 // packCandidateFilter admits a file when it is inside the requested scope and
@@ -146,6 +176,8 @@ func lexicalPackFile(ctx *packContext, files *packFileBuilder, hit LexicalHit, t
 		file.Role = "test"
 	}
 
+	dense := slices.Contains(hit.Sources, "dense")
+
 	if len(hit.Terms) > 0 {
 		file.Reason = "BM25 match: " + strings.Join(hit.Terms, ", ")
 		file.matched = hit.Terms
@@ -155,6 +187,14 @@ func lexicalPackFile(ctx *packContext, files *packFileBuilder, hit LexicalHit, t
 		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "graph_hop", State: hit.Via}}
 	} else {
 		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "graph_match", State: "symbol_or_path"}}
+	}
+
+	if dense {
+		if file.Reason == "" {
+			file.Reason = "semantic match to the task (embedding similarity)"
+		}
+
+		file.RankerReasons = append(file.RankerReasons, RankerReason{Reason: "dense_match", State: "embedding"})
 	}
 
 	file.Stale = file.Stale || packPathIsStale(ctx.stale, hit.Path)

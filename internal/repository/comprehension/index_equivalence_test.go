@@ -87,6 +87,7 @@ type normalizedGraph struct {
 	edges   []string
 	derived []string
 	lexical []string
+	dense   []string
 }
 
 // lexicalRowsForEquivalence dumps the lexical index with document ids
@@ -130,6 +131,36 @@ func lexicalRowsForEquivalence(root string) []string {
 	Expect(postings.Close()).To(Succeed())
 
 	return rows
+}
+
+// denseRowsForEquivalence dumps the dense index (path, vector key, vector
+// bytes) so an incremental store and a cold one compare by content.
+func denseRowsForEquivalence(root string) []string {
+	store, err := openDenseStore(denseStorePath(root))
+	Expect(err).NotTo(HaveOccurred())
+
+	defer store.Close()
+
+	rows, err := store.db.Query(`SELECT d.path, d.vec_key, hex(v.vec) FROM dense_docs d JOIN dense_vectors v USING(vec_key)`)
+	Expect(err).NotTo(HaveOccurred())
+
+	defer rows.Close()
+
+	var out []string
+
+	for rows.Next() {
+		var path, key, vec string
+
+		Expect(rows.Scan(&path, &key, &vec)).To(Succeed())
+
+		out = append(out, "dense|"+path+"|"+key+"|"+vec)
+	}
+
+	var orphans int
+
+	Expect(store.db.QueryRow(`SELECT COUNT(*) FROM dense_vectors WHERE vec_key NOT IN (SELECT vec_key FROM dense_docs)`).Scan(&orphans)).To(Succeed())
+
+	return append(out, fmt.Sprintf("orphan vectors=%d", orphans))
 }
 
 func normalizeGraphForEquivalence(root string) normalizedGraph {
@@ -189,6 +220,9 @@ func normalizeGraphForEquivalence(root string) normalizedGraph {
 	out.lexical = lexicalRowsForEquivalence(root)
 	slices.Sort(out.lexical)
 
+	out.dense = denseRowsForEquivalence(root)
+	slices.Sort(out.dense)
+
 	return out
 }
 
@@ -228,6 +262,8 @@ func refreshChangedPaths(root string, paths []string, exact bool) {
 
 var _ = DescribeTable("incremental refresh equals a cold rebuild",
 	func(exact bool) {
+		fake := newFakeEmbedder()
+		useFake(GinkgoT(), fake)
 		live := GinkgoT().TempDir()
 		cold := GinkgoT().TempDir()
 
@@ -253,6 +289,8 @@ var _ = DescribeTable("incremental refresh equals a cold rebuild",
 		diffs = append(diffs, diffSorted("edge", got.edges, want.edges)...)
 		diffs = append(diffs, diffSorted("derived", got.derived, want.derived)...)
 		diffs = append(diffs, diffSorted("lexical", got.lexical, want.lexical)...)
+		diffs = append(diffs, diffSorted("dense", got.dense, want.dense)...)
+		Expect(want.dense).To(ContainElement(HavePrefix("dense|core/a.cpp|")), "cold build stored no dense index")
 		Expect(want.lexical).NotTo(BeEmpty(), "cold build stored no lexical index")
 		Expect(diffs).To(BeEmpty(), strings.Join(diffs, "\n"))
 	},

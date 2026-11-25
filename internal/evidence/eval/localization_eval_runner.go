@@ -20,7 +20,7 @@ const (
 	defaultLocalizationTimedRun = 3
 	defaultIndexTimeout         = 40 * time.Minute
 	defaultQueryTimeout         = 5 * time.Minute
-	localizationEvalCacheFiles  = "graph.sqlite graph.sqlite.meta.json manifest.json"
+	localizationEvalCacheFiles  = "graph.sqlite graph.sqlite.meta.json manifest.json dense.sqlite"
 	// localizationEvalRankedKept bounds the stored ranked list per case.
 	localizationEvalRankedKept = 24
 )
@@ -498,7 +498,7 @@ func copyIndexFiles(from, to string) error {
 	for _, name := range strings.Fields(localizationEvalCacheFiles) {
 		data, err := os.ReadFile(filepath.Join(from, name))
 		if err != nil {
-			if os.IsNotExist(err) && name == "manifest.json" {
+			if os.IsNotExist(err) && (name == "manifest.json" || name == "dense.sqlite") {
 				continue
 			}
 

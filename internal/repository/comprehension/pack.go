@@ -231,8 +231,10 @@ func Pack(requestContext context.Context, opts PackOptions) (PackResult, error) 
 
 	AttachPackResultContract(&result)
 
-	if err := SaveView(ctx.root, ctx.cacheKey, result); err != nil {
-		return PackResult{}, fmt.Errorf("save graph_views row: %w", err)
+	if !ctx.denseTransient {
+		if err := SaveView(ctx.root, ctx.cacheKey, result); err != nil {
+			return PackResult{}, fmt.Errorf("save graph_views row: %w", err)
+		}
 	}
 
 	if err := savePack(ctx.root, result); err != nil {
@@ -271,6 +273,11 @@ type packContext struct {
 	requiredNodes     []Node
 	relationships     []Edge
 	learnedWeights    map[string]float64
+
+	// denseNotes are why the embedding channel did not run; denseTransient
+	// keeps such a pack out of the view cache.
+	denseNotes     []string
+	denseTransient bool
 }
 
 type packCandidates struct {
@@ -354,7 +361,7 @@ func preparePackContext(requestContext context.Context, opts PackOptions) (*pack
 		ForbiddenPaths:      opts.ForbiddenPaths,
 		IncludeStaleRuntime: opts.IncludeStaleRuntime,
 		Explain:             opts.Explain,
-	}, graph.ID, mode, intent, workspaceStateFingerprints, LocalizationConfigFingerprint(root))
+	}, graph.ID, mode, intent, workspaceStateFingerprints, LocalizationConfigFingerprint(root)+DenseStateKey(root))
 	cacheState := GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "miss_recompute", "cache_miss")
 
 	// A malformed localization section loads as the zero config and is
@@ -650,6 +657,8 @@ func addPackResultGaps(ctx *packContext, candidates packCandidates, result *Pack
 	result.Evidence = append(result.Evidence, candidates.runtimeOverlay.Evidence...)
 	result.Risks = append(result.Risks, candidates.runtimeOverlay.Risks...)
 	result.Unknowns = append(result.Unknowns, candidates.runtimeOverlay.Unknowns...)
+
+	result.Unknowns = append(result.Unknowns, ctx.denseNotes...)
 
 	if ctx.configErr != nil {
 		result.Unknowns = append(result.Unknowns, "localization config in "+localizationConfigRelPath+" is unreadable; defaults used: "+ctx.configErr.Error())
