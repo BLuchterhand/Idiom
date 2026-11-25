@@ -3,7 +3,8 @@ package eval
 import (
 	"math"
 	"slices"
-	"strings"
+
+	"idiom/internal/repository/comprehension"
 )
 
 // Localization eval metrics. The ranked list is the files an agent sees, in
@@ -36,22 +37,6 @@ type LocalizationEvalCaseMetrics struct {
 	GoldFilesInTopK int     `json:"gold_files_in_top_k"`
 }
 
-// LocalizationEvalDir2 is the subtopic key of a file: its first two directory
-// components (fewer when the file sits higher; "." at the root).
-func LocalizationEvalDir2(path string) string {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) <= 1 {
-		return "."
-	}
-
-	dirs := parts[:len(parts)-1]
-	if len(dirs) > 2 {
-		dirs = dirs[:2]
-	}
-
-	return strings.Join(dirs, "/")
-}
-
 // ComputeLocalizationEvalMetrics scores one ranked file list against gold at k.
 // Duplicate ranked paths keep their first position. Returns ok=false when the
 // gold set is empty (the case is not scoreable).
@@ -70,14 +55,14 @@ func ComputeLocalizationEvalMetrics(ranked []string, gold []string, k int) (Loca
 
 	dirs := map[string]struct{}{}
 	for _, p := range top {
-		dirs[LocalizationEvalDir2(p)] = struct{}{}
+		dirs[comprehension.PathDir2(p)] = struct{}{}
 	}
 
 	m.DistinctDirs = len(dirs)
 
 	subtopics := map[string]struct{}{}
 	for g := range goldSet {
-		subtopics[LocalizationEvalDir2(g)] = struct{}{}
+		subtopics[comprehension.PathDir2(g)] = struct{}{}
 	}
 
 	m.GoldSubtopics = len(subtopics)
@@ -96,7 +81,7 @@ func ComputeLocalizationEvalMetrics(ranked []string, gold []string, k int) (Loca
 		}
 
 		dcg += 1 / math.Log2(float64(i+2))
-		covered[LocalizationEvalDir2(p)] = struct{}{}
+		covered[comprehension.PathDir2(p)] = struct{}{}
 	}
 
 	m.RecallRaw = float64(m.GoldFilesInTopK) / float64(len(goldSet))
@@ -149,7 +134,7 @@ func idealBinaryDCG(n int) float64 {
 // already covered, ties by path. It has min(k, |gold|) positions.
 func alphaNDCG(top []string, goldSet map[string]struct{}, k int) float64 {
 	gain := func(seen map[string]int, path string) float64 {
-		return math.Pow(1-LocalizationEvalAlpha, float64(seen[LocalizationEvalDir2(path)]))
+		return math.Pow(1-LocalizationEvalAlpha, float64(seen[comprehension.PathDir2(path)]))
 	}
 
 	seen := map[string]int{}
@@ -161,7 +146,7 @@ func alphaNDCG(top []string, goldSet map[string]struct{}, k int) float64 {
 		}
 
 		dcg += gain(seen, p) / math.Log2(float64(i+2))
-		seen[LocalizationEvalDir2(p)]++
+		seen[comprehension.PathDir2(p)]++
 	}
 
 	remaining := make([]string, 0, len(goldSet))
@@ -184,7 +169,7 @@ func alphaNDCG(top []string, goldSet map[string]struct{}, k int) float64 {
 		}
 
 		ideal += gain(idealSeen, remaining[best]) / math.Log2(float64(pos+2))
-		idealSeen[LocalizationEvalDir2(remaining[best])]++
+		idealSeen[comprehension.PathDir2(remaining[best])]++
 		remaining = slices.Delete(remaining, best, best+1)
 	}
 

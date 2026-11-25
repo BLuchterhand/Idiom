@@ -378,6 +378,10 @@ type contextImpactSignal struct {
 }
 
 func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult {
+	if !validContextImpactFormat(req.Format) {
+		return ToolResult{Tool: ToolNameContextImpact, Summary: "Context impact format unsupported", Error: fmt.Sprintf("format %q is not supported; use %q or omit it", req.Format, contextFormatCompact)}
+	}
+
 	task := m.contextImpactTask(req)
 
 	freshness, err := m.contextReadFreshness(ctx, req, ToolNameContextImpact)
@@ -401,6 +405,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		RequiredEditPaths: req.RequiredEditPaths,
 		ForbiddenPaths:    req.ForbiddenPaths,
 		Freshness:         &freshness,
+		Explain:           req.Format == contextFormatCompact,
 	})
 	if err != nil {
 		return ToolResult{Tool: ToolNameContextImpact, Summary: "Context impact ranking failed", Error: err.Error()}
@@ -439,6 +444,10 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return ToolResult{Tool: ToolNameContextImpact, Summary: "Context impact report encode failed", Error: err.Error()}
+	}
+
+	if req.Format == contextFormatCompact {
+		output = []byte(renderContextImpactCompact(pack, req.Limit))
 	}
 
 	gap := ""

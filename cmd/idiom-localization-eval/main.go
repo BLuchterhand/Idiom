@@ -108,6 +108,7 @@ func run(args []string) error {
 	subset := fs.String("subset", "all", "dev, holdout or all")
 	only := fs.String("only", "", "comma-separated case ids")
 	seed := fs.Bool("seed", false, "seed each index from the nearest cached tree (faster, tail ranks may differ from a cold index); default is a cold index per case")
+	format := fs.String("format", "", "context_impact output format under test: empty (default JSON) or compact")
 	timed := fs.Int("timed-calls", 3, "timed calls per case after one warm-up")
 	out := fs.String("out", "", "result file")
 	_ = fs.Parse(args)
@@ -125,7 +126,7 @@ func run(args []string) error {
 	defer stop()
 
 	opts := eval.LocalizationEvalRunOptions{Repo: *repo, IdiomBin: *bin, CacheDir: *cache, CacheMaxBytes: *cacheGB << 30,
-		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Log: os.Stderr}
+		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, Log: os.Stderr}
 	if *only != "" {
 		opts.OnlyIDs = strings.Split(*only, ",")
 	}
@@ -145,6 +146,7 @@ func compare(args []string) error {
 	metric := fs.String("metric", "recall_capped", "metric name")
 	split := fs.String("split", "dev", "dev, holdout or all")
 	minMean := fs.Float64("min-mean", 0, "target mean delta")
+	noReg := fs.Bool("no-regression", false, "guard against loss only (implied by a no_regression corpus)")
 	floor := fs.Float64("floor", 0, "lower bound must exceed this (-0.01 for no-regression phases)")
 	_ = fs.Parse(args)
 
@@ -163,9 +165,10 @@ func compare(args []string) error {
 		confidence = eval.LocalizationEvalHoldoutConfidence
 	}
 
-	verdict := eval.EvaluateLocalizationEvalGate(eval.LocalizationEvalGateSpec{
-		Metric: *metric, MinMean: *minMean, Confidence: confidence, LowerBoundFloor: *floor,
-	}, eval.PairLocalizationEvalDeltas(b, a, *metric, *split))
+	spec := eval.EffectiveLocalizationEvalGateSpec(a.Gate, eval.LocalizationEvalGateSpec{
+		Metric: *metric, MinMean: *minMean, Confidence: confidence, LowerBoundFloor: *floor, NoRegression: *noReg,
+	})
+	verdict := eval.EvaluateLocalizationEvalGate(spec, eval.PairLocalizationEvalDeltas(b, a, *metric, *split))
 
 	data, _ := json.MarshalIndent(verdict, "", " ")
 	fmt.Println(string(data))

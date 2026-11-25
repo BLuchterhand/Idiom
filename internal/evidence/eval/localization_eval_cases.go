@@ -15,8 +15,11 @@ import (
 
 // LocalizationEvalCaseFile is the checked-in case set of one corpus.
 type LocalizationEvalCaseFile struct {
-	Schema       int                              `json:"schema"`
-	Corpus       string                           `json:"corpus"`
+	Schema int    `json:"schema"`
+	Corpus string `json:"corpus"`
+	// Gate is "" (gain gates allowed) or "no_regression": a corpus whose
+	// queries are post-hoc commit messages may only guard against loss.
+	Gate         string                           `json:"gate,omitempty"`
 	Config       LocalizationEvalBuilderConfig    `json:"builder"`
 	Localization comprehension.LocalizationConfig `json:"localization,omitempty"`
 	Cases        []LocalizationEvalCase           `json:"cases"`
@@ -34,9 +37,18 @@ type LocalizationEvalCase struct {
 	QuerySource string   `json:"query_source"`
 	Gold        []string `json:"gold"`
 	GoldNew     []string `json:"gold_new,omitempty"`
-	GoldTests   []string `json:"gold_tests,omitempty"`
-	GoldDocs    []string `json:"gold_docs,omitempty"`
-	Split       string   `json:"split"`
+	// GoldRenames lists renamed source files. The old path is scored in Gold
+	// (it is the file an index at Base contains); the new path is listed here.
+	GoldRenames []LocalizationEvalRename `json:"gold_renames,omitempty"`
+	GoldTests   []string                 `json:"gold_tests,omitempty"`
+	GoldDocs    []string                 `json:"gold_docs,omitempty"`
+	Split       string                   `json:"split"`
+}
+
+// LocalizationEvalRename is one renamed gold file.
+type LocalizationEvalRename struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // LocalizationEvalBuilderConfig carries every repository-specific rule of the
@@ -171,7 +183,7 @@ func buildLocalizationEvalCase(repo, merge string, cfg LocalizationEvalBuilderCo
 		return LocalizationEvalCase{}, false, err
 	}
 
-	names, err := gitOut(repo, "diff", "--name-status", "--no-renames", base, merge)
+	names, err := gitOut(repo, "diff", "--name-status", "-M", base, merge)
 	if err != nil {
 		return LocalizationEvalCase{}, false, err
 	}
@@ -181,8 +193,14 @@ func buildLocalizationEvalCase(repo, merge string, cfg LocalizationEvalBuilderCo
 	docRe := optionalRegexp(cfg.DocRegex)
 
 	for _, line := range strings.Split(strings.TrimSpace(names), "\n") {
-		status, path, found := strings.Cut(line, "\t")
-		if !found {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+
+		status, path := fields[0], fields[len(fields)-1]
+		if strings.HasPrefix(status, "R") && len(fields) == 3 {
+			c = recordRename(c, fields[1], fields[2], source, excludes, testRe, docRe)
 			continue
 		}
 
@@ -321,4 +339,21 @@ func ReadLocalizationEvalCaseFile(path string) (LocalizationEvalCaseFile, error)
 	}
 
 	return file, nil
+}
+
+// recordRename scores a renamed source file by its old path, which an index at
+// the base commit contains, and keeps the new path alongside it. Renamed tests
+// and docs follow the same kind rules as any other changed file.
+func recordRename(c LocalizationEvalCase, from, to string, source *regexp.Regexp, excludes []*regexp.Regexp, testRe, docRe *regexp.Regexp) LocalizationEvalCase {
+	switch {
+	case testRe != nil && testRe.MatchString(to):
+		c.GoldTests = append(c.GoldTests, to)
+	case docRe != nil && docRe.MatchString(to):
+		c.GoldDocs = append(c.GoldDocs, to)
+	case source.MatchString(from) && !matchesAny(excludes, from):
+		c.Gold = append(c.Gold, from)
+		c.GoldRenames = append(c.GoldRenames, LocalizationEvalRename{From: from, To: to})
+	}
+
+	return c
 }

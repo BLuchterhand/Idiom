@@ -45,6 +45,8 @@ type ViewQueryInputs struct {
 	// `localization` config changes; empty for the default config so
 	// existing keys are unchanged.
 	LocalizationConfigFingerprint string `json:"localization_config_fingerprint,omitempty"`
+	// Explain marks packs that carry role and reason labels.
+	Explain bool `json:"explain,omitempty"`
 }
 
 // ViewKey is the content-addressed identifier for a graph_views row.
