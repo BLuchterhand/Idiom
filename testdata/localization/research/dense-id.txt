@@ -1,0 +1,7 @@
+id dev n=44 shipped 40ea5c869: rc8 0.447 hit 0.818 mrr 0.549
+id dev n=44 recall@24 shipped 0.428 dense 0.417
+id shipped              rc8 0.447 hit 0.818 mrr 0.549
+id dense alone          rc8 0.295 (-0.152) hit 0.773 (-0.045) mrr 0.518 (-0.031)
+id rrf w=0.5            rc8 0.433 (-0.014) hit 0.841 (+0.023) mrr 0.624 (+0.074)
+id rrf w=1.0            rc8 0.446 (-0.001) hit 0.886 (+0.068) mrr 0.619 (+0.069)
+id query latency ms p50 36 max 166 (query embed + 1077x1024 dot)

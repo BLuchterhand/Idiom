@@ -1,0 +1,14 @@
+bt dev n=51 shipped 40ea5c869: rc8 0.402 hit 0.745 mrr 0.450
+bt recall@24 main 0.343 cochange 0.373 message 0.341
+bt cc rrf w=.25                 rc8 0.403 (+0.001) hit 0.745 (+0.000) mrr 0.497 (+0.047)
+bt msg rrf w=.25                rc8 0.395 (-0.007) hit 0.745 (+0.000) mrr 0.559 (+0.110)
+bt cc boost-only w=1            rc8 0.385 (-0.018) hit 0.667 (-0.078) mrr 0.458 (+0.009)
+bt msg boost-only w=1           rc8 0.407 (+0.005) hit 0.745 (+0.000) mrr 0.530 (+0.081)
+bt cc+msg boost-only w=.5/.5    rc8 0.394 (-0.009) hit 0.725 (-0.020) mrr 0.510 (+0.060)
+id dev n=44 shipped 40ea5c869: rc8 0.447 hit 0.818 mrr 0.549
+id recall@24 main 0.428 cochange 0.428 message 0.478
+id cc rrf w=.25                 rc8 0.413 (-0.034) hit 0.795 (-0.023) mrr 0.508 (-0.042)
+id msg rrf w=.25                rc8 0.433 (-0.014) hit 0.818 (+0.000) mrr 0.602 (+0.052)
+id cc boost-only w=1            rc8 0.413 (-0.034) hit 0.750 (-0.068) mrr 0.551 (+0.002)
+id msg boost-only w=1           rc8 0.444 (-0.003) hit 0.841 (+0.023) mrr 0.591 (+0.041)
+id cc+msg boost-only w=.5/.5    rc8 0.411 (-0.035) hit 0.750 (-0.068) mrr 0.582 (+0.032)
