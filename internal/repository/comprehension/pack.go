@@ -426,11 +426,13 @@ func collectPackCandidates(ctx *packContext) packCandidates {
 
 	rankInputs := packRankInputs(ctx)
 
-	candidateFiles, lexical := lexicalPackFiles(ctx, files, runtimeOverlay)
+	graphRanked := RankPackFiles(withPackFiles(rankInputs, files.all()))
+
+	candidateFiles, lexical := lexicalPackFiles(ctx, files, runtimeOverlay, graphRanked)
 	if lexical {
 		candidateFiles = finishPackFiles(candidateFiles, rankInputs.QueryTokens, ctx.opts.Explain)
 	} else {
-		candidateFiles = finalizePackFiles(files.all(), rankInputs, ctx.limit, ctx.opts.Explain)
+		candidateFiles = finishPackFiles(truncatePackFiles(graphRanked, ctx.limit), rankInputs.QueryTokens, ctx.opts.Explain)
 	}
 
 	return packCandidates{

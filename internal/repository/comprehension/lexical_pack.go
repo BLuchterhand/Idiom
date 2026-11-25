@@ -4,6 +4,20 @@ import (
 	"strings"
 )
 
+// graphRankedHits is the exact-symbol and path channel: the files the symbol
+// graph pool surfaced, in the graph ranker's order.
+func graphRankedHits(ranked []PackFile, include func(string) bool) []LexicalHit {
+	hits := make([]LexicalHit, 0, len(ranked))
+
+	for _, file := range ranked {
+		if include(file.Path) {
+			hits = append(hits, LexicalHit{Path: file.Path, Score: file.Score})
+		}
+	}
+
+	return hits
+}
+
 // lexicalPackFiles builds the pack's candidate files from the BM25 index:
 // declared edit paths and runtime-overlay files first, then every file the
 // task's terms retrieve, best first, cut at the pack limit. It reports false
@@ -13,7 +27,7 @@ import (
 //
 // Scope (PackOptions.Path and Scope) restricts which files may appear; it is
 // never a query term and never changes a score.
-func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimePackOverlay) ([]PackFile, bool) {
+func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimePackOverlay, graphRanked []PackFile) ([]PackFile, bool) {
 	terms := UniqueLexicalTerms(LexicalTokens(ctx.task))
 	if len(terms) == 0 {
 		return nil, false
@@ -24,10 +38,12 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 		return nil, false
 	}
 
-	hits := fuseRankedLists(rankedList{
-		Source: "bm25",
-		Hits:   RankLexical(corpus, terms, packCandidateFilter(ctx, files)),
-	})
+	include := packCandidateFilter(ctx, files)
+
+	hits := fuseRankedLists(
+		rankedList{Source: "bm25", Hits: RankLexical(corpus, terms, include)},
+		rankedList{Source: "graph", Hits: graphRankedHits(graphRanked, include)},
+	)
 	if len(hits) == 0 {
 		return nil, false
 	}
@@ -127,11 +143,16 @@ func lexicalPackFile(ctx *packContext, files *packFileBuilder, hit LexicalHit, t
 		file.Role = "test"
 	}
 
-	file.Reason = "BM25 match: " + strings.Join(hit.Terms, ", ")
+	if len(hit.Terms) > 0 {
+		file.Reason = "BM25 match: " + strings.Join(hit.Terms, ", ")
+		file.matched = hit.Terms
+		file.RankerReasons = lexicalRankerReasons(hit, file.Role)
+	} else {
+		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "graph_match", State: "symbol_or_path"}}
+	}
+
 	file.Stale = file.Stale || packPathIsStale(ctx.stale, hit.Path)
 	file.Score = hit.Score / top
-	file.matched = hit.Terms
-	file.RankerReasons = lexicalRankerReasons(hit, file.Role)
 
 	return file
 }

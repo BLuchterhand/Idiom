@@ -182,3 +182,49 @@ func TestPackScopeIsAFilterNotATerm(t *testing.T) {
 		t.Fatalf("unscoped pack should retrieve every refund file, got %v", unscoped)
 	}
 }
+
+func hitsOf(paths ...string) []LexicalHit {
+	out := make([]LexicalHit, len(paths))
+	for i, p := range paths {
+		out[i] = LexicalHit{Path: p}
+	}
+
+	return out
+}
+
+func TestFuseRankedListsReciprocalRank(t *testing.T) {
+	bm25 := rankedList{Source: "bm25", Hits: append(hitsOf("a", "b", "c"), LexicalHit{Path: "d", Terms: []string{"t"}})}
+	graph := rankedList{Source: "graph", Hits: hitsOf("c", "x", "a")}
+
+	got := fuseRankedLists(bm25, graph)
+
+	var order []string
+	for _, h := range got {
+		order = append(order, h.Path)
+	}
+
+	// a: 1/61+1/63, c: 1/63+1/61 (tie, by path), then b 1/62, x 1/62 (tie), d 1/64.
+	if want := []string{"a", "c", "b", "x", "d"}; !slices.Equal(order, want) {
+		t.Fatalf("fused order = %v, want %v", order, want)
+	}
+
+	if want := 1.0/61 + 1.0/63; got[0].Score < want-1e-12 || got[0].Score > want+1e-12 {
+		t.Fatalf("a scored %v, want %v (k=60, equal weights)", got[0].Score, want)
+	}
+
+	if got[4].Path != "d" || len(got[4].Terms) != 1 {
+		t.Fatalf("matched terms must survive fusion, got %+v", got[4])
+	}
+}
+
+func TestFuseRankedListsCutsAtDepth(t *testing.T) {
+	var long []string
+	for i := 0; i < fusionDepth+5; i++ {
+		long = append(long, string(rune('a'+i)))
+	}
+
+	got := fuseRankedLists(rankedList{Hits: hitsOf(long...)})
+	if len(got) != fusionDepth {
+		t.Fatalf("fused %d files, want depth %d", len(got), fusionDepth)
+	}
+}

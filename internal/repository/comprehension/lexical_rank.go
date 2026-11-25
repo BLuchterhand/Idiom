@@ -114,13 +114,53 @@ type rankedList struct {
 	Hits   []LexicalHit
 }
 
-// fuseRankedLists is the seam where later phases combine retrievers (exact
-// symbol matches, graph neighbours) by reciprocal rank fusion. Phase 1 has
-// one retriever, so its list passes through unchanged.
+const (
+	// rrfK is the reciprocal rank fusion constant of Cormack, Clarke and
+	// Buettcher (SIGIR 2009); 60 is their published default, not fitted.
+	rrfK = 60
+	// fusionDepth cuts each list before fusing, so membership in a long tail
+	// does not count as agreement.
+	fusionDepth = 24
+)
+
+// fuseRankedLists combines retrievers by reciprocal rank fusion with equal
+// weights: a file scores the sum of 1/(rrfK+rank) over the lists that hold it
+// in their first fusionDepth entries. Ties break by path. Matched terms come
+// from whichever list carried them.
 func fuseRankedLists(lists ...rankedList) []LexicalHit {
-	if len(lists) == 0 {
-		return nil
+	byPath := map[string]*LexicalHit{}
+
+	for _, list := range lists {
+		for rank, hit := range list.Hits[:min(fusionDepth, len(list.Hits))] {
+			fused := byPath[hit.Path]
+			if fused == nil {
+				fused = &LexicalHit{Path: hit.Path}
+				byPath[hit.Path] = fused
+			}
+
+			fused.Score += 1 / float64(rrfK+rank+1)
+
+			if len(fused.Terms) == 0 {
+				fused.Terms = hit.Terms
+			}
+		}
 	}
 
-	return lists[0].Hits
+	out := make([]LexicalHit, 0, len(byPath))
+	for _, hit := range byPath {
+		out = append(out, *hit)
+	}
+
+	slices.SortFunc(out, func(a, b LexicalHit) int {
+		switch {
+		case a.Score > b.Score:
+			return -1
+		case a.Score < b.Score:
+			return 1
+		default:
+			return strings.Compare(a.Path, b.Path)
+		}
+	})
+
+	return out
 }
