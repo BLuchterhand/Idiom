@@ -20,7 +20,7 @@ const (
 	maxPackFileHandles     = 12
 	maxPackRelationships   = 32
 	relationshipsPerTarget = 4
-	packAlgorithmVersion   = "query-term-coverage-v5-packet-quality"
+	packAlgorithmVersion   = "bm25-lexical-v1-packet-quality"
 )
 
 type PackOptions struct {
@@ -143,6 +143,10 @@ type PackFile struct {
 	Dir2       string         `json:"dir2,omitempty"`
 	AdmittedBy *PackAdmission `json:"admitted_by,omitempty"`
 	Why        string         `json:"why,omitempty"`
+
+	// matched are the query terms that retrieved the file; they feed Why
+	// and are not part of the stored pack.
+	matched []string
 }
 
 // PackFileKind is the candidate's role for the agent reading the pack.
@@ -421,7 +425,13 @@ func collectPackCandidates(ctx *packContext) packCandidates {
 	runtimeOverlay := addRuntimeOverlayToPack(ctx, files, tests)
 
 	rankInputs := packRankInputs(ctx)
-	candidateFiles := finalizePackFiles(files.all(), rankInputs, ctx.limit, ctx.opts.Explain)
+
+	candidateFiles, lexical := lexicalPackFiles(ctx, files, runtimeOverlay)
+	if lexical {
+		candidateFiles = finishPackFiles(candidateFiles, rankInputs.QueryTokens, ctx.opts.Explain)
+	} else {
+		candidateFiles = finalizePackFiles(files.all(), rankInputs, ctx.limit, ctx.opts.Explain)
+	}
 
 	return packCandidates{
 		files:          files,

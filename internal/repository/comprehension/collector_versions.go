@@ -24,6 +24,7 @@ var currentCollectorVersions = map[string]string{
 	"language_environment":      "2",
 	"workspace_tool_enrichment": "2",
 	"summary_index":             "1",
+	"lexical_index":             "1",
 }
 
 // localizationCollectorKey names the collector-version entry that carries the

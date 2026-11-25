@@ -129,12 +129,19 @@ func finalizePackFiles(files []PackFile, in RankInputs, limit int, explain bool)
 		ranked = ranked[:limit]
 	}
 
+	return finishPackFiles(ranked, in.QueryTokens, explain)
+}
+
+// finishPackFiles bounds each file's handles and, when explaining, labels
+// role and reason; otherwise it drops the admission record kept only for
+// explanations.
+func finishPackFiles(ranked []PackFile, queryTokens []string, explain bool) []PackFile {
 	for i := range ranked {
 		ranked[i] = boundedPackFileHandles(ranked[i])
 	}
 
 	if explain {
-		explainPackFiles(ranked, in.QueryTokens)
+		explainPackFiles(ranked, queryTokens)
 
 		return ranked
 	}

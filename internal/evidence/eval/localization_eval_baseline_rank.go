@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"idiom/internal/repository/comprehension"
 )
 
 // rrfK is the reciprocal rank fusion constant of Cormack, Clarke and
@@ -301,7 +303,7 @@ func ComputeLocalizationCeiling(cases []*baselineCase, rareFraction float64) []L
 			}
 
 			lc.Cases++
-			terms := uniqueStrings(bc.query)
+			terms := comprehension.UniqueLexicalTerms(bc.query)
 			lc.QueryTermsMean += float64(len(terms))
 
 			rare := map[string]bool{}

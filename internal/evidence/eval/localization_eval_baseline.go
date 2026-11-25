@@ -22,105 +22,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
+
+	"idiom/internal/repository/comprehension"
 
 	_ "modernc.org/sqlite"
 )
-
-const (
-	bm25K1 = 1.2
-	bm25B  = 0.75
-	// baselineMaxFileBytes skips generated or vendored blobs that would
-	// dominate length normalization.
-	baselineMaxFileBytes = 1 << 20
-)
-
-// baselineStopwords are English function words plus ledger boilerplate that
-// names no code (designer, playtest, row ids are split into dropped digits).
-var baselineStopwords = map[string]struct{}{}
-
-func init() {
-	for _, w := range strings.Fields(`a an and are as at be by for from has have in into is it its of on or
-		that the this to was were will with not no so but if then than when while what which who how why
-		all any each every one two per via vs only also more most less very just still now new same own
-		do does did done can could should would may might must our we you they them their there here
-		designer playtest main red green fix fixes`) {
-		baselineStopwords[w] = struct{}{}
-	}
-}
-
-// BaselineTokens splits text into lowercase index terms: identifiers are split
-// on snake_case, camelCase and letter/digit boundaries, the joined compound is
-// kept too (world_gen also matches worldgen), single characters, pure numbers
-// and stopwords are dropped, and a plural s is stripped.
-func BaselineTokens(text string) []string {
-	var out []string
-
-	for _, word := range strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }) {
-		parts := splitIdentifier(word)
-		for _, p := range parts {
-			out = appendTerm(out, p)
-		}
-
-		if len(parts) > 1 {
-			out = appendTerm(out, strings.Join(parts, ""))
-		}
-	}
-
-	return out
-}
-
-func appendTerm(out []string, t string) []string {
-	if len(t) < 2 {
-		return out
-	}
-
-	if _, err := strconv.Atoi(t); err == nil {
-		return out
-	}
-
-	if _, stop := baselineStopwords[t]; stop {
-		return out
-	}
-
-	if len(t) > 3 && strings.HasSuffix(t, "s") && !strings.HasSuffix(t, "ss") {
-		t = t[:len(t)-1]
-	}
-
-	return append(out, t)
-}
-
-func splitIdentifier(word string) []string {
-	var parts []string
-
-	for _, piece := range strings.Split(word, "_") {
-		runes := []rune(piece)
-		start := 0
-
-		for i := 1; i < len(runes); i++ {
-			prev, cur := runes[i-1], runes[i]
-			next := rune(0)
-
-			if i+1 < len(runes) {
-				next = runes[i+1]
-			}
-
-			boundary := (unicode.IsLower(prev) && unicode.IsUpper(cur)) ||
-				(unicode.IsUpper(prev) && unicode.IsUpper(cur) && unicode.IsLower(next)) ||
-				(unicode.IsLetter(prev) != unicode.IsLetter(cur))
-			if boundary {
-				parts = append(parts, strings.ToLower(string(runes[start:i])))
-				start = i
-			}
-		}
-
-		if start < len(runes) {
-			parts = append(parts, strings.ToLower(string(runes[start:])))
-		}
-	}
-
-	return parts
-}
 
 // bm25Field holds, for one document field, the query-term frequencies and
 // lengths of every document. Only query terms are counted: the ranker never
@@ -165,31 +71,20 @@ func (f *bm25Field) scores(query []string) []float64 {
 		total += l
 	}
 
-	avg := math.Max(float64(total)/float64(n), 1)
+	avg := comprehension.BM25AvgLength(total, n)
 
-	for _, term := range uniqueStrings(query) {
-		df := 0
-
-		for _, tf := range f.tf {
-			if tf[term] > 0 {
-				df++
-			}
-		}
-
+	for _, term := range comprehension.UniqueLexicalTerms(query) {
+		df := f.docFreq(term)
 		if df == 0 {
 			continue
 		}
 
-		idf := math.Log(1 + (float64(n)-float64(df)+0.5)/(float64(df)+0.5))
+		idf := comprehension.BM25IDF(n, df)
 
 		for d, tf := range f.tf {
-			c := float64(tf[term])
-			if c == 0 {
-				continue
+			if c := tf[term]; c > 0 {
+				out[d] += idf * comprehension.BM25TermScore(c, f.length[d], avg)
 			}
-
-			norm := c * (bm25K1 + 1) / (c + bm25K1*(1-bm25B+bm25B*float64(f.length[d])/avg))
-			out[d] += idf * norm
 		}
 	}
 
@@ -206,21 +101,6 @@ func (f *bm25Field) docFreq(term string) int {
 	}
 
 	return df
-}
-
-func uniqueStrings(in []string) []string {
-	seen := map[string]struct{}{}
-
-	var out []string
-
-	for _, s := range in {
-		if _, ok := seen[s]; !ok {
-			seen[s] = struct{}{}
-			out = append(out, s)
-		}
-	}
-
-	return out
 }
 
 // baselineCase is everything the rankers need for one case.
@@ -247,7 +127,7 @@ func loadBaselineCase(repo, indexDir, codeMap string, c LocalizationEvalCase, cf
 		return nil, err
 	}
 
-	bc := &baselineCase{c: c, files: files, index: map[string]int{}, query: BaselineTokens(c.Query)}
+	bc := &baselineCase{c: c, files: files, index: map[string]int{}, query: comprehension.LexicalTokens(c.Query)}
 	for i, f := range files {
 		bc.index[f] = i
 	}
@@ -263,14 +143,14 @@ func loadBaselineCase(repo, indexDir, codeMap string, c LocalizationEvalCase, cf
 	bc.isTest = make([]bool, len(files))
 
 	for i, f := range files {
-		pt := BaselineTokens(f)
+		pt := comprehension.LexicalTokens(f)
 		bc.path.add(i, pt, querySet)
 		bc.content.add(i, pt, querySet)
 		bc.isTest[i] = testRx.MatchString(f)
 	}
 
 	if err := readBlobs(repo, c.Base, files, func(i int, data []byte) {
-		bc.content.add(i, BaselineTokens(string(data)), querySet)
+		bc.content.add(i, comprehension.LexicalTokens(string(data)), querySet)
 	}); err != nil {
 		return nil, err
 	}
@@ -281,7 +161,7 @@ func loadBaselineCase(repo, indexDir, codeMap string, c LocalizationEvalCase, cf
 
 			for f, text := range entries {
 				if i, ok := bc.index[f]; ok {
-					bc.docs.add(i, BaselineTokens(f+" "+text), querySet)
+					bc.docs.add(i, comprehension.LexicalTokens(f+" "+text), querySet)
 				}
 			}
 		}
@@ -469,7 +349,7 @@ func readBlobs(repo, base string, files []string, fn func(int, []byte)) error {
 			return err
 		}
 
-		if size <= baselineMaxFileBytes {
+		if size <= comprehension.LexicalMaxFileBytes {
 			fn(i, data[:size])
 		}
 	}

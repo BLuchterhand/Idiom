@@ -1,18 +1,6 @@
 package eval
 
-import (
-	"slices"
-	"testing"
-)
-
-func TestBaselineTokensSplitsIdentifiers(t *testing.T) {
-	got := BaselineTokens("SunShadow day_clock HTTPServer G713 the shadows")
-	want := []string{"sun", "shadow", "sunshadow", "day", "clock", "dayclock", "http", "server", "httpserver", "g713", "shadow"}
-
-	if !slices.Equal(got, want) {
-		t.Fatalf("tokens = %v, want %v", got, want)
-	}
-}
+import "testing"
 
 func TestBM25PrefersRareTermMatch(t *testing.T) {
 	query := []string{"slot", "queue"}

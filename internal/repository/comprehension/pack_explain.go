@@ -126,6 +126,10 @@ func packFileWhy(file PackFile, terms []string) string {
 		return truncateWhy(verb + " " + adm.Object)
 	}
 
+	if len(file.matched) > 0 {
+		return truncateWhy("matches \"" + strings.Join(file.matched, "\",\"") + "\"")
+	}
+
 	if matched := matchingPathTerms(file.Path, terms); len(matched) > 0 {
 		return truncateWhy("matches \"" + strings.Join(matched, "\",\"") + "\" in path")
 	}

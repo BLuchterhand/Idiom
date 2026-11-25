@@ -442,7 +442,7 @@ var _ = It("pack exposes graph view contract cache and ranker reasons", func() {
 	alpha := packFileByPath(first.CandidateFiles, "pkg/alpha.go")
 	Expect(alpha).NotTo(BeNil(), "expected ranker reasons for alpha candidate, got %#v", alpha)
 	Expect(rankerReasonsContain(alpha.RankerReasons, "role_floor")).To(BeTrue(), "expected ranker reasons for alpha candidate, got %#v", alpha)
-	Expect(rankerReasonsContain(alpha.RankerReasons, "direct_task_match")).To(BeTrue(), "expected ranker reasons for alpha candidate, got %#v", alpha)
+	Expect(rankerReasonsContain(alpha.RankerReasons, "bm25_match")).To(BeTrue(), "expected ranker reasons for alpha candidate, got %#v", alpha)
 
 	second, err := Pack(context.Background(), opts)
 	Expect(err).NotTo(HaveOccurred(), "second Pack: %v", err)

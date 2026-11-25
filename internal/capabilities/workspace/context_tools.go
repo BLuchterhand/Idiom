@@ -475,8 +475,13 @@ func (m *Manager) contextImpactTask(req ToolRequest) string {
 	return "Graph-backed impact evidence for " + path
 }
 
+// contextImpactItems lists the pack's candidate files first, in the order the
+// ranker produced them, then symbols and test commands by rank. Files are
+// never interleaved with symbols: a symbol's fixed rank must not displace a
+// lower-scored file, since the file order is the localization answer. The
+// files and the supporting items each get their own cap of limit.
 func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpactItem {
-	var items []contextImpactItem
+	var files, items []contextImpactItem
 
 	for _, file := range pack.CandidateFiles {
 		rank := 0.74
@@ -530,7 +535,7 @@ func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpac
 			item.Limitations = append(item.Limitations, "candidate was marked stale by context graph")
 		}
 
-		items = append(items, item)
+		files = append(files, item)
 	}
 
 	for _, symbol := range pack.CandidateSymbols {
@@ -585,11 +590,15 @@ func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpac
 		return items[i].Rank > items[j].Rank
 	})
 
+	if limit > 0 && len(files) > limit {
+		files = files[:limit]
+	}
+
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
 	}
 
-	return items
+	return append(files, items...)
 }
 
 func firstString(values []string) string {

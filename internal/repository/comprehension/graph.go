@@ -2620,7 +2620,8 @@ func isSymbolKind(kind string) bool {
 func queryTerms(opts QueryOptions) []string {
 	var terms []string
 
-	for _, value := range []string{opts.Symbol, opts.Query, opts.Path, opts.Scope} {
+	// Path and Scope restrict where results may come from; they are not terms.
+	for _, value := range []string{opts.Symbol, opts.Query} {
 		for _, field := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '/' || r == '.')
 		}) {
@@ -2959,8 +2960,13 @@ func nodeTermMatchScore(node Node, term string) int {
 	name := strings.ToLower(node.QualifiedName)
 	kind := strings.ToLower(node.Kind)
 
+	// Namespace-qualified C++ names ("bt::client::Ambience") must still count
+	// as an exact match on the symbol's own name.
+	bare, _ := node.Properties["name"].(string)
+	bare = strings.ToLower(bare)
+
 	switch {
-	case name == term:
+	case name == term || bare == term:
 		score += 80
 	case strings.Contains(name, term):
 		score += 40
