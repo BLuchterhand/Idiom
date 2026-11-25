@@ -38,7 +38,10 @@ type LocalizationEvalRunOptions struct {
 	// about 10 s here). A seeded index (incremental update of the nearest cached
 	// tree) matched a cold one in the top 8 but differed at rank 13 in a probe,
 	// so seeding is opt-in.
-	NoSeed       bool
+	NoSeed bool
+	// Format is the context_impact output format under test: "" (default
+	// JSON) or "compact".
+	Format       string
 	IndexTimeout time.Duration
 	QueryTimeout time.Duration
 	Log          io.Writer
@@ -65,6 +68,8 @@ type LocalizationEvalCaseResult struct {
 type LocalizationEvalRunResult struct {
 	Schema           int                          `json:"schema"`
 	Corpus           string                       `json:"corpus"`
+	Gate             string                       `json:"gate,omitempty"`
+	Format           string                       `json:"format,omitempty"`
 	Mode             string                       `json:"mode"`
 	CollectorVersion string                       `json:"collector_version"`
 	Limit            string                       `json:"limit"`
@@ -91,7 +96,7 @@ func RunLocalizationEval(ctx context.Context, file LocalizationEvalCaseFile, opt
 	}
 
 	r := &localizationEvalRunner{file: file, opts: opts}
-	result := LocalizationEvalRunResult{Schema: localizationEvalSchema, Corpus: file.Corpus, Mode: "exact", Limit: "production default (limit 8, pool 32 nodes)"}
+	result := LocalizationEvalRunResult{Schema: localizationEvalSchema, Corpus: file.Corpus, Gate: file.Gate, Format: opts.Format, Mode: "exact", Limit: "production default (limit 8, pool 32 nodes)"}
 
 	cases := selectLocalizationEvalCases(file.Cases, opts)
 	for i, c := range cases {
@@ -142,11 +147,15 @@ type localizationEvalRunner struct {
 func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEvalCase) LocalizationEvalCaseResult {
 	cr := LocalizationEvalCaseResult{ID: c.ID, Split: c.Split, Deterministic: true}
 
-	wt, err := os.MkdirTemp("", "idiom-loc-eval-")
-	if err != nil {
+	// The worktree path is fixed: a cold index's ranking was seen to vary with
+	// the checkout path, so a random temp dir would add noise between runs.
+	wt := filepath.Join(r.opts.CacheDir, "worktree")
+	if err := os.RemoveAll(wt); err != nil {
 		cr.Error = err.Error()
 		return cr
 	}
+
+	_, _ = gitOut(r.opts.Repo, "worktree", "prune")
 
 	defer os.RemoveAll(wt)
 
@@ -163,6 +172,8 @@ func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEval
 	}
 
 	started := time.Now()
+	var err error
+
 	if cr.IndexSource, err = r.prepareIndex(ctx, wt, c); err != nil {
 		cr.Error = err.Error()
 		return cr
@@ -283,11 +294,20 @@ func (r *localizationEvalRunner) collectorVersion(ctx context.Context, wt string
 }
 
 func (r *localizationEvalRunner) query(ctx context.Context, wt, task string) ([]string, int, bool, error) {
-	input, _ := json.Marshal(map[string]any{"path": localizationEvalProdPath, "task": task})
+	request := map[string]any{"path": localizationEvalProdPath, "task": task}
+	if r.opts.Format != "" {
+		request["format"] = r.opts.Format
+	}
+
+	input, _ := json.Marshal(request)
 
 	out, err := r.runIdiom(ctx, wt, r.opts.QueryTimeout, "context_impact", string(input))
 	if err != nil {
 		return nil, 0, false, err
+	}
+
+	if r.opts.Format == "compact" {
+		return parseCompactImpact(out)
 	}
 
 	var parsed struct {
@@ -491,4 +511,27 @@ func copyIndexFiles(from, to string) error {
 	}
 
 	return nil
+}
+
+// parseCompactImpact reads the files of a format=compact report: lines of
+// `<rank> <path>  <kind>  <why>`, after one header line.
+func parseCompactImpact(out string) ([]string, int, bool, error) {
+	lines := strings.Split(out, "\n")
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "context_impact ") {
+		return nil, 0, false, fmt.Errorf("compact output has no header: %q", truncate(out, 80))
+	}
+
+	var files []string
+
+	for _, line := range lines[1:] {
+		rank, rest, ok := strings.Cut(line, " ")
+		if !ok || rank == "" || strings.Trim(rank, "0123456789") != "" {
+			continue
+		}
+
+		path, _, _ := strings.Cut(rest, "  ")
+		files = append(files, path)
+	}
+
+	return files, len(out), strings.Contains(lines[0], "fresh=true"), nil
 }

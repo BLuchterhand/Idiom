@@ -122,7 +122,7 @@ func (b *packFileBuilder) all() []PackFile {
 // finalizePackFiles applies score-based ranking via RankPackFiles, then the
 // candidate limit and per-file handle bounding. The Hub flag is set inside
 // RankPackFiles so callers that bypass finalizePackFiles still see it.
-func finalizePackFiles(files []PackFile, in RankInputs, limit int) []PackFile {
+func finalizePackFiles(files []PackFile, in RankInputs, limit int, explain bool) []PackFile {
 	in.Files = files
 	ranked := RankPackFiles(in)
 	if limit > 0 && len(ranked) > limit {
@@ -131,6 +131,16 @@ func finalizePackFiles(files []PackFile, in RankInputs, limit int) []PackFile {
 
 	for i := range ranked {
 		ranked[i] = boundedPackFileHandles(ranked[i])
+	}
+
+	if explain {
+		explainPackFiles(ranked, in.QueryTokens)
+
+		return ranked
+	}
+
+	for i := range ranked {
+		ranked[i].AdmittedBy = nil // recorded for explanations only
 	}
 
 	return ranked

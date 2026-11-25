@@ -10,38 +10,41 @@ import (
 
 // ToolRequest is the normalized, typed form of a workspace tool call.
 type ToolRequest struct {
-	Tool              string              `json:"tool"`
-	ID                string              `json:"id,omitempty"`
-	Key               string              `json:"key,omitempty"`
-	Handle            string              `json:"handle,omitempty"`
-	Path              string              `json:"path,omitempty"`
-	Root              string              `json:"root,omitempty"`
-	ConfigPath        string              `json:"config_path,omitempty"`
-	EffortRoot        string              `json:"effort_root,omitempty"`
-	StartLine         int                 `json:"start_line,omitempty"`
-	EndLine           int                 `json:"end_line,omitempty"`
-	Pattern           string              `json:"pattern,omitempty"`
-	Query             string              `json:"query,omitempty"`
-	Status            string              `json:"status,omitempty"`
-	Task              string              `json:"task,omitempty"`
-	Purpose           string              `json:"purpose,omitempty"`
-	Capability        string              `json:"capability,omitempty"`
-	Decision          string              `json:"decision,omitempty"`
-	Language          string              `json:"language,omitempty"`
-	Glob              string              `json:"glob,omitempty"`
-	Workdir           string              `json:"workdir,omitempty"`
-	Command           string              `json:"command,omitempty"`
-	Prompt            string              `json:"prompt,omitempty"`
-	Agent             string              `json:"agent,omitempty"`
-	Mode              string              `json:"mode,omitempty"`
-	Content           string              `json:"content,omitempty"`
-	OldText           string              `json:"old_text,omitempty"`
-	NewText           string              `json:"new_text,omitempty"`
-	ReplaceAll        bool                `json:"replace_all,omitempty"`
-	Recursive         bool                `json:"recursive,omitempty"`
-	FixedStrings      bool                `json:"fixed_strings,omitempty"`
-	MaxDepth          int                 `json:"max_depth,omitempty"`
-	Limit             int                 `json:"limit,omitempty"`
+	Tool         string `json:"tool"`
+	ID           string `json:"id,omitempty"`
+	Key          string `json:"key,omitempty"`
+	Handle       string `json:"handle,omitempty"`
+	Path         string `json:"path,omitempty"`
+	Root         string `json:"root,omitempty"`
+	ConfigPath   string `json:"config_path,omitempty"`
+	EffortRoot   string `json:"effort_root,omitempty"`
+	StartLine    int    `json:"start_line,omitempty"`
+	EndLine      int    `json:"end_line,omitempty"`
+	Pattern      string `json:"pattern,omitempty"`
+	Query        string `json:"query,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Task         string `json:"task,omitempty"`
+	Purpose      string `json:"purpose,omitempty"`
+	Capability   string `json:"capability,omitempty"`
+	Decision     string `json:"decision,omitempty"`
+	Language     string `json:"language,omitempty"`
+	Glob         string `json:"glob,omitempty"`
+	Workdir      string `json:"workdir,omitempty"`
+	Command      string `json:"command,omitempty"`
+	Prompt       string `json:"prompt,omitempty"`
+	Agent        string `json:"agent,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	Content      string `json:"content,omitempty"`
+	OldText      string `json:"old_text,omitempty"`
+	NewText      string `json:"new_text,omitempty"`
+	ReplaceAll   bool   `json:"replace_all,omitempty"`
+	Recursive    bool   `json:"recursive,omitempty"`
+	FixedStrings bool   `json:"fixed_strings,omitempty"`
+	MaxDepth     int    `json:"max_depth,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+	// Format selects the context_impact output: "" or "json" is the full
+	// report; "compact" is one role-and-reason line per candidate file.
+	Format            string              `json:"format,omitempty"`
 	BudgetTokens      int                 `json:"budget_tokens,omitempty"`
 	Resolution        string              `json:"resolution,omitempty"`
 	IncludeEvidence   bool                `json:"include_evidence,omitempty"`

@@ -9,6 +9,7 @@ import (
 
 	ginkgo "github.com/onsi/ginkgo/v2"
 	gomega "github.com/onsi/gomega"
+	"idiom/internal/repository/comprehension"
 )
 
 const metricTolerance = 1e-9
@@ -72,10 +73,10 @@ var _ = ginkgo.Describe("localization eval metrics", func() {
 	})
 
 	ginkgo.It("maps files to two-level subtopics", func() {
-		gomega.Expect(LocalizationEvalDir2("core/world/day_clock.cpp")).To(gomega.Equal("core/world"))
-		gomega.Expect(LocalizationEvalDir2("core/world/constants/x.h")).To(gomega.Equal("core/world"))
-		gomega.Expect(LocalizationEvalDir2("client/session.cpp")).To(gomega.Equal("client"))
-		gomega.Expect(LocalizationEvalDir2("go.mod")).To(gomega.Equal("."))
+		gomega.Expect(comprehension.PathDir2("core/world/day_clock.cpp")).To(gomega.Equal("core/world"))
+		gomega.Expect(comprehension.PathDir2("core/world/constants/x.h")).To(gomega.Equal("core/world"))
+		gomega.Expect(comprehension.PathDir2("client/session.cpp")).To(gomega.Equal("client"))
+		gomega.Expect(comprehension.PathDir2("go.mod")).To(gomega.Equal("."))
 	})
 })
 
@@ -150,6 +151,33 @@ var _ = ginkgo.Describe("localization eval split and gates", func() {
 		small := EvaluateLocalizationEvalGate(spec, wrapDeltas(repeatDeltas(3, 0.2)))
 		gomega.Expect(small.Pass).To(gomega.BeFalse())
 		gomega.Expect(EvaluateLocalizationEvalGate(spec, nil).Pass).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("judges small no-regression subsets by the sign test and passes an unchanged one", func() {
+		noReg := LocalizationEvalGateSpec{Metric: "recall_capped", MinMean: -0.01, Confidence: LocalizationEvalDevConfidence, LowerBoundFloor: -0.01}
+
+		unchanged := EvaluateLocalizationEvalGate(noReg, wrapDeltas(repeatDeltas(8, 0)))
+		gomega.Expect(unchanged.Pass).To(gomega.BeTrue(), "%v", unchanged.Reasons)
+		gomega.Expect(unchanged.Method).To(gomega.Equal("sign_test"))
+		gomega.Expect(EvaluateLocalizationEvalGate(noReg, nil).Pass).To(gomega.BeFalse(), "no cases is not a pass")
+
+		oneLoss := EvaluateLocalizationEvalGate(noReg, wrapDeltas(append(repeatDeltas(7, 0), -0.004)))
+		gomega.Expect(oneLoss.Pass).To(gomega.BeTrue(), "%v", oneLoss.Reasons)
+
+		worse := EvaluateLocalizationEvalGate(noReg, wrapDeltas(repeatDeltas(6, -0.004)))
+		gomega.Expect(worse.Pass).To(gomega.BeFalse())
+		gomega.Expect(strings.Join(worse.Reasons, ";")).To(gomega.ContainSubstring("significantly worse"))
+
+		// A gain gate still fails an unchanged subset.
+		gomega.Expect(EvaluateLocalizationEvalGate(spec, wrapDeltas(repeatDeltas(8, 0))).Pass).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("turns any gate on a no-regression corpus into a no-regression gate", func() {
+		asked := LocalizationEvalGateSpec{Metric: "recall_capped", MinMean: 0.05, LowerBoundFloor: 0, Confidence: LocalizationEvalDevConfidence}
+		got := EffectiveLocalizationEvalGateSpec(LocalizationEvalGateNoRegression, asked)
+		gomega.Expect(got.LowerBoundFloor).To(gomega.Equal(LocalizationEvalNoRegressionFloor))
+		gomega.Expect(got.MinMean).To(gomega.Equal(LocalizationEvalNoRegressionFloor))
+		gomega.Expect(EffectiveLocalizationEvalGateSpec("", asked)).To(gomega.Equal(asked))
 	})
 
 	ginkgo.It("pairs two runs by case id and skips errored cases", func() {
@@ -258,6 +286,33 @@ var _ = ginkgo.Describe("localization eval case builder", func() {
 		gomega.Expect(c.GoldTests).To(gomega.Equal([]string{"tests/a_test.cpp"}))
 		gomega.Expect(c.GoldDocs).To(gomega.ConsistOf("docs/ledger.md", "docs/note.md"))
 		gomega.Expect(c.Split).To(gomega.Equal(LocalizationEvalSplit(c.Merge)))
+	})
+
+	ginkgo.It("scores a renamed source file by its old path and records the new one", func() {
+		repo := ginkgo.GinkgoT().TempDir()
+		runGit(repo, "init", "-q", "-b", "main")
+		write(repo, "docs/ledger.md", "| G1 | Rename the thing across the tree | x |\n")
+		write(repo, "src/old_name.cpp", strings.Repeat("int x;\n", 40))
+		runGit(repo, "add", "-A")
+		runGit(repo, "commit", "-q", "-m", "base")
+		runGit(repo, "checkout", "-q", "-b", "work")
+		runGit(repo, "mv", "src/old_name.cpp", "src/new_name.cpp")
+		runGit(repo, "commit", "-q", "-am", "rename")
+		runGit(repo, "checkout", "-q", "main")
+		write(repo, "other.txt", "o\n")
+		runGit(repo, "add", "-A")
+		runGit(repo, "commit", "-q", "-m", "diverge")
+		runGit(repo, "merge", "-q", "--no-ff", "-m", "merge: G1 rename", "work")
+
+		cases, err := BuildLocalizationEvalCases(repo, LocalizationEvalBuilderConfig{
+			Commits: "merges", QueryFrom: "ledger", LedgerPaths: []string{"docs/ledger.md"},
+			SubjectIDRegex: `^merge: ([A-Z]+[0-9]+)\b`, LedgerRowRegex: `(?m)^\| %s \| ([^|]+) \|`, SourceRegex: `\.cpp$`, MinQueryLen: 5,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(cases).To(gomega.HaveLen(1))
+		gomega.Expect(cases[0].Gold).To(gomega.Equal([]string{"src/old_name.cpp"}))
+		gomega.Expect(cases[0].GoldRenames).To(gomega.Equal([]LocalizationEvalRename{{From: "src/old_name.cpp", To: "src/new_name.cpp"}}))
+		gomega.Expect(cases[0].GoldNew).To(gomega.BeEmpty())
 	})
 
 	ginkgo.It("rejects a case file whose split does not match the hash", func() {

@@ -5,11 +5,16 @@
   "max_commits": 400,
   "query_from": "message",
   "source_regex": "\\.go$",
-  "exclude_gold": ["_test\\.go$", "^testdata/", "^docs/"],
+  "exclude_gold": [
+   "_test\\.go$",
+   "^testdata/",
+   "^docs/"
+  ],
   "test_regex": "_test\\.go$",
   "doc_regex": "\\.md$|^docs/",
   "max_gold_files": 25,
   "min_query_len": 40,
   "max_cases": 60
- }
+ },
+ "gate": "no_regression"
 }

@@ -39,6 +39,9 @@ type PackOptions struct {
 	RequiredEditPaths []string
 	ForbiddenPaths    []string
 	Now               time.Time
+	// Explain adds Kind, Dir2, AdmittedBy and Why to every candidate file.
+	// It is part of the cache key; default packs are unchanged.
+	Explain bool
 	// Intent overrides automatic intent detection from Task. Empty means
 	// detect from Task.
 	Intent Intent
@@ -168,6 +171,9 @@ type PackAdmission struct {
 	EdgeKind   string `json:"edge_kind"`
 	Object     string `json:"object,omitempty"`
 	SourcePath string `json:"source_path,omitempty"`
+	// Direction is "out" when the admitted file is the edge source (it calls,
+	// imports or references the object) and "in" when it is the target.
+	Direction string `json:"direction,omitempty"`
 }
 
 type PackSymbol struct {
@@ -246,6 +252,7 @@ type packContext struct {
 	graph        Graph
 	status       StatusReport
 	localization LocalizationConfig
+	configErr    error
 	cacheKey     ViewKey
 	cacheState   GraphViewCacheState
 
@@ -342,15 +349,18 @@ func preparePackContext(requestContext context.Context, opts PackOptions) (*pack
 		RequiredEditPaths:   opts.RequiredEditPaths,
 		ForbiddenPaths:      opts.ForbiddenPaths,
 		IncludeStaleRuntime: opts.IncludeStaleRuntime,
+		Explain:             opts.Explain,
 	}, graph.ID, mode, intent, workspaceStateFingerprints, LocalizationConfigFingerprint(root))
 	cacheState := GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "miss_recompute", "cache_miss")
 
-	// A malformed localization section loads as the zero config; the cache
-	// key above still changes with the file bytes (LocalizationConfigFingerprint).
-	localization, _ := LoadLocalizationConfig(root)
+	// A malformed localization section loads as the zero config and is
+	// reported in the pack's unknowns; the cache key above also changes with
+	// the file bytes (LocalizationConfigFingerprint).
+	localization, localizationErr := LoadLocalizationConfig(root)
 
 	return &packContext{
 		localization:   localization,
+		configErr:      localizationErr,
 		requestContext: requestContext,
 		opts:           opts,
 		root:           root,
@@ -411,7 +421,7 @@ func collectPackCandidates(ctx *packContext) packCandidates {
 	runtimeOverlay := addRuntimeOverlayToPack(ctx, files, tests)
 
 	rankInputs := packRankInputs(ctx)
-	candidateFiles := finalizePackFiles(files.all(), rankInputs, ctx.limit)
+	candidateFiles := finalizePackFiles(files.all(), rankInputs, ctx.limit, ctx.opts.Explain)
 
 	return packCandidates{
 		files:          files,
@@ -503,8 +513,12 @@ func addPackRelationshipEvidence(ctx *packContext, files *packFileBuilder, symbo
 			addPackTestFromNode(source, target, tests)
 		}
 
+		sourceKnown, targetKnown := files.has(source.Path), files.has(target.Path)
+
 		addPackRelatedNode(source, edge, files, symbols)
 		addPackRelatedNode(target, edge, files, symbols)
+		files.admitIfNew(source.Path, sourceKnown, PackAdmission{EdgeKind: edge.Kind, Object: admissionObject(target), SourcePath: target.Path, Direction: edgeDirectionOut})
+		files.admitIfNew(target.Path, targetKnown, PackAdmission{EdgeKind: edge.Kind, Object: admissionObject(source), SourcePath: source.Path, Direction: edgeDirectionIn})
 	}
 }
 
@@ -624,6 +638,10 @@ func addPackResultGaps(ctx *packContext, candidates packCandidates, result *Pack
 	result.Evidence = append(result.Evidence, candidates.runtimeOverlay.Evidence...)
 	result.Risks = append(result.Risks, candidates.runtimeOverlay.Risks...)
 	result.Unknowns = append(result.Unknowns, candidates.runtimeOverlay.Unknowns...)
+
+	if ctx.configErr != nil {
+		result.Unknowns = append(result.Unknowns, "localization config in "+localizationConfigRelPath+" is unreadable; defaults used: "+ctx.configErr.Error())
+	}
 	result.UnresolvedGaps = append(result.UnresolvedGaps, candidates.runtimeOverlay.UnresolvedGaps...)
 	result.UnresolvedGapDetails = append(result.UnresolvedGapDetails, candidates.runtimeOverlay.UnresolvedGapDetails...)
 }
@@ -709,6 +727,7 @@ func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, w
 			RuntimeTracesFingerprint:  workspaceStateFingerprints.RuntimeTracesFingerprint,
 
 			LocalizationConfigFingerprint: localizationFingerprint,
+			Explain:                       opts.Explain,
 		},
 	}
 }

@@ -59,6 +59,25 @@ type LocalizationEvalGateSpec struct {
 	MaxWorstDrop    float64
 }
 
+// LocalizationEvalGateNoRegression marks corpora that may only guard against
+// loss (the Idiom commit-message queries).
+const LocalizationEvalGateNoRegression = "no_regression"
+
+// LocalizationEvalNoRegressionFloor is the lower-bound floor of a
+// no-regression gate.
+const LocalizationEvalNoRegressionFloor = -0.01
+
+// EffectiveLocalizationEvalGateSpec applies a corpus's gate kind: a
+// no-regression corpus never gates a gain, whatever was asked for.
+func EffectiveLocalizationEvalGateSpec(gate string, spec LocalizationEvalGateSpec) LocalizationEvalGateSpec {
+	if gate == LocalizationEvalGateNoRegression {
+		spec.MinMean = min(spec.MinMean, LocalizationEvalNoRegressionFloor)
+		spec.LowerBoundFloor = LocalizationEvalNoRegressionFloor
+	}
+
+	return spec
+}
+
 // LocalizationEvalGateVerdict is the gate outcome with its evidence.
 type LocalizationEvalGateVerdict struct {
 	Metric     string   `json:"metric"`
@@ -126,7 +145,10 @@ func EvaluateLocalizationEvalGate(spec LocalizationEvalGateSpec, deltas []Locali
 		fail("mean delta %.4f below target %.4f", v.Mean, spec.MinMean)
 	}
 
-	if v.Losses > v.Wins {
+	// A small no-regression subset is judged by the sign test below; a bare
+	// loss count would fail it on one unlucky case.
+	smallNoRegression := spec.LowerBoundFloor < 0 && len(deltas) < LocalizationEvalMinSubset
+	if v.Losses > v.Wins && !smallNoRegression {
 		fail("losses %d exceed wins %d", v.Losses, v.Wins)
 	}
 
@@ -136,8 +158,19 @@ func EvaluateLocalizationEvalGate(spec LocalizationEvalGateSpec, deltas []Locali
 
 	if len(deltas) < LocalizationEvalMinSubset {
 		v.Method = "sign_test"
-		v.SignP = LocalizationEvalSignTestP(v.Wins, v.Losses)
 
+		if spec.LowerBoundFloor < 0 {
+			// No-regression: pass unless the subset is significantly worse.
+			// An unchanged subset (no wins, no losses) is a pass.
+			v.SignP = LocalizationEvalSignTestP(v.Losses, v.Wins)
+			if v.Losses > 0 && v.SignP < LocalizationEvalSignTestAlpha {
+				fail("sign test p=%.4f: significantly worse (%d losses, %d wins)", v.SignP, v.Losses, v.Wins)
+			}
+
+			return v
+		}
+
+		v.SignP = LocalizationEvalSignTestP(v.Wins, v.Losses)
 		if v.SignP >= LocalizationEvalSignTestAlpha {
 			fail("sign test p=%.4f at n=%d (<%d cases) not below %.2f", v.SignP, len(deltas), LocalizationEvalMinSubset, LocalizationEvalSignTestAlpha)
 		}

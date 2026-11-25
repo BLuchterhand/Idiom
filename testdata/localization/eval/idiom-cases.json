@@ -1,6 +1,7 @@
 {
  "schema": 1,
  "corpus": "idiom",
+ "gate": "no_regression",
  "builder": {
   "commits": "commits",
   "max_commits": 400,
