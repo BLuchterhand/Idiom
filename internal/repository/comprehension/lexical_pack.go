@@ -6,11 +6,11 @@ import (
 
 // graphRankedHits is the exact-symbol and path channel: the files the symbol
 // graph pool surfaced, in the graph ranker's order.
-func graphRankedHits(ranked []PackFile, include func(string) bool) []LexicalHit {
+func graphRankedHits(ranked []PackFile, include func(string) bool, languageOf func(string) string) []LexicalHit {
 	hits := make([]LexicalHit, 0, len(ranked))
 
 	for _, file := range ranked {
-		if include(file.Path) {
+		if include(file.Path) && policyFor(languageOf(file.Path)).Channel {
 			hits = append(hits, LexicalHit{Path: file.Path, Score: file.Score})
 		}
 	}
@@ -40,9 +40,12 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 
 	include := packCandidateFilter(ctx, files)
 
+	languageOf := func(p string) string { return ctx.nodesByID[fileNodeID(p)].Language }
+	lexical := HopLexical(RankLexical(corpus, terms, include), buildHopGraph(ctx.graph, ctx.nodesByID), languageOf, include)
+
 	hits := fuseRankedLists(
-		rankedList{Source: "bm25", Hits: RankLexical(corpus, terms, include)},
-		rankedList{Source: "graph", Hits: graphRankedHits(graphRanked, include)},
+		rankedList{Source: "bm25", Hits: lexical},
+		rankedList{Source: "graph", Hits: graphRankedHits(graphRanked, include, languageOf)},
 	)
 	if len(hits) == 0 {
 		return nil, false
@@ -147,6 +150,9 @@ func lexicalPackFile(ctx *packContext, files *packFileBuilder, hit LexicalHit, t
 		file.Reason = "BM25 match: " + strings.Join(hit.Terms, ", ")
 		file.matched = hit.Terms
 		file.RankerReasons = lexicalRankerReasons(hit, file.Role)
+	} else if hit.Via != "" {
+		file.Reason = "graph neighbour of " + hit.Via
+		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "graph_hop", State: hit.Via}}
 	} else {
 		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "graph_match", State: "symbol_or_path"}}
 	}

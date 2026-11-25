@@ -160,8 +160,8 @@ func deleteStaleLexicalDocs(tx *sql.Tx, want []lexicalFile, have map[string]stri
 }
 
 func insertLexicalDoc(docStmt, postingStmt *sql.Stmt, root string, file lexicalFile) error {
-	text, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file.path)))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	text, err := readLexicalText(root, file.path)
+	if err != nil {
 		return err
 	}
 
@@ -186,6 +186,29 @@ func insertLexicalDoc(docStmt, postingStmt *sql.Stmt, root string, file lexicalF
 	return nil
 }
 
+// readLexicalText reads a file's text for indexing. A file over
+// LexicalMaxFileBytes or missing from disk indexes by path only, and the
+// oversize file is never read.
+func readLexicalText(root, path string) ([]byte, error) {
+	full := filepath.Join(root, filepath.FromSlash(path))
+
+	info, err := os.Stat(full)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && info.Size() > LexicalMaxFileBytes) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	text, err := os.ReadFile(full)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+
+	return text, err
+}
+
 // LexicalPosting is one file's frequency for one query term.
 type LexicalPosting struct {
 	Path   string
@@ -205,7 +228,9 @@ type LexicalCorpus struct {
 // existed or an empty one; the caller falls back to graph-only candidates.
 var ErrLexicalIndexMissing = errors.New("lexical index missing")
 
-// LoadLexicalCorpus reads the postings of terms from the graph store.
+// LoadLexicalCorpus reads the postings of terms from the graph store. The
+// corpus statistics and the postings come from one read transaction, so a
+// concurrent index write cannot make them disagree.
 func LoadLexicalCorpus(root string, terms []string) (LexicalCorpus, error) {
 	db, err := openSQLite(sqliteGraphPath(root))
 	if err != nil {
@@ -213,9 +238,16 @@ func LoadLexicalCorpus(root string, terms []string) (LexicalCorpus, error) {
 	}
 	defer db.Close()
 
+	tx, err := db.Begin()
+	if err != nil {
+		return LexicalCorpus{}, err
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
 	corpus := LexicalCorpus{Postings: make(map[string][]LexicalPosting, len(terms))}
 
-	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(length), 0) FROM lexical_docs`).Scan(&corpus.Docs, &corpus.TotalLen); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*), COALESCE(SUM(length), 0) FROM lexical_docs`).Scan(&corpus.Docs, &corpus.TotalLen); err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			return LexicalCorpus{}, ErrLexicalIndexMissing
 		}
@@ -229,7 +261,7 @@ func LoadLexicalCorpus(root string, terms []string) (LexicalCorpus, error) {
 
 	for start := 0; start < len(terms); start += lexicalSQLBatchTerms {
 		batch := terms[start:min(start+lexicalSQLBatchTerms, len(terms))]
-		if err := loadLexicalPostings(db, batch, corpus.Postings); err != nil {
+		if err := loadLexicalPostings(tx, batch, corpus.Postings); err != nil {
 			return LexicalCorpus{}, err
 		}
 	}
@@ -237,7 +269,7 @@ func LoadLexicalCorpus(root string, terms []string) (LexicalCorpus, error) {
 	return corpus, nil
 }
 
-func loadLexicalPostings(db *sql.DB, terms []string, into map[string][]LexicalPosting) error {
+func loadLexicalPostings(q *sql.Tx, terms []string, into map[string][]LexicalPosting) error {
 	if len(terms) == 0 {
 		return nil
 	}
@@ -251,7 +283,7 @@ func loadLexicalPostings(db *sql.DB, terms []string, into map[string][]LexicalPo
 		JOIN lexical_docs d ON d.doc_id = p.doc_id WHERE p.term IN (%s) ORDER BY p.term, d.path`,
 		strings.TrimSuffix(strings.Repeat("?,", len(terms)), ","))
 
-	rows, err := db.Query(query, args...)
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return err
 	}
