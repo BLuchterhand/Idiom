@@ -173,8 +173,8 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		return BuildReport{}, err
 	}
 
-	collectorVersion := currentCollectorVersion()
-	collectorVersions := currentCollectorVersionMap()
+	collectorVersion := currentCollectorVersion(root)
+	collectorVersions := currentCollectorVersionMap(root)
 
 	if preserveCollectorMismatch {
 		collectorVersion = previousGraph.CollectorVersion
@@ -618,7 +618,7 @@ func status(root string, scope string) (StatusReport, error) {
 
 		if !os.IsNotExist(err) {
 			gitHead, gitDirty := gitState(context.Background(), root)
-			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
+			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(root), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
 		}
 	}
 
@@ -626,7 +626,7 @@ func status(root string, scope string) (StatusReport, error) {
 	if err != nil {
 		if os.IsNotExist(err) || activeKind != "" {
 			gitHead, gitDirty := gitState(context.Background(), root)
-			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
+			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(root), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
 		}
 
 		return StatusReport{}, err
@@ -636,7 +636,7 @@ func status(root string, scope string) (StatusReport, error) {
 		activeKind = graph.StoreKind
 	}
 
-	currentVersion := currentCollectorVersion()
+	currentVersion := currentCollectorVersion(root)
 	collectorMismatch := strings.TrimSpace(graph.CollectorVersion) == "" || graph.CollectorVersion != currentVersion
 	staleFiles, missingFiles := staleFilePaths(root, graph)
 

@@ -41,6 +41,10 @@ type ViewQueryInputs struct {
 	WorkspaceStateFingerprint string `json:"workspace_state_fingerprint,omitempty"`
 	RankerWeightsFingerprint  string `json:"ranker_weights_fingerprint,omitempty"`
 	RuntimeTracesFingerprint  string `json:"runtime_traces_fingerprint,omitempty"`
+	// LocalizationConfigFingerprint changes when the repository's
+	// `localization` config changes; empty for the default config so
+	// existing keys are unchanged.
+	LocalizationConfigFingerprint string `json:"localization_config_fingerprint,omitempty"`
 }
 
 // ViewKey is the content-addressed identifier for a graph_views row.

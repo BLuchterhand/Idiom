@@ -1,0 +1,18 @@
+{
+ "corpus": "bentech",
+ "builder": {
+  "commits": "merges",
+  "max_commits": 400,
+  "query_from": "ledger",
+  "ledger_paths": ["docs/planning/ledger.md", "docs/planning/ledger-archive.md"],
+  "subject_id_regex": "^merge: ([A-Z]+[0-9]+[a-z]?)\\b",
+  "ledger_row_regex": "(?m)^\\| %s \\| ([^|]+) \\|",
+  "source_regex": "\\.(cpp|h|hpp|cc|gd|gdshader|json|sh|mjs|js|py|ps1)$",
+  "exclude_gold": ["^(docs|\\.claude|art)/", "\\.uid$", "golden", "CMakeLists", "\\.(jpg|png)$", "selftest"],
+  "test_regex": "(^|/)tests?/|_test\\.|(^|/)test_",
+  "doc_regex": "\\.md$|^docs/",
+  "max_gold_files": 60,
+  "max_cases": 75,
+  "min_query_len": 12
+ }
+}

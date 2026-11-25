@@ -133,6 +133,41 @@ type PackFile struct {
 	Score          float64        `json:"score,omitempty"`
 	Hub            bool           `json:"hub,omitempty"`
 	RankerReasons  []RankerReason `json:"ranker_reasons,omitempty"`
+	// Kind, Dir2, AdmittedBy and Why are the localization contract fields.
+	// They are written by later phases (role, subtopic key, admitting edge,
+	// short reason) and stay empty, and out of the JSON, until then.
+	Kind       PackFileKind   `json:"kind,omitempty"`
+	Dir2       string         `json:"dir2,omitempty"`
+	AdmittedBy *PackAdmission `json:"admitted_by,omitempty"`
+	Why        string         `json:"why,omitempty"`
+}
+
+// PackFileKind is the candidate's role for the agent reading the pack.
+type PackFileKind string
+
+const (
+	PackFileKindDef      PackFileKind = "def"
+	PackFileKindCaller   PackFileKind = "caller"
+	PackFileKindCallee   PackFileKind = "callee"
+	PackFileKindConsumer PackFileKind = "consumer"
+	PackFileKindTest     PackFileKind = "test"
+	PackFileKindDoc      PackFileKind = "doc"
+	PackFileKindContent  PackFileKind = "content"
+	PackFileKindShader   PackFileKind = "shader"
+	PackFileKindScript   PackFileKind = "script"
+	PackFileKindUI       PackFileKind = "ui"
+	PackFileKindTool     PackFileKind = "tool"
+)
+
+// PackWhyMaxChars bounds PackFile.Why.
+const PackWhyMaxChars = 90
+
+// PackAdmission records the edge through which a file entered the pack:
+// the edge kind, the object it named, and the matched file it came from.
+type PackAdmission struct {
+	EdgeKind   string `json:"edge_kind"`
+	Object     string `json:"object,omitempty"`
+	SourcePath string `json:"source_path,omitempty"`
 }
 
 type PackSymbol struct {
@@ -208,10 +243,11 @@ type packContext struct {
 	limit  int
 	intent Intent
 
-	graph      Graph
-	status     StatusReport
-	cacheKey   ViewKey
-	cacheState GraphViewCacheState
+	graph        Graph
+	status       StatusReport
+	localization LocalizationConfig
+	cacheKey     ViewKey
+	cacheState   GraphViewCacheState
 
 	nodesByID         map[string]Node
 	stale             map[string]struct{}
@@ -306,10 +342,15 @@ func preparePackContext(requestContext context.Context, opts PackOptions) (*pack
 		RequiredEditPaths:   opts.RequiredEditPaths,
 		ForbiddenPaths:      opts.ForbiddenPaths,
 		IncludeStaleRuntime: opts.IncludeStaleRuntime,
-	}, graph.ID, mode, intent, workspaceStateFingerprints)
+	}, graph.ID, mode, intent, workspaceStateFingerprints, LocalizationConfigFingerprint(root))
 	cacheState := GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "miss_recompute", "cache_miss")
 
+	// A malformed localization section loads as the zero config; the cache
+	// key above still changes with the file bytes (LocalizationConfigFingerprint).
+	localization, _ := LoadLocalizationConfig(root)
+
 	return &packContext{
+		localization:   localization,
 		requestContext: requestContext,
 		opts:           opts,
 		root:           root,
@@ -494,6 +535,7 @@ func packRankInputs(ctx *packContext) RankInputs {
 		LearnedWeights: ctx.learnedWeights,
 		QueryTokens:    ctx.terms,
 		RequiredPaths:  ctx.requiredPathSet,
+		Config:         ctx.localization,
 	}
 }
 
@@ -646,7 +688,7 @@ func packLearnedWeightsOverrideFingerprint(learnedWeights map[string]float64) st
 // PackOptions. Identical option sets produce identical keys across
 // processes; the active graph index_id makes the key invalidate when
 // the codebase content shifts under the harness.
-func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, workspaceStateFingerprints ComprehensionStateFingerprintSet) ViewKey {
+func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, workspaceStateFingerprints ComprehensionStateFingerprintSet, localizationFingerprint string) ViewKey {
 	return ViewKey{
 		IndexID: indexID,
 		Task:    strings.TrimSpace(opts.Task),
@@ -665,6 +707,8 @@ func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, w
 			WorkspaceStateFingerprint: workspaceStateFingerprints.WorkspaceStateFingerprint,
 			RankerWeightsFingerprint:  workspaceStateFingerprints.RankerWeightsFingerprint,
 			RuntimeTracesFingerprint:  workspaceStateFingerprints.RuntimeTracesFingerprint,
+
+			LocalizationConfigFingerprint: localizationFingerprint,
 		},
 	}
 }

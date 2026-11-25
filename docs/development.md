@@ -63,3 +63,23 @@ inspect the tracked source and release archives for generated logs, transcripts,
 indexes, model files, and private notes. Build release artifacts from a clean
 checkout; do not delete a developer's ignored local data as a release step.
 Keep only small sanitized fixtures that tests require.
+
+## Localization Eval
+
+`cmd/idiom-localization-eval` measures context-pack localization on real
+history, in exact mode: each case is indexed cold at its first parent in a
+detached worktree (index cached by tree hash and collector version), then
+queried with the production call (`context_impact`, default limit, path `.`).
+Cases live in `testdata/localization/eval/*-cases.json` (query from the task
+text at the base commit, gold from the files the change touched that exist at
+base, hash-split dev/hold-out). Metrics and gates are in
+`internal/evidence/eval/localization_eval_*.go`.
+
+```bash
+go run ./cmd/idiom-localization-eval build-cases -repo <repo> -config <seed.json> -out <cases.json>
+go run ./cmd/idiom-localization-eval run -repo <repo> -cases <cases.json> -idiom-bin <idiom> -cache <dir> -out <result.json>
+go run ./cmd/idiom-localization-eval compare -before <a.json> -after <b.json> -metric recall_capped -split dev
+```
+
+The committed baseline is `testdata/localization/eval/baseline.json`. The
+hold-out split is scored once per phase after dev gates pass.

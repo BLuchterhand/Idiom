@@ -46,6 +46,16 @@ type RankerWeights struct {
 	PenaltyDocs       float64
 	PenaltyVendored   float64 // hard floor for node_modules / vendor / .venv
 	HubFanoutFraction float64 // share-of-files threshold for fanout hub detection
+
+	// Selection and edge-class contract fields. Neutral until the phases
+	// that read them land; all are swept by the localization eval harness.
+	MMRLambda        float64 // relevance weight in diversity selection (1 = relevance only)
+	HeadPureCount    int     // leading files chosen by relevance alone
+	EdgeClassCall    float64 // hop-boost multiplier per edge class
+	EdgeClassRef     float64
+	EdgeClassImport  float64
+	EdgeClassTest    float64
+	EdgeClassContent float64
 }
 
 // DefaultRankerWeights returns sigmap-flavored defaults tuned to keep
@@ -70,8 +80,21 @@ func DefaultRankerWeights() RankerWeights {
 		PenaltyDocs:       0.2,
 		PenaltyVendored:   0.0,
 		HubFanoutFraction: 0.2,
+		MMRLambda:         defaultMMRLambda,
+		HeadPureCount:     defaultHeadPureCount,
+		EdgeClassCall:     neutralEdgeClassWeight,
+		EdgeClassRef:      neutralEdgeClassWeight,
+		EdgeClassImport:   neutralEdgeClassWeight,
+		EdgeClassTest:     neutralEdgeClassWeight,
+		EdgeClassContent:  neutralEdgeClassWeight,
 	}
 }
+
+const (
+	defaultMMRLambda       = 0.8
+	defaultHeadPureCount   = 3
+	neutralEdgeClassWeight = 1.0
+)
 
 // WeightsForIntent applies intent-specific overrides on top of the default
 // weights. The shifts mirror sigmap's intent table: explain leans on path and
@@ -438,6 +461,27 @@ type RankInputs struct {
 	LearnedWeights map[string]float64
 	QueryTokens    []string
 	RequiredPaths  map[string]struct{}
+
+	// MatchStrength is the graded, term-weighted match of each file to the
+	// query, in [0,1], keyed by path. It is the only home of graded match
+	// strength: computed once at pack time, read only by the ranker. Nil
+	// means "use the binary MatchedIDs match".
+	MatchStrength map[string]float64
+	// EdgeClassWeights scales the hop boost per edge class; nil is neutral.
+	EdgeClassWeights map[string]float64
+	// LearnedPairs is the read-only view of per-(term,file) learned
+	// weights; nil means no learning.
+	LearnedPairs LearnedPairView
+	// Config is the repository's localization config; zero by default.
+	Config LocalizationConfig
+}
+
+// LearnedPairView is the read side of event-sourced per-(term,file)
+// weights. Implementations must be deterministic for a fixed state and
+// must not read the wall clock.
+type LearnedPairView interface {
+	// PairWeight returns the multiplier for term on path, 1 when unknown.
+	PairWeight(term, path string) float64
 }
 
 // RankPackFiles assigns a Score to every input file by combining role floor,
