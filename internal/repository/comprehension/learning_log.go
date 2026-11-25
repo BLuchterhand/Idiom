@@ -33,6 +33,9 @@ type LearningLogEntry struct {
 	Rollback      *LearningRollbackData            `json:"rollback,omitempty"`
 	Verification  *LearningLogVerificationEvidence `json:"verification,omitempty"`
 	Note          string                           `json:"note,omitempty"`
+	// IDVersion names the event-id recipe. Zero is a legacy event written
+	// before versioning and uses recipe 1.
+	IDVersion int `json:"id_version,omitempty"`
 }
 
 // LearningEvidenceRef records sanitized identifiers and numeric metrics that
@@ -159,6 +162,10 @@ func sanitizeLearningLogEntry(entry LearningLogEntry) LearningLogEntry {
 		v := sanitizeLearningLogVerificationEvidence(*entry.Verification)
 
 		entry.Verification = &v
+	}
+
+	if entry.IDVersion != 0 && entry.IDVersion != learningEventIDVersion {
+		entry.IDVersion = learningEventIDVersion
 	}
 
 	entry.EventID = sanitizeLearningEventID(suppliedEventID, entry)
