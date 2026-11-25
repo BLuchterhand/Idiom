@@ -119,6 +119,52 @@ template class Box<double>;
 		Expect(index.Files[0].Path).To(Equal("native/sim.cpp"))
 		Expect(index.FindSymbols("tool", 8)).To(BeEmpty())
 	})
+	It("keeps definitions after a hex digit separator and records call sites only as calls", func() {
+		root := GinkgoT().TempDir()
+		mustWriteFile(filepath.Join(root, "core", "clock.cpp"), strings.TrimSpace(`
+namespace bt::world {
+namespace {
+int mask(int tick) {
+    DayPhase out;
+    out.day_index = static_cast<int>((tick / 2) & 0xFFFF'FFFFu);
+    out.month = static_cast<int>(tick % 12);
+    return out.day_index;
+}
+
+int blend_dir(int a, int b) {
+    return a + b;
+}
+}  // namespace
+
+int glide(int a, int b) {
+    int out = 0;
+    out = blend_dir(a, b);
+    return out + mask(a);
+}
+}  // namespace bt::world
+`)+"\n")
+
+		index, err := BuildCppIndexWithOptions(root, semantic.IndexOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(index).NotTo(BeNil())
+
+		file := index.FileByPath("core/clock.cpp")
+		Expect(file).NotTo(BeNil())
+
+		lines := map[string][]int{}
+		for _, symbol := range file.Symbols {
+			lines[symbol.Qualified] = append(lines[symbol.Qualified], symbol.StartLine)
+		}
+
+		Expect(lines["bt::world::mask"]).To(Equal([]int{3}))
+		Expect(lines["bt::world::blend_dir"]).To(Equal([]int{10}), "blend_dir starts at its definition, not at the call site")
+		Expect(lines["bt::world::glide"]).To(Equal([]int{15}))
+	})
+
+	It("tells digit separators from character literals", func() {
+		code := blankCppCommentsAndLiterals("a = 1'000 + 0xFFFF'FFFFu + u8'x' + 'y';\n")
+		Expect(code).To(Equal("a = 1'000 + 0xFFFF'FFFFu + u8' ' + ' ';\n"))
+	})
 })
 
 func mustWriteFile(path string, content string) {

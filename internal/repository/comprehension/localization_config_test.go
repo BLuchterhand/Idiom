@@ -14,7 +14,7 @@ import (
 const (
 	goldenDefaultViewKeyID     = "4367b9476193e54d"
 	goldenDefaultPackFileJSON  = `{"path":"a.go","role":"editable","reason":"r","score":1.5,"ranker_reasons":[{"reason":"role_floor","state":"x","score_delta":3}]}`
-	goldenDefaultCollectorHash = "cbf08614e15884eb"
+	goldenDefaultCollectorHash = "e9b26cad0d87c0d9"
 )
 
 func writeLocalizationConfig(root string, section map[string]any) {

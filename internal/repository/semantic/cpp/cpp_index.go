@@ -569,8 +569,8 @@ func blankCppCommentsAndLiterals(content string) string {
 	for i := 0; i < len(out); i++ {
 		switch out[i] {
 		case '"', '\'':
-			if out[i] == '\'' && i > 0 && out[i-1] >= '0' && out[i-1] <= '9' {
-				continue // a digit separator (1'000)
+			if out[i] == '\'' && isCppDigitSeparator(out, i) {
+				continue // a digit separator (1'000, 0xFFFF'FFFFu)
 			}
 
 			quote := out[i]
@@ -613,6 +613,24 @@ func blankCppCommentsAndLiterals(content string) string {
 	}
 
 	return string(out)
+}
+
+// isCppDigitSeparator reports whether the quote at out[i] sits inside a
+// numeric literal. A hex digit before it is not enough (0xFFFF'FFFFu); the
+// token it ends has to start with a digit, which also keeps u8'a' and
+// L'x' character literals out.
+func isCppDigitSeparator(out []byte, i int) bool {
+	start := i
+
+	for start > 0 && isCppNumberTokenByte(out[start-1]) {
+		start--
+	}
+
+	return start < i && out[start] >= '0' && out[start] <= '9'
+}
+
+func isCppNumberTokenByte(b byte) bool {
+	return b == '\'' || b == '.' || b == '_' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // isCppNamespaceAlias reports a `namespace X = Y;` line, which declares no
