@@ -29,6 +29,8 @@ func main() {
 		err = run(os.Args[2:])
 	case "compare":
 		err = compare(os.Args[2:])
+	case "baseline":
+		err = baseline(os.Args[2:])
 	default:
 		usage()
 	}
@@ -40,7 +42,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: idiom-localization-eval build-cases|run|compare [flags]")
+	fmt.Fprintln(os.Stderr, "usage: idiom-localization-eval build-cases|run|compare|baseline [flags]")
 	os.Exit(2)
 }
 

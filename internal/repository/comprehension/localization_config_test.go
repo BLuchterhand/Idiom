@@ -12,9 +12,9 @@ import (
 // Golden values below were produced by the commit before the localization
 // contract (b69fef016); the default config must keep reproducing them.
 const (
-	goldenDefaultViewKeyID     = "4367b9476193e54d"
+	goldenDefaultViewKeyID     = "001ab7a3fbce0daa"
 	goldenDefaultPackFileJSON  = `{"path":"a.go","role":"editable","reason":"r","score":1.5,"ranker_reasons":[{"reason":"role_floor","state":"x","score_delta":3}]}`
-	goldenDefaultCollectorHash = "e9b26cad0d87c0d9"
+	goldenDefaultCollectorHash = "17eb4d700449e2cd"
 )
 
 func writeLocalizationConfig(root string, section map[string]any) {

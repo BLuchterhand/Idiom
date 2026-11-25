@@ -86,6 +86,50 @@ type normalizedGraph struct {
 	nodes   []string
 	edges   []string
 	derived []string
+	lexical []string
+}
+
+// lexicalRowsForEquivalence dumps the lexical index with document ids
+// resolved to paths, so two stores compare by content, not rowid.
+func lexicalRowsForEquivalence(root string) []string {
+	db, err := openSQLite(sqliteGraphPath(root))
+	Expect(err).NotTo(HaveOccurred())
+
+	defer db.Close()
+
+	var rows []string
+
+	docs, err := db.Query(`SELECT path, fingerprint, length FROM lexical_docs`)
+	Expect(err).NotTo(HaveOccurred())
+
+	for docs.Next() {
+		var path, fingerprint string
+
+		var length int
+
+		Expect(docs.Scan(&path, &fingerprint, &length)).To(Succeed())
+
+		rows = append(rows, fmt.Sprintf("doc|%s|%s|%d", path, fingerprint, length))
+	}
+
+	Expect(docs.Close()).To(Succeed())
+
+	postings, err := db.Query(`SELECT p.term, d.path, p.tf FROM lexical_postings p JOIN lexical_docs d ON d.doc_id = p.doc_id`)
+	Expect(err).NotTo(HaveOccurred())
+
+	for postings.Next() {
+		var term, path string
+
+		var tf int
+
+		Expect(postings.Scan(&term, &path, &tf)).To(Succeed())
+
+		rows = append(rows, fmt.Sprintf("posting|%s|%s|%d", term, path, tf))
+	}
+
+	Expect(postings.Close()).To(Succeed())
+
+	return rows
 }
 
 func normalizeGraphForEquivalence(root string) normalizedGraph {
@@ -141,6 +185,9 @@ func normalizeGraphForEquivalence(root string) normalizedGraph {
 	slices.Sort(out.nodes)
 	slices.Sort(out.edges)
 	slices.Sort(out.derived)
+
+	out.lexical = lexicalRowsForEquivalence(root)
+	slices.Sort(out.lexical)
 
 	return out
 }
@@ -205,6 +252,8 @@ var _ = DescribeTable("incremental refresh equals a cold rebuild",
 		diffs = append(diffs, diffSorted("node", got.nodes, want.nodes)...)
 		diffs = append(diffs, diffSorted("edge", got.edges, want.edges)...)
 		diffs = append(diffs, diffSorted("derived", got.derived, want.derived)...)
+		diffs = append(diffs, diffSorted("lexical", got.lexical, want.lexical)...)
+		Expect(want.lexical).NotTo(BeEmpty(), "cold build stored no lexical index")
 		Expect(diffs).To(BeEmpty(), strings.Join(diffs, "\n"))
 	},
 	Entry("dependency-expanding patch", false),

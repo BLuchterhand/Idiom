@@ -338,6 +338,10 @@ func saveSQLiteGraph(root string, graph Graph) error {
 		return err
 	}
 
+	if err := syncLexicalIndex(tx, root); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -451,6 +455,10 @@ func patchSQLiteGraphScope(root string, graph Graph, scope string, repoID string
 	}
 
 	if err := updateSQLiteGraphCounts(tx, filesIndexed, symbolsIndexed, edgesIndexed); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+
+	if err := syncLexicalIndex(tx, root); err != nil {
 		return sqlitePatchCounts{}, err
 	}
 
@@ -1550,6 +1558,10 @@ func createSQLiteSchema(tx *sql.Tx) error {
 		if _, err := tx.Exec(statement); err != nil {
 			return err
 		}
+	}
+
+	if err := createLexicalSchema(tx); err != nil {
+		return err
 	}
 
 	return ensureGraphViewsColumns(tx)
