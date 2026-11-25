@@ -164,3 +164,18 @@ func TestPackFindsFilesThroughCommitHistory(t *testing.T) {
 		t.Fatalf("a commit after the checked-out base leaked into the pack: %v", paths)
 	}
 }
+
+func TestRankHistoryDiscountsHubFiles(t *testing.T) {
+	const now = 1_800_000_000
+
+	// hub.cpp is touched by every commit, rare.cpp by the one that matches.
+	commits := []HistoryCommit{histCommit(now, "habitat gates", "hub.cpp", "rare.cpp")}
+	for i := 0; i < 30; i++ {
+		commits = append(commits, histCommit(now, "unrelated change", "hub.cpp"))
+	}
+
+	hits := RankHistory(commits, now, LexicalTokens("habitat gates"), always2)
+	if len(hits) != 2 || hits[0].Path != "rare.cpp" {
+		t.Fatalf("a file touched by every commit must rank below the file only the match touched, got %+v", hits)
+	}
+}

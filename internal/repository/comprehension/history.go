@@ -171,6 +171,13 @@ func RankHistory(commits []HistoryCommit, headTime int64, terms []string, includ
 		}
 	})
 
+	touched := map[string]int{}
+	for _, c := range commits {
+		for _, f := range c.Files {
+			touched[f]++
+		}
+	}
+
 	byFile := map[string]float64{}
 
 	for _, m := range matched[:min(historyTopCommits, len(matched))] {
@@ -178,7 +185,7 @@ func RankHistory(commits []HistoryCommit, headTime int64, terms []string, includ
 
 		for _, f := range m.files {
 			if include(f) {
-				byFile[f] += share
+				byFile[f] += share * fileRarity(len(commits), touched[f])
 			}
 		}
 	}
@@ -200,4 +207,13 @@ func RankHistory(commits []HistoryCommit, headTime int64, terms []string, includ
 	})
 
 	return hits
+}
+
+// fileRarity discounts files that many commits touch: a hub such as a
+// dispatcher or a shared header is credited by unrelated changes, so it says
+// little about this task. It is the BM25 inverse document frequency of the
+// file over commits (chosen on dev over max(log(N/(1+c)), 0): equal recall,
+// never zero).
+func fileRarity(commits, touching int) float64 {
+	return BM25IDF(commits, touching)
 }

@@ -20,7 +20,7 @@ const (
 	maxPackFileHandles     = 12
 	maxPackRelationships   = 32
 	relationshipsPerTarget = 4
-	packAlgorithmVersion   = "bm25-rrf-hop-history-v1-packet-quality"
+	packAlgorithmVersion   = "bm25-rrf-hop-history-v2-packet-quality"
 )
 
 type PackOptions struct {
