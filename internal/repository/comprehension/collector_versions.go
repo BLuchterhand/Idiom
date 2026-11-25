@@ -13,7 +13,7 @@ var currentCollectorVersions = map[string]string{
 	"file_fingerprint":          "1",
 	"git_state":                 "1",
 	"go_index":                  "3",
-	"cpp_index":                 "3",
+	"cpp_index":                 "4",
 	"python_index":              "2",
 	"typescript_index":          "2",
 	"javascript_index":          "2",

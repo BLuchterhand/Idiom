@@ -285,7 +285,7 @@ var _ = It("path scoped build exact scope skips dependency expansion", func() {
 	Expect(hasNode(graph.Nodes, "symbol://pkg/a.go#OldName")).To(BeFalse(), "expected refreshed target file and retained dependency graph, got nodes=%#v", graph.Nodes)
 	Expect(hasNode(graph.Nodes, "symbol://pkg/b.go#KeepName")).To(BeTrue(), "expected refreshed target file and retained dependency graph, got nodes=%#v", graph.Nodes)
 })
-var _ = It("patch active store preserves inbound edges and drops summaries", func() {
+var _ = It("patch active store preserves inbound edges and regenerates summaries", func() {
 	root := GinkgoT().TempDir()
 	writeFile(filepath.Join(root, "go.mod"), "module example.com/patchactive\n\ngo 1.22\n")
 
@@ -311,17 +311,30 @@ var _ = It("patch active store preserves inbound edges and drops summaries", fun
 	Expect(hasNode(graph.Nodes, "symbol://pkg/b.go#KeepName")).To(BeTrue(), "expected refreshed target and retained caller nodes, got nodes=%#v", graph.Nodes)
 	Expect(hasEdge(graph.Edges, "calls", "symbol://pkg/b.go#KeepName", "symbol://pkg/a.go#Run")).To(BeTrue(), "expected inbound caller edge to survive exact patch, got edges=%#v", graph.Edges)
 
+	summaries := 0
+
 	for _, node := range graph.Nodes {
-		Expect(node.Kind).NotTo(BeEquivalentTo("summary"), "patch-active refresh must not leave stale summary nodes, got %#v", node)
-		Expect(node.Collector).NotTo(BeEquivalentTo("summary_index"), "patch-active refresh must not leave stale summary nodes, got %#v", node)
+		if node.Collector != "summary_index" || node.Path != "pkg/a.go" {
+			continue
+		}
+
+		summaries++
+
+		Expect(node.Properties["symbol_names"]).To(BeEquivalentTo([]any{"Run"}), "patch-active refresh must regenerate summaries from the patched graph, got %#v", node)
 	}
+
+	Expect(summaries).To(BeEquivalentTo(1), "expected one regenerated file summary for pkg/a.go, got %d", summaries)
 
 	status, err := Status(root)
 	Expect(err).NotTo(HaveOccurred(), "Status: %v", err)
 
+	advertised := false
+
 	for _, report := range status.CollectorReports {
-		Expect(report.Name).NotTo(BeEquivalentTo("summary_index"), "patch-active refresh must not advertise deleted summary_index reports, got %#v", status.CollectorReports)
+		advertised = advertised || report.Name == "summary_index"
 	}
+
+	Expect(advertised).To(BeTrue(), "patch-active refresh must advertise the regenerated summary_index report, got %#v", status.CollectorReports)
 })
 var _ = It("patch active store expands dependencies without full rewrite", func() {
 	root := GinkgoT().TempDir()
