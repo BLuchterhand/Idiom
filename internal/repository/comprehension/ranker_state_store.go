@@ -636,6 +636,10 @@ func (store *rankerStateStore) loadWeightsLocked() (map[string]float64, error) {
 }
 
 func (store *rankerStateStore) loadConsistentRankerStateLocked() (map[string]float64, []byte, []LearningLogEntry, error) {
+	if err := store.quarantineOrphanedLocked(); err != nil {
+		return nil, nil, nil, err
+	}
+
 	weights, err := store.loadWeightsLocked()
 	if err != nil {
 		return nil, nil, nil, err
@@ -1190,6 +1194,7 @@ func canonicalLearningDecision(entry LearningLogEntry) (LearningLogEntry, []byte
 	}
 
 	entry = sanitizeLearningLogEntry(entry)
+	entry.IDVersion = learningEventIDVersion
 	entry.RequestID = canonicalLearningRequestID(entry.RequestID, entry)
 	entry.EventID = learningEventID(entry)
 	if err := validateLearningLogEntrySemantics(entry); err != nil {
@@ -1399,4 +1404,86 @@ func runRankerStateTestHook(canonicalRoot string, stage string) error {
 	}
 
 	return hook(stage)
+}
+
+const rankerStateQuarantinePath = ".idiom/ranker/learning_log.quarantine.jsonl"
+
+// quarantineOrphanedLocked moves out of the learning log every event whose id
+// does not match its record (written by an id recipe that no longer exists)
+// and that changed no weights, so the rest of the log still validates. The
+// lines are appended to a quarantine file, never discarded. An event that
+// changed weights, or any other kind of invalid line, is left in place and
+// still fails the strict read.
+func (store *rankerStateStore) quarantineOrphanedLocked() error {
+	if _, err := store.readRegularFileLocked(rankerStatePendingPath); err == nil {
+		return nil // a transaction is in flight; recovery owns the log
+	}
+
+	raw, err := store.readLearningLogBytesLocked()
+	if err != nil || len(raw) == 0 || raw[len(raw)-1] != '\n' {
+		return err
+	}
+
+	var kept, orphaned []byte
+
+	for _, line := range bytes.SplitAfter(raw, []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+
+		if isOrphanedLearningLine(bytes.TrimSuffix(line, []byte{'\n'})) {
+			orphaned = append(orphaned, line...)
+
+			continue
+		}
+
+		kept = append(kept, line...)
+	}
+
+	if len(orphaned) == 0 {
+		return nil
+	}
+
+	existing, err := store.readRegularFileLocked(rankerStateQuarantinePath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	if err := atomicfile.WriteFileRootChecked(store.root, rankerStateQuarantinePath, append(existing, orphaned...), 0o644, func() error { return nil }); err != nil {
+		return err
+	}
+
+	if err := atomicfile.WriteFileRootChecked(store.root, rankerStateLearningLogPath, kept, 0o644, func() error {
+		return store.beforeRankerPublicationLocked(rankerStateHookBeforeLogAppend)
+	}); err != nil {
+		return err
+	}
+
+	return store.validateRootIdentityLocked()
+}
+
+func isOrphanedLearningLine(line []byte) bool {
+	if _, err := parseCanonicalLearningLogEntry(line); !errors.Is(err, errLearningEventIDMismatch) {
+		return false
+	}
+
+	var entry LearningLogEntry
+
+	decoder := json.NewDecoder(bytes.NewReader(line))
+	decoder.DisallowUnknownFields()
+
+	if decoder.Decode(&entry) != nil {
+		return false
+	}
+
+	before, after := map[string]float64{}, map[string]float64{}
+	if entry.BeforeWeights != nil {
+		before = *entry.BeforeWeights
+	}
+
+	if entry.AfterWeights != nil {
+		after = *entry.AfterWeights
+	}
+
+	return weightsEqual(canonicalLearnedWeights(before), canonicalLearnedWeights(after))
 }

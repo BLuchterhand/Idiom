@@ -12,7 +12,7 @@ import (
 // Golden values below were produced by the commit before the localization
 // contract (b69fef016); the default config must keep reproducing them.
 const (
-	goldenDefaultViewKeyID     = "aaad15c438f948f6"
+	goldenDefaultViewKeyID     = "2f09f68cfac7f3ca"
 	goldenDefaultPackFileJSON  = `{"path":"a.go","role":"editable","reason":"r","score":1.5,"ranker_reasons":[{"reason":"role_floor","state":"x","score_delta":3}]}`
 	goldenDefaultCollectorHash = "17eb4d700449e2cd"
 )

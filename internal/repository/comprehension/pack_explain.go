@@ -126,7 +126,7 @@ func packFileWhy(file PackFile, terms []string) string {
 		return truncateWhy(verb + " " + adm.Object)
 	}
 
-	if strings.HasPrefix(file.Reason, "graph neighbour of ") {
+	if strings.HasPrefix(file.Reason, "graph neighbour of ") || strings.HasPrefix(file.Reason, "changed by past commits") {
 		return truncateWhy(file.Reason)
 	}
 

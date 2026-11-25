@@ -4,6 +4,19 @@ import (
 	"strings"
 )
 
+// historyList is the commit-history channel: files touched by past commits
+// whose messages match the task, restricted to files in the index.
+func historyList(ctx *packContext, include func(string) bool) rankedList {
+	commits, headTime := LoadHistory(ctx.requestContext, ctx.root)
+	indexed := func(path string) bool {
+		_, ok := ctx.nodesByID[fileNodeID(path)]
+
+		return ok && include(path)
+	}
+
+	return rankedList{Source: "history", Hits: RankHistory(commits, headTime, LexicalTokens(ctx.task), indexed), Weight: historyChannelWeight}
+}
+
 // graphRankedHits is the exact-symbol and path channel: the files the symbol
 // graph pool surfaced, in the graph ranker's order.
 func graphRankedHits(ranked []PackFile, include func(string) bool, languageOf func(string) string) []LexicalHit {
@@ -46,6 +59,7 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 	hits := fuseRankedLists(
 		rankedList{Source: "bm25", Hits: lexical},
 		rankedList{Source: "graph", Hits: graphRankedHits(graphRanked, include, languageOf)},
+		historyList(ctx, include),
 	)
 	if len(hits) == 0 {
 		return nil, false
@@ -150,6 +164,9 @@ func lexicalPackFile(ctx *packContext, files *packFileBuilder, hit LexicalHit, t
 		file.Reason = "BM25 match: " + strings.Join(hit.Terms, ", ")
 		file.matched = hit.Terms
 		file.RankerReasons = lexicalRankerReasons(hit, file.Role)
+	} else if hit.History {
+		file.Reason = "changed by past commits matching the task"
+		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "history_match", State: "commit_messages"}}
 	} else if hit.Via != "" {
 		file.Reason = "graph neighbour of " + hit.Via
 		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "graph_hop", State: hit.Via}}
