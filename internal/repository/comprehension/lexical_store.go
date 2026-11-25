@@ -222,6 +222,8 @@ type LexicalCorpus struct {
 	Docs     int
 	TotalLen int
 	Postings map[string][]LexicalPosting
+	// Lengths is every indexed file's token length, for per-class statistics.
+	Lengths map[string]int
 }
 
 // ErrLexicalIndexMissing reports an index built before the lexical tables
@@ -259,6 +261,13 @@ func LoadLexicalCorpus(root string, terms []string) (LexicalCorpus, error) {
 		return LexicalCorpus{}, ErrLexicalIndexMissing
 	}
 
+	lengths, err := loadLexicalLengths(tx)
+	if err != nil {
+		return LexicalCorpus{}, err
+	}
+
+	corpus.Lengths = lengths
+
 	for start := 0; start < len(terms); start += lexicalSQLBatchTerms {
 		batch := terms[start:min(start+lexicalSQLBatchTerms, len(terms))]
 		if err := loadLexicalPostings(tx, batch, corpus.Postings); err != nil {
@@ -267,6 +276,29 @@ func LoadLexicalCorpus(root string, terms []string) (LexicalCorpus, error) {
 	}
 
 	return corpus, nil
+}
+
+func loadLexicalLengths(tx *sql.Tx) (map[string]int, error) {
+	rows, err := tx.Query(`SELECT path, length FROM lexical_docs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	lengths := map[string]int{}
+
+	for rows.Next() {
+		var path string
+
+		var length int
+		if err := rows.Scan(&path, &length); err != nil {
+			return nil, err
+		}
+
+		lengths[path] = length
+	}
+
+	return lengths, rows.Err()
 }
 
 func loadLexicalPostings(q *sql.Tx, terms []string, into map[string][]LexicalPosting) error {

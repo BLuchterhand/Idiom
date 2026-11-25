@@ -171,8 +171,50 @@ func TestShippedExtraFileWeightAndRankLexicalWeight(t *testing.T) {
 		return 1
 	}
 
-	hits := RankLexical(corpus, []string{"fox"}, nil, weight)
+	hits := RankLexical(corpus, []string{"fox"}, nil, weight, nil)
 	if hits[0].Path != "src/fox.go" || hits[1].Score/hits[0].Score < 0.5-1e-9 || hits[1].Score/hits[0].Score > 0.5+1e-9 {
 		t.Fatalf("a weighted file must score x0.5 of an identical one, got %+v", hits)
+	}
+}
+
+// Adding a class of documents must not move the scores of another class.
+func TestPerClassStatisticsIsolateClasses(t *testing.T) {
+	source := map[string]map[string]int{
+		"src/fox.go":   {"fox": 2, "den": 1},
+		"src/other.go": {"other": 3},
+		"src/more.go":  {"more": 4},
+	}
+	withExtras := map[string]map[string]int{"content/fox1.json": {"fox": 1, "pad": 30}, "content/fox2.json": {"fox": 1, "pad": 30}}
+
+	for p, d := range source {
+		withExtras[p] = d
+	}
+
+	class := func(p string) string {
+		if len(p) > 7 && p[:7] == "content" {
+			return classExtra
+		}
+
+		return ""
+	}
+
+	score := func(docs map[string]map[string]int, class func(string) string) float64 {
+		for _, h := range RankLexical(lexicalCorpusOf(docs), []string{"fox"}, nil, nil, class) {
+			if h.Path == "src/fox.go" {
+				return h.Score
+			}
+		}
+
+		t.Fatal("src/fox.go not retrieved")
+
+		return 0
+	}
+
+	if a, b := score(source, class), score(withExtras, class); a != b {
+		t.Fatalf("per-class statistics: source score moved from %v to %v when extras were added", a, b)
+	}
+
+	if a, b := score(source, nil), score(withExtras, nil); a == b {
+		t.Fatalf("single-class statistics should shift when extras are added (%v), the test would prove nothing", a)
 	}
 }

@@ -18,17 +18,53 @@ type LexicalHit struct {
 	Via string
 }
 
+// classStats are the BM25 corpus statistics of one document class.
+type classStats struct {
+	docs     int
+	totalLen int
+}
+
+// lexicalClassStats counts documents and their total length per class. With
+// no class function (or no per-document lengths) the whole index is one class.
+func lexicalClassStats(corpus LexicalCorpus, class func(path string) string) map[string]classStats {
+	if class == nil || corpus.Lengths == nil {
+		return map[string]classStats{"": {docs: corpus.Docs, totalLen: corpus.TotalLen}}
+	}
+
+	stats := map[string]classStats{}
+
+	for path, length := range corpus.Lengths {
+		s := stats[class(path)]
+		s.docs++
+		s.totalLen += length
+		stats[class(path)] = s
+	}
+
+	return stats
+}
+
 // RankLexical scores every file that shares a query term with BM25 and
 // returns them best first, ties by path. include restricts which files may
 // appear (scope, forbidden paths); it never changes a score, so corpus
 // statistics stay those of the whole index. A nil include admits every file.
 // weight, when not nil, multiplies each file's score (per-language demotion).
-func RankLexical(corpus LexicalCorpus, terms []string, include func(path string) bool, weight func(path string) float64) []LexicalHit {
+// class, when not nil, groups documents (source, data, scripts): each document
+// is scored against its own class's document count, document frequency and
+// mean length (BM25F-style), so adding a class of files never shifts the
+// statistics of another.
+func RankLexical(corpus LexicalCorpus, terms []string, include func(path string) bool, weight func(path string) float64, class func(path string) string) []LexicalHit {
 	if corpus.Docs == 0 {
 		return nil
 	}
 
-	avg := BM25AvgLength(corpus.TotalLen, corpus.Docs)
+	stats := lexicalClassStats(corpus, class)
+	classOf := func(path string) string {
+		if class == nil || corpus.Lengths == nil {
+			return ""
+		}
+
+		return class(path)
+	}
 
 	type acc struct {
 		score float64
@@ -43,9 +79,16 @@ func RankLexical(corpus LexicalCorpus, terms []string, include func(path string)
 			continue
 		}
 
-		idf := BM25IDF(corpus.Docs, len(postings))
+		df := map[string]int{}
+		for _, p := range postings {
+			df[classOf(p.Path)]++
+		}
 
 		for _, p := range postings {
+			c := classOf(p.Path)
+			idf := BM25IDF(stats[c].docs, df[c])
+			avg := BM25AvgLength(stats[c].totalLen, stats[c].docs)
+
 			a := byPath[p.Path]
 			if a == nil {
 				a = &acc{}

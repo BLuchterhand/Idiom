@@ -44,6 +44,9 @@ type languagePolicy struct {
 	// Weight scales the BM25 score of files of this language; zero means 1.
 	// It demotes kinds of file a task rarely names, as test files are.
 	Weight float64
+	// Class names a document class with its own BM25 statistics; empty is
+	// the source class.
+	Class string
 }
 
 // languagePolicies are the dev-split choices; defaultPolicy covers any other
@@ -67,7 +70,15 @@ var languagePolicies = map[string]languagePolicy{
 	"powershell":    {Weight: extraFileWeight},
 }
 
-const extraFileWeight = 0.5
+const (
+	extraFileWeight = 0.5
+	classExtra      = "extra" // files a localization config adds beyond source code
+)
+
+// languageClass is the statistics class of a file of the given language.
+func languageClass(language string) string {
+	return policyFor(language).Class
+}
 
 var defaultPolicy = languagePolicy{Hop: hopNone, Channel: false}
 
