@@ -126,6 +126,10 @@ func packFileWhy(file PackFile, terms []string) string {
 		return truncateWhy(verb + " " + adm.Object)
 	}
 
+	if strings.HasPrefix(file.Reason, "graph neighbour of ") {
+		return truncateWhy(file.Reason)
+	}
+
 	if len(file.matched) > 0 {
 		return truncateWhy("matches \"" + strings.Join(file.matched, "\",\"") + "\"")
 	}

@@ -13,6 +13,9 @@ type LexicalHit struct {
 	Path  string
 	Score float64
 	Terms []string
+	// Via names the matched file a graph hop reached this one from; empty
+	// for files that matched the task themselves.
+	Via string
 }
 
 // RankLexical scores every file that shares a query term with BM25 and
@@ -142,6 +145,10 @@ func fuseRankedLists(lists ...rankedList) []LexicalHit {
 
 			if len(fused.Terms) == 0 {
 				fused.Terms = hit.Terms
+			}
+
+			if fused.Via == "" {
+				fused.Via = hit.Via
 			}
 		}
 	}

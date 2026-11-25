@@ -228,3 +228,33 @@ func TestFuseRankedListsCutsAtDepth(t *testing.T) {
 		t.Fatalf("fused %d files, want depth %d", len(got), fusionDepth)
 	}
 }
+
+func TestReadLexicalTextSkipsOversizeAndMissingFiles(t *testing.T) {
+	root := t.TempDir()
+
+	small := filepath.Join(root, "small.go")
+	if err := os.WriteFile(small, []byte("package small"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	big := filepath.Join(root, "big.go")
+	if err := os.WriteFile(big, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Truncate(big, LexicalMaxFileBytes+1); err != nil { // sparse: nothing is written
+		t.Fatal(err)
+	}
+
+	if text, err := readLexicalText(root, "small.go"); err != nil || string(text) != "package small" {
+		t.Fatalf("small file = %q, %v", text, err)
+	}
+
+	if text, err := readLexicalText(root, "big.go"); err != nil || text != nil {
+		t.Fatalf("a file over %d bytes must not be read, got %d bytes, %v", LexicalMaxFileBytes, len(text), err)
+	}
+
+	if text, err := readLexicalText(root, "gone.go"); err != nil || text != nil {
+		t.Fatalf("a missing file indexes by path only, got %v, %v", text, err)
+	}
+}
