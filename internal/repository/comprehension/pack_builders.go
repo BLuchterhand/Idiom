@@ -123,15 +123,8 @@ func (b *packFileBuilder) all() []PackFile {
 // candidate limit and per-file handle bounding. The Hub flag is set inside
 // RankPackFiles so callers that bypass finalizePackFiles still see it.
 func finalizePackFiles(files []PackFile, in RankInputs, limit int) []PackFile {
-	ranked := RankPackFiles(RankInputs{
-		Files:          files,
-		Graph:          in.Graph,
-		MatchedIDs:     in.MatchedIDs,
-		Intent:         in.Intent,
-		LearnedWeights: in.LearnedWeights,
-		QueryTokens:    in.QueryTokens,
-		RequiredPaths:  in.RequiredPaths,
-	})
+	in.Files = files
+	ranked := RankPackFiles(in)
 	if limit > 0 && len(ranked) > limit {
 		ranked = ranked[:limit]
 	}

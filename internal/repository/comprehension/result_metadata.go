@@ -302,7 +302,7 @@ func graphResultProvenanceFromGraph(operation string, graph Graph, artifactPath 
 		IndexID:                 graph.ID,
 		GeneratedAt:             graph.GeneratedAt,
 		CollectorVersion:        graph.CollectorVersion,
-		CurrentCollectorVersion: currentCollectorVersion(),
+		CurrentCollectorVersion: currentCollectorVersion(graph.Root),
 		ArtifactPath:            artifactPath,
 	}
 }

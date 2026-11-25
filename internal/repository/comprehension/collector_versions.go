@@ -26,25 +26,36 @@ var currentCollectorVersions = map[string]string{
 	"summary_index":             "1",
 }
 
-func currentCollectorVersion() string {
-	entries := currentCollectorVersionEntries()
+// localizationCollectorKey names the collector-version entry that carries the
+// localization config fingerprint. It exists only when the repository has a
+// non-empty `localization` section, so default fingerprints are unchanged.
+const localizationCollectorKey = "localization"
+
+func currentCollectorVersion(root string) string {
+	entries := currentCollectorVersionEntries(root)
 	sum := sha256.Sum256([]byte(strings.Join(entries, "\n")))
 
 	return hex.EncodeToString(sum[:8])
 }
 
-func currentCollectorVersionMap() map[string]string {
-	out := make(map[string]string, len(currentCollectorVersions))
+func currentCollectorVersionMap(root string) map[string]string {
+	out := make(map[string]string, len(currentCollectorVersions)+1)
 	for key, value := range currentCollectorVersions {
 		out[key] = value
+	}
+
+	if fingerprint := LocalizationConfigFingerprint(root); fingerprint != "" {
+		out[localizationCollectorKey] = fingerprint
 	}
 
 	return out
 }
 
-func currentCollectorVersionEntries() []string {
-	entries := make([]string, 0, len(currentCollectorVersions))
-	for key, value := range currentCollectorVersions {
+func currentCollectorVersionEntries(root string) []string {
+	versions := currentCollectorVersionMap(root)
+	entries := make([]string, 0, len(versions))
+
+	for key, value := range versions {
 		entries = append(entries, key+"="+value)
 	}
 

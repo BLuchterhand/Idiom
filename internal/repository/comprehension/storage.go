@@ -1079,7 +1079,7 @@ func statusFromSQLite(root string, activeKind string, scope string) (StatusRepor
 		activeKind = sqliteStoreKind
 	}
 
-	currentVersion := currentCollectorVersion()
+	currentVersion := currentCollectorVersion(root)
 	collectorMismatch := strings.TrimSpace(graph.CollectorVersion) == "" || graph.CollectorVersion != currentVersion
 
 	staleFiles, missingFiles, err := sqliteStaleFilePaths(root, db, scope, graph.Languages)
