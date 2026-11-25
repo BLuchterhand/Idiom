@@ -1,0 +1,1663 @@
+{
+ "schema": 1,
+ "corpus": "idiom",
+ "gate": "no_regression",
+ "builder": {
+  "commits": "commits",
+  "max_commits": 400,
+  "query_from": "message",
+  "source_regex": "\\.go$",
+  "exclude_gold": [
+   "_test\\.go$",
+   "^testdata/",
+   "^docs/"
+  ],
+  "test_regex": "_test\\.go$",
+  "doc_regex": "\\.md$|^docs/",
+  "max_gold_files": 25,
+  "min_query_len": 40,
+  "max_cases": 60,
+  "scoped_cases": true
+ },
+ "localization": {},
+ "cases": [
+  {
+   "id": "40ea5c869",
+   "merge": "40ea5c869bdc4003476cdc40aa9de8f564dceb36",
+   "base": "9fe60f44754a6fae114843802457ba6751ffc6d8",
+   "query": "localization phase 3: per-language graph hop and channel policy (dev-selected; beats 9fe60f44 on every split mean incl. fresh hold-outs)",
+   "query_source": "commit message",
+   "gold": [
+    "internal/repository/comprehension/lexical_pack.go",
+    "internal/repository/comprehension/lexical_rank.go",
+    "internal/repository/comprehension/lexical_store.go",
+    "internal/repository/comprehension/pack.go",
+    "internal/repository/comprehension/pack_explain.go"
+   ],
+   "gold_new": [
+    "internal/repository/comprehension/lexical_hop.go"
+   ],
+   "gold_tests": [
+    "internal/repository/comprehension/lexical_hop_test.go",
+    "internal/repository/comprehension/lexical_test.go",
+    "internal/repository/comprehension/localization_config_test.go"
+   ],
+   "split": "holdout",
+   "scope": "internal/repository"
+  },
+  {
+   "id": "5571e7d22",
+   "merge": "5571e7d222e77e544987fb121cb64cfd61409aa3",
+   "base": "11a21c93d79d48c0b6d7c0e38bddb3e0fca14bb2",
+   "query": "cpp digit-separator lexing fix and incremental summary rebuild (index equivalence)",
+   "query_source": "commit message",
+   "gold": [
+    "internal/repository/comprehension/collector_versions.go",
+    "internal/repository/comprehension/graph.go",
+    "internal/repository/comprehension/storage.go",
+    "internal/repository/semantic/cpp/cpp_index.go"
+   ],
+   "gold_tests": [
+    "internal/repository/comprehension/graph_test.go",
+    "internal/repository/comprehension/index_equivalence_test.go",
+    "internal/repository/comprehension/localization_config_test.go",
+    "internal/repository/semantic/cpp/cpp_index_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal/repository"
+  },
+  {
+   "id": "39ab9ca60",
+   "merge": "39ab9ca60f93ca45d92e5a4542cedef4c345c593",
+   "base": "b69fef016f2ed2c28ac380e520ab5f1087db163e",
+   "query": "localization accuracy phases 0-1: RankInputs/PackFile contract, localization config in freshness, eval harness and baseline",
+   "query_source": "commit message",
+   "gold": [
+    "internal/repository/comprehension/collector_versions.go",
+    "internal/repository/comprehension/graph.go",
+    "internal/repository/comprehension/pack.go",
+    "internal/repository/comprehension/pack_builders.go",
+    "internal/repository/comprehension/ranker.go",
+    "internal/repository/comprehension/result_metadata.go",
+    "internal/repository/comprehension/storage.go",
+    "internal/repository/comprehension/views.go"
+   ],
+   "gold_new": [
+    "cmd/idiom-localization-eval/main.go",
+    "internal/evidence/eval/localization_eval_cases.go",
+    "internal/evidence/eval/localization_eval_metrics.go",
+    "internal/evidence/eval/localization_eval_runner.go",
+    "internal/evidence/eval/localization_eval_stats.go",
+    "internal/evidence/eval/localization_eval_summary.go",
+    "internal/repository/comprehension/localization_config.go"
+   ],
+   "gold_tests": [
+    "internal/evidence/eval/localization_eval_test.go",
+    "internal/repository/comprehension/localization_config_test.go"
+   ],
+   "gold_docs": [
+    "docs/development.md"
+   ],
+   "split": "dev",
+   "scope": "internal/repository"
+  },
+  {
+   "id": "b69fef016",
+   "merge": "b69fef016f2ed2c28ac380e520ab5f1087db163e",
+   "base": "4eab2cdb6e8824a25f5d9a992b1e0a43437c134c",
+   "query": "qualified cpp_calls_into resolves callers to the owner, fail closed (W903)",
+   "query_source": "commit message",
+   "gold": [
+    "internal/repository/semantic/cpp/cpp_index.go",
+    "internal/repository/semantic/cpp/cpp_resolve.go",
+    "internal/repository/semantic/languagetools/cpp_provenance.go",
+    "internal/repository/semantic/languagetools/cpp_tools.go"
+   ],
+   "gold_new": [
+    "internal/repository/semantic/cpp/cpp_callers.go",
+    "internal/repository/semantic/cpp/cpp_calls.go"
+   ],
+   "gold_tests": [
+    "internal/repository/semantic/cpp/cpp_callers_test.go",
+    "internal/repository/semantic/cpp/cpp_index_test.go",
+    "internal/repository/semantic/cpp/cpp_resolve_test.go",
+    "internal/repository/semantic/languagetools/cpp_tools_test.go"
+   ],
+   "gold_docs": [
+    "docs/cli.md"
+   ],
+   "split": "holdout",
+   "scope": "internal/repository"
+  },
+  {
+   "id": "4eab2cdb6",
+   "merge": "4eab2cdb6e8824a25f5d9a992b1e0a43437c134c",
+   "base": "031fa703a0a8206f5c9a85561af4909c5f9e6b6f",
+   "query": "exact, bounded native C++ tools with index identity (W866)",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/capabilities/workspace/tool_io.go",
+    "internal/capabilities/workspace/tool_sidecar_envelope.go",
+    "internal/platform/safepath/open.go",
+    "internal/platform/safepath/walk.go",
+    "internal/repository/semantic/cpp/cpp_index.go",
+    "internal/repository/semantic/cpp/cpp_query.go",
+    "internal/repository/semantic/java/java_query.go",
+    "internal/repository/semantic/languagetools/cpp_tools.go",
+    "internal/repository/semantic/languagetools/dispatch.go",
+    "internal/repository/semantic/languagetools/manager.go"
+   ],
+   "gold_new": [
+    "internal/repository/semantic/cpp/cpp_budget.go",
+    "internal/repository/semantic/cpp/cpp_resolve.go",
+    "internal/repository/semantic/languagetools/cpp_provenance.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/tool_sidecar_envelope_test.go",
+    "internal/platform/safepath/rebase_test.go",
+    "internal/repository/semantic/cpp/cpp_index_test.go",
+    "internal/repository/semantic/cpp/cpp_resolve_test.go",
+    "internal/repository/semantic/languagetools/cpp_provenance_test.go",
+    "internal/repository/semantic/languagetools/cpp_tools_test.go"
+   ],
+   "gold_docs": [
+    "docs/cli.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "ccb2e2d9c",
+   "merge": "ccb2e2d9c3e16b3f9ffc94e3c5be1fbb1a907cda",
+   "base": "08bd82ec46e7edfa5466342b8d17cfcdb526739a",
+   "query": "Prepare GPLv3 public release and harden runtime boundaries",
+   "query_source": "commit message",
+   "gold": [
+    "internal/evidence/telemetry/recorder.go",
+    "internal/evidence/trace/trace.go",
+    "internal/evidence/transcript/debuglog.go",
+    "internal/evidence/transcript/store.go",
+    "internal/platform/commandexec/commandexec.go",
+    "internal/platform/config/config.go",
+    "internal/platform/redaction/redaction.go",
+    "internal/runtime/runner/client.go",
+    "internal/runtime/runner/gate.go",
+    "internal/runtime/runner/server.go"
+   ],
+   "gold_new": [
+    "internal/platform/gotestenv/toolchain.go",
+    "internal/runtime/runner/socket_startup_lock.go",
+    "internal/runtime/runner/socket_startup_lock_other.go",
+    "internal/runtime/runner/socket_startup_lock_unix.go",
+    "internal/runtime/runner/socket_startup_lock_windows.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/workspace_suite_test.go",
+    "internal/contracts/compile/system_harness_entrypoints_test.go",
+    "internal/evidence/telemetry/recorder_test.go",
+    "internal/evidence/trace/trace_test.go",
+    "internal/evidence/transcript/debuglog_test.go",
+    "internal/evidence/transcript/store_test.go",
+    "internal/platform/commandexec/commandexec_test.go",
+    "internal/platform/commandexec/shell_test.go",
+    "internal/platform/config/config_test.go",
+    "internal/platform/redaction/redaction_test.go",
+    "internal/runtime/agent/agent_suite_test.go",
+    "internal/runtime/queueadmission/admission_test.go",
+    "internal/runtime/runner/client_test.go",
+    "internal/runtime/runner/runner_test.go",
+    "internal/runtime/runner/server_lifecycle_test.go",
+    "internal/surfaces/cli/root/root_suite_test.go"
+   ],
+   "gold_docs": [
+    "CONTRIBUTING.md",
+    "README.md",
+    "architect.md",
+    "docs/README.md",
+    "docs/architecture.md",
+    "docs/client-demo-transcripts.md",
+    "docs/configuration.md",
+    "docs/consolidation-overhaul-design.md",
+    "docs/design-compaction-provenance.md",
+    "docs/design-model-capability-profile.md",
+    "docs/design-os-sandbox.md",
+    "docs/design-run-trace.md",
+    "docs/design-tool-surface-parity.md",
+    "docs/development.md",
+    "docs/getting-started.md",
+    "docs/licensing.md",
+    "docs/rearchitecture-reduction-plan.md",
+    "docs/release-readiness-review.md",
+    "docs/release.md",
+    "docs/security-privacy-posture.matrix.json",
+    "docs/security-privacy-posture.md",
+    "docs/troubleshooting.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "08bd82ec4",
+   "merge": "08bd82ec46e7edfa5466342b8d17cfcdb526739a",
+   "base": "5b2afb5d59cfdaae02a607a6d31b8012df12e75c",
+   "query": "Bound conversation continuity handoffs with runner evidence",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/runner_run_state.go"
+   ],
+   "gold_new": [
+    "internal/evidence/conversation/context.go",
+    "internal/runtime/agent/conversation_continuity.go"
+   ],
+   "gold_tests": [
+    "internal/evidence/conversation/context_suite_test.go",
+    "internal/evidence/conversation/context_test.go",
+    "internal/runtime/agent/conversation_continuity_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "7ecec7132",
+   "merge": "7ecec71329d040589963273a2a519ac9e02cb77f",
+   "base": "dfbf342ad601aeb0f4bd2b34b0d43c8558fd18ee",
+   "query": "Consolidate MCP registry identity ownership",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/mcp/registry.go",
+    "internal/capabilities/workspace/tool_surface.go",
+    "internal/platform/config/config.go"
+   ],
+   "gold_new": [
+    "internal/contracts/mcpidentity/identity.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/mcp/client_test.go",
+    "internal/contracts/compile/layer_boundaries_test.go",
+    "internal/contracts/mcpidentity/identity_test.go",
+    "internal/platform/config/config_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "dfbf342ad",
+   "merge": "dfbf342ad601aeb0f4bd2b34b0d43c8558fd18ee",
+   "base": "877fc7601dabc4e8022e11324cf2919cb8fa465a",
+   "query": "Consolidate source evidence projection authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "877fc7601",
+   "merge": "877fc7601dabc4e8022e11324cf2919cb8fa465a",
+   "base": "4bace396e58940ec3ce7bbac5c34caf2543c86d4",
+   "query": "Move workspace dispatch authority into catalog",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/capabilities.go",
+    "internal/capabilities/workspace/harness_audit.go",
+    "internal/capabilities/workspace/harness_feedback.go",
+    "internal/capabilities/workspace/patch.go",
+    "internal/capabilities/workspace/product_tools.go",
+    "internal/capabilities/workspace/read_tools.go",
+    "internal/capabilities/workspace/search_helpers.go",
+    "internal/capabilities/workspace/shell_tools.go",
+    "internal/capabilities/workspace/submit_plan.go",
+    "internal/capabilities/workspace/tool_class.go",
+    "internal/capabilities/workspace/tool_dispatch.go",
+    "internal/capabilities/workspace/tool_manifest.go",
+    "internal/capabilities/workspace/tool_names.go",
+    "internal/capabilities/workspace/tool_profile_policy.go",
+    "internal/capabilities/workspace/tool_surface_metadata.go",
+    "internal/capabilities/workspace/write_tools.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/submit_plan_test.go",
+    "internal/capabilities/workspace/tool_profile_policy_test.go",
+    "internal/capabilities/workspace/tool_surface_metadata_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/capabilities"
+  },
+  {
+   "id": "4bace396e",
+   "merge": "4bace396e58940ec3ce7bbac5c34caf2543c86d4",
+   "base": "e65126c78d061a0fb6a88c68a17de478c5598440",
+   "query": "Consolidate plan-execute terminal decisions",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/plan/terminal_completion.go",
+    "internal/workflows/featureplanner/adapters/planexecute/reconcile.go",
+    "internal/workflows/featureplanner/orchestrate.go",
+    "internal/workflows/featureplanner/plan_execute_completion.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/tui/app/feature_planner_product_test.go",
+    "internal/surfaces/tui/app/recover_status_test.go",
+    "internal/workflows/featureplanner/plan_execute_completion_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "865a51559",
+   "merge": "865a5155932d03320368a8fb52886e40361b2ac5",
+   "base": "5b3ce393f097ebf3ccf183222e9af4a9188b35b0",
+   "query": "Harden MCP network and lifecycle ownership",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/mcp/client.go",
+    "internal/capabilities/mcp/http.go",
+    "internal/capabilities/mcp/ssrf.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/mcp/client_test.go",
+    "internal/capabilities/mcp/http_test.go",
+    "internal/capabilities/mcp/ssrf_test.go",
+    "internal/surfaces/cli/mcp/mcpcmd_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/security-privacy-posture.matrix.json",
+    "docs/security-privacy-posture.md"
+   ],
+   "split": "dev",
+   "scope": "internal/capabilities"
+  },
+  {
+   "id": "6f65d4caf",
+   "merge": "6f65d4caf80c09e9f2efab58d6bdc4e894ae0316",
+   "base": "14c30e86c369d261e58784ad3f5636dc5e629af6",
+   "query": "Delete product workflow contract facades",
+   "query_source": "commit message",
+   "gold": [
+    "internal/workflows/productworkflow/behavioral_coverage_contract.go",
+    "internal/workflows/productworkflow/migration.go",
+    "internal/workflows/productworkflow/validate.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/tui/app/feature_planner_product_test.go",
+    "internal/workflows/featureplannerproduct/brief_adapter_test.go",
+    "internal/workflows/productworkflow/behavioral_coverage_contract_test.go",
+    "internal/workflows/productworkflow/migration_test.go",
+    "internal/workflows/productworkflow/validate_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal/workflows"
+  },
+  {
+   "id": "14c30e86c",
+   "merge": "14c30e86c369d261e58784ad3f5636dc5e629af6",
+   "base": "1f689732d49edbf954812f29e2a78c802620329f",
+   "query": "Delete dormant plan contract helper APIs",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/plan/edit_set_obligations.go",
+    "internal/contracts/plan/execution_contract.go",
+    "internal/contracts/plan/failure_kinds.go",
+    "internal/contracts/plan/rejection_codes.go",
+    "internal/contracts/plan/scope_expansion.go",
+    "internal/contracts/plan/terminal_completion.go",
+    "internal/contracts/planartifact/types.go",
+    "internal/contracts/planartifact/vocabulary.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/submit_plan_test.go",
+    "internal/contracts/plan/edit_set_obligations_test.go",
+    "internal/contracts/plan/execution_contract_test.go",
+    "internal/contracts/plan/failure_kinds_test.go",
+    "internal/contracts/plan/rejection_codes_test.go",
+    "internal/contracts/plan/scope_expansion_test.go",
+    "internal/contracts/plan/terminal_completion_projection_test.go",
+    "internal/contracts/planartifact/types_test.go",
+    "internal/workflows/recovery/record_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/contracts"
+  },
+  {
+   "id": "f94f9f7d7",
+   "merge": "f94f9f7d7fd8aa570621687e6be6abcd86099584",
+   "base": "1dac269511fa09bfb111acd9f30b88abe7f018db",
+   "query": "Remove autonomy policy and obligation test facades",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/autonomy/event.go",
+    "internal/contracts/autonomy/obligation_ledger.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/discovery_tools_test.go",
+    "internal/contracts/autonomy/audit_test.go",
+    "internal/contracts/autonomy/event_test.go",
+    "internal/contracts/autonomy/obligation_ledger_test.go",
+    "internal/contracts/autonomy/replay_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/contracts"
+  },
+  {
+   "id": "1dac26951",
+   "merge": "1dac269511fa09bfb111acd9f30b88abe7f018db",
+   "base": "b2bfc726c52025a8e131a1617672e762c6a59ed9",
+   "query": "Delete dormant autonomy validation facades",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/autonomy/action_intent.go",
+    "internal/contracts/autonomy/model_exchange.go"
+   ],
+   "gold_tests": [
+    "internal/contracts/autonomy/action_intent_test.go",
+    "internal/contracts/autonomy/model_exchange_test.go",
+    "internal/contracts/compile/compile_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal/contracts"
+  },
+  {
+   "id": "2d17b8e8c",
+   "merge": "2d17b8e8cb9ba363cf71a34032c5ff46eb9339b3",
+   "base": "13f4488d6e503b5421dec9adf0e27e1b22e70f52",
+   "query": "Remove product evidence dependency shims",
+   "query_source": "commit message",
+   "gold": [
+    "internal/evidence/productevidence/dependencies.go",
+    "internal/evidence/productevidence/product_evidence.go",
+    "internal/evidence/productevidence/release_evidence.go"
+   ],
+   "gold_tests": [
+    "internal/evidence/productevidence/dependencies_test.go",
+    "internal/evidence/productevidence/product_evidence_test.go",
+    "internal/evidence/productevidence/release_evidence_test.go",
+    "internal/evidence/productevidence/test_helpers_test.go",
+    "internal/evidence/sidecarvalidation/cli_helpers_test.go",
+    "internal/evidence/sidecarvalidation/sidecar_recipe_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/evidence"
+  },
+  {
+   "id": "13f4488d6",
+   "merge": "13f4488d6e503b5421dec9adf0e27e1b22e70f52",
+   "base": "d8de37f568e83a3ca09efe48032da5d8b707aff2",
+   "query": "Remove planexecute legacy packet fallback",
+   "query_source": "commit message",
+   "gold": [
+    "internal/workflows/planexecute/executor_handoff.go",
+    "internal/workflows/planexecute/phase_evidence.go",
+    "internal/workflows/planexecute/planner_prompt.go",
+    "internal/workflows/planexecute/progress.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/planexecute/plan_execute_test.go",
+    "internal/workflows/planexecute/helpers_prompt_test.go",
+    "internal/workflows/planexecute/phase_evidence_test.go",
+    "internal/workflows/planexecute/run_test.go",
+    "internal/workflows/planexecute/terminal_completion_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/workflows"
+  },
+  {
+   "id": "d8de37f56",
+   "merge": "d8de37f568e83a3ca09efe48032da5d8b707aff2",
+   "base": "db5c39eb5bbe0e39a134d829bec76043c6cd0ff1",
+   "query": "Delete featureplanner replay compatibility surfaces",
+   "query_source": "commit message",
+   "gold": [
+    "internal/workflows/featureplanner/errors.go",
+    "internal/workflows/featureplanner/orchestrate.go",
+    "internal/workflows/featureplanner/plan_execute_completion.go",
+    "internal/workflows/featureplanner/replay.go",
+    "internal/workflows/featureplanner/standalone_coverage_contract.go",
+    "internal/workflows/featureplanner/store.go",
+    "internal/workflows/featureplanner/validate.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/featureplanner/feature_planner_test.go",
+    "internal/workflows/featureplanner/durable_test.go",
+    "internal/workflows/featureplanner/plan_execute_completion_test.go",
+    "internal/workflows/featureplanner/validate_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/workflows"
+  },
+  {
+   "id": "1d3f57f97",
+   "merge": "1d3f57f97a9e7dea841b93ef02ee600252b2ddce",
+   "base": "3da4c11adb38dae2a2b3e78abb81d06ea5abed01",
+   "query": "Remove factless discovery packet fallbacks",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/context_pack_test_fixtures_test.go",
+    "internal/runtime/agent/evidence_projection_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "3da4c11ad",
+   "merge": "3da4c11adb38dae2a2b3e78abb81d06ea5abed01",
+   "base": "4de12e53165175a70307f138e1ee187b85047a85",
+   "query": "Move search discovery authority into producer facts",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/discovery_query.go",
+    "internal/capabilities/workspace/search_helpers.go",
+    "internal/capabilities/workspace/tool_class.go",
+    "internal/contracts/toolfacts/facts.go",
+    "internal/runtime/agent/discovery_consumption.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/discovery_query_test.go",
+    "internal/capabilities/workspace/manager_test.go",
+    "internal/capabilities/workspace/tool_class_test.go",
+    "internal/contracts/toolfacts/facts_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_projection_test.go",
+    "internal/runtime/agent/final_answer_acceptance_e2e_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "4de12e531",
+   "merge": "4de12e53165175a70307f138e1ee187b85047a85",
+   "base": "3e63efc14a07a9d6fd0f86734ebdde9e0ee87c88",
+   "query": "Move discovery candidates into tool result facts",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/context_pack_facts.go",
+    "internal/capabilities/workspace/context_tools.go",
+    "internal/capabilities/workspace/discovery_tools.go",
+    "internal/capabilities/workspace/read_tools.go",
+    "internal/capabilities/workspace/tool_surface_phase.go",
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/discovery_consumption.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/workflows/planexecute/runner/runner.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/context_pack_facts_test.go",
+    "internal/capabilities/workspace/discovery_tools_test.go",
+    "internal/capabilities/workspace/manager_test.go",
+    "internal/runtime/agent/context_pack_test_fixtures_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_projection_test.go",
+    "internal/runtime/agent/final_answer_acceptance_e2e_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "bb18f5a8d",
+   "merge": "bb18f5a8d59611236c22c261871e6dc04d1e4b4f",
+   "base": "20917a51783a1d16d75dafa3df4364d7989eca74",
+   "query": "Move read-only answer evidence to closeout",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "20917a517",
+   "merge": "20917a51783a1d16d75dafa3df4364d7989eca74",
+   "base": "553789ab8db0d24c47648609ce6f5e9b7f86b438",
+   "query": "Unify nested plan-execute runner authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/featureplanner/feature_planner.go",
+    "internal/surfaces/cli/lane/lane.go",
+    "internal/surfaces/cli/planexecute/plan_execute.go",
+    "internal/surfaces/cli/root/command_adapters.go",
+    "internal/surfaces/cli/runtime/runtime.go",
+    "internal/surfaces/tui/app/model_state.go",
+    "internal/workflows/planexecute/runner/runner.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/featureplanner/feature_planner_test.go",
+    "internal/surfaces/cli/lane/lane_test.go",
+    "internal/surfaces/cli/lane/phase6_5_test.go",
+    "internal/surfaces/cli/lane/recovery_test.go",
+    "internal/surfaces/cli/planexecute/plan_execute_test.go",
+    "internal/surfaces/tui/app/prompt_runtime_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "553789ab8",
+   "merge": "553789ab8db0d24c47648609ce6f5e9b7f86b438",
+   "base": "2145e4e3487af08dec2cde509416a3b506da312f",
+   "query": "Consolidate plan-execute runner authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/lane/lane.go",
+    "internal/surfaces/cli/planexecute/plan_execute.go"
+   ],
+   "gold_new": [
+    "internal/workflows/planexecute/runner/runner.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/lane/lane_test.go",
+    "internal/surfaces/cli/lane/phase6_5_test.go",
+    "internal/surfaces/cli/lane/recovery_test.go",
+    "internal/surfaces/cli/planexecute/plan_execute_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal/surfaces"
+  },
+  {
+   "id": "2145e4e34",
+   "merge": "2145e4e3487af08dec2cde509416a3b506da312f",
+   "base": "b5a2e6194c09c1c6d651d6c6fbb3c809859dff38",
+   "query": "Route feature planner through typed plan-execute workflow",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/featureplanner/feature_planner.go",
+    "internal/surfaces/cli/implement/implement.go",
+    "internal/surfaces/cli/lane/telemetry.go",
+    "internal/surfaces/cli/planexecute/plan_execute.go",
+    "internal/surfaces/cli/root/command_adapters.go",
+    "internal/surfaces/cli/telemetry/local_ops.go"
+   ],
+   "gold_renames": [
+    {
+     "from": "internal/surfaces/cli/telemetry/local_ops.go",
+     "to": "internal/runtime/localops/telemetry.go"
+    }
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/featureplanner/feature_planner_test.go",
+    "internal/surfaces/cli/planexecute/plan_execute_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal/surfaces"
+  },
+  {
+   "id": "28ac30dbf",
+   "merge": "28ac30dbfe42a409db0482c4f83064da43959b13",
+   "base": "d63a6eb20f3fe90e3c91552262f2ca14268a29ac",
+   "query": "Consolidate brief lint workflow authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/brief/brief.go",
+    "internal/surfaces/cli/lane/lane.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/refine/refine.go",
+    "internal/workflows/brieflint/lint.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/brief/brief_lint_test.go",
+    "internal/surfaces/cli/lane/lane_test.go",
+    "internal/surfaces/cli/lane/phase6_5_test.go",
+    "internal/surfaces/cli/lane/recovery_test.go",
+    "internal/surfaces/cli/refine/refine_test.go",
+    "internal/surfaces/cli/refine/refine_test_helpers_test.go"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "d63a6eb20",
+   "merge": "d63a6eb20f3fe90e3c91552262f2ca14268a29ac",
+   "base": "fce27fb692cf1f8608f1980d107c4d29513b878f",
+   "query": "Move product validation authority into workflow",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/workflows/productworkflow/lint.go",
+    "internal/workflows/productworkflow/status.go"
+   ],
+   "gold_new": [
+    "internal/workflows/productworkflow/artifact_validation.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
+    "internal/workflows/productworkflow/artifact_validation_test.go",
+    "internal/workflows/productworkflow/status_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "fce27fb69",
+   "merge": "fce27fb692cf1f8608f1980d107c4d29513b878f",
+   "base": "5f9e46ec35a5f8f29907745c12f3f6219aa774c7",
+   "query": "Consolidate evidence path selection authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/source_grounding.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/runtime/agent/validation_status.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "c22467019",
+   "merge": "c22467019505183bbfa20556eecb02b912aec526",
+   "base": "891143c0447faea920af4d378455c72e4497f5b6",
+   "query": "Consolidate delegated read-only terminal decisions",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "891143c04",
+   "merge": "891143c0447faea920af4d378455c72e4497f5b6",
+   "base": "977e1e79673775edffa8ea7ae4a90969d37f3dfa",
+   "query": "Consolidate read-only closeout grounding authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/source_grounding.go",
+    "internal/runtime/agent/tools_surface.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "977e1e796",
+   "merge": "977e1e79673775edffa8ea7ae4a90969d37f3dfa",
+   "base": "c6c6f637e1597d9f048f17d60f10b75eb73fe429",
+   "query": "Collapse legacy headless command aliases",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/headless/headless.go",
+    "internal/surfaces/cli/root/root.go",
+    "internal/surfaces/cli/runtime/runtime.go",
+    "internal/surfaces/tui/app/approval.go",
+    "internal/surfaces/tui/app/event_stream.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/headless/headless_test.go",
+    "internal/surfaces/cli/root/root_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/rearchitecture-reduction-plan.md"
+   ],
+   "split": "dev",
+   "scope": "internal/surfaces"
+  },
+  {
+   "id": "c6c6f637e",
+   "merge": "c6c6f637e1597d9f048f17d60f10b75eb73fe429",
+   "base": "f3efdc68e2e09ad20c78f7cf30ae0ee40b4031de",
+   "query": "Consolidate source-grounding final-answer authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/source_grounding.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go",
+    "internal/runtime/agent/source_grounding_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/rearchitecture-reduction-plan.md"
+   ],
+   "split": "holdout",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "40945e055",
+   "merge": "40945e05562fbad287081795ecbb424e552874b3",
+   "base": "4c0484cade0bc68990611739701f35b651f6a636",
+   "query": "Move read-only answerability to evidence observations",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_projection_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/rearchitecture-reduction-plan.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "4c0484cad",
+   "merge": "4c0484cade0bc68990611739701f35b651f6a636",
+   "base": "d7af15ec3491f61b562a8bf9f7c34768b453bd87",
+   "query": "Consolidate source-body evidence authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/discovery_consumption.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/evidence_projection_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/rearchitecture-reduction-plan.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "d7af15ec3",
+   "merge": "d7af15ec3491f61b562a8bf9f7c34768b453bd87",
+   "base": "6bd8dba43c97736c032c6720f66bb15773cc9434",
+   "query": "Consolidate evidence projection path authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/source_grounding.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_projection_test.go",
+    "internal/runtime/agent/source_grounding_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/rearchitecture-reduction-plan.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "ce27c6369",
+   "merge": "ce27c6369fcb8976312c9d588e18838089bca152",
+   "base": "dd8110ce9931fb65fd0045d81df389ec124ad43f",
+   "query": "Delete deferred read-only capability facades",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/capabilities.go",
+    "internal/capabilities/workspace/context_telemetry.go",
+    "internal/capabilities/workspace/harness_audit.go",
+    "internal/capabilities/workspace/tool_schema_export.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/capabilities_test.go",
+    "internal/capabilities/workspace/tool_schema_export_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/rearchitecture-reduction-plan.md"
+   ],
+   "split": "dev",
+   "scope": "internal/capabilities"
+  },
+  {
+   "id": "dd8110ce9",
+   "merge": "dd8110ce9931fb65fd0045d81df389ec124ad43f",
+   "base": "6127a5df5f0f2aa0a40b76463943edfca5527f96",
+   "query": "Centralize shell and read-only capability authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/capabilities.go",
+    "internal/capabilities/workspace/discovery_profile.go",
+    "internal/capabilities/workspace/shell_analysis.go",
+    "internal/capabilities/workspace/shell_tools.go",
+    "internal/capabilities/workspace/tool_class.go",
+    "internal/runtime/agent/implementation_flow.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/discovery_profile_test.go",
+    "internal/capabilities/workspace/shell_analysis_test.go",
+    "internal/capabilities/workspace/tool_request_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md",
+    "docs/rearchitecture-reduction-plan.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "6127a5df5",
+   "merge": "6127a5df5f0f2aa0a40b76463943edfca5527f96",
+   "base": "e2aa37232f3f4f1af118d97366eeefa5b2bc0f18",
+   "query": "Centralize semantic language tool catalog",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/capabilities.go",
+    "internal/capabilities/workspace/discovery_profile.go",
+    "internal/capabilities/workspace/language_tool_catalog.go",
+    "internal/capabilities/workspace/manager.go",
+    "internal/capabilities/workspace/shell_tools.go",
+    "internal/capabilities/workspace/tool_class.go",
+    "internal/capabilities/workspace/tool_dispatch.go",
+    "internal/capabilities/workspace/tool_manifest.go",
+    "internal/capabilities/workspace/tool_profile_policy.go",
+    "internal/capabilities/workspace/tool_schema_export.go",
+    "internal/capabilities/workspace/tool_schemas.go",
+    "internal/capabilities/workspace/tool_surface_metadata.go",
+    "internal/repository/semantic/languagetools/code_navigation.go",
+    "internal/runtime/agent/discovery_consumption.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/runtime/workerruntime/runtime_action_guidance.go",
+    "internal/surfaces/tui/app/busy_status.go",
+    "internal/surfaces/tui/app/lifecycle.go",
+    "internal/surfaces/tui/app/tool_intent.go"
+   ],
+   "gold_new": [
+    "internal/platform/tooljsonschema/schema.go",
+    "internal/repository/semantic/languagetools/tool_catalog.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/capabilities_test.go",
+    "internal/capabilities/workspace/tool_class_test.go",
+    "internal/capabilities/workspace/tool_manifest_test.go",
+    "internal/capabilities/workspace/tool_request_test.go",
+    "internal/capabilities/workspace/tool_schema_export_test.go",
+    "internal/repository/semantic/languagetools/tool_catalog_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "ba3650506",
+   "merge": "ba36505068dcf0dfc956fb29316967168a9975e5",
+   "base": "83bb272c4ed4a451def838212c6149fb4e6a9c7b",
+   "query": "Route external tools through workspace command runner",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/command_runner.go",
+    "internal/capabilities/workspace/external_mcp_dispatch.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/external_tool_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/capabilities"
+  },
+  {
+   "id": "83bb272c4",
+   "merge": "83bb272c4ed4a451def838212c6149fb4e6a9c7b",
+   "base": "f28e85336ec1bd0a20eaeaf0700e394c348b63b1",
+   "query": "Move command display projection to workspace",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/command_runner.go",
+    "internal/capabilities/workspace/external_mcp_dispatch.go",
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/capabilities/workspace/search_helpers.go",
+    "internal/capabilities/workspace/shell_tools.go",
+    "internal/platform/commandexec/commandexec.go",
+    "internal/repository/semantic/languagetools/cpp_tools.go",
+    "internal/repository/semantic/languagetools/go_tools.go",
+    "internal/repository/semantic/languagetools/java_tools.go",
+    "internal/repository/semantic/languagetools/manager.go",
+    "internal/repository/semantic/languagetools/rust_tools.go"
+   ],
+   "gold_tests": [
+    "internal/platform/commandexec/commandexec_test.go",
+    "internal/repository/semantic/languagetools/owner_bridge_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "eaad2c9bb",
+   "merge": "eaad2c9bbe2f84d10bb675caeea1359b2879a402",
+   "base": "69482862e3605d477ebf824ff847e84d9c2fba6f",
+   "query": "Consolidate shell and read-window result facts",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/shell_analysis.go",
+    "internal/capabilities/workspace/shell_tools.go",
+    "internal/capabilities/workspace/verification_observation.go",
+    "internal/contracts/toolfacts/facts.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/runtime/agent/validation_status.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/shell_analysis_test.go",
+    "internal/capabilities/workspace/verification_observation_test.go",
+    "internal/contracts/toolfacts/facts_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go",
+    "internal/runtime/agent/tool_result_fixtures_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "69482862e",
+   "merge": "69482862e3605d477ebf824ff847e84d9c2fba6f",
+   "base": "fe7c7148fb121e0599e7443b47ed1b7153d84aca",
+   "query": "Consolidate source body evidence authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/capabilities.go",
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/capabilities/workspace/read_prefetch.go",
+    "internal/capabilities/workspace/read_tools.go",
+    "internal/contracts/toolfacts/facts.go",
+    "internal/repository/semantic/languagetools/code_navigation.go",
+    "internal/repository/semantic/languagetools/cpp_tools.go",
+    "internal/repository/semantic/languagetools/go_tools.go",
+    "internal/repository/semantic/languagetools/java_tools.go",
+    "internal/repository/semantic/languagetools/manager.go",
+    "internal/repository/semantic/languagetools/python_tools.go",
+    "internal/repository/semantic/languagetools/rust_tools.go",
+    "internal/repository/semantic/languagetools/ts_tools.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go"
+   ],
+   "gold_tests": [
+    "internal/contracts/toolfacts/facts_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_projection_test.go",
+    "internal/runtime/agent/runner_tests_test.go",
+    "internal/runtime/agent/source_grounding_test.go",
+    "internal/runtime/agent/tool_result_fixtures_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "fe7c7148f",
+   "merge": "fe7c7148fb121e0599e7443b47ed1b7153d84aca",
+   "base": "d1d6ac1b9d6dbb5067ad3dccb66b3184be574525",
+   "query": "Centralize git history evidence authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/discovery_query.go",
+    "internal/capabilities/workspace/discovery_tools.go",
+    "internal/capabilities/workspace/git_tools.go",
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/contracts/toolfacts/facts.go",
+    "internal/platform/gitstate/gitstate.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/discovery_tools_test.go",
+    "internal/capabilities/workspace/git_tools_test.go",
+    "internal/platform/gitstate/gitstate_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "d1d6ac1b9",
+   "merge": "d1d6ac1b9d6dbb5067ad3dccb66b3184be574525",
+   "base": "27ec922cab16877360a2448e6f64ffd84690befd",
+   "query": "Centralize TUI foreground command preparation",
+   "query_source": "commit message",
+   "gold": [
+    "internal/platform/commandexec/commandexec.go",
+    "internal/surfaces/tui/app/clipboard.go",
+    "internal/surfaces/tui/app/plan.go"
+   ],
+   "gold_tests": [
+    "internal/platform/commandexec/commandexec_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "27ec922ca",
+   "merge": "27ec922cab16877360a2448e6f64ffd84690befd",
+   "base": "c9204f37df55af8e7224ada208ab449acdf5cf73",
+   "query": "Consolidate detached backend launch authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/platform/commandexec/commandexec.go",
+    "internal/runtime/backends/launcher.go",
+    "internal/runtime/backends/launcher_unix.go"
+   ],
+   "gold_new": [
+    "internal/platform/commandexec/process_group_unix.go",
+    "internal/platform/commandexec/process_group_windows.go"
+   ],
+   "gold_tests": [
+    "internal/platform/commandexec/commandexec_test.go",
+    "internal/runtime/backends/launcher_integration_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "c9204f37d",
+   "merge": "c9204f37df55af8e7224ada208ab449acdf5cf73",
+   "base": "b4ab9823ea29d4d646a190039b1879f2f80c45a1",
+   "query": "Route queue execution through commandexec",
+   "query_source": "commit message",
+   "gold": [
+    "internal/platform/commandexec/commandexec.go",
+    "internal/surfaces/cli/queue/queue.go"
+   ],
+   "gold_tests": [
+    "internal/platform/commandexec/commandexec_test.go",
+    "internal/surfaces/cli/queue/queue_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "b4ab9823e",
+   "merge": "b4ab9823ea29d4d646a190039b1879f2f80c45a1",
+   "base": "d0620f74790a738d36fd62ba0bf8ab6684d1a1cb",
+   "query": "Retire duplicate workspace path normalization",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/plan/scope_contract.go",
+    "internal/workflows/architect/plan_audit.go",
+    "internal/workflows/implementationdispatch/dirty.go",
+    "internal/workflows/planexecute/scope_repair.go",
+    "internal/workflows/planintent/intent.go",
+    "internal/workflows/postflight/checks.go",
+    "internal/workflows/productworkflow/scope.go"
+   ],
+   "gold_tests": [
+    "internal/contracts/pathparse/pathparse_test.go",
+    "internal/contracts/plan/scope_contract_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "d0620f747",
+   "merge": "d0620f74790a738d36fd62ba0bf8ab6684d1a1cb",
+   "base": "9cffdb7343e9b265dd947a001809efb7008e8cc9",
+   "query": "Consolidate workspace path parsing authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/pathparse/pathparse.go",
+    "internal/repository/comprehension/freshness.go",
+    "internal/repository/comprehension/graph.go",
+    "internal/repository/comprehension/views.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/path_predicates.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/source_grounding.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/workflows/implementationdispatch/paths.go",
+    "internal/workflows/planexecute/approval.go",
+    "internal/workflows/planexecute/context_pack.go",
+    "internal/workflows/planexecute/verification_planner.go",
+    "internal/workflows/productworkflow/create.go"
+   ],
+   "gold_tests": [
+    "internal/contracts/pathparse/pathparse_test.go",
+    "internal/repository/comprehension/freshness_test.go",
+    "internal/workflows/implementationdispatch/paths_test.go",
+    "internal/workflows/planexecute/approval_test.go",
+    "internal/workflows/planexecute/context_pack_test.go",
+    "internal/workflows/planexecute/verification_planner_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "9cffdb734",
+   "merge": "9cffdb7343e9b265dd947a001809efb7008e8cc9",
+   "base": "976abd60f5275d05982935fa33d146396c50521c",
+   "query": "Consolidate shell and lane history authorities",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/context_tools.go",
+    "internal/capabilities/workspace/shell_tools.go",
+    "internal/evidence/productevidence/dependencies.go",
+    "internal/evidence/productevidence/product_evidence.go",
+    "internal/evidence/productevidence/release_evidence.go",
+    "internal/surfaces/cli/root/command_adapters.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/manager_test.go",
+    "internal/evidence/productevidence/dependencies_test.go",
+    "internal/evidence/productevidence/product_evidence_test.go",
+    "internal/evidence/productevidence/release_evidence_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "976abd60f",
+   "merge": "976abd60f5275d05982935fa33d146396c50521c",
+   "base": "2e42dd89174b114c435ddd8f1fc1756d2398cb8a",
+   "query": "Remove write description recovery choreography",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "2e42dd891",
+   "merge": "2e42dd89174b114c435ddd8f1fc1756d2398cb8a",
+   "base": "7118c050cbef032613008f9831d74dba1f4d9bd5",
+   "query": "Carry source grounding as typed evidence",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/source_grounding.go",
+    "internal/runtime/agent/turn_decision.go",
+    "internal/runtime/agent/turn_projection.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go",
+    "internal/runtime/agent/source_grounding_test.go",
+    "internal/runtime/agent/turn_decision_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "d5cb61828",
+   "merge": "d5cb6182815dd36c4403ca24fafabbbe8c76e4f0",
+   "base": "572ea6aa511837b18e752f98366b87c857971453",
+   "query": "Move context-pack facts to producer authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/context_tools.go",
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/contracts/toolfacts/facts.go",
+    "internal/runtime/agent/discovery_consumption.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go"
+   ],
+   "gold_new": [
+    "internal/capabilities/workspace/context_pack_facts.go",
+    "internal/repository/comprehension/pack_candidates.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/context_pack_facts_test.go",
+    "internal/runtime/agent/context_pack_test_fixtures_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_registry_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "572ea6aa5",
+   "merge": "572ea6aa511837b18e752f98366b87c857971453",
+   "base": "44fca25ead217adf1f94b06d69558bde1bd39a52",
+   "query": "Fold command outcome policy into commandcheck run",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/artifact/artifact.go",
+    "internal/surfaces/cli/brief/brief.go",
+    "internal/surfaces/cli/headless/headless.go",
+    "internal/surfaces/cli/refine/refine.go",
+    "internal/surfaces/cli/sweeval/live_runner.go",
+    "internal/surfaces/tui/app/implementation_dispatch.go",
+    "internal/workflows/architect/packet.go",
+    "internal/workflows/brieflint/lint.go",
+    "internal/workflows/commandcheck/outcome.go",
+    "internal/workflows/commandcheck/run.go",
+    "internal/workflows/planexecute/verification_runner.go",
+    "internal/workflows/postflight/go_build_passes.go",
+    "internal/workflows/postflight/project.go"
+   ],
+   "gold_tests": [
+    "internal/workflows/commandcheck/run_test.go"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "44fca25ea",
+   "merge": "44fca25ead217adf1f94b06d69558bde1bd39a52",
+   "base": "99ecbc5e080ea4491c9eedf5b476cafeb89bb751",
+   "query": "Move diagnostic evidence facts to producers",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/capabilities/workspace/source_sanity.go",
+    "internal/capabilities/workspace/tool_io.go",
+    "internal/repository/semantic/languagetools/cpp_tools.go",
+    "internal/repository/semantic/languagetools/go_tools.go",
+    "internal/repository/semantic/languagetools/java_tools.go",
+    "internal/repository/semantic/languagetools/manager.go",
+    "internal/repository/semantic/languagetools/python_tools.go",
+    "internal/repository/semantic/languagetools/rust_tools.go",
+    "internal/repository/semantic/languagetools/ts_tools.go",
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/runner_core.go"
+   ],
+   "gold_new": [
+    "internal/contracts/toolfacts/facts.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/language_tools_adapter_test.go",
+    "internal/capabilities/workspace/manager_test.go",
+    "internal/contracts/compile/layer_boundaries_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_registry_test.go"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "c6f1ff517",
+   "merge": "c6f1ff51780cb2cbb8cbd72661584afeed883330",
+   "base": "82afa00be7aa743e53ff94c7c64f2ef4f02733fe",
+   "query": "Consolidate source-satisfied dispatch closeout",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/tui/app/implementation_dispatch_recovery.go",
+    "internal/workflows/implementationdispatch/preflight_messages.go",
+    "internal/workflows/implementationdispatch/source_satisfied.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/tui/app/turn_planner_test.go",
+    "internal/workflows/implementationdispatch/plan_document_preflight_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "82afa00be",
+   "merge": "82afa00be7aa743e53ff94c7c64f2ef4f02733fe",
+   "base": "130fd355915531d4198b3ae02994f2448bf08edd",
+   "query": "Consolidate tool surface and lane output authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/tool_class.go",
+    "internal/capabilities/workspace/tool_manifest.go",
+    "internal/capabilities/workspace/tool_surface_metadata.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/runtime/workerruntime/catalog.go",
+    "internal/runtime/workerruntime/runtime_action_guidance.go",
+    "internal/surfaces/cli/lane/adapters.go",
+    "internal/surfaces/cli/lane/lane.go",
+    "internal/surfaces/cli/lane/post_analyze.go",
+    "internal/surfaces/tui/app/turn_planner.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/tool_class_test.go",
+    "internal/capabilities/workspace/tool_surface_metadata_test.go",
+    "internal/runtime/workerruntime/catalog_test.go",
+    "internal/runtime/workerruntime/runtime_test.go",
+    "internal/surfaces/cli/lane/phase6_5_test.go",
+    "internal/surfaces/cli/lane/post_analyze_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout",
+   "scope": "internal"
+  },
+  {
+   "id": "130fd3559",
+   "merge": "130fd355915531d4198b3ae02994f2448bf08edd",
+   "base": "27f80ce9982f073b74c650838a818ae71d5e5dce",
+   "query": "Consolidate delegated evidence authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/evidence_registry.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_registry_test.go",
+    "internal/runtime/agent/source_grounding_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/runtime"
+  },
+  {
+   "id": "27f80ce99",
+   "merge": "27f80ce9982f073b74c650838a818ae71d5e5dce",
+   "base": "a38fcbfd52e447a4f04ddf1bca2e4aa5b09bf953",
+   "query": "Consolidate workflow command check authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/surfaces/cli/artifact/artifact.go",
+    "internal/surfaces/cli/brief/brief.go",
+    "internal/surfaces/cli/headless/headless.go",
+    "internal/surfaces/cli/recover/packet.go",
+    "internal/surfaces/cli/refine/refine.go",
+    "internal/surfaces/cli/sweeval/live_runner.go",
+    "internal/surfaces/tui/app/implementation_dispatch.go",
+    "internal/workflows/architect/packet.go",
+    "internal/workflows/brieflint/lint.go",
+    "internal/workflows/planexecute/verification_runner.go",
+    "internal/workflows/postflight/go_build_passes.go",
+    "internal/workflows/postflight/project.go"
+   ],
+   "gold_new": [
+    "internal/workflows/commandcheck/run.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go",
+    "internal/workflows/commandcheck/run_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal"
+  },
+  {
+   "id": "a38fcbfd5",
+   "merge": "a38fcbfd52e447a4f04ddf1bca2e4aa5b09bf953",
+   "base": "13cd9847f3af765a33940631eeb2cce4771ff0dd",
+   "query": "Consolidate headless command runtime authority",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/headless/headless.go",
+    "internal/surfaces/cli/root/command_adapters.go",
+    "internal/surfaces/cli/root/root.go",
+    "internal/surfaces/cli/runtime/runtime.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/headless/headless_test.go",
+    "internal/surfaces/cli/root/headless_e2e_test.go",
+    "internal/surfaces/cli/root/root_test.go",
+    "internal/surfaces/cli/runtime/runtime_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev",
+   "scope": "internal/surfaces"
+  }
+ ]
+}

@@ -69,7 +69,7 @@ func TestRankLexicalDemotesTestFiles(t *testing.T) {
 		"core/sim/another_unrelated.cpp": {"misc": 3},
 	})
 
-	hits := RankLexical(corpus, []string{"ambience", "wind"}, nil)
+	hits := RankLexical(corpus, []string{"ambience", "wind"}, nil, nil)
 	if len(hits) != 2 || hits[0].Path != "core/sim/ambience.cpp" {
 		t.Fatalf("hits = %+v, want the source file first", hits)
 	}
@@ -87,7 +87,7 @@ func TestRankLexicalDemotesTestFiles(t *testing.T) {
 		"core/tests/test_ambience.cpp": {"ambience": 6, "wind": 4},
 		"core/sim/other.cpp":           {"other": 3},
 	})
-	if hits := RankLexical(strong, []string{"ambience", "wind"}, nil); hits[0].Path != "core/tests/test_ambience.cpp" {
+	if hits := RankLexical(strong, []string{"ambience", "wind"}, nil, nil); hits[0].Path != "core/tests/test_ambience.cpp" {
 		t.Fatalf("a much stronger test match must still lead, got %+v", hits)
 	}
 }
@@ -100,8 +100,8 @@ func TestRankLexicalScopeFiltersWithoutChangingScores(t *testing.T) {
 		"other/d.go":   {"misc": 2},
 	})
 
-	all := RankLexical(corpus, []string{"refund"}, nil)
-	scoped := RankLexical(corpus, []string{"refund"}, func(path string) bool { return pathInScope(path, "billing") })
+	all := RankLexical(corpus, []string{"refund"}, nil, nil)
+	scoped := RankLexical(corpus, []string{"refund"}, func(path string) bool { return pathInScope(path, "billing") }, nil)
 
 	if len(scoped) != 1 || scoped[0].Path != "billing/a.go" {
 		t.Fatalf("scoped hits = %+v, want only billing/a.go", scoped)

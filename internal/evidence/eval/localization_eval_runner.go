@@ -186,7 +186,7 @@ func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEval
 	for call := 0; call <= r.opts.TimedCalls; call++ { // call 0 is the warm-up
 		t0 := time.Now()
 
-		files, bytesOut, fresh, err := r.query(ctx, wt, c.Query)
+		files, bytesOut, fresh, err := r.query(ctx, wt, c)
 		if err != nil {
 			cr.Error = err.Error()
 			return cr
@@ -293,8 +293,13 @@ func (r *localizationEvalRunner) collectorVersion(ctx context.Context, wt string
 	return status.CurrentCollectorVersion, nil
 }
 
-func (r *localizationEvalRunner) query(ctx context.Context, wt, task string) ([]string, int, bool, error) {
-	request := map[string]any{"path": localizationEvalProdPath, "task": task}
+func (r *localizationEvalRunner) query(ctx context.Context, wt string, c LocalizationEvalCase) ([]string, int, bool, error) {
+	scope := localizationEvalProdPath
+	if c.Scope != "" {
+		scope = c.Scope
+	}
+
+	request := map[string]any{"path": scope, "task": c.Query}
 	if r.opts.Format != "" {
 		request["format"] = r.opts.Format
 	}

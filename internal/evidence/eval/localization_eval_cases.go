@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -43,6 +44,10 @@ type LocalizationEvalCase struct {
 	GoldTests   []string                 `json:"gold_tests,omitempty"`
 	GoldDocs    []string                 `json:"gold_docs,omitempty"`
 	Split       string                   `json:"split"`
+	// Scope is the directory a caller would pass as the tool's path; empty
+	// means the whole repository. Scoped cases are built from changes whose
+	// gold sits under one directory.
+	Scope string `json:"scope,omitempty"`
 }
 
 // LocalizationEvalRename is one renamed gold file.
@@ -77,6 +82,43 @@ type LocalizationEvalBuilderConfig struct {
 	MaxGoldFiles int      `json:"max_gold_files,omitempty"`
 	MinQueryLen  int      `json:"min_query_len,omitempty"`
 	MaxCases     int      `json:"max_cases,omitempty"`
+	// ScopedCases keeps only changes whose gold files (at least two) share a
+	// directory, and records that directory (at most ScopeDepth components,
+	// default 2) as the case's scope.
+	ScopedCases bool `json:"scoped_cases,omitempty"`
+	ScopeDepth  int  `json:"scope_depth,omitempty"`
+}
+
+const defaultScopeDepth = 2
+
+// CommonGoldScope is the longest directory, at most depth components, that
+// contains every file, or "" when they share none.
+func CommonGoldScope(files []string, depth int) string {
+	if len(files) == 0 {
+		return ""
+	}
+
+	common := strings.Split(path.Dir(files[0]), "/")
+	if common[0] == "." {
+		return ""
+	}
+
+	for _, f := range files[1:] {
+		dir := strings.Split(path.Dir(f), "/")
+		n := 0
+
+		for n < len(common) && n < len(dir) && common[n] == dir[n] {
+			n++
+		}
+
+		common = common[:n]
+	}
+
+	if depth > 0 && len(common) > depth {
+		common = common[:depth]
+	}
+
+	return strings.Join(common, "/")
 }
 
 func gitOut(repo string, args ...string) (string, error) {
@@ -221,6 +263,21 @@ func buildLocalizationEvalCase(repo, merge string, cfg LocalizationEvalBuilderCo
 
 	if len(c.Gold) == 0 || (cfg.MaxGoldFiles > 0 && len(c.Gold) > cfg.MaxGoldFiles) {
 		return LocalizationEvalCase{}, false, nil
+	}
+
+	if cfg.ScopedCases {
+		if len(c.Gold) < 2 {
+			return LocalizationEvalCase{}, false, nil
+		}
+
+		depth := cfg.ScopeDepth
+		if depth == 0 {
+			depth = defaultScopeDepth
+		}
+
+		if c.Scope = CommonGoldScope(c.Gold, depth); c.Scope == "" {
+			return LocalizationEvalCase{}, false, nil
+		}
 	}
 
 	return c, true, nil

@@ -41,6 +41,9 @@ type languagePolicy struct {
 	// Channel admits files of this language from the graph symbol/path
 	// channel into the fusion.
 	Channel bool
+	// Weight scales the BM25 score of files of this language; zero means 1.
+	// It demotes kinds of file a task rarely names, as test files are.
+	Weight float64
 }
 
 // languagePolicies are the dev-split choices; defaultPolicy covers any other
@@ -52,10 +55,19 @@ type languagePolicy struct {
 //     the channel on the C++ pool cost .056 against BM25 alone).
 //   - everything else: no hop, channel off (no dev difference on Go, a gain
 //     on the mixed BenTech tree).
+//   - content, shader, powershell (files a localization config adds to the
+//     index): score x0.5. Unweighted they displaced source files on BenTech
+//     dev (MRR .450 to .433); x0.5 gives .407 / .765 / .454 against .402 /
+//     .745 / .450 without them, x0.25 loses recall (.399).
 var languagePolicies = map[string]languagePolicy{
-	"go":  {Hop: hopCalls, Channel: true},
-	"cpp": {Hop: hopAll, Channel: false},
+	"go":            {Hop: hopCalls, Channel: true},
+	"cpp":           {Hop: hopAll, Channel: false},
+	languageContent: {Weight: extraFileWeight},
+	languageShader:  {Weight: extraFileWeight},
+	"powershell":    {Weight: extraFileWeight},
 }
+
+const extraFileWeight = 0.5
 
 var defaultPolicy = languagePolicy{Hop: hopNone, Channel: false}
 
@@ -65,6 +77,15 @@ func policyFor(language string) languagePolicy {
 	}
 
 	return defaultPolicy
+}
+
+// languageWeight is the score multiplier for a file of the given language.
+func languageWeight(language string) float64 {
+	if w := policyFor(language).Weight; w > 0 {
+		return w
+	}
+
+	return 1
 }
 
 var edgeHopKind = map[string]hopKinds{"imports": hopImports, "calls": hopCalls, "tests": hopTests, "extends": hopExtends}

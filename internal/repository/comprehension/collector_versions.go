@@ -20,7 +20,7 @@ var currentCollectorVersions = map[string]string{
 	"rust_index":                "2",
 	"java_index":                "2",
 	"gdscript_index":            "2",
-	"generic_source_index":      "2",
+	"generic_source_index":      "3",
 	"language_environment":      "2",
 	"workspace_tool_enrichment": "2",
 	"summary_index":             "1",

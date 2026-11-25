@@ -41,7 +41,7 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 	include := packCandidateFilter(ctx, files)
 
 	languageOf := func(p string) string { return ctx.nodesByID[fileNodeID(p)].Language }
-	lexical := HopLexical(RankLexical(corpus, terms, include), buildHopGraph(ctx.graph, ctx.nodesByID), languageOf, include)
+	lexical := HopLexical(RankLexical(corpus, terms, include, func(p string) float64 { return languageWeight(languageOf(p)) }), buildHopGraph(ctx.graph, ctx.nodesByID), languageOf, include)
 
 	hits := fuseRankedLists(
 		rankedList{Source: "bm25", Hits: lexical},

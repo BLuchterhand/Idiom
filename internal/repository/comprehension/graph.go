@@ -1018,6 +1018,11 @@ func shouldVisitScopeDir(root string, path string, scope string) bool {
 func collectGenericSourceFiles(ctx context.Context, root string, scope string, language string, maxFiles int, indexedFiles map[string]struct{}) ([]genericSourceFile, error) {
 	files := make([]genericSourceFile, 0)
 	errStop := fmt.Errorf("stop generic source walk")
+
+	// A malformed config adds nothing; it is reported through the pack.
+	cfg, _ := LoadLocalizationConfig(root)
+	extra := newExtraSourceMatcher(cfg)
+
 	err := safepath.WalkDirUnderRoot(root, root, "generic source discovery", func(path string, d os.DirEntry, walkErr error) error {
 		if err := checkBuildContext(ctx); err != nil {
 			return err
@@ -1058,6 +1063,10 @@ func collectGenericSourceFiles(ctx context.Context, root string, scope string, l
 		}
 
 		fileLanguage := sourceLanguageForPath(rel)
+		if fileLanguage == "" {
+			fileLanguage = extra.language(rel)
+		}
+
 		if fileLanguage == "" || !languageMatches(language, fileLanguage) {
 			return nil
 		}

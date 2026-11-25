@@ -146,3 +146,33 @@ func TestShippedLanguagePolicies(t *testing.T) {
 		t.Fatalf("default policy = %+v", p)
 	}
 }
+
+func TestShippedExtraFileWeightAndRankLexicalWeight(t *testing.T) {
+	for _, lang := range []string{languageContent, languageShader, "powershell"} {
+		if w := languageWeight(lang); w != 0.5 {
+			t.Fatalf("%s weight = %v, want 0.5", lang, w)
+		}
+	}
+
+	if w := languageWeight("go"); w != 1 {
+		t.Fatalf("go weight = %v, want 1", w)
+	}
+
+	corpus := lexicalCorpusOf(map[string]map[string]int{
+		"content/fox.json": {"fox": 2},
+		"src/fox.go":       {"fox": 2},
+		"src/other.go":     {"other": 2},
+	})
+	weight := func(p string) float64 {
+		if p == "content/fox.json" {
+			return 0.5
+		}
+
+		return 1
+	}
+
+	hits := RankLexical(corpus, []string{"fox"}, nil, weight)
+	if hits[0].Path != "src/fox.go" || hits[1].Score/hits[0].Score < 0.5-1e-9 || hits[1].Score/hits[0].Score > 0.5+1e-9 {
+		t.Fatalf("a weighted file must score x0.5 of an identical one, got %+v", hits)
+	}
+}

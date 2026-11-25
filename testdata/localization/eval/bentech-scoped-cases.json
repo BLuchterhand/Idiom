@@ -1,0 +1,2694 @@
+{
+ "schema": 1,
+ "corpus": "bentech",
+ "builder": {
+  "commits": "merges",
+  "max_commits": 400,
+  "query_from": "ledger",
+  "ledger_paths": [
+   "docs/planning/ledger.md",
+   "docs/planning/ledger-archive.md"
+  ],
+  "subject_id_regex": "^merge: ([A-Z]+[0-9]+[a-z]?)\\b",
+  "ledger_row_regex": "(?m)^\\| %s \\| ([^|]+) \\|",
+  "source_regex": "\\.(cpp|h|hpp|cc|gd|gdshader|json|sh|mjs|js|py|ps1)$",
+  "exclude_gold": [
+   "^(docs|\\.claude|art)/",
+   "\\.uid$",
+   "golden",
+   "CMakeLists",
+   "\\.(jpg|png)$",
+   "selftest"
+  ],
+  "test_regex": "(^|/)tests?/|_test\\.|(^|/)test_",
+  "doc_regex": "\\.md$|^docs/",
+  "max_gold_files": 60,
+  "min_query_len": 12,
+  "max_cases": 75,
+  "scoped_cases": true
+ },
+ "localization": {
+  "content_globs": [
+   "content/**/*.json",
+   "game/**/*.json"
+  ],
+  "shader_globs": [
+   "game/**/*.gdshader"
+  ],
+  "extra_extensions": [
+   ".ps1"
+  ]
+ },
+ "cases": [
+  {
+   "id": "900a05152",
+   "merge": "900a05152e7c6117bcb8971ccb694ff8688b8fb4",
+   "base": "98abe00f2aab16a4c5e0000a24a0f3fdcd277126",
+   "query": "Merge commits take \u003e120 s in pre/post-commit hooks; debug_workflow H4+ guard untested",
+   "query_source": "ledger docs/planning/ledger.md at base, row G732",
+   "gold": [
+    "scripts/idiom_drift.sh",
+    "scripts/lib/platform.sh",
+    "scripts/post_commit_smoke.mjs",
+    "scripts/post_commit_smoke.sh"
+   ],
+   "gold_new": [
+    "scripts/game_uid_check.mjs",
+    "scripts/post_commit_smoke_run.sh"
+   ],
+   "gold_tests": [
+    "game/tests/plant_capture.gd.uid",
+    "scripts/lib/test_parallel.sh",
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    "docs/design/g732-hook-smoke.md",
+    "docs/handback/g732.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "575506f52",
+   "merge": "575506f52e2b8fffd9f1751d33058dd8c6aba56f",
+   "base": "dc442c0abeb77392760f5bea43e25f75b774d600",
+   "query": "Codex wrapper exits after its report (PC killed hung Codex by PID 3x on 11/25)",
+   "query_source": "ledger docs/planning/ledger.md at base, row G748",
+   "gold": [
+    "scripts/break_check.sh",
+    "scripts/codex_run.sh",
+    "scripts/lib/platform.sh"
+   ],
+   "gold_new": [
+    "scripts/lib/proc_tree.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    "docs/design/g748-codex-exit.md",
+    "docs/handback/g748.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "b14a5c1c7",
+   "merge": "b14a5c1c76501115f9c82215233287a7c0408643",
+   "base": "1b24f72fdf4cf67c3e84978a2ff399cee5cef8fc",
+   "query": "T311: sloped reach crossing hydro cells (level steps) vs A2 equal-level same-body seams",
+   "query_source": "ledger docs/planning/ledger.md at base, row T338",
+   "gold": [
+    "core/worldgen/v4/final_water_cell.cpp",
+    "core/worldgen/v4/final_water_cell.h",
+    "core/worldgen/v4/hydro_water_contracts.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/final_water_surface.h"
+   ],
+   "gold_tests": [
+    "core/tests/final_water_fixtures.h",
+    "core/tests/test_final_solid_query.cpp",
+    "core/tests/test_final_water_cell.cpp",
+    "core/tests/test_reach_seam_census.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t338-reach-seams.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "f9b511833",
+   "merge": "f9b511833a0cead0b51d05baf4bab2a19b54461a",
+   "base": "59ade64063a16e8bef958030c635e5038245b5b9",
+   "query": "Slot-aware test admission: priority queue, visible expected wait, no busy rewake",
+   "query_source": "ledger docs/planning/ledger.md at base, row G713",
+   "gold": [
+    "scripts/deflake.sh",
+    "scripts/lib/platform.sh",
+    "scripts/lib/slots.sh",
+    "scripts/lib/worktree_safety.sh",
+    "scripts/run_tests.sh"
+   ],
+   "gold_tests": [
+    "scripts/lib/test_parallel.sh",
+    "scripts/test_affected.sh",
+    "scripts/test_affected_selftest.mjs",
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    ".claude/rules/testing.md",
+    "docs/design/g713-slot-aware-test-admission.md",
+    "docs/engineering/g713-slot-admission-measurement.md",
+    "docs/engineering/rule-history.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "0fe63f8d0",
+   "merge": "0fe63f8d00f557e6628761b965a6ded4487e70db",
+   "base": "2b3d79a06f91172cad47177abba91fc0083434a1",
+   "query": "One test-receipt registry keyed by tree, build config, binary and selection",
+   "query_source": "ledger docs/planning/ledger.md at base, row G712",
+   "gold": [
+    "scripts/results_summary.mjs",
+    "scripts/run_tests.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_receipt_registry_selftest.mjs",
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    ".claude/rules/handback.md",
+    ".claude/rules/orchestration.md",
+    "docs/engineering/g712-test-receipt-registry.md",
+    "docs/engineering/rule-history.md",
+    "docs/handback/g712.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "8ea507e01",
+   "merge": "8ea507e019e65016659ee9799d44e11ed581b16d",
+   "base": "2c5396e2a874bc16e36d0c912fb4196d1e60e400",
+   "query": "Codex rounds hit the 5 h cap with 2 M-line logs: checkpoint commits, quiet tool output",
+   "query_source": "ledger docs/planning/ledger-archive.md at base, row G725",
+   "gold": [
+    "scripts/agent_shims/churn_lib.sh",
+    "scripts/api_agent.sh",
+    "scripts/brief_intake.mjs",
+    "scripts/g725_measure.sh",
+    "scripts/idiom.sh",
+    "scripts/idiom_drift.sh",
+    "scripts/lib/platform.sh",
+    "scripts/lib/worktree_safety.sh",
+    "scripts/portability_check.mjs",
+    "scripts/quiet_command.sh",
+    "scripts/round_checkpoint.sh",
+    "scripts/self_review.sh",
+    "scripts/worktree_reaper.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_all.sh"
+   ],
+   "gold_docs": [
+    "docs/design/g714-brief-intake.md",
+    "docs/design/g725-portability-and-exit-status-lint.md"
+   ],
+   "split": "holdout",
+   "scope": "scripts"
+  },
+  {
+   "id": "f9bae809e",
+   "merge": "f9bae809e4b99e8912634a6bd3c3219bfa243c1a",
+   "base": "e578b79897665116e511fff9c59e6634cd4ae4ab",
+   "query": "Worktree reaper: auto-prune merged worktrees and stale build dirs; disk budget alarm",
+   "query_source": "ledger docs/planning/ledger-archive.md at base, row G724",
+   "gold": [
+    "scripts/install_reaper.sh",
+    "scripts/lib/worktree_safety.sh",
+    "scripts/merge_done.sh",
+    "scripts/worktree_reaper.sh"
+   ],
+   "gold_new": [
+    "scripts/install_reaper_windows.sh",
+    "scripts/lib/windows_process_probe.ps1",
+    "scripts/windows/run_reaper_task.sh"
+   ],
+   "gold_docs": [
+    "docs/design/windows-worktree-reaper.md",
+    "docs/engineering/machine-setup.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "8d8c8bea2",
+   "merge": "8d8c8bea21530676996f6b26f62699369f825da2",
+   "base": "9e8a1f3c3d1c56c87b15313c214672ba03a05e86",
+   "query": "Handoff file on timeout, usage limit or context exit: tree, gates done, pending, resume",
+   "query_source": "ledger docs/planning/ledger.md at base, row G705",
+   "gold": [
+    "scripts/build.sh",
+    "scripts/code_map.mjs",
+    "scripts/idiom_context.mjs",
+    "scripts/idiom_drift.sh",
+    "scripts/sccache_launcher.mjs"
+   ],
+   "gold_new": [
+    "scripts/context_indexes.mjs",
+    "scripts/context_indexes.sh",
+    "scripts/session_handoff.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_selection.conf",
+    "scripts/test_stamp.mjs",
+    "scripts/test_stamp_selftest.mjs"
+   ],
+   "gold_docs": [
+    ".claude/rules/build-system.md",
+    ".claude/rules/handback.md",
+    ".claude/rules/idiom.md",
+    "docs/design/g715-build-cache-telemetry.md",
+    "docs/design/g718-context-indexes.md",
+    "docs/engineering/g715-measurement.md",
+    "docs/engineering/rule-history.md",
+    "docs/engineering/session-handoff.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "105cf961e",
+   "merge": "105cf961e799ff73771eff2debc33fe8c69ec60a",
+   "base": "494abb7104598fd68955a464abb2243e9fc78b1f",
+   "query": "Reviews consume recorded results and changed-file evidence; rerun only what is missing",
+   "query_source": "ledger docs/planning/ledger.md at base, row G711",
+   "gold": [
+    "scripts/commit_scope.mjs",
+    "scripts/deflake.mjs",
+    "scripts/deflake.sh",
+    "scripts/githooks/install-worktree.sh",
+    "scripts/results_summary.mjs",
+    "scripts/results_summary.sh",
+    "scripts/run_tests.sh",
+    "scripts/self_review.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh"
+   ],
+   "gold_docs": [
+    ".claude/rules/handback.md",
+    ".claude/rules/orchestration.md",
+    "docs/architecture.md",
+    "docs/engineering/g710-commit-scope-stage-lock.md",
+    "docs/engineering/rule-history.md",
+    "docs/handback/g711.md"
+   ],
+   "split": "holdout",
+   "scope": "scripts"
+  },
+  {
+   "id": "26ff6ad74",
+   "merge": "26ff6ad741c6c3c8761bb9fe2348848e552e0928",
+   "base": "9415d6cda5c5cc6c83842f39839b7972f4881638",
+   "query": "Commit-level smoke routing for cross-boundary changes",
+   "query_source": "ledger docs/planning/ledger.md at base, row G720",
+   "gold": [
+    "scripts/agent_shims/churn_lib.sh",
+    "scripts/break_check.sh",
+    "scripts/idiom_drift.sh"
+   ],
+   "gold_new": [
+    "scripts/commit_scope.mjs",
+    "scripts/gate_scope.sh",
+    "scripts/githooks/install-worktree.sh",
+    "scripts/idiom_context.mjs",
+    "scripts/idiom_context.sh",
+    "scripts/post_commit_smoke.mjs",
+    "scripts/post_commit_smoke.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    ".claude/rules/handback.md",
+    ".claude/rules/idiom.md",
+    ".claude/rules/working-practice.md",
+    "docs/engineering/g710-commit-scope-stage-lock.md",
+    "docs/engineering/g717-idiom-context-pack.md",
+    "docs/engineering/g720-commit-level-smoke-routing.md",
+    "docs/engineering/idiom-notes.md",
+    "docs/engineering/rule-history.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "961a7afd5",
+   "merge": "961a7afd5c31c646080a5e839410cbfae522871e",
+   "base": "275cdb75279a3eef611c0aa6d55057c372fd6a90",
+   "query": "Quiet-output contract for direct binaries, capture tooling and remaining wrappers",
+   "query_source": "ledger docs/planning/ledger.md at base, row G706",
+   "gold": [
+    "scripts/animals_capture.sh",
+    "scripts/breath_capture.sh",
+    "scripts/breath_pitch_capture.sh",
+    "scripts/camera_motion_capture.sh",
+    "scripts/coop_capture.sh",
+    "scripts/craft_search_capture.sh",
+    "scripts/deflake.sh",
+    "scripts/fire_capture.sh",
+    "scripts/firefly_capture.sh",
+    "scripts/foliage_capture.sh",
+    "scripts/forest_walk_capture.sh",
+    "scripts/herding_capture.sh",
+    "scripts/hitch_capture.sh",
+    "scripts/interaction_capture.sh",
+    "scripts/look_bench.sh",
+    "scripts/panel_capture.sh",
+    "scripts/player_capture.sh",
+    "scripts/player_style_capture.sh",
+    "scripts/quiet_output.sh",
+    "scripts/run_tests.sh",
+    "scripts/surface_capture.sh",
+    "scripts/tree_forest_poc.sh",
+    "scripts/tree_poc_capture.sh",
+    "scripts/ui_capture.sh",
+    "scripts/water_capture.sh"
+   ],
+   "gold_tests": [
+    "scripts/godot_boundary_test.sh",
+    "scripts/loading_test.sh",
+    "scripts/test_affected.sh",
+    "scripts/test_all.sh",
+    "scripts/test_stamp.mjs"
+   ],
+   "gold_docs": [
+    ".claude/rules/working-practice.md",
+    "docs/architecture.md",
+    "docs/engineering/rule-history.md"
+   ],
+   "split": "holdout",
+   "scope": "scripts"
+  },
+  {
+   "id": "2c1e97a2c",
+   "merge": "2c1e97a2cce7c77666206a6c28d43918891bd6c1",
+   "base": "6cae6ef9dfdbe89c0d2998c6100ce9c7ad48c23b",
+   "query": "Codex token use: quiet build output, scoped AGENTS.md, Idiom nudges, effort, self-review",
+   "query_source": "ledger docs/planning/ledger.md at base, row G689",
+   "gold": [
+    "scripts/agent_shims/churn_lib.sh",
+    "scripts/build.sh",
+    "scripts/deflake.sh",
+    "scripts/preflight.sh",
+    "scripts/run_tests.sh",
+    "scripts/self_review.sh",
+    "scripts/t311_fast.sh"
+   ],
+   "gold_new": [
+    "scripts/codex_run.sh",
+    "scripts/quiet_output.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh",
+    "scripts/test_affected_selftest.mjs"
+   ],
+   "gold_docs": [
+    ".claude/rules/handback.md",
+    ".claude/rules/orchestration.md",
+    "AGENTS.md",
+    "docs/engineering/rule-history.md",
+    "docs/handback/g689.md",
+    "docs/planning/ledger-archive.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "holdout",
+   "scope": "scripts"
+  },
+  {
+   "id": "3b1808671",
+   "merge": "3b1808671e2f8ed8d5fa26f7de9a01b9cf6817a5",
+   "base": "067b7026764f3b18e65d361188eb5e74a1cca20a",
+   "query": "Pre-map ambience invents its own wind fallback (second wind owner)",
+   "query_source": "ledger docs/planning/ledger-archive.md at base, row G633",
+   "gold": [
+    "client/ambience.cpp",
+    "client/ambience.h",
+    "client/session.cpp",
+    "client/session.h",
+    "client/session_ambience.cpp",
+    "client/session_fireflies.cpp",
+    "client/terrain_client.h"
+   ],
+   "gold_tests": [
+    "client/tests/test_ambience.cpp",
+    "client/tests/test_firefly_field.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/ambience.md",
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/reports/g633-report.md"
+   ],
+   "split": "dev",
+   "scope": "client"
+  },
+  {
+   "id": "602b72778",
+   "merge": "602b727785bd86d0ca9b42777a7dff31d62275ab",
+   "base": "d3b560d524f92ee2c5600e4e6d94321ede17f414",
+   "query": "test_affected: one graph snapshot per run, stable inputs, drop stamps of failed runs",
+   "query_source": "ledger docs/planning/ledger.md at base, row G601",
+   "gold": [
+    "scripts/affected_tests.mjs",
+    "scripts/preflight_checks.mjs"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh",
+    "scripts/test_affected_selftest.mjs",
+    "scripts/test_graph.mjs",
+    "scripts/test_stamp.mjs",
+    "scripts/test_stamp_selftest.mjs"
+   ],
+   "gold_docs": [
+    "docs/engineering/test-selection.md",
+    "docs/planning/ledger-archive.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "41327929d",
+   "merge": "41327929db9e2a15a60b540fbe1f32b1b4933d48",
+   "base": "9ad1abe399479ee1021d30ed81f7cce5d766d949",
+   "query": "Moved drop saved at its old position: Drops::move_to skips the saved projection",
+   "query_source": "ledger docs/planning/ledger.md at base, row G645",
+   "gold": [
+    "server/items/drops.cpp",
+    "server/items/drops.h"
+   ],
+   "gold_tests": [
+    "server/tests/test_items_save.cpp"
+   ],
+   "split": "holdout",
+   "scope": "server/items"
+  },
+  {
+   "id": "df0cf3825",
+   "merge": "df0cf3825fdaaf75f1b4a027c26b43c8e507f5bf",
+   "base": "0c5903043fcaa87f974b07c24dd949fd0761594b",
+   "query": "idiom.sh, idiom_drift.sh: MSYS_NO_PATHCONV makes /c/ paths fail under PowerShell Codex",
+   "query_source": "ledger docs/planning/ledger.md at base, row G604",
+   "gold": [
+    "scripts/idiom.sh",
+    "scripts/idiom_drift.sh",
+    "scripts/lib/build_scratch.sh"
+   ],
+   "gold_docs": [
+    "docs/reports/g615-report.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "8ab6f5378",
+   "merge": "8ab6f5378983086b04fe3cc25d3585ea61795fb5",
+   "base": "bdadd049ce24164be090e6a94ae676fc6a6c6be3",
+   "query": "Test selection by link map plus finer core targets (saves 11-21 min per terrain round)",
+   "query_source": "ledger docs/planning/ledger.md at base, row G574",
+   "gold": [
+    "scripts/affected_tests.mjs",
+    "scripts/build.sh"
+   ],
+   "gold_new": [
+    "scripts/link_map_launcher.mjs",
+    "scripts/link_reach.mjs",
+    "scripts/link_reach_recall.mjs"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh",
+    "scripts/test_affected_selftest.mjs",
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    "docs/engineering/test-selection.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "efd6aeafe",
+   "merge": "efd6aeafea0e90e9844ebf7b60a6f2059ff061be",
+   "base": "c15b4383623a6b31e1f97612d26e7e11e2063c5b",
+   "query": "Terrain chain ordered and consolidated: the cause behind T184, T301, T310 walls",
+   "query_source": "ledger docs/planning/ledger-archive.md at base, row T311",
+   "gold": [
+    "scripts/idiom_drift.sh",
+    "scripts/t311_census.mjs"
+   ],
+   "gold_new": [
+    "scripts/stale_input_check.mjs",
+    "scripts/t311_fast.sh",
+    "scripts/t311_fast_baseline.json",
+    "scripts/t311_integration.sh",
+    "scripts/t311_shared_tests.sh"
+   ],
+   "gold_tests": [
+    "core/tests/test_water_ground_consistency.cpp",
+    "core/tests/water_ground_trace.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/water-ground-consistency.md",
+    "docs/engineering/t311-census-report.md",
+    "docs/engineering/v4-product-inputs.conf"
+   ],
+   "split": "holdout",
+   "scope": "scripts"
+  },
+  {
+   "id": "de99513d4",
+   "merge": "de99513d419d1643eaf5166eac15b1e25742c425",
+   "base": "648773519810fd754d09dbeb6ab222743d8afed1",
+   "query": "Terrain chain ordered and consolidated: the cause behind T184, T301, T310 walls",
+   "query_source": "ledger docs/planning/ledger.md at base, row T311",
+   "gold": [
+    "core/worldgen/v4/body_claims.cpp",
+    "core/worldgen/v4/body_claims.h",
+    "core/worldgen/v4/ground_window.cpp",
+    "core/worldgen/v4/ground_window.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/hydrologic_terrain.h",
+    "core/worldgen/v4/hydrologic_terrain_query.h",
+    "scripts/t311_census.mjs"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_claim_kernel.cpp",
+    "core/tests/test_v4_ground_census.cpp",
+    "core/tests/test_water_ground_consistency.cpp",
+    "core/tests/water_ground_fixture.h",
+    "core/tests/water_ground_junction_fixture.txt",
+    "core/tests/water_ground_observations.h",
+    "core/tests/water_ground_trace.cpp",
+    "core/tests/water_ground_trace.h"
+   ],
+   "gold_docs": [
+    "docs/design/water-ground-consistency.md",
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/t311/README.md",
+    "docs/engineering/t311/mechanism-summary.json",
+    "docs/engineering/t311/observations.txt",
+    "docs/engineering/t311/point-mechanisms.csv",
+    "docs/engineering/t311/review-1.md",
+    "docs/engineering/t311/review-2.md",
+    "docs/engineering/t311/review-3.md",
+    "docs/engineering/t311/runner-results.txt",
+    "docs/engineering/t311/trace.csv",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "820e5a5b2",
+   "merge": "820e5a5b2db66f0c337c9548fab0534dd2be1dd6",
+   "base": "56a882a94273d62e76e4c9ef4cc316cbc8aa56f1",
+   "query": "Run test programs and doctest shards in parallel inside test_affected and run_tests",
+   "query_source": "ledger docs/planning/ledger.md at base, row G590",
+   "gold": [
+    "scripts/lib/slots.sh",
+    "scripts/run_tests.sh"
+   ],
+   "gold_tests": [
+    "core/tests/test_main.cpp",
+    "scripts/lib/test_parallel.sh",
+    "scripts/test_affected.sh",
+    "scripts/test_selection.conf",
+    "scripts/test_shard_safe.conf",
+    "scripts/test_shards.mjs",
+    "scripts/test_shards_selftest.mjs"
+   ],
+   "gold_docs": [
+    "docs/engineering/test-selection.md",
+    "docs/reports/g590-report.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "6615e7964",
+   "merge": "6615e796432cae5841915e914d9d020537d9a539",
+   "base": "aa7c03172530c371818f66bdf8d2600ec91a55d6",
+   "query": "test_affected stamp keyed on the code tree, so a docs-only commit keeps it valid",
+   "query_source": "ledger docs/planning/ledger.md at base, row G587",
+   "gold": [
+    "scripts/affected_tests.mjs",
+    "scripts/include_graph.mjs",
+    "scripts/preflight.mjs",
+    "scripts/preflight_checks.mjs",
+    "scripts/preflight_git.mjs"
+   ],
+   "gold_new": [
+    "scripts/code_tree.mjs"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh",
+    "scripts/test_selection.conf",
+    "scripts/test_sets_check.mjs",
+    "scripts/test_stamp.mjs",
+    "scripts/test_stamp_selftest.mjs"
+   ],
+   "gold_docs": [
+    "docs/engineering/test-selection.md",
+    "docs/reports/g587-report.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "b8a93ad52",
+   "merge": "b8a93ad526f227c46c304fb7218fdaa1f9a8bae7",
+   "base": "592caff72cb5b0b7dc5a3ca5ee173de06b88e516",
+   "query": "Preflight: loosened-check tripwire and runner-output results summary for reports",
+   "query_source": "ledger docs/planning/ledger.md at base, row G582",
+   "gold": [
+    "scripts/deflake.mjs",
+    "scripts/preflight.mjs",
+    "scripts/preflight.sh",
+    "scripts/run_tests.sh"
+   ],
+   "gold_new": [
+    "scripts/loosening_check.mjs",
+    "scripts/results_summary.mjs",
+    "scripts/results_summary.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh",
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    "docs/reports/g582-report.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "f536859eb",
+   "merge": "f536859eb72939e5e520bd035a552cfe9564f375",
+   "base": "7335753cf3f95e2bf3e90e7ea70da85b41ea98f5",
+   "query": "Daytime moon reads as a second sun (6x radiance, 3.4x size); stray yellow square",
+   "query_source": "ledger docs/planning/ledger.md at base, row G577",
+   "gold": [
+    "game/shaders/sky.gdshader",
+    "game/sky/sky_palette.json"
+   ],
+   "gold_tests": [
+    "game/tests/light_rig_test.gd"
+   ],
+   "gold_docs": [
+    "docs/art/g577-moon-report.md",
+    "docs/art/g577/moon-final/after/day.png",
+    "docs/art/g577/moon-final/after/dusk.png",
+    "docs/art/g577/moon-final/after/night.png",
+    "docs/art/g577/moon-final/after/waxing-crescent-dusk.png",
+    "docs/art/g577/moon-final/before/day.png",
+    "docs/art/g577/moon-final/before/dusk.png",
+    "docs/art/g577/moon-final/before/night.png",
+    "docs/art/g577/moon-final/before/original-playtest.png"
+   ],
+   "split": "dev",
+   "scope": "game"
+  },
+  {
+   "id": "cd6736ca2",
+   "merge": "cd6736ca2758ba327bcf76b2213153eb20f33635",
+   "base": "1f9275a821f3a8904e6b2ff2c9212df883b20df6",
+   "query": "Tree ladder keeps leaf-bearing shoots; floating-leaf gate on all species at L0 and L1",
+   "query_source": "ledger docs/planning/ledger.md at base, row G506",
+   "gold": [
+    "client/tree_bands.h",
+    "client/tree_birch.cpp",
+    "client/tree_cache.cpp",
+    "client/tree_cache.h",
+    "client/tree_curves.h",
+    "client/tree_ladder.cpp",
+    "client/tree_ladder.h",
+    "client/tree_lod.cpp",
+    "client/tree_lod.h",
+    "client/tree_model.h",
+    "client/tree_raster.cpp",
+    "client/tree_skeleton.cpp",
+    "client/tree_spruce.cpp"
+   ],
+   "gold_new": [
+    "client/tree_beech.cpp",
+    "client/tree_carrying.cpp",
+    "client/tree_carrying.h",
+    "tools/treecensus/main.cpp"
+   ],
+   "gold_tests": [
+    "client/tests/test_plot_trees_client.cpp",
+    "client/tests/test_tree_beech.cpp",
+    "client/tests/test_tree_birch.cpp",
+    "client/tests/test_tree_cache.cpp",
+    "client/tests/test_tree_conifer.cpp",
+    "client/tests/test_tree_floating.cpp",
+    "client/tests/test_tree_forest_hole.cpp",
+    "client/tests/test_tree_ladder.cpp",
+    "client/tests/test_tree_model.cpp",
+    "client/tests/tree_crown_outline.h",
+    "client/tests/tree_join_test.h",
+    "core/tests/test_tree_record.cpp"
+   ],
+   "gold_docs": [
+    "art/references/photos/beech/ATTRIBUTION.md",
+    "art/review/beech/record.md",
+    "art/review/dashboard.md",
+    "docs/art/g466/875a7cf622/player_close_l.png",
+    "docs/art/g466/875a7cf622/player_close_l.txt",
+    "docs/art/g466/875a7cf622/player_close_l_board.png",
+    "docs/art/g466/875a7cf622/player_close_l_board.png.json",
+    "docs/art/g466/875a7cf622/player_close_l_clear.png",
+    "docs/art/g466/875a7cf622/player_close_l_clear.txt",
+    "docs/art/g466/875a7cf622/player_edge_l.png",
+    "docs/art/g466/875a7cf622/player_edge_l.txt",
+    "docs/art/g466/875a7cf622/player_forest_l.png",
+    "docs/art/g466/875a7cf622/player_forest_l.txt",
+    "docs/art/g466/875a7cf622/player_open7_l.png",
+    "docs/art/g466/875a7cf622/player_open7_l.txt",
+    "docs/art/g466/875a7cf622/player_under_l.png",
+    "docs/art/g466/875a7cf622/player_under_l.txt",
+    "docs/art/g466/e257262e8f/player_close_l.png",
+    "docs/art/g466/e257262e8f/player_close_l.txt",
+    "docs/art/g466/e257262e8f/player_close_l_board.png",
+    "docs/art/g466/e257262e8f/player_close_l_board.png.json",
+    "docs/art/g466/e257262e8f/player_close_l_clear.png",
+    "docs/art/g466/e257262e8f/player_close_l_clear.txt",
+    "docs/art/g466/e257262e8f/player_edge_l.png",
+    "docs/art/g466/e257262e8f/player_edge_l.txt",
+    "docs/art/g466/e257262e8f/player_forest_l.png",
+    "docs/art/g466/e257262e8f/player_forest_l.txt",
+    "docs/art/g466/e257262e8f/player_open7_l.png",
+    "docs/art/g466/e257262e8f/player_open7_l.txt",
+    "docs/art/g466/e257262e8f/player_under_l.png",
+    "docs/art/g466/e257262e8f/player_under_l.txt",
+    "docs/art/g466/forest_birch_on/walk_02.png",
+    "docs/art/g466/forest_birch_on/walk_03.png",
+    "docs/art/g466/forest_birch_on/walk_04.png",
+    "docs/art/g466/forest_birch_on/walk_05.png",
+    "docs/art/g466/r1_oak/player_close_l.png",
+    "docs/art/g466/r1_oak/player_close_l.txt",
+    "docs/art/g466/r1_oak/player_edge_l.png",
+    "docs/art/g466/r1_oak/player_edge_l.txt",
+    "docs/art/g466/r1_oak/player_forest_l.png",
+    "docs/art/g466/r1_oak/player_forest_l.txt",
+    "docs/art/g466/r1_oak/player_open7_l.png",
+    "docs/art/g466/r1_oak/player_open7_l.txt",
+    "docs/art/g466/r1_oak/player_under_l.png",
+    "docs/art/g466/r1_oak/player_under_l.txt",
+    "docs/art/g466/r2wip/player_close_l.png",
+    "docs/art/g466/r2wip/player_close_l.txt",
+    "docs/art/g466/r2wip/player_close_l_clear.png",
+    "docs/art/g466/r2wip/player_close_l_clear.txt",
+    "docs/art/g466/r2wip/player_edge_l.png",
+    "docs/art/g466/r2wip/player_edge_l.txt",
+    "docs/art/g466/r2wip/player_forest_l.png",
+    "docs/art/g466/r2wip/player_forest_l.txt",
+    "docs/art/g466/r2wip/player_open7_l.png",
+    "docs/art/g466/r2wip/player_open7_l.txt",
+    "docs/art/g466/r2wip/player_under_l.png",
+    "docs/art/g466/r2wip/player_under_l.txt",
+    "docs/art/g466/wip/player_close_l.png",
+    "docs/art/g466/wip/player_close_l.txt",
+    "docs/art/g466/wip/player_close_l_r1b.png",
+    "docs/art/g466/wip/player_close_l_r1b.txt",
+    "docs/art/g506/after_beech/player_close_l.png",
+    "docs/art/g506/after_beech/player_close_l.txt",
+    "docs/art/g506/after_beech/player_close_l_apex.png",
+    "docs/art/g506/after_beech/player_close_l_apex_right.png",
+    "docs/art/g506/after_beech/player_edge_l.png",
+    "docs/art/g506/after_beech/player_edge_l.txt",
+    "docs/art/g506/after_beech/player_edge_l_apex.png",
+    "docs/art/g506/after_birch/player_close_l.png",
+    "docs/art/g506/after_birch/player_close_l.txt",
+    "docs/art/g506/after_birch/player_close_l_apex.png",
+    "docs/art/g506/beech_close_apex_before_after.png",
+    "docs/art/g506/beech_close_apex_right_before_after.png",
+    "docs/art/g506/beech_edge_apex_before_after.png",
+    "docs/art/g506/before_beech/player_close_l.png",
+    "docs/art/g506/before_beech/player_close_l.txt",
+    "docs/art/g506/before_beech/player_close_l_apex.png",
+    "docs/art/g506/before_beech/player_close_l_apex_right.png",
+    "docs/art/g506/before_beech/player_edge_l.png",
+    "docs/art/g506/before_beech/player_edge_l.txt",
+    "docs/art/g506/before_beech/player_edge_l_apex.png",
+    "docs/art/g506/before_birch/player_close_l.png",
+    "docs/art/g506/before_birch/player_close_l.txt",
+    "docs/art/g506/before_birch/player_close_l_apex.png",
+    "docs/art/g506/birch_close_apex_before_after.png",
+    "docs/art/g506/carrying-stems.md",
+    "docs/art/g506/r2_after_beech/player_close_l.png",
+    "docs/art/g506/r2_after_beech/player_close_l.txt",
+    "docs/art/g506/r2_after_beech/player_close_l_apex.png",
+    "docs/art/g506/r2_after_beech/player_edge_l.png",
+    "docs/art/g506/r2_after_beech/player_edge_l.txt",
+    "docs/art/g506/r2_after_beech/player_edge_l_apex.png",
+    "docs/art/g506/r2_after_birch/player_close_l.png",
+    "docs/art/g506/r2_after_birch/player_close_l.txt",
+    "docs/art/g506/r2_maple_merge/before_player_close_l.png",
+    "docs/art/g506/r2_maple_merge/player_close_l.png",
+    "docs/art/g506/r2_maple_merge/player_close_l.txt",
+    "docs/art/g506/r3/affected-tree.log",
+    "docs/art/g506/r3/affected.log",
+    "docs/art/g506/r3/after-census.log",
+    "docs/art/g506/r3/before-tests.log",
+    "docs/art/g506/r3/break-checks.log",
+    "docs/art/g506/r3/break-endpoint.log",
+    "docs/art/g506/r3/deflake.log",
+    "docs/art/g506/r3/headless-capture.log",
+    "docs/art/g506/r3/idiom-drift.log",
+    "docs/art/g506/r3/l1-all-stems.log",
+    "docs/art/g506/r3/maple-after.log",
+    "docs/art/g506/r3/maple-before.log",
+    "docs/art/g506/r3/maple-candidate.patch.gz",
+    "docs/art/g506/r3/maple-existing-clump-crop.png",
+    "docs/art/g506/r3/oak-l1-cost.log",
+    "docs/art/g506/r3/preflight-original.log",
+    "docs/art/g506/r3/preflight.log",
+    "docs/art/g506/r4/affected-original.log",
+    "docs/art/g506/r4/affected-validation.log",
+    "docs/art/g506/r4/baseline-census.log",
+    "docs/art/g506/r4/break-checks.log",
+    "docs/art/g506/r4/build-all.log",
+    "docs/art/g506/r4/build-original.log",
+    "docs/art/g506/r4/client-suite.log",
+    "docs/art/g506/r4/deflake-original.log",
+    "docs/art/g506/r4/deflake-retry.log",
+    "docs/art/g506/r4/deflake.log",
+    "docs/art/g506/r4/final-census.log",
+    "docs/art/g506/r4/forest-baseline-0.pgm",
+    "docs/art/g506/r4/forest-baseline-1.pgm",
+    "docs/art/g506/r4/forest-final-0.pgm",
+    "docs/art/g506/r4/forest-final-1.pgm",
+    "docs/art/g506/r4/forest-fit-projections.png",
+    "docs/art/g506/r4/forest-fit.log",
+    "docs/art/g506/r4/forest-mask-measurement.txt",
+    "docs/art/g506/r4/godot-help.log",
+    "docs/art/g506/r4/headless-capture.log",
+    "docs/art/g506/r4/idiom-drift.log",
+    "docs/art/g506/r4/l1-cause.log",
+    "docs/art/g506/r4/maple-baseline.log",
+    "docs/art/g506/r4/maple-final.log",
+    "docs/art/g506/r4/maple-patch-base-sha256.json",
+    "docs/art/g506/r4/maple-round-4.patch.gz",
+    "docs/art/g506/r4/preflight-original.log",
+    "docs/art/g506/r4/preflight.log",
+    "docs/art/g506/r4/rejected-global-break-checks.log",
+    "docs/art/g506/r4/rejected-global-deflake.log",
+    "docs/art/g506/r4/rejected-global-final-census.log",
+    "docs/art/g506/r4/rejected-global-focused-final.log",
+    "docs/art/g506/r4/rejected-global-forest-final-0.pgm",
+    "docs/art/g506/r4/rejected-global-forest-final-1.pgm",
+    "docs/art/g506/r4/rejected-global-forest-fit-projections.png",
+    "docs/art/g506/r4/rejected-global-forest-mask-measurement.txt",
+    "docs/art/g506/r4/rejected-global-ladder-diagnostic.log",
+    "docs/art/g506/r4/rejected-global-maple-final.log",
+    "docs/art/g506/r4/rejected-l1-only.log",
+    "docs/art/g506/r4/server-timeout.log",
+    "docs/art/g506/r4/source-checksums.json",
+    "docs/art/g506/r4/tree-suite.log",
+    "docs/art/g506/r4_after_beech/player_close_l.png",
+    "docs/art/g506/r4_after_beech/player_close_l.txt",
+    "docs/art/g506/r4_after_beech/player_edge_l.png",
+    "docs/art/g506/r4_after_beech/player_edge_l.txt",
+    "docs/art/g506/r4_after_birch/player_close_l.png",
+    "docs/art/g506/r4_after_birch/player_close_l.txt",
+    "docs/art/g506/r4_after_forest/player_edge200_l.png",
+    "docs/art/g506/r4_after_forest/player_edge200_l.txt",
+    "docs/art/g506/r4_after_forest/player_stand_l.png",
+    "docs/art/g506/r4_after_forest/player_stand_l.txt",
+    "docs/art/g506/r4_after_maple/player_close_l.png",
+    "docs/art/g506/r4_after_maple/player_close_l.txt",
+    "docs/art/g506/r4_beech_close_apex_before_after.png",
+    "docs/art/g506/r4_beech_close_apex_right_before_after.png",
+    "docs/art/g506/r4_beech_edge_apex_before_after.png",
+    "docs/art/g506/r4_beech_edge_full_before_after.png",
+    "docs/art/g506/r4_birch_close_apex_before_after.png",
+    "docs/art/g506/r4_maple_close_apex_before_after.png",
+    "docs/art/g506/r5_after_beech/player_close_l.png",
+    "docs/art/g506/r5_after_beech/player_close_l.txt",
+    "docs/art/g506/r5_after_beech/player_close_l_apex.png",
+    "docs/art/g506/r5_after_beech/player_close_l_apex_right.png",
+    "docs/art/g506/r5_after_beech/player_edge_l.png",
+    "docs/art/g506/r5_after_beech/player_edge_l.txt",
+    "docs/art/g506/r5_after_beech/player_edge_l_apex.png",
+    "docs/art/g506/r5_after_birch/player_close_l.png",
+    "docs/art/g506/r5_after_birch/player_close_l.txt",
+    "docs/art/g506/r5_after_birch/player_close_l_apex.png",
+    "docs/art/g506/r5_after_forest/player_stand_l.png",
+    "docs/art/g506/r5_after_forest/player_stand_l.txt",
+    "docs/art/g506/r5_beech_close_apex_r4_after.png",
+    "docs/art/g506/r5_beech_close_apex_right_r4_after.png",
+    "docs/art/g506/r5_beech_close_full_r4_after.png",
+    "docs/art/g506/r5_beech_edge_apex_r4_after.png",
+    "docs/art/g506/r5_beech_edge_full_r4_after.png",
+    "docs/art/g506/r5_beech_target_zoom_r4_after.png",
+    "docs/art/g506/r5_birch_close_apex_r4_after.png",
+    "docs/art/g506/r5_birch_close_full_r4_after.png",
+    "docs/art/g506/r5_forest_stand_full_r4_after.png",
+    "docs/art/g506/r6_after_beech/player_edge_l.png",
+    "docs/art/g506/r6_after_beech/player_edge_l.txt",
+    "docs/art/g506/r6_after_beech/player_edge_l_top_right_plate.png",
+    "docs/art/g506/r6_near_switch/player_under_l_L0_near7m.png",
+    "docs/art/g506/r6_near_switch/player_under_l_L0_near7m.txt",
+    "docs/art/g506/r6_near_switch/player_under_l_L1_near12m.png",
+    "docs/art/g506/r6_near_switch/player_under_l_L1_near12m.txt",
+    "docs/art/g506/r6_near_switch/player_under_l_L2_near24m.png",
+    "docs/art/g506/r6_near_switch/player_under_l_L2_near24m.txt",
+    "docs/art/g506/r6_near_switch/player_under_l_L3_near48m.png",
+    "docs/art/g506/r6_near_switch/player_under_l_L3_near48m.txt",
+    "docs/art/g506/r6_near_switch/player_under_l_L4_near96m.png",
+    "docs/art/g506/r6_near_switch/player_under_l_L4_near96m.txt",
+    "docs/art/g506/r6_near_switch/player_under_l_L5_near192m.png",
+    "docs/art/g506/r6_near_switch/player_under_l_L5_near192m.txt",
+    "docs/art/g506/r7_near_switch/player_under_l_L0_near7m.png",
+    "docs/art/g506/r7_near_switch/player_under_l_L0_near7m.txt",
+    "docs/art/g506/r7_near_switch/player_under_l_L1_near31m.png",
+    "docs/art/g506/r7_near_switch/player_under_l_L1_near31m.txt",
+    "docs/art/g506/r7_near_switch/player_under_l_L2_near62m.png",
+    "docs/art/g506/r7_near_switch/player_under_l_L2_near62m.txt",
+    "docs/art/g506/r7_near_switch/player_under_l_L3_near123m.png",
+    "docs/art/g506/r7_near_switch/player_under_l_L3_near123m.txt",
+    "docs/art/g506/r7_near_switch/player_under_l_L4_near247m.png",
+    "docs/art/g506/r7_near_switch/player_under_l_L4_near247m.txt",
+    "docs/art/g506/r7_near_switch/player_under_l_L5_near493m.png",
+    "docs/art/g506/r7_near_switch/player_under_l_L5_near493m.txt",
+    "docs/art/g506/round-3-report.md",
+    "docs/art/g506/round-4-design.md",
+    "docs/art/g506/round-4-report.md",
+    "docs/art/g506/round-5-design.md",
+    "docs/art/g506/round-5-report.md",
+    "docs/art/g506/round-6-design.md",
+    "docs/art/g506/round-6-report.md",
+    "docs/art/g506/round-7-design.md",
+    "docs/art/g506/round-7-report.md",
+    "docs/research/tree-microvoxel-research.md"
+   ],
+   "split": "dev",
+   "scope": "client"
+  },
+  {
+   "id": "fd8cbc054",
+   "merge": "fd8cbc05431282c847c83170498ca873ca5e286d",
+   "base": "9d8659d8abea16ac480d62cf63e8c45bc3357785",
+   "query": "Birch trunk far too thin for its height in game (playtest)",
+   "query_source": "ledger docs/planning/ledger.md at base, row G555",
+   "gold": [
+    "client/tree_cache.h",
+    "client/tree_raster.cpp"
+   ],
+   "gold_tests": [
+    "client/tests/test_tree_ladder.cpp",
+    "client/tests/test_tree_model.cpp"
+   ],
+   "gold_docs": [
+    "docs/art/g555-birch-trunk-report.md",
+    "docs/art/g555-birch/player_close_l_after.png",
+    "docs/art/g555-birch/player_close_l_after.txt",
+    "docs/art/g555-birch/player_close_l_before.png",
+    "docs/art/g555-birch/player_close_l_before.txt",
+    "docs/art/g555-birch/player_forest_l_after.png",
+    "docs/art/g555-birch/player_forest_l_after.txt",
+    "docs/art/g555-birch/player_forest_l_before.png",
+    "docs/art/g555-birch/player_forest_l_before.txt",
+    "docs/art/g555-birch/player_trunk_l_after.png",
+    "docs/art/g555-birch/player_trunk_l_after.txt",
+    "docs/art/g555-birch/player_trunk_l_before.png",
+    "docs/art/g555-birch/player_trunk_l_before.txt"
+   ],
+   "split": "dev",
+   "scope": "client"
+  },
+  {
+   "id": "b46ae0cd7",
+   "merge": "b46ae0cd7c2d2c872d47e889e49242b2833b95cd",
+   "base": "731baebc951d3bc4ab89c8d24990da63b60690c4",
+   "query": "v4 M5: layer stack, sediment supply, material resolver, cover",
+   "query_source": "ledger docs/planning/ledger.md at base, row T147",
+   "gold": [
+    "core/worldgen/climate.cpp",
+    "core/worldgen/climate.h",
+    "core/worldgen/v4/m5/deposit_features.cpp",
+    "core/worldgen/v4/m5/m5_graph.h",
+    "core/worldgen/v4/m5/material_kernel.cpp"
+   ],
+   "gold_tests": [
+    "core/tests/census/v4_m5_walls_main.cpp",
+    "core/tests/test_v4_stage_contracts.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m5-layers.md",
+    "docs/handback/T147-codex-r2.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "af5d5a0e5",
+   "merge": "af5d5a0e58a76b47e75a3a3aaeaf5c17937e4713",
+   "base": "28b85170178ceb1a951a308b2bea5bce0b4993ca",
+   "query": "v4 M5: layer stack, sediment supply, material resolver, cover",
+   "query_source": "ledger docs/planning/ledger.md at base, row T147",
+   "gold": [
+    "core/worldgen/v4/m5/deposit_features.cpp",
+    "core/worldgen/v4/m5/deposit_slope_wind.cpp",
+    "core/worldgen/v4/m5/m5_graph.h",
+    "core/worldgen/v4/m5/material_kernel.cpp",
+    "core/worldgen/v4/m5/surface_rows.cpp",
+    "core/worldgen/v4/m5/surface_rows.h",
+    "core/worldgen/v4/m5/wall_build.cpp",
+    "core/worldgen/v4/m5/wall_build.h",
+    "core/worldgen/v4/rock_wall.cpp",
+    "core/worldgen/v4/rock_wall.h",
+    "core/worldgen/v4/surface_material.h",
+    "core/worldgen/v4/v4_cover.cpp"
+   ],
+   "gold_tests": [
+    "core/tests/census/v4_m5_deposits.h",
+    "core/tests/census/v4_m5_walls_main.cpp",
+    "core/tests/test_v4_m5_features.cpp",
+    "core/tests/test_v4_m5_fixture.h",
+    "core/tests/test_v4_m5_layers.cpp",
+    "core/tests/test_v4_m5_rows.cpp",
+    "core/tests/test_v4_rock_wall.cpp",
+    "core/tests/test_v4_stage_contracts.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-m5-layers.md",
+    "docs/engineering/v4-m5-talus.md",
+    "docs/handback/T147-codex-r1.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "cb7d4cd06",
+   "merge": "cb7d4cd06726a896f6368ac33aa5678d7bb605a1",
+   "base": "0dbb66565c755c339978ba57b0836cebb77a5028",
+   "query": "v4 M6: one function at every far level; macro pyramid; delete the macro far path",
+   "query_source": "ledger docs/planning/ledger.md at base, row T148",
+   "gold": [
+    "core/worldgen/v4/far_filter.cpp",
+    "core/worldgen/v4/far_filter.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m6/macro_band.cpp",
+    "core/worldgen/v4/m6/macro_band.h",
+    "core/worldgen/v4/m6/macro_cells.h",
+    "core/worldgen/v4/m6/valley_bound.cpp",
+    "core/worldgen/v4/m6/valley_bound.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/v4_m6_far.cpp",
+    "core/tests/census/v4_m6_far.h",
+    "core/tests/census/v4_m6_far_main.cpp",
+    "core/tests/test_v4_m6_bounds.cpp",
+    "core/tests/test_v4_m6_census.cpp",
+    "core/tests/test_v4_m6_join.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/t148-s4p1-design.md",
+    "docs/engineering/t148-s4p1-report.md",
+    "docs/engineering/v4-m6-far-function.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "da100e2e5",
+   "merge": "da100e2e5eb1ad3cc1502b328bf94059206f9bc7",
+   "base": "41b42db94dfe1913f1bd74b5845330d9dae3450a",
+   "query": "GlacialBasins step after drift: basins flood on carved+drift; outlets become spill nodes",
+   "query_source": "ledger docs/planning/ledger.md at base, row T283",
+   "gold": [
+    "core/worldgen/constants/worldgen_constants.h",
+    "core/worldgen/v4/body_claims.cpp",
+    "core/worldgen/v4/body_claims.h",
+    "core/worldgen/v4/glacial_bodies.cpp",
+    "core/worldgen/v4/glacial_bodies.h",
+    "core/worldgen/v4/level_kernel.cpp",
+    "core/worldgen/v4/level_kernel.h",
+    "core/worldgen/v4/network.h",
+    "core/worldgen/v4/network_build.h",
+    "core/worldgen/v4/network_conditioning.cpp",
+    "core/worldgen/v4/network_cut.cpp",
+    "core/worldgen/v4/network_join.cpp",
+    "core/worldgen/v4/network_join.h",
+    "core/worldgen/v4/network_kernel.cpp",
+    "core/worldgen/v4/network_kernel.h",
+    "core/worldgen/v4/network_place.cpp",
+    "core/worldgen/v4/network_sweep.cpp",
+    "core/worldgen/v4/network_topology.cpp",
+    "core/worldgen/v4/pool_join.cpp",
+    "core/worldgen/v4/terrain_graph.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/basin_lines.cpp",
+    "core/worldgen/v4/basin_lines.h",
+    "core/worldgen/v4/glacial_basins.cpp",
+    "core/worldgen/v4/glacial_basins.h",
+    "core/worldgen/v4/glacial_outlets.cpp",
+    "core/worldgen/v4/glacial_outlets.h",
+    "core/worldgen/v4/line_samples.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/glacial_outlet_report.h",
+    "core/tests/census/network_causes.cpp",
+    "core/tests/census/network_diagnose.h",
+    "core/tests/census/network_report.cpp",
+    "core/tests/census/network_report_run.cpp",
+    "core/tests/census/v4_network_adapter.cpp",
+    "core/tests/golden/worldgen_goldens.h",
+    "core/tests/test_glacial_row.cpp",
+    "core/tests/test_v4_basin_lines.cpp",
+    "core/tests/test_v4_corridor.cpp",
+    "core/tests/test_v4_glacial_bodies.cpp",
+    "core/tests/test_v4_glacial_outlets.cpp",
+    "core/tests/test_v4_graph.cpp",
+    "core/tests/test_v4_m4_ice.cpp",
+    "core/tests/test_v4_m5_walls.cpp",
+    "core/tests/test_v4_network.cpp",
+    "core/tests/test_v4_network_cut.cpp",
+    "core/tests/test_v4_network_join.cpp",
+    "core/tests/test_v4_valley_lattice.cpp",
+    "core/tests/v4_network_test_world.h",
+    "core/tests/v4_test_features.h",
+    "server/tests/test_save_set_aside.cpp",
+    "server/tests/test_v4_preview.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-causal-order.conf",
+    "docs/engineering/v4-m3-ground-water.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "5cc3f3744",
+   "merge": "5cc3f3744c5c8f3f011060b17b4df18188e79e98",
+   "base": "ba2c668493e4338d7d3b77457574410d24570c9c",
+   "query": "Seed-7 server world hash differs between runs of one binary (2 of 12 launches)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T292",
+   "gold": [
+    "scripts/ecores.ps1",
+    "scripts/idiom_drift.sh",
+    "scripts/lighting_check.ps1",
+    "scripts/pin_ecores.ps1",
+    "scripts/streaming_traverse.ps1",
+    "scripts/weather_check.ps1",
+    "scripts/weather_clips.ps1"
+   ],
+   "gold_new": [
+    "scripts/affinity_check.mjs",
+    "scripts/lib/agent_cores.ps1",
+    "tools/worldhash/main.cpp"
+   ],
+   "gold_tests": [
+    "core/tests/test_world_build.cpp",
+    "scripts/test_sets.conf"
+   ],
+   "gold_docs": [
+    "docs/engineering/machine-setup.md",
+    "docs/worldgen-stage-graph-design.md"
+   ],
+   "split": "holdout",
+   "scope": "scripts"
+  },
+  {
+   "id": "862482915",
+   "merge": "8624829150d52f5de88404d3dd88c49b29fce8b5",
+   "base": "4a117b76aa3e19f50619207ff720648043826f3e",
+   "query": "New world menu: random or typed seed, start time of day, server weather pick",
+   "query_source": "ledger docs/planning/ledger-archive.md at base, row G472",
+   "gold": [
+    "server/animals/animal_host.cpp",
+    "server/animals/animal_host.h",
+    "server/animals/animal_host_save.cpp",
+    "server/terrain/terrain_state.h"
+   ],
+   "gold_tests": [
+    "server/tests/test_animal_population.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/animal-behaviour.md"
+   ],
+   "split": "holdout",
+   "scope": "server"
+  },
+  {
+   "id": "0a6cd4873",
+   "merge": "0a6cd4873c77b04d66111f307bb7a6ba5d22507b",
+   "base": "60d51e7f8ec4cf09c94b60bb64e454cfc4e329b5",
+   "query": "v4 stage contracts: product, queries, invariant tests, fixture per stage in nature's order",
+   "query_source": "ledger docs/planning/ledger.md at base, row T293",
+   "gold": [
+    "core/worldgen/v4/claim_kernel.h",
+    "core/worldgen/v4/small_bodies.cpp",
+    "core/worldgen/v4/small_bodies.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_contract.cpp",
+    "core/tests/test_v4_stage_contracts.cpp",
+    "core/tests/v4_fixtures/stage_contracts.h",
+    "core/tests/v4_fixtures/stand_in_scene.h"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m4-m7-contract.md",
+    "docs/engineering/v4-stage-contracts.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "d0d10123a",
+   "merge": "d0d10123a5bb00fc404e578621a54783ab8b08de",
+   "base": "90b18c981b58dd5fa721ea38d5e74dc56db95696",
+   "query": "Animal micro-voxel models from approved concepts: squirrel, fish, bird; then the rest",
+   "query_source": "ledger docs/planning/ledger.md at base, row G130",
+   "gold": [
+    "tools/art/lib/board_measure.mjs",
+    "tools/art/review_strips.mjs"
+   ],
+   "gold_new": [
+    "tools/art/lib/robin_load.mjs",
+    "tools/art/robin_board.mjs",
+    "tools/art/robin_feet_read.mjs",
+    "tools/art/robin_landmarks.mjs",
+    "tools/art/robin_stills.mjs"
+   ],
+   "gold_tests": [
+    "tools/art/test_review_tools.mjs",
+    "tools/art/test_robin.mjs"
+   ],
+   "gold_docs": [
+    "art/references/photos/robin/ATTRIBUTION.md",
+    "art/review/dashboard.md",
+    "art/review/robin/record.md",
+    "docs/art/concepts/animals/lib/robin_checks.js",
+    "docs/art/concepts/animals/lib/robin_data.js",
+    "docs/art/concepts/animals/lib/robin_model.js",
+    "docs/art/concepts/animals/lib/robin_motion.js",
+    "docs/art/concepts/animals/robin_motion.html",
+    "docs/art/concepts/animals/robin_motion_cards.md",
+    "docs/art/concepts/animals/robin_motion_research.md",
+    "docs/art/concepts/animals/robin_rig_sheet.md"
+   ],
+   "split": "dev",
+   "scope": "tools/art"
+  },
+  {
+   "id": "16b6ca1d1",
+   "merge": "16b6ca1d1267d9820d7ea76963abd85e41498021",
+   "base": "bf8010acc8bab8d8b1f720fdfcfb496ed05e0069",
+   "query": "View checks each read point field border \u003e= the view border (release builds too)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T239",
+   "gold": [
+    "core/worldgen/v4/graph_check.h",
+    "core/worldgen/v4/product_graph.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_graph.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m1-product-graph.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "6b774c38f",
+   "merge": "6b774c38f7e0abaf2c6cad69dd23dab7d9f0194b",
+   "base": "b72f8f523d704c5f637c8ea4dc155bd7a1937aea",
+   "query": "Census: one-seed mode to halve diagnostic loops (default world run ~6.5 min)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T245",
+   "gold": [
+    "scripts/deflake.mjs",
+    "scripts/run_tests.sh"
+   ],
+   "gold_tests": [
+    "core/tests/census_seeds.h",
+    "core/tests/test_census_seeds.cpp",
+    "core/tests/test_erosion_stability.cpp",
+    "core/tests/test_mid_relief.cpp",
+    "core/tests/test_v4_bodies_world.cpp",
+    "core/tests/test_v4_form.cpp",
+    "scripts/test_affected.sh",
+    "scripts/test_stamp.mjs",
+    "scripts/test_stamp_selftest.mjs"
+   ],
+   "gold_docs": [
+    "docs/engineering/test-selection.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "5b9a70048",
+   "merge": "5b9a70048aff8b444648a7321e81238e6eb7deee",
+   "base": "d298a49f363ebae07fdfd865b54b7f1fc17e86f2",
+   "query": "In-game lighting washed out, no shadows: game should match the tree-test forest look",
+   "query_source": "ledger docs/planning/ledger.md at base, row G414",
+   "gold": [
+    "game/shaders/sky.gdshader",
+    "game/sky/daytime_grade.gd",
+    "game/sky/sky_palette.json",
+    "game/sky/sky_rig.gd",
+    "game/world/ambience_preview.gd",
+    "game/world/tree_forest_poc.gd",
+    "game/world/tree_poc.gd"
+   ],
+   "gold_tests": [
+    "game/tests/light_rig_test.gd",
+    "game/tests/light_rig_test.gd.uid",
+    "game/tests/light_rig_test.tscn"
+   ],
+   "gold_docs": [
+    "docs/art/g414/round2/board_game_low_sun.jpg",
+    "docs/art/g414/round2/board_game_noon.jpg",
+    "docs/art/g414/round2/board_test_forest_sun16.jpg",
+    "docs/art/g414/round2/game_low19_forest_after.jpg",
+    "docs/art/g414/round2/game_low19_forest_before.jpg",
+    "docs/art/g414/round2/game_low19_rest_after.jpg",
+    "docs/art/g414/round2/game_low19_rest_before.jpg",
+    "docs/art/g414/round2/game_noon_forest_after.jpg",
+    "docs/art/g414/round2/game_noon_forest_before.jpg",
+    "docs/art/g414/round2/game_noon_rest_after.jpg",
+    "docs/art/g414/round2/game_noon_rest_before.jpg",
+    "docs/art/g414/round2/testforest_sun16_game_rig.jpg",
+    "docs/art/g414/round2/testforest_sun16_game_rig_original_values.jpg",
+    "docs/art/g414/round2/testforest_sun16_original.jpg",
+    "docs/design/g414-light-rig.md"
+   ],
+   "split": "dev",
+   "scope": "game"
+  },
+  {
+   "id": "489067b4f",
+   "merge": "489067b4f5e703e22dad0d682095a3793814fbc6",
+   "base": "53235ee20eae9c8f6dd0c7e8806b71fc066d0b56",
+   "query": "break_check.sh: print doctest ERROR lines; --replace mode for constexpr breaks",
+   "query_source": "ledger docs/planning/ledger.md at base, row T244",
+   "gold": [
+    "scripts/break_check.sh",
+    "scripts/changed_cases.mjs",
+    "scripts/deflake.mjs",
+    "scripts/deflake.sh",
+    "scripts/idiom_drift.sh"
+   ],
+   "gold_new": [
+    "scripts/deflake_report.mjs"
+   ],
+   "gold_docs": [
+    ".claude/rules/handback.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "cdfdb6583",
+   "merge": "cdfdb6583b72d91f1ea5a1f769ecbcb59651453e",
+   "base": "b3e115a912422f0a7b9e5d808b35b1df609557a7",
+   "query": "v4 M8: cut over to v4, delete the v3 column program, re-pin goldens once",
+   "query_source": "ledger docs/planning/ledger.md at base, row T150",
+   "gold": [
+    "core/worldgen/column.cpp",
+    "core/worldgen/column/ground_override.h",
+    "core/worldgen/v4/m5/mask_kernel.cpp",
+    "core/worldgen/v4/m5/material_kernel.cpp",
+    "core/worldgen/v4/m7/classify_kernel.cpp",
+    "core/worldgen/v4/m7/site_inputs.cpp",
+    "core/worldgen/v4/m7/site_inputs.h",
+    "core/worldgen/v4/v4_ground.cpp",
+    "core/worldgen/v4/v4_ground.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m5/surface_rows.cpp",
+    "core/worldgen/v4/m5/surface_rows.h",
+    "core/worldgen/v4/v4_cover.cpp"
+   ],
+   "gold_tests": [
+    "client/tests/test_e2e_v4_preview.cpp",
+    "core/tests/test_v4_m7_classify.cpp",
+    "server/tests/test_v4_surface.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-world-source.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "df73e63be",
+   "merge": "df73e63be71695cb4a38d3cedfeac376d37b28bd",
+   "base": "1c6feeeb56686c3310784ef7114a2a28ac9bd4e0",
+   "query": "T146 review: honest trough tests (worst deficit, all nodes), foot scan, Ice match test",
+   "query_source": "ledger docs/planning/ledger.md at base, row T233",
+   "gold": [
+    "core/worldgen/v4/corridor_lines.h",
+    "core/worldgen/v4/corridor_valleys.cpp",
+    "core/worldgen/v4/m4/ice_inputs.h",
+    "core/worldgen/v4/m4/ice_kernel.cpp",
+    "core/worldgen/v4/trough_lines.cpp"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/network_floors.cpp",
+    "core/worldgen/v4/network_floors.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_m4_ice.cpp",
+    "core/tests/test_v4_trough_lines.cpp",
+    "core/tests/v4_valley_hand.h"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/v4-m4-trough-line.md",
+    "docs/planning/ledger-archive.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "b52aa1bab",
+   "merge": "b52aa1baba5339300c57f61ab1a8475a9b38039f",
+   "base": "55f95caf55892f5bced9c7c5419928c5ab18e33b",
+   "query": "In-game lighting washed out, no shadows: game should match the tree-test forest look",
+   "query_source": "ledger docs/planning/ledger.md at base, row G414",
+   "gold": [
+    "game/sky/daytime_grade.gd",
+    "game/sky/sky_palette.json",
+    "game/sky/sky_rig.gd",
+    "game/world/tree_poc.gd",
+    "game/world/world_main.gd"
+   ],
+   "gold_tests": [
+    "game/tests/daytime_grade_test.gd",
+    "game/tests/forest_walk_capture.gd",
+    "game/tests/weather_view_test.gd"
+   ],
+   "gold_docs": [
+    "docs/art/g414/after_seed2_lowsun.png",
+    "docs/art/g414/after_seed2_noon.png",
+    "docs/art/g414/before_seed2_lowsun.png",
+    "docs/art/g414/before_seed2_noon.png",
+    "docs/art/g414/poc_sun26.png",
+    "docs/art/g414/side_by_side_game_left_poc_right_sun26.png"
+   ],
+   "split": "dev",
+   "scope": "game"
+  },
+  {
+   "id": "bed709a6a",
+   "merge": "bed709a6ae779896f14d86defcca184f531eab90",
+   "base": "a2dd2b0cafffad1e26051e3497b41137dd9d3d22",
+   "query": "v4 lay_form sample mask for walls (3x3 can hold a block face) and cheaper window set-up",
+   "query_source": "ledger docs/planning/ledger.md at base, row T229",
+   "gold": [
+    "core/worldgen/v4/m5/wall_build.cpp",
+    "core/worldgen/v4/m5/wall_build.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m5/band_reach.cpp",
+    "core/worldgen/v4/m5/band_reach.h",
+    "core/worldgen/v4/m5/wall_tiles.cpp",
+    "core/worldgen/v4/m5/wall_tiles.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/v4_m5_walls_main.cpp",
+    "core/tests/test_v4_m5_walls.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m5-layers.md",
+    "docs/planning/ledger-archive.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "a2dd2b0ca",
+   "merge": "a2dd2b0cafffad1e26051e3497b41137dd9d3d22",
+   "base": "304d28c01fc10d92960a9e90ce2aaa2b5cd40a33",
+   "query": "v4 M3: ground and water kernels: land conforms to the network, no berm",
+   "query_source": "ledger docs/planning/ledger.md at base, row T145",
+   "gold": [
+    "core/worldgen/v4/ground_conform.cpp",
+    "core/worldgen/v4/ground_conform.h",
+    "core/worldgen/v4/ground_window.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/ground_window.cpp"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_ground_conform.cpp",
+    "core/tests/test_v4_ground_window.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-ground-conform.md",
+    "docs/engineering/v4-m3-ground-water.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "f0704477a",
+   "merge": "f0704477a100b07a91d1a03a4b2b42272645f338",
+   "base": "ecd49b2e8dee554dc9fbce205ed66b4880b088fc",
+   "query": "v4 pool join leftovers: overlapped or spill discs keep foreign nodes; contested rejected",
+   "query_source": "ledger docs/planning/ledger.md at base, row T231",
+   "gold": [
+    "core/worldgen/v4/level_kernel.h",
+    "core/worldgen/v4/network_kernel.h",
+    "core/worldgen/v4/pool_join.cpp",
+    "core/worldgen/v4/pool_join.h",
+    "core/worldgen/v4/shore_zones.cpp",
+    "core/worldgen/v4/shore_zones.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/network_report_run.cpp",
+    "core/tests/test_v4_pool_join.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m3-ground-water.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "43490c6cd",
+   "merge": "43490c6cd497fc937181a29738d275aac92cea8e",
+   "base": "b89fd8d45382a67aa25b9908c9917375161a540f",
+   "query": "v4 M4: ice (valley-law primitive) and coast grades on the network",
+   "query_source": "ledger docs/planning/ledger.md at base, row T146",
+   "gold": [
+    "core/worldgen/v4/corridor_lines.h",
+    "core/worldgen/v4/corridor_valleys.cpp",
+    "core/worldgen/v4/form_kernel.h",
+    "core/worldgen/v4/level_kernel.cpp",
+    "core/worldgen/v4/level_kernel.h",
+    "core/worldgen/v4/trough_axis.cpp",
+    "core/worldgen/v4/trough_axis.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/trough_lines.cpp",
+    "core/worldgen/v4/trough_lines.h",
+    "core/worldgen/v4/trough_side.cpp",
+    "core/worldgen/v4/trough_side.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_corridor.cpp",
+    "core/tests/test_v4_trough_axis.cpp",
+    "core/tests/test_v4_trough_lines.cpp",
+    "core/tests/test_v4_valley_lattice.cpp",
+    "core/tests/v4_corridor_fixture.h"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m4-trough-line.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "5cf63d17f",
+   "merge": "5cf63d17f316e1b5e9fceeabfec468a56ad6261f",
+   "base": "aaa39c7ea3bf8aefda493ba6d2e8d843568da057",
+   "query": "v4 M3: ground and water kernels: land conforms to the network, no berm",
+   "query_source": "ledger docs/planning/ledger.md at base, row T145",
+   "gold": [
+    "core/bench/bench_v4_form.cpp",
+    "core/worldgen/v4/corridor.h",
+    "core/worldgen/v4/corridor_lines.h",
+    "core/worldgen/v4/form_kernel.cpp",
+    "core/worldgen/v4/form_kernel.h",
+    "core/worldgen/v4/lake_divide.cpp",
+    "core/worldgen/v4/lake_divide.h",
+    "core/worldgen/v4/level_kernel.cpp",
+    "core/worldgen/v4/level_kernel.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/shore_zones.cpp",
+    "core/worldgen/v4/shore_zones.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_corridor.cpp",
+    "core/tests/test_v4_form.cpp",
+    "core/tests/test_v4_shore_weight.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m3-ground-water.md"
+   ],
+   "split": "dev",
+   "scope": "core"
+  },
+  {
+   "id": "5865437df",
+   "merge": "5865437df33e8ae634cfade57073372f7642d6b8",
+   "base": "edc57a37f9204daf0df0b59123c2afb076d03b80",
+   "query": "G359 S8: game-walk measure, trees on and off, player-camera captures before and after",
+   "query_source": "ledger docs/planning/ledger.md at base, row G384",
+   "gold": [
+    "core/worldgen/v4/m7/placement/tree_field.cpp",
+    "core/worldgen/v4/m7/placement/tree_field.h",
+    "core/worldgen/v4/m7/placement/tree_record.cpp",
+    "core/worldgen/v4/m7/placement/tree_record.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m7/placement/tree_cover_index.cpp",
+    "core/worldgen/v4/m7/placement/tree_cover_index.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_tree_field.cpp",
+    "game/tests/boundary_test.gd",
+    "game/tests/forest_walk_capture.gd",
+    "server/tests/test_tree_collision.cpp"
+   ],
+   "gold_docs": [
+    "docs/art/g384/off_seed2/godot.log",
+    "docs/art/g384/off_seed2/rest.jpg",
+    "docs/art/g384/off_seed2/walk_04.jpg",
+    "docs/art/g384/off_seed5/godot.log",
+    "docs/art/g384/off_seed5/rest.jpg",
+    "docs/art/g384/off_seed5/walk_04.jpg",
+    "docs/art/g384/on_seed2/godot.log",
+    "docs/art/g384/on_seed2/rest.jpg",
+    "docs/art/g384/on_seed2/walk_04.jpg",
+    "docs/art/g384/on_seed5/godot.log",
+    "docs/art/g384/on_seed5/rest.jpg",
+    "docs/art/g384/on_seed5/walk_04.jpg",
+    "docs/design/trees-in-game.md",
+    "docs/planning/ledger-archive.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "571e7d29d",
+   "merge": "571e7d29d77dc8573b2c696bef01312df798fd3d",
+   "base": "7d4eabc83869ca30225881415e1fe1a9a5277e9a",
+   "query": "G359 S9: oak on in model_species; generator revision; goldens re-pinned; saves set aside",
+   "query_source": "ledger docs/planning/ledger.md at base, row G385",
+   "gold": [
+    "bindings/bentech_game.h",
+    "bindings/bentech_game_trees.cpp"
+   ],
+   "gold_new": [
+    "client/forest_start.cpp",
+    "client/forest_start.h"
+   ],
+   "gold_tests": [
+    "client/tests/test_forest_start.cpp",
+    "client/tests/test_game_forest_species.cpp",
+    "core/tests/test_tree_record.cpp",
+    "server/tests/terrain_fixture.cpp",
+    "server/tests/terrain_fixture.h",
+    "server/tests/test_tree_act.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/trees-in-game.md"
+   ],
+   "split": "holdout",
+   "scope": "bindings"
+  },
+  {
+   "id": "2ae8af453",
+   "merge": "2ae8af453f681075ba461e1e3248b49daf19535f",
+   "base": "df78ccea30a219a41b25b21fbacfbbee4f46b40a",
+   "query": "v4 M3: ground and water kernels: land conforms to the network, no berm",
+   "query_source": "ledger docs/planning/ledger.md at base, row T145",
+   "gold": [
+    "core/worldgen/v4/corridor_lines.h",
+    "core/worldgen/v4/corridor_valleys.cpp",
+    "core/worldgen/v4/level_kernel.cpp",
+    "core/worldgen/v4/level_kernel.h",
+    "core/worldgen/v4/network.h",
+    "core/worldgen/v4/network_build.h",
+    "core/worldgen/v4/network_conditioning.cpp",
+    "core/worldgen/v4/network_join.cpp",
+    "core/worldgen/v4/network_join.h",
+    "core/worldgen/v4/network_kernel.h",
+    "core/worldgen/v4/network_sweep.cpp",
+    "core/worldgen/v4/small_bodies.cpp",
+    "core/worldgen/v4/small_bodies.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/pool_join.cpp",
+    "core/worldgen/v4/pool_join.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/network_report.cpp",
+    "core/tests/census/network_report_run.cpp",
+    "core/tests/census/network_report_run.h",
+    "core/tests/test_v4_corridor.cpp",
+    "core/tests/test_v4_form.cpp",
+    "core/tests/test_v4_network.cpp",
+    "core/tests/test_v4_network_join.cpp",
+    "core/tests/test_v4_pool_join.cpp",
+    "core/tests/v4_network_test_world.h",
+    "core/tests/v4_valley_hand.h",
+    "core/tests/v4_valley_pieces.h"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m3-ground-water.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "54ab23b30",
+   "merge": "54ab23b3011e9d6cccae1f48adc650e2887bddc1",
+   "base": "5c4e5552ec2ff49f80f0fdc31072030e22fe3ddb",
+   "query": "v4 wall record: split a face where the valley return changes (V4-M5-021 known_fail)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T228",
+   "gold": [
+    "core/worldgen/v4/m5/m5_graph.h",
+    "core/worldgen/v4/m5/wall_build.cpp",
+    "core/worldgen/v4/rock_wall.cpp",
+    "core/worldgen/v4/rock_wall.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_m5_walls.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m5-layers.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "f23703525",
+   "merge": "f23703525f6d8d42ea1ee58b555f92cd0463790e",
+   "base": "703f2f66d5ba60120dd7dcb2a5088f18f6f75257",
+   "query": "v4 valley form cost 8-10x plain form where a line has a say; gather cap; scratch 141 KB",
+   "query_source": "ledger docs/planning/ledger.md at base, row T209",
+   "gold": [
+    "core/worldgen/column/column_program.cpp",
+    "core/worldgen/column/column_program.h",
+    "core/worldgen/noise.cpp",
+    "core/worldgen/noise.h",
+    "core/worldgen/v4/corridor.h",
+    "core/worldgen/v4/corridor_lines.cpp",
+    "core/worldgen/v4/corridor_lines.h",
+    "core/worldgen/v4/form_kernel.cpp",
+    "core/worldgen/v4/form_kernel.h",
+    "core/worldgen/v4/m5/wall_build.cpp",
+    "core/worldgen/v4/network.cpp",
+    "core/worldgen/v4/network.h",
+    "core/worldgen/v4/window.h"
+   ],
+   "gold_new": [
+    "core/bench/bench_v4_form.cpp",
+    "core/worldgen/v4/corridor_valleys.cpp",
+    "core/worldgen/v4/corridor_window.h",
+    "scripts/form_dump_base.sh",
+    "scripts/form_dump_compare.mjs"
+   ],
+   "gold_tests": [
+    "core/tests/test_hash_noise.cpp",
+    "core/tests/test_v4_form.cpp",
+    "core/tests/test_v4_m3_interfaces.cpp",
+    "core/tests/test_v4_valley_lattice.cpp",
+    "core/tests/test_v4_valley_law.cpp",
+    "core/tests/v4_corridor_fixture.h",
+    "core/tests/v4_held_windows.h",
+    "core/tests/v4_valley_hand.h",
+    "core/tests/v4_valley_pieces.h"
+   ],
+   "gold_docs": [
+    "docs/art/t209/seed20261111_hills_x57690_z51362.png",
+    "docs/art/t209/seed20261111_mid_x161455_z15537.png",
+    "docs/art/t209/seed20261111_mouth_x125530_z18687.png",
+    "docs/art/t209/seed7_couloirs_x21378_z54673.png",
+    "docs/art/t209/seed7_headwater_x146511_z46316.png",
+    "docs/art/t209/seed7_mid_x163052_z13082.png",
+    "docs/engineering/v4-m3-ground-water.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "c0d95b46b",
+   "merge": "c0d95b46bb37cef501255438284ef04a74ff162a",
+   "base": "112de18f2d0fd9b87b64ec4c257af80b058804b1",
+   "query": "v4 M5: layer stack, sediment supply, material resolver, cover",
+   "query_source": "ledger docs/planning/ledger.md at base, row T147",
+   "gold": [
+    "core/worldgen/v4/m5/wall_build.cpp",
+    "core/worldgen/v4/m5/wall_build.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/v4_m5_walls_main.cpp",
+    "core/tests/test_v4_m5_walls.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m5-layers.md",
+    "docs/engineering/v4-rock-wall.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "c0ee59612",
+   "merge": "c0ee59612f3792143ee18f8c51301a4ba66b678e",
+   "base": "1137956f9bf27482852605e34771ed26471a07db",
+   "query": "v4 M3: ground and water kernels: land conforms to the network, no berm",
+   "query_source": "ledger docs/planning/ledger.md at base, row T145",
+   "gold": [
+    "core/worldgen/v4/body_claims.cpp",
+    "core/worldgen/v4/body_claims.h",
+    "core/worldgen/v4/level_kernel.h",
+    "core/worldgen/v4/network.cpp",
+    "core/worldgen/v4/network.h",
+    "core/worldgen/v4/network_build.h",
+    "core/worldgen/v4/network_join.cpp",
+    "core/worldgen/v4/network_join.h",
+    "core/worldgen/v4/network_kernel.h",
+    "core/worldgen/v4/network_profile.cpp",
+    "core/worldgen/v4/network_sweep.cpp",
+    "core/worldgen/v4/network_topology.cpp"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/lake_divide.cpp",
+    "core/worldgen/v4/lake_divide.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/network_report_run.cpp",
+    "core/tests/census/v4_network_reaches.cpp",
+    "core/tests/test_v4_network_join.cpp",
+    "scripts/test_sets.conf"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m2-network.md",
+    "docs/engineering/v4-m3-ground-water.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "1fa8cd7c8",
+   "merge": "1fa8cd7c83eb6749d9090fe39d8f8dbd7e84a84d",
+   "base": "728c174ef435ad0fb31beb236a9bccdd519075f7",
+   "query": "G359 S4: client data path: plot trees from column job, mirrored PlotEdits, TreePlacement",
+   "query_source": "ledger docs/planning/ledger.md at base, row G380",
+   "gold": [
+    "client/client.cpp",
+    "client/client.h",
+    "client/terrain_client.cpp",
+    "client/terrain_client.h",
+    "client/terrain_jobs.cpp",
+    "client/terrain_work.h",
+    "client/tree_tiles.cpp",
+    "client/tree_tiles.h"
+   ],
+   "gold_new": [
+    "client/plot_tree_mirror.cpp",
+    "client/plot_tree_mirror.h",
+    "client/tree_plot_placement.cpp",
+    "client/tree_plot_placement.h",
+    "client/tree_stand.cpp",
+    "client/tree_tiles_impl.h",
+    "client/tree_tiles_load.cpp"
+   ],
+   "gold_tests": [
+    "client/tests/test_plot_trees_client.cpp",
+    "client/tests/test_tree_plot_placement.cpp",
+    "server/tests/test_tree_collision.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/trees-in-game.md"
+   ],
+   "split": "holdout",
+   "scope": "client"
+  },
+  {
+   "id": "8eca43f2c",
+   "merge": "8eca43f2cb9a47671404af08238739b2226ff208",
+   "base": "d6b112ece5917cde83046735fdb227644c3e74cf",
+   "query": "v4 M3: ground and water kernels: land conforms to the network, no berm",
+   "query_source": "ledger docs/planning/ledger.md at base, row T145",
+   "gold": [
+    "core/worldgen/v4/network.h",
+    "core/worldgen/v4/network_kernel.h",
+    "core/worldgen/v4/network_sweep.cpp",
+    "core/worldgen/v4/reach_grade.cpp",
+    "core/worldgen/v4/reach_grade.h",
+    "core/worldgen/v4/small_bodies.cpp",
+    "core/worldgen/v4/small_bodies.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_bodies.cpp",
+    "core/tests/test_v4_bodies_world.cpp",
+    "core/tests/test_v4_reach_grade.cpp",
+    "core/tests/v4_body_ground.h"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-m3-ground-water.md",
+    "docs/engineering/v4-reach-grade.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "2b2e56836",
+   "merge": "2b2e56836a9bdfea16077547e0bf322202f5e53e",
+   "base": "fc8714ed16fd42ccf85528d0bd863739bafc86b8",
+   "query": "v4 M5: layer stack, sediment supply, material resolver, cover",
+   "query_source": "ledger docs/planning/ledger.md at base, row T147",
+   "gold": [
+    "core/worldgen/v4/contract/contract_graph.h",
+    "core/worldgen/v4/contract/upstream_products.h",
+    "core/worldgen/v4/form_kernel.cpp",
+    "core/worldgen/v4/form_kernel.h",
+    "core/worldgen/v4/m5/feature_kernels.cpp",
+    "core/worldgen/v4/m5/m5_graph.h",
+    "core/worldgen/v4/rock_wall.cpp",
+    "core/worldgen/v4/rock_wall.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m5/wall_build.cpp",
+    "core/worldgen/v4/m5/wall_build.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_m5_walls.cpp",
+    "core/tests/test_v4_m7_placement_rig.h",
+    "core/tests/v4_fixtures/stand_in_graph.h",
+    "scripts/test_sets.conf"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-m5-layers.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "51af9223c",
+   "merge": "51af9223c428610133b42b6227d252f246ab7da3",
+   "base": "d1c3baf01b47fb6ca899b67bc77a4c226148d843",
+   "query": "v4 M6: one function at every far level; macro pyramid; delete the macro far path",
+   "query_source": "ledger docs/planning/ledger.md at base, row T148",
+   "gold": [
+    "core/worldgen/column.h",
+    "core/worldgen/column/field_kernels.cpp",
+    "core/worldgen/v4/form_kernel.cpp",
+    "core/worldgen/v4/form_kernel.h",
+    "core/worldgen/v4/m6/m6_graph.h",
+    "core/worldgen/v4/terrain_graph.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m6/pyramid_kernel.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/network_report_gather.cpp",
+    "core/tests/census/v4_m6_far.cpp",
+    "core/tests/census/v4_m6_far.h",
+    "core/tests/census/v4_m6_far_main.cpp",
+    "core/tests/test_v4_contract.cpp",
+    "core/tests/test_v4_corridor.cpp",
+    "core/tests/test_v4_form.cpp",
+    "core/tests/test_v4_m6_join.cpp",
+    "core/tests/v4_fixtures/stand_in_graph.h"
+   ],
+   "gold_docs": [
+    "docs/engineering/v4-m6-far-function.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "1a64a5815",
+   "merge": "1a64a581576ebcffe08e283ed362705b33f111b2",
+   "base": "968aefb8aef9fa461f553fcbeb53fe42e1e1eeda",
+   "query": "Server spawn uses plan_spawn plus local refinement",
+   "query_source": "ledger docs/planning/ledger.md at base, row G31",
+   "gold": [
+    "core/worldgen/column.h",
+    "core/worldgen/constants/worldgen_constants.h",
+    "core/worldgen/placement/placement.cpp",
+    "core/worldgen/resources/chunk_resources.cpp",
+    "core/worldgen/resources/chunk_resources.h",
+    "core/worldgen/resources/resource_kinds.h",
+    "core/worldgen/resources/salvage_resources.h",
+    "core/worldgen/resources/salvage_survey.cpp",
+    "core/worldgen/resources/salvage_survey.h",
+    "core/worldgen/resources/spawn_plan.cpp",
+    "core/worldgen/resources/spawn_plan.h",
+    "core/worldgen/resources/spawn_salvage.cpp",
+    "core/worldgen/resources/spawn_salvage.h",
+    "core/worldgen/stages/world_build.h"
+   ],
+   "gold_new": [
+    "core/worldgen/resources/spawn_sites.cpp",
+    "core/worldgen/resources/spawn_sites.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_spawn_sites.cpp",
+    "scripts/test_sets.conf"
+   ],
+   "gold_docs": [
+    "docs/design/live-spawn-guarantees.md"
+   ],
+   "split": "holdout",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "d2454fd6f",
+   "merge": "d2454fd6f9651111dc5cd865d065263b64e3c2c1",
+   "base": "5c9397355fa1ac13ae9dc39eeed7cd2cd99d524f",
+   "query": "Near trees cast real shadows (no 1 m proxy): cheaper shadow level, leaf gaps kept",
+   "query_source": "ledger docs/planning/ledger.md at base, row G362",
+   "gold": [
+    "client/tree_tiles.cpp",
+    "client/tree_tiles.h"
+   ],
+   "gold_tests": [
+    "client/tests/test_tree_tiles.cpp"
+   ],
+   "split": "dev",
+   "scope": "client"
+  },
+  {
+   "id": "c5be8622d",
+   "merge": "c5be8622d2977399d267c08d7f478661dc5accf6",
+   "base": "6bed12a7db5bbf6a49da543f6477ef0034023ba7",
+   "query": "Test selection from the build graph, merge gate, batch sweep, flake quarantine, hermetic",
+   "query_source": "ledger docs/planning/ledger.md at base, row G319",
+   "gold": [
+    "scripts/build.sh",
+    "scripts/build_in_msvc.sh",
+    "scripts/idiom_drift.sh",
+    "scripts/include_graph.mjs",
+    "scripts/preflight.mjs",
+    "scripts/preflight_checks.mjs",
+    "scripts/preflight_git.mjs",
+    "scripts/run_tests.sh"
+   ],
+   "gold_new": [
+    "scripts/affected_tests.mjs",
+    "scripts/affected_tests.sh",
+    "scripts/changed_cases.mjs",
+    "scripts/deflake.mjs",
+    "scripts/deflake.sh",
+    "scripts/lib/slots.sh"
+   ],
+   "gold_tests": [
+    "client/tests/test_creature_pose.cpp",
+    "core/tests/test_animal_brain.cpp",
+    "core/tests/test_animal_crowd.cpp",
+    "core/tests/test_job_wake.cpp",
+    "core/tests/test_main.cpp",
+    "core/tests/test_shared_slot.cpp",
+    "scripts/test_affected.sh",
+    "scripts/test_all.sh",
+    "scripts/test_graph.mjs",
+    "scripts/test_selection.conf",
+    "scripts/test_stamp.mjs",
+    "scripts/test_stamp_selftest.mjs",
+    "scripts/test_waits_baseline.conf",
+    "scripts/test_waits_check.mjs",
+    "server/tests/test_items_property.cpp",
+    "tools/worldaudit/tests/test_prominence.cpp"
+   ],
+   "gold_docs": [
+    ".claude/rules/testing.md",
+    ".claude/rules/working-practice.md",
+    "docs/engineering/test-selection.md",
+    "docs/engineering/test-waits.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "0846d3b10",
+   "merge": "0846d3b1057cec35a0dd10ff0484260b0783cfa7",
+   "base": "79c751a6e10394757639b30343e7cb1593baa9e9",
+   "query": "v4 M5: layer stack, sediment supply, material resolver, cover",
+   "query_source": "ledger docs/planning/ledger.md at base, row T147",
+   "gold": [
+    "core/worldgen/v4/deposit_grade.cpp",
+    "core/worldgen/v4/deposit_grade.h",
+    "core/worldgen/v4/m5/m5_graph.h",
+    "core/worldgen/v4/m7/m7_graph.h",
+    "core/worldgen/v4/overlay_rows.cpp",
+    "core/worldgen/v4/surface_material.cpp",
+    "core/worldgen/v4/surface_material.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m5/deposit_alluvium.cpp",
+    "core/worldgen/v4/m5/deposit_build.h",
+    "core/worldgen/v4/m5/deposit_features.cpp",
+    "core/worldgen/v4/m5/deposit_features.h",
+    "core/worldgen/v4/m5/deposit_kernel.cpp",
+    "core/worldgen/v4/m5/deposit_slope_wind.cpp",
+    "core/worldgen/v4/m5/deposit_till_shore.cpp",
+    "core/worldgen/v4/m5/feature_kernels.cpp",
+    "core/worldgen/v4/m5/mask_kernel.cpp",
+    "core/worldgen/v4/m5/material_kernel.cpp"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_deposit_grade.cpp",
+    "core/tests/test_v4_m5_features.cpp",
+    "core/tests/test_v4_m5_fixture.h",
+    "core/tests/test_v4_m5_layers.cpp",
+    "core/tests/test_v4_m5_rows.cpp",
+    "core/tests/test_v4_m5_stack.h"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-m5-layers.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "bd32aae02",
+   "merge": "bd32aae021ace6f0467ac5f708beaf35d56f724c",
+   "base": "03d77c17f24ec2833e63f2b6e18e997161c2542c",
+   "query": "v4 M4: ice and coast grades on the network",
+   "query_source": "ledger docs/planning/ledger.md at base, row T146",
+   "gold": [
+    "core/worldgen/v4/ice_features.cpp",
+    "core/worldgen/v4/ice_features.h",
+    "core/worldgen/v4/ice_grade.cpp",
+    "core/worldgen/v4/ice_grade.h",
+    "core/worldgen/v4/m4/m4_graph.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m4/coast_build.cpp",
+    "core/worldgen/v4/m4/coast_build.h",
+    "core/worldgen/v4/m4/coast_kernel.cpp",
+    "core/worldgen/v4/m4/cut_far.h",
+    "core/worldgen/v4/m4/cut_kernel.cpp",
+    "core/worldgen/v4/m4/ice_inputs.h",
+    "core/worldgen/v4/m4/ice_kernel.cpp",
+    "core/worldgen/v4/m4/overdeepening.cpp",
+    "core/worldgen/v4/m4/overdeepening.h",
+    "core/worldgen/v4/m4/shore_point.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_v4_ice_grade.cpp",
+    "core/tests/test_v4_m4_coast.cpp",
+    "core/tests/test_v4_m4_cut.cpp",
+    "core/tests/test_v4_m4_fixtures.h",
+    "core/tests/test_v4_m4_ice.cpp",
+    "core/tests/test_v4_m4_section_fit.h",
+    "core/tests/test_v4_m4_world.h",
+    "scripts/test_sets.conf"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-coast-grade.md",
+    "docs/engineering/v4-ice-features.md",
+    "docs/engineering/v4-ice-grade.md",
+    "docs/engineering/v4-m4-ice-coast-cut.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "aa20dd231",
+   "merge": "aa20dd231ada29aef1a36426c41ec79645608468",
+   "base": "e283434bc42525b21a28b87d5b48e91fedb3295d",
+   "query": "v4 M7: placement, classification frames, sea meanings, public queries",
+   "query_source": "ledger docs/planning/ledger.md at base, row T149",
+   "gold": [
+    "core/worldgen/v4/classified_site.cpp",
+    "core/worldgen/v4/classified_site.h",
+    "core/worldgen/v4/m7/m7_graph.h",
+    "core/worldgen/v4/sea_meanings.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m7/classify_kernel.cpp",
+    "core/worldgen/v4/m7/generated_water.cpp",
+    "core/worldgen/v4/m7/generated_water.h",
+    "core/worldgen/v4/m7/ground_surface.cpp",
+    "core/worldgen/v4/m7/ground_surface.h",
+    "core/worldgen/v4/m7/rooting.cpp",
+    "core/worldgen/v4/m7/rooting.h",
+    "core/worldgen/v4/m7/sea_queries.h",
+    "core/worldgen/v4/m7/site_inputs.cpp",
+    "core/worldgen/v4/m7/site_inputs.h",
+    "core/worldgen/v4/m7/terrain_query.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/v4_m7_sea.h",
+    "core/tests/test_v4_classified_site.cpp",
+    "core/tests/test_v4_m7_classify.cpp",
+    "core/tests/test_v4_m7_query.cpp",
+    "core/tests/test_v4_m7_rig.h",
+    "core/tests/test_v4_m7_surface.cpp",
+    "core/tests/test_v4_sea_meanings.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-classified-site.md",
+    "docs/engineering/v4-m7-ground-queries.md",
+    "docs/engineering/v4-m7-sea-migration.md",
+    "docs/engineering/v4-sea-meanings.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "fd4936488",
+   "merge": "fd4936488ba7e952acb791508ddc4abd16d55b58",
+   "base": "5e4f61caefe4acfa2a1f72608daf358d8b07ecca",
+   "query": "v4 M6: one function at every far level; macro pyramid; delete the macro far path",
+   "query_source": "ledger docs/planning/ledger.md at base, row T148",
+   "gold": [
+    "core/worldgen/v4/m6/m6_graph.h",
+    "core/worldgen/v4/macro_pyramid.cpp",
+    "core/worldgen/v4/macro_pyramid.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/m6/bench_far_macro.cpp",
+    "core/worldgen/v4/m6/far_columns.cpp",
+    "core/worldgen/v4/m6/far_columns.h",
+    "core/worldgen/v4/m6/far_macro_term.cpp",
+    "core/worldgen/v4/m6/far_macro_term.h",
+    "core/worldgen/v4/m6/far_request.h",
+    "core/worldgen/v4/m6/pyramid_kernels.cpp"
+   ],
+   "gold_tests": [
+    "core/tests/census/v4_m6_far.cpp",
+    "core/tests/census/v4_m6_far.h",
+    "core/tests/test_v4_m6_census.cpp",
+    "core/tests/test_v4_m6_far_tile.cpp",
+    "core/tests/test_v4_m6_kernels.cpp",
+    "core/tests/test_v4_m6_macro_term.cpp",
+    "core/tests/test_v4_m6_world.h",
+    "core/tests/test_v4_macro_pyramid.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/v4-m6-far-function.md",
+    "docs/engineering/v4-macro-pyramid.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  },
+  {
+   "id": "cdf59c1f8",
+   "merge": "cdf59c1f8db34829dfa72fb6443ee3886f0dc2b0",
+   "base": "c98c919f57de0cadef17b22387c59bc5a244cb11",
+   "query": "ledger.mjs: archive then ledger write is not atomic; a failed open duplicates rows",
+   "query_source": "ledger docs/planning/ledger.md at base, row G317",
+   "gold": [
+    "scripts/idiom_drift.sh",
+    "scripts/ledger.mjs"
+   ],
+   "gold_docs": [
+    "docs/planning/ledger-archive.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "77671ac4f",
+   "merge": "77671ac4f185f15b4640a98bd43a0746d36bf65f",
+   "base": "6913250037bb70ccb17b8dbbd6981d3be6553a07",
+   "query": "Preflight and break-check scripts for the hand-back gates (working-practice.md)",
+   "query_source": "ledger docs/planning/ledger.md at base, row G289",
+   "gold": [
+    "scripts/cpp_source.mjs",
+    "scripts/idiom_drift.sh",
+    "scripts/spec_trace.sh"
+   ],
+   "gold_new": [
+    "scripts/break_check.sh",
+    "scripts/line_classify.mjs",
+    "scripts/preflight.mjs",
+    "scripts/preflight.sh",
+    "scripts/preflight_checks.mjs",
+    "scripts/preflight_git.mjs"
+   ],
+   "gold_docs": [
+    ".claude/rules/working-practice.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "9e5b14b69",
+   "merge": "9e5b14b69d7f1aa1883face15d3fc35f9473f3ac",
+   "base": "36378390088ab4b7ee762c9de153bb430734aecd",
+   "query": "Dead players: one gate in TerrainState::apply refuses every intent while dead",
+   "query_source": "ledger docs/planning/ledger.md at base, row G298",
+   "gold": [
+    "server/body_host.cpp",
+    "server/food_intents.cpp",
+    "server/food_intents.h",
+    "server/items/body_save.cpp",
+    "server/items/player_records.h",
+    "server/server.cpp",
+    "server/server.h",
+    "server/terrain/terrain_respawn.cpp"
+   ],
+   "gold_tests": [
+    "server/tests/test_death.cpp",
+    "server/tests/test_death_gate.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/death-and-recovery.md"
+   ],
+   "split": "dev",
+   "scope": "server"
+  },
+  {
+   "id": "c6f3f5c17",
+   "merge": "c6f3f5c1780c6b146bc097c0c41141e96257f643",
+   "base": "922f2c322db201bdbdd1a9a1e73034c1f0b66954",
+   "query": "Bear threat context: a moving signal separate from Gait, which now does two jobs",
+   "query_source": "ledger docs/planning/ledger.md at base, row G167c",
+   "gold": [
+    "core/animals/animal_brain.cpp",
+    "core/animals/animal_table.cpp",
+    "core/animals/animal_table.h",
+    "core/animals/brain_constants.h",
+    "core/animals/temperament.cpp",
+    "core/animals/temperament.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_animal_brain.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/animal-behaviour.md"
+   ],
+   "split": "holdout",
+   "scope": "core/animals"
+  },
+  {
+   "id": "64cdb2bca",
+   "merge": "64cdb2bcacda9c3231a82a227bd0d67390f728cb",
+   "base": "2b8ec1bd993a515080e703e741c1c38ab6af2d42",
+   "query": "Animal brain: wake timed waiting actions by deadline, not executor run every tick",
+   "query_source": "ledger docs/planning/ledger.md at base, row G167b",
+   "gold": [
+    "core/animals/action_executor.h",
+    "core/animals/action_executors.h",
+    "core/animals/animal_brain.cpp",
+    "core/animals/animal_brain.h",
+    "core/animals/animal_table.cpp",
+    "core/animals/animal_table.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_animal_brain.cpp",
+    "server/tests/test_animals.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/animal-behaviour.md"
+   ],
+   "split": "holdout",
+   "scope": "core/animals"
+  },
+  {
+   "id": "146582748",
+   "merge": "14658274807be882f562b70ba2ffc8d8447555c8",
+   "base": "5fc4009c9dcfef928bde51710f521f8ad5207c94",
+   "query": "idiom_drift reach step takes 3-15 min after merges: cap it or add --no-reach",
+   "query_source": "ledger docs/planning/ledger.md at base, row G54",
+   "gold": [
+    "scripts/idiom.sh",
+    "scripts/idiom_drift.sh",
+    "scripts/layers_check.mjs"
+   ],
+   "gold_new": [
+    "scripts/include_graph.mjs",
+    "scripts/include_reach.mjs"
+   ],
+   "gold_docs": [
+    ".claude/rules/idiom.md"
+   ],
+   "split": "dev",
+   "scope": "scripts"
+  },
+  {
+   "id": "e8823d987",
+   "merge": "e8823d9870ee2b2255997b33c013e397a8ab2b4e",
+   "base": "baa37ff19f80ad0497ababbc79b5ef0a0fca3646",
+   "query": "Dappled sunlight: leaves cast moving sun shadows on the ground, with sun and weather",
+   "query_source": "ledger docs/planning/ledger.md at base, row G273",
+   "gold": [
+    "game/shaders/leaf_cutout.gdshader",
+    "game/sky/sky_palette.json",
+    "game/sky/sky_rig.gd",
+    "game/world/floor_capture.gd",
+    "game/world/world_main.gd"
+   ],
+   "gold_new": [
+    "game/world/canopy_sway.gd"
+   ],
+   "gold_tests": [
+    "game/tests/canopy_sway_test.gd",
+    "game/tests/canopy_sway_test.tscn",
+    "game/tests/daytime_grade_test.gd",
+    "game/tests/terrain_draw_test.gd"
+   ],
+   "gold_docs": [
+    "docs/design/dappled-sunlight.md"
+   ],
+   "split": "dev",
+   "scope": "game"
+  },
+  {
+   "id": "5317c97fa",
+   "merge": "5317c97fae1505bb2cb40a4b0f6288b2a3ad6a5b",
+   "base": "eac2856e13c7ada686143c9b622fbaa7100b08c8",
+   "query": "Water look in game: see-through, depth-tinted water from the G181 spike (bed shows)",
+   "query_source": "ledger docs/planning/ledger.md at base, row G257",
+   "gold": [
+    "game/world/ambience_capture.gd",
+    "game/world/water.gdshader",
+    "game/world/world_main.gd"
+   ],
+   "gold_tests": [
+    "game/tests/test_util.gd",
+    "game/tests/water_look_capture.gd"
+   ],
+   "split": "dev",
+   "scope": "game/world"
+  },
+  {
+   "id": "a0b2876b7",
+   "merge": "a0b2876b71ed704be51f9850a2db026257683710",
+   "base": "d982c71e2cd7c66d245f4abe06f9fb55b78ab277",
+   "query": "core/workpiece library: grid, operations, shape hash, preview-equals-result, bench",
+   "query_source": "ledger docs/planning/ledger.md at base, row G39",
+   "gold": [
+    "core/jobs/job_system.cpp",
+    "core/jobs/job_system.h",
+    "core/jobs/job_wake.cpp",
+    "core/sim/slot_map.cpp",
+    "core/sim/slot_map.h"
+   ],
+   "gold_new": [
+    "core/bench/bench_workpiece.cpp",
+    "core/bench/workpiece_bound.h",
+    "core/bench/workpiece_sweep.h",
+    "core/workpiece/bit_packing.h",
+    "core/workpiece/canonical_lines.cpp",
+    "core/workpiece/canonical_rows.cpp",
+    "core/workpiece/canonical_rows.h",
+    "core/workpiece/components.cpp",
+    "core/workpiece/components.h",
+    "core/workpiece/connectivity.h",
+    "core/workpiece/constants/grid_constants.h",
+    "core/workpiece/grid.cpp",
+    "core/workpiece/grid.h",
+    "core/workpiece/heat.h",
+    "core/workpiece/identity.cpp",
+    "core/workpiece/identity.h",
+    "core/workpiece/operation_rotation.cpp",
+    "core/workpiece/operations.cpp",
+    "core/workpiece/operations.h",
+    "core/workpiece/orientations.h",
+    "core/workpiece/shape.cpp",
+    "core/workpiece/shape.h",
+    "core/workpiece/shape_transfer.cpp",
+    "core/workpiece/shape_transfer.h",
+    "server/bench/bench_work_store.cpp",
+    "server/constants/work_constants.h",
+    "server/workpiece/commit_order.h",
+    "server/workpiece/work_store.cpp",
+    "server/workpiece/work_store.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_job_submit.cpp",
+    "core/tests/test_workpiece.cpp",
+    "core/tests/test_workpiece_canonical.cpp",
+    "core/tests/test_workpiece_components.cpp",
+    "core/tests/test_workpiece_index.cpp",
+    "core/tests/test_workpiece_properties.cpp",
+    "core/tests/test_workpiece_resources.cpp",
+    "core/tests/test_workpiece_shaping.cpp",
+    "core/tests/workpiece_adversaries.h",
+    "core/tests/workpiece_bound_cases.h",
+    "core/tests/workpiece_fixtures.h",
+    "core/tests/workpiece_review_cases.h",
+    "core/tests/workpiece_separation_cases.h",
+    "server/tests/test_work_store.cpp",
+    "server/tests/test_work_store_lifecycle.cpp",
+    "server/tests/work_store_fixture.h"
+   ],
+   "gold_docs": [
+    "docs/architecture.md",
+    "docs/design/physical-crafting.md",
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/layers.conf",
+    "docs/engineering/workpiece-r10.md",
+    "docs/engineering/workpiece-r11.md",
+    "docs/engineering/workpiece-r12.md",
+    "docs/engineering/workpiece-r2.md",
+    "docs/engineering/workpiece-r3.md",
+    "docs/engineering/workpiece-r4.md",
+    "docs/engineering/workpiece-r5.md",
+    "docs/engineering/workpiece-r6.md",
+    "docs/engineering/workpiece-r7.md",
+    "docs/engineering/workpiece-r8.md",
+    "docs/engineering/workpiece-r9.md",
+    "docs/engineering/workpiece.md"
+   ],
+   "split": "dev",
+   "scope": "core"
+  },
+  {
+   "id": "a0e53aec8",
+   "merge": "a0e53aec837e2e9c534f3151e72a69b3d43eacd8",
+   "base": "3f4343337fcf9b970dcfb970c19384c96b48c02d",
+   "query": "Adopt the scaled receiver draw for v3 landform and hydrology routing: one golden batch",
+   "query_source": "ledger docs/planning/ledger.md at base, row T169",
+   "gold": [
+    "core/bench/bench_worldgen.cpp",
+    "core/worldgen/caves/cave_carve.cpp",
+    "core/worldgen/caves/cave_carve_internal.h",
+    "core/worldgen/constants/worldgen_constants.h",
+    "core/worldgen/hydrology.cpp",
+    "core/worldgen/landform.cpp",
+    "core/worldgen/landform.h",
+    "core/worldgen/receiver_rule.h",
+    "core/worldgen/stream_power.cpp",
+    "core/worldgen/stream_power.h"
+   ],
+   "gold_new": [
+    "core/worldgen/landform_trial.h",
+    "core/worldgen/stream_power_trial.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/erosion_probe.h",
+    "core/tests/census/erosion_stability.cpp",
+    "core/tests/census/erosion_stability.h",
+    "core/tests/census/erosion_stability_character.cpp",
+    "core/tests/census/erosion_stability_main.cpp",
+    "core/tests/census/erosion_stability_response.cpp",
+    "core/tests/census/network_report.cpp",
+    "core/tests/golden/worldgen_goldens.h",
+    "core/tests/test_coast.cpp",
+    "core/tests/test_erosion_stability.cpp",
+    "core/tests/test_glacial_row.cpp",
+    "core/tests/test_grade_properties.cpp",
+    "core/tests/test_hydrology.cpp",
+    "core/tests/test_incision_cap.cpp",
+    "core/tests/test_macro_realism.cpp",
+    "core/tests/test_region_caves.cpp",
+    "core/tests/test_river_incision.cpp",
+    "core/tests/test_surface_edges.cpp",
+    "core/tests/test_v4_classified_site.cpp",
+    "core/tests/test_v4_coast.cpp",
+    "core/tests/test_v4_fall_line_receivers.cpp",
+    "core/tests/test_v4_network_join.cpp",
+    "core/tests/test_v4_sea_meanings.cpp",
+    "core/tests/test_valleys.cpp",
+    "core/tests/test_water_ice.cpp",
+    "core/tests/test_wind.cpp",
+    "scripts/test_sets.conf"
+   ],
+   "gold_docs": [
+    "docs/engineering/canonical-models.md",
+    "docs/engineering/census-baseline/v3_seed20261111.counts.csv",
+    "docs/engineering/census-baseline/v3_seed7.counts.csv",
+    "docs/engineering/erosion-stable-receivers.md",
+    "docs/engineering/v4-drainage-fall-line.md",
+    "docs/engineering/v4-m0-census.md",
+    "docs/worldgen-region-caves-design.md"
+   ],
+   "split": "dev",
+   "scope": "core"
+  },
+  {
+   "id": "1c60cd990",
+   "merge": "1c60cd99023498b7d13232ea0541a1b9da26a96f",
+   "base": "50b70cdbbc3f4c911e95de0a9810ebbd8e1a8fbe",
+   "query": "Edit stamp at publish_block_change and lit-fire index inside Fires",
+   "query_source": "ledger docs/planning/ledger.md at base, row G88",
+   "gold": [
+    "server/constants/fire_constants.h",
+    "server/server.cpp",
+    "server/structures/fires.cpp",
+    "server/structures/fires.h",
+    "server/terrain/generated_cache.cpp",
+    "server/terrain/generated_cache.h",
+    "server/terrain/terrain_state.cpp",
+    "server/terrain/terrain_state.h",
+    "server/terrain/terrain_stream.cpp",
+    "server/terrain/terrain_world.cpp",
+    "server/terrain/terrain_world.h"
+   ],
+   "gold_new": [
+    "server/bench/bench_body_inputs.cpp",
+    "server/structures/fires_index.cpp",
+    "server/terrain/shelter_cache.h"
+   ],
+   "gold_tests": [
+    "server/tests/test_body_fires.cpp",
+    "server/tests/test_body_stamps.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/body-and-weather.md",
+    "docs/design/body-input-batching.md",
+    "docs/design/body-input-indexes.md"
+   ],
+   "split": "dev",
+   "scope": "server"
+  },
+  {
+   "id": "17dd5993e",
+   "merge": "17dd5993eb22907707d5ba20d1a1a9b3d1744dad",
+   "base": "a41c3b5fe2d8a94dad94a8aaa41c864f5f62c7b2",
+   "query": "Erosion routes with a stable receiver rule: the macro surface without the hashed draw",
+   "query_source": "ledger docs/planning/ledger.md at base, row T165",
+   "gold": [
+    "core/worldgen/landform.cpp",
+    "core/worldgen/landform.h",
+    "core/worldgen/stream_power.cpp",
+    "core/worldgen/stream_power.h"
+   ],
+   "gold_tests": [
+    "core/tests/census/erosion_stability.cpp",
+    "core/tests/census/erosion_stability.h",
+    "core/tests/census/erosion_stability_character.cpp",
+    "core/tests/census/erosion_stability_main.cpp",
+    "core/tests/census/erosion_stability_response.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/erosion-stable-receivers.md"
+   ],
+   "split": "dev",
+   "scope": "core/worldgen"
+  }
+ ]
+}

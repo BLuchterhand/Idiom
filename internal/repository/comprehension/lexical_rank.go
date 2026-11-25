@@ -22,7 +22,8 @@ type LexicalHit struct {
 // returns them best first, ties by path. include restricts which files may
 // appear (scope, forbidden paths); it never changes a score, so corpus
 // statistics stay those of the whole index. A nil include admits every file.
-func RankLexical(corpus LexicalCorpus, terms []string, include func(path string) bool) []LexicalHit {
+// weight, when not nil, multiplies each file's score (per-language demotion).
+func RankLexical(corpus LexicalCorpus, terms []string, include func(path string) bool, weight func(path string) float64) []LexicalHit {
 	if corpus.Docs == 0 {
 		return nil
 	}
@@ -67,6 +68,10 @@ func RankLexical(corpus LexicalCorpus, terms []string, include func(path string)
 		score := a.score
 		if IsLexicalTestPath(path) {
 			score *= lexicalTestWeight
+		}
+
+		if weight != nil {
+			score *= weight(path)
 		}
 
 		hits = append(hits, LexicalHit{Path: path, Score: score, Terms: topTerms(a.best)})
