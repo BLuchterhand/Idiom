@@ -2959,8 +2959,13 @@ func nodeTermMatchScore(node Node, term string) int {
 	name := strings.ToLower(node.QualifiedName)
 	kind := strings.ToLower(node.Kind)
 
+	// Namespace-qualified C++ names ("bt::client::Ambience") must still count
+	// as an exact match on the symbol's own name.
+	bare, _ := node.Properties["name"].(string)
+	bare = strings.ToLower(bare)
+
 	switch {
-	case name == term:
+	case name == term || bare == term:
 		score += 80
 	case strings.Contains(name, term):
 		score += 40
