@@ -754,9 +754,43 @@ func cloneWeights(in map[string]float64) map[string]float64 {
 	return out
 }
 
+// learningEventIDVersion is the current event-id recipe. An id is the hash of
+// a frozen record (learningEventIDRecipeV1), never of the live struct, so a
+// field added to LearningLogEntry cannot change the id of an event already in
+// a log. A new recipe gets a new version and a new frozen record.
+const learningEventIDVersion = 1
+
+// learningEventIDRecipeV1 is the record recipe 1 hashes. Its fields and JSON
+// tags are frozen; id_version and event_id are deliberately absent.
+type learningEventIDRecipeV1 struct {
+	RequestID     string                           `json:"request_id,omitempty"`
+	Timestamp     string                           `json:"timestamp"`
+	Source        string                           `json:"source"`
+	Action        string                           `json:"action"`
+	State         string                           `json:"state,omitempty"`
+	Reason        string                           `json:"reason,omitempty"`
+	Score         float64                          `json:"score,omitempty"`
+	Files         []string                         `json:"files,omitempty"`
+	TaskID        string                           `json:"task_id,omitempty"`
+	CorpusID      string                           `json:"corpus_id,omitempty"`
+	ResultID      string                           `json:"result_id,omitempty"`
+	Evidence      *LearningEvidenceRef             `json:"evidence,omitempty"`
+	BeforeWeights *map[string]float64              `json:"before_weights,omitempty"`
+	AfterWeights  *map[string]float64              `json:"after_weights,omitempty"`
+	Rollback      *LearningRollbackData            `json:"rollback,omitempty"`
+	Verification  *LearningLogVerificationEvidence `json:"verification,omitempty"`
+	Note          string                           `json:"note,omitempty"`
+}
+
 func learningEventID(entry LearningLogEntry) string {
-	entry.EventID = ""
-	encoded, err := json.Marshal(entry)
+	record := learningEventIDRecipeV1{
+		RequestID: entry.RequestID, Timestamp: entry.Timestamp, Source: entry.Source, Action: entry.Action,
+		State: entry.State, Reason: entry.Reason, Score: entry.Score, Files: entry.Files, TaskID: entry.TaskID,
+		CorpusID: entry.CorpusID, ResultID: entry.ResultID, Evidence: entry.Evidence, BeforeWeights: entry.BeforeWeights,
+		AfterWeights: entry.AfterWeights, Rollback: entry.Rollback, Verification: entry.Verification, Note: entry.Note,
+	}
+
+	encoded, err := json.Marshal(record)
 	if err != nil {
 		return ""
 	}
@@ -805,12 +839,16 @@ func learningRequestFingerprint(entry LearningLogEntry) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// errLearningEventIDMismatch marks an event whose stored id is not the hash of
+// its record: written by an older id recipe, or tampered with.
+var errLearningEventIDMismatch = errors.New("learning-log event id does not match its canonical record")
+
 func validateLearningLogEntrySemantics(entry LearningLogEntry) error {
 	if entry.RequestID == "" {
 		return errors.New("learning-log entry is missing its stable request id")
 	}
 	if entry.EventID == "" || entry.EventID != learningEventID(entry) {
-		return errors.New("learning-log event id does not match its canonical record")
+		return errLearningEventIDMismatch
 	}
 	if entry.Source == "" || entry.Action == "" || entry.State == "" {
 		return errors.New("learning-log entry is missing its source, action, or state")
