@@ -22,16 +22,20 @@ const rrfK = 60
 // reciprocal rank when RRF is set); then each file gains Alpha times the best
 // score among its graph neighbours in the top Seeds files.
 type LocalizationBaselineConfig struct {
-	Name       string
-	WContent   float64
-	WPath      float64
-	WDocs      float64
-	WIdiom     float64 // RRF only: weight of idiom's own ranked list
-	Alpha      float64
-	Seeds      int
-	TestWeight float64 // multiplies scores of files matching the test regex
-	RRF        bool
-	PairsOnly  bool // graph step follows header/implementation pairs only
+	Name        string
+	WContent    float64
+	WPath       float64
+	WDocs       float64
+	WIdiom      float64 // RRF only: weight of idiom's own ranked list
+	Alpha       float64
+	Seeds       int
+	TestWeight  float64 // multiplies scores of files matching the test regex
+	RRF         bool
+	PairsOnly   bool // graph step follows header/implementation pairs only
+	ImportsOnly bool // graph step follows import/include edges and pairs, not calls
+	// FuseIdiom, when positive, fuses the final lexical+graph ranking with
+	// idiom's own ranked list by reciprocal rank (idiom weighted FuseIdiom).
+	FuseIdiom float64
 }
 
 // LocalizationBaselineOptions configures a baseline run.
@@ -165,6 +169,8 @@ func (bc *baselineCase) rank(cfg LocalizationBaselineConfig, idiomRanked []strin
 			adj := bc.adj
 			if cfg.PairsOnly {
 				adj = bc.pairs
+			} else if cfg.ImportsOnly {
+				adj = bc.imports
 			}
 
 			for nb := range adj[s] {
@@ -173,7 +179,25 @@ func (bc *baselineCase) rank(cfg LocalizationBaselineConfig, idiomRanked []strin
 		}
 	}
 
-	return bc.rankScores(final)
+	ranked := bc.rankScores(final)
+	if cfg.FuseIdiom <= 0 {
+		return ranked
+	}
+
+	// Both lists are cut to the depth idiom runs keep, so membership in the
+	// lexical tail does not count as agreement.
+	fused := make([]float64, n)
+	for r, file := range firstN(ranked, localizationEvalRankedKept) {
+		fused[bc.index[file]] += 1 / float64(rrfK+r+1)
+	}
+
+	for r, file := range firstN(idiomRanked, localizationEvalRankedKept) {
+		if i, ok := bc.index[file]; ok {
+			fused[i] += cfg.FuseIdiom / float64(rrfK+r+1)
+		}
+	}
+
+	return bc.rankScores(fused)
 }
 
 func firstN(s []string, n int) []string {

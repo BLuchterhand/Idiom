@@ -236,6 +236,7 @@ type baselineCase struct {
 	isTest  []bool
 	adj     []map[int]float64 // file graph, undirected, edge counts
 	pairs   []map[int]float64 // header/implementation pairs only
+	imports []map[int]float64 // import/include edges plus pairs (no call edges)
 }
 
 func loadBaselineCase(repo, indexDir, codeMap string, c LocalizationEvalCase, cfg LocalizationEvalBuilderConfig) (*baselineCase, error) {
@@ -301,14 +302,31 @@ func loadBaselineCase(repo, indexDir, codeMap string, c LocalizationEvalCase, cf
 		}
 	}
 
+	bc.imports = make([]map[int]float64, len(files))
+	linkInto := func(adj []map[int]float64, a, b int) {
+		for _, p := range [][2]int{{a, b}, {b, a}} {
+			if adj[p[0]] == nil {
+				adj[p[0]] = map[int]float64{}
+			}
+
+			adj[p[0]][p[1]]++
+		}
+	}
+
 	for _, e := range edges {
 		a, okA := bc.index[e[0]]
 		b, okB := bc.index[e[1]]
 
 		if okA && okB {
 			link(a, b, 1)
+
+			if e[2] == "imports" && a != b {
+				linkInto(bc.imports, a, b)
+			}
 		}
 	}
+
+	linkHeaderPairs(files, func(a, b int, _ float64) { linkInto(bc.imports, a, b) })
 
 	linkHeaderPairs(files, link)
 
@@ -354,8 +372,9 @@ func linkHeaderPairs(files []string, link func(a, b int, w float64)) {
 }
 
 // readIndexGraph returns the indexed files matching sourceRegex and every
-// cross-file edge (imports, calls, tests, extends) between indexed paths.
-func readIndexGraph(dbPath, sourceRegex string) ([]string, [][2]string, error) {
+// cross-file edge (imports, calls, tests, extends) between indexed paths,
+// as source, target and kind.
+func readIndexGraph(dbPath, sourceRegex string) ([]string, [][3]string, error) {
 	rx, err := regexp.Compile(sourceRegex)
 	if err != nil {
 		return nil, nil, err
@@ -388,7 +407,7 @@ func readIndexGraph(dbPath, sourceRegex string) ([]string, [][2]string, error) {
 
 	rows.Close()
 
-	rows, err = db.Query(`SELECT s.path, t.path FROM graph_edges e
+	rows, err = db.Query(`SELECT s.path, t.path, e.kind FROM graph_edges e
 		JOIN graph_nodes s ON s.id = e.source_id JOIN graph_nodes t ON t.id = e.target_id
 		WHERE e.kind IN ('imports','calls','tests','extends') AND s.path IS NOT NULL AND t.path IS NOT NULL AND s.path <> t.path`)
 	if err != nil {
@@ -396,15 +415,15 @@ func readIndexGraph(dbPath, sourceRegex string) ([]string, [][2]string, error) {
 	}
 	defer rows.Close()
 
-	var edges [][2]string
+	var edges [][3]string
 
 	for rows.Next() {
-		var a, b string
-		if err := rows.Scan(&a, &b); err != nil {
+		var a, b, kind string
+		if err := rows.Scan(&a, &b, &kind); err != nil {
 			return nil, nil, err
 		}
 
-		edges = append(edges, [2]string{a, b})
+		edges = append(edges, [3]string{a, b, kind})
 	}
 
 	return files, edges, rows.Err()

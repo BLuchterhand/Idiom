@@ -21,6 +21,8 @@ var baselineConfigs = []eval.LocalizationBaselineConfig{
 	{Name: "bm25-notests", WContent: 1, TestWeight: 0.5},
 	{Name: "bm25-notests-graph", WContent: 1, TestWeight: 0.5, Alpha: 0.5, Seeds: 10},
 	{Name: "bm25-notests-pairs", WContent: 1, TestWeight: 0.5, Alpha: 0.5, Seeds: 10, PairsOnly: true},
+	{Name: "hybrid-idiom", WContent: 1, TestWeight: 0.5, Alpha: 0.5, Seeds: 10, FuseIdiom: 1},
+	{Name: "bm25-notests-imports", WContent: 1, TestWeight: 0.5, Alpha: 0.5, Seeds: 10, ImportsOnly: true},
 }
 
 // baseline scores the reference rankers, fits the grid on dev only, writes
