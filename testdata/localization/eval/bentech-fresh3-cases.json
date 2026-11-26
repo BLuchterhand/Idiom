@@ -1,0 +1,673 @@
+{
+ "schema": 1,
+ "corpus": "bentech-fresh3",
+ "builder": {
+  "commits": "merges",
+  "since": "900a05152",
+  "max_commits": 400,
+  "query_from": "ledger",
+  "ledger_paths": [
+   "docs/planning/ledger.md",
+   "docs/planning/ledger-archive.md"
+  ],
+  "subject_id_regex": "^merge: ([A-Z]+[0-9]+[a-z]?)\\b",
+  "ledger_row_regex": "(?m)^\\| %s \\| ([^|]+) \\|",
+  "source_regex": "\\.(cpp|h|hpp|cc|gd|gdshader|json|sh|mjs|js|py|ps1)$",
+  "exclude_gold": [
+   "^(docs|\\.claude|art)/",
+   "\\.uid$",
+   "golden",
+   "CMakeLists",
+   "\\.(jpg|png)$",
+   "selftest"
+  ],
+  "test_regex": "(^|/)tests?/|_test\\.|(^|/)test_",
+  "doc_regex": "\\.md$|^docs/",
+  "max_gold_files": 60,
+  "min_query_len": 12,
+  "select": "every qualifying first-parent merge of BenTech origin/main 46b5daa40 after 900a05152, the newest commit in any earlier BenTech case file"
+ },
+ "localization": {
+  "content_globs": [
+   "content/**/*.json",
+   "game/**/*.json"
+  ],
+  "shader_globs": [
+   "game/**/*.gdshader"
+  ],
+  "extra_extensions": [
+   ".ps1"
+  ]
+ },
+ "cases": [
+  {
+   "id": "da47c541d",
+   "merge": "da47c541d9cfc6fb715c0edcf38f630b9ca05d06",
+   "base": "1372c67e50d981b2495fd732f60c5f069c9b9ff9",
+   "query": "Globe world at Earth scale, scalable down and up: sphere mapping, coarse global model",
+   "query_source": "ledger docs/planning/ledger.md at base, row T327",
+   "gold": [
+    "core/world/topology/cube_sphere_topology.h",
+    "core/world/topology/cylinder_topology.cpp",
+    "core/world/topology/globe_config.h"
+   ],
+   "gold_new": [
+    "core/common/wide_math.h",
+    "core/world/topology/cube_sphere_hilbert.h",
+    "core/world/topology/cube_sphere_math.cpp",
+    "core/world/topology/cube_sphere_math.h",
+    "core/world/topology/cube_sphere_metric.cpp",
+    "core/world/topology/cube_sphere_pages.cpp",
+    "core/world/topology/cube_sphere_pages.h",
+    "core/world/topology/cube_sphere_topology.cpp",
+    "core/world/topology/topology_cordic.cpp",
+    "core/world/topology/topology_cordic.h"
+   ],
+   "gold_tests": [
+    "core/tests/globe_mapping_harness.cpp",
+    "core/tests/globe_mapping_harness.h",
+    "core/tests/globe_sphere_fixture.h",
+    "core/tests/test_globe_mapping.cpp",
+    "core/tests/test_globe_metric.cpp",
+    "core/tests/test_globe_sphere.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t327-globe-contracts.md",
+    "docs/engineering/canonical-models.md",
+    "docs/handback/globe-core.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "c426374f7",
+   "merge": "c426374f70ce349b0db28520ac55ddc4d9dace53",
+   "base": "1b1d4462a392ec332964923805cbcce20ff99c8a",
+   "query": "Water switch S1: wire HydroWaterWorld, cache and feed at server startup",
+   "query_source": "ledger docs/planning/ledger.md at base, row T343a",
+   "gold": [
+    "server/server.cpp",
+    "server/server_config.cpp",
+    "server/server_config.h",
+    "server/terrain/generated_cache.cpp",
+    "server/terrain/generated_cache.h"
+   ],
+   "gold_new": [
+    "server/terrain/hydro_stream.cpp",
+    "server/terrain/hydro_stream.h"
+   ],
+   "gold_tests": [
+    "server/tests/test_hydro_chunk_stream.cpp",
+    "server/tests/test_server_config.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t311-t340-integration.md",
+    "docs/handback/T343a.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "6cd618878",
+   "merge": "6cd6188782dc330daba363ef3baf051ad0e51e69",
+   "base": "41e16bd697336e81d077a0b59c061c750a059f66",
+   "query": "Far and forest-grown trees read as thin bare poles with leaf tufts (all species)",
+   "query_source": "ledger docs/planning/ledger.md at base, row G784",
+   "gold": [
+    "client/game_forest.cpp",
+    "client/tree_cache.cpp",
+    "client/tree_cache.h",
+    "client/tree_plot_placement.cpp",
+    "client/tree_plot_placement.h",
+    "core/worldgen/sandbox_world.cpp"
+   ],
+   "gold_tests": [
+    "client/tests/test_tree_far_read.cpp",
+    "client/tests/test_tree_plot_placement.cpp",
+    "core/tests/test_sandbox_world.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/tree-far-fix.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "41e16bd69",
+   "merge": "41e16bd697336e81d077a0b59c061c750a059f66",
+   "base": "bf920e3f742229bae9fc9289af581756681953c9",
+   "query": "Creatures in game: export wolf model and clips to content/creatures; then fox, squirrel",
+   "query_source": "ledger docs/planning/ledger.md at base, row G584",
+   "gold": [
+    "content/sandbox/stations.json",
+    "game/world/animals_capture.gd",
+    "tools/art/creature_export.mjs"
+   ],
+   "gold_new": [
+    "content/creatures/fox.json",
+    "content/creatures/wolf.json",
+    "scripts/creature_capture.sh"
+   ],
+   "gold_tests": [
+    "client/tests/test_creature_pose.cpp",
+    "tools/art/test_creature_export.mjs"
+   ],
+   "gold_docs": [
+    "docs/art/concepts/animals/fox_fine.html",
+    "docs/art/concepts/animals/squirrel_game.html",
+    "docs/design/animals-first-slice.md",
+    "docs/handback/G584.md",
+    "docs/handback/G584/fox_idle.png",
+    "docs/handback/G584/fox_walk_p000.png",
+    "docs/handback/G584/fox_walk_p025.png",
+    "docs/handback/G584/fox_walk_p050.png",
+    "docs/handback/G584/fox_walk_p075.png",
+    "docs/handback/G584/r2/bear_walk_p025_baseline.png",
+    "docs/handback/G584/r2/wolf_walk_p025_far_flank.png",
+    "docs/handback/G584/r2/wolf_walk_p025_near_flank.png",
+    "docs/handback/G584/r2/wolf_walk_p025_shadows_off.png",
+    "docs/handback/G584/wolf_idle.png",
+    "docs/handback/G584/wolf_walk_p000.png",
+    "docs/handback/G584/wolf_walk_p025.png",
+    "docs/handback/G584/wolf_walk_p050.png",
+    "docs/handback/G584/wolf_walk_p075.png"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "bf920e3f7",
+   "merge": "bf920e3f742229bae9fc9289af581756681953c9",
+   "base": "89c8511be9d490ea80e2e83d72ab543d9e4d1d34",
+   "query": "Cells with same-body seams seed from them (MissingWetSource 569/416)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T342c",
+   "gold": [
+    "core/worldgen/v4/final_macro_water.cpp",
+    "core/worldgen/v4/final_macro_water.h",
+    "core/worldgen/v4/final_water_cell.cpp",
+    "core/worldgen/v4/final_water_cell.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_final_macro_water.cpp",
+    "core/tests/test_final_macro_water_census.cpp",
+    "core/tests/test_final_water_cell.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t342c-seam-seeded-reaches.md",
+    "docs/design/t342d-envelope-growth.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "da8a93ac3",
+   "merge": "da8a93ac3297972533ee7cec893e40f162a50802",
+   "base": "1c9cad43eca413eb655a85de7b12684973e76cc4",
+   "query": "Windows main red: food_spoil divide by zero, hydro_cell_c002 stack overflow, 64 vs 128",
+   "query_source": "ledger docs/planning/ledger.md at base, row G795",
+   "gold": [
+    "core/diagnostics/sink.cpp",
+    "core/jobs/thread_cpu.cpp",
+    "core/jobs/thread_cpu.h",
+    "core/sim/food/stack_spoil.h",
+    "scripts/lib/platform.sh"
+   ],
+   "gold_tests": [
+    "client/tests/test_crash_handler.cpp",
+    "client/tests/test_tree_conifer.cpp",
+    "client/tests/test_tree_floating.cpp",
+    "client/tests/test_tree_ladder.cpp",
+    "client/tests/test_tree_model.cpp",
+    "client/tests/tree_parallel.h",
+    "core/tests/test_food_spoil.cpp",
+    "core/tests/test_hydro_cell_c002.cpp",
+    "core/tests/test_jobs.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/g795-windows-reds.md",
+    "docs/design/job-system.md",
+    "docs/design/playtest-kit.md",
+    "docs/handback/g795.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "ef87349de",
+   "merge": "ef87349de1b9cab63fa501b60297828a85c740af",
+   "base": "fc655df4e655e79baeacfa664d71b70471bc3b4e",
+   "query": "Census blind spot: ~20 files take hydrology.standing as an argument, no census regex",
+   "query_source": "ledger docs/planning/ledger.md at base, row T340c",
+   "gold": [
+    "core/bench/bench_worldgen.cpp",
+    "core/worldgen/caves/cave_features.cpp",
+    "core/worldgen/hydrology.h",
+    "core/worldgen/macro_water_view.h",
+    "core/worldgen/pickups/pickup_facts.cpp",
+    "core/worldgen/placement/patches.cpp",
+    "core/worldgen/region/region_data.cpp",
+    "core/worldgen/region/region_data.h",
+    "core/worldgen/resources/chunk_resources.cpp",
+    "core/worldgen/resources/deposits.cpp",
+    "core/worldgen/resources/site_traits.cpp",
+    "core/worldgen/resources/spawn_plan.cpp",
+    "core/worldgen/v4/hydro_water_world.cpp",
+    "core/worldgen/water_ice_chunk.cpp",
+    "scripts/t311_consumer_baseline.json",
+    "scripts/t311_consumer_census.mjs",
+    "server/bench/bench_hydrology.cpp",
+    "tools/resourcesweep/main.cpp",
+    "tools/worldaudit/macro_metrics.cpp",
+    "tools/worldaudit/sampling.cpp",
+    "tools/worldmap/climate_maps.cpp",
+    "tools/worldmap/flora_map.cpp",
+    "tools/worldmap/landmark_views.cpp",
+    "tools/worldmap/main.cpp"
+   ],
+   "gold_tests": [
+    "core/tests/test_hydro_water_world.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t311-t340-integration.md",
+    "docs/handback/T340c.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "280e1df3e",
+   "merge": "280e1df3e4e5fbed1f850993e98b59fcecb8aacb",
+   "base": "a2dc3fa932fefccf7fafda041866aed05916adbd",
+   "query": "Switch beech, then maple, on as model species: version bump, save set-aside",
+   "query_source": "ledger docs/planning/ledger.md at base, row G488",
+   "gold": [
+    "content/worldgen/model_species.json",
+    "core/worldgen/constants/worldgen_constants.h",
+    "core/worldgen/content/generated/worldgen_schema.h",
+    "core/worldgen/v4/m7/constants/placement_constants.h"
+   ],
+   "gold_tests": [
+    "client/tests/test_game_forest_species.cpp",
+    "client/tests/test_plot_trees_client.cpp",
+    "core/tests/golden/worldgen_goldens.h",
+    "core/tests/test_glacial_row.cpp",
+    "core/tests/test_region_caves.cpp",
+    "core/tests/test_tree_record.cpp",
+    "server/tests/test_save_set_aside.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/trees-in-game.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "111a40d90",
+   "merge": "111a40d903d1756792a10e11f392b0e13c4314de",
+   "base": "08f722a29e21647f4d51ebe657a597dfdfca7a0b",
+   "query": "test_affected per-binary progress output; deflake honours BUILD_DIR",
+   "query_source": "ledger docs/planning/ledger.md at base, row G745",
+   "gold": [
+    "scripts/deflake.mjs",
+    "scripts/deflake_report.mjs",
+    "scripts/lib/slots.sh",
+    "scripts/loosening_check.mjs",
+    "scripts/run_tests.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh",
+    "scripts/test_affected_selftest.mjs",
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    "docs/design/g745-test-affected-progress.md",
+    "docs/design/g747-loosening-widen-waiver.md",
+    "docs/handback/g716.md",
+    "docs/handback/g745.md",
+    "docs/handback/g747.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "2cbcf0586",
+   "merge": "2cbcf0586e632bdca06f6d79c4928be50cabc806",
+   "base": "037fc3760ec0a2a95aafff9f1fef243de64a3ae5",
+   "query": "CompletedMacroSolid: 100 m completed-solid product so lake levels can re-spill",
+   "query_source": "ledger docs/planning/ledger.md at base, row T342e",
+   "gold": [
+    "core/worldgen/v4/final_macro_water.cpp",
+    "core/worldgen/v4/final_macro_water.h",
+    "core/worldgen/v4/macro_water_causes.cpp",
+    "core/worldgen/v4/macro_water_causes.h",
+    "scripts/causal_order_check.mjs"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/completed_macro_solid.cpp",
+    "core/worldgen/v4/completed_macro_solid.h",
+    "core/worldgen/v4/standing_respill.cpp",
+    "core/worldgen/v4/standing_respill.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_final_macro_water.cpp",
+    "core/tests/test_final_macro_water_census.cpp",
+    "core/tests/test_reach_seam_real.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t342-final-macro-water.md",
+    "docs/design/t342e-completed-macro-solid.md",
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "56f76214a",
+   "merge": "56f76214aa124817c7bccf3cf14d4cec8876ddfb",
+   "base": "40e9d89b57e3d19797f42e9c81071c2403ace214",
+   "query": "T337: informative share 435/331/458 permille vs bar 500 (A4-007/008/009 known_fail)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T337b",
+   "gold": [
+    "core/worldgen/v4/corridor_lines.cpp",
+    "core/worldgen/v4/corridor_lines.h",
+    "core/worldgen/v4/terrain_solid_lower_bound.cpp",
+    "core/worldgen/v4/terrain_solid_lower_bound.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/macro_patch_bound.cpp",
+    "core/worldgen/v4/macro_patch_bound.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_t311_support_probe.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/t337-solid-lower-bound.md",
+    "docs/planning/ledger-archive.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "33c6f7e28",
+   "merge": "33c6f7e2825c930ac6dbb5906d766616e53df98d",
+   "base": "f6cf2b3cd8bf69629b07a8a3895699a9cd3abfc5",
+   "query": "T311 A4: tighten final-solid lower bound (A1 ships full storage interval)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T337",
+   "gold": [
+    "core/worldgen/v4/corridor.h",
+    "core/worldgen/v4/corridor_lines.cpp",
+    "core/worldgen/v4/corridor_lines.h",
+    "core/worldgen/v4/corridor_valleys.cpp",
+    "core/worldgen/v4/network.h",
+    "core/worldgen/v4/network_gather.cpp",
+    "core/worldgen/v4/network_gather.h",
+    "core/worldgen/v4/terrain_final_solid_query.cpp",
+    "core/worldgen/v4/terrain_final_solid_query.h"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/hydro_cell_window.cpp",
+    "core/worldgen/v4/hydro_cell_window.h",
+    "core/worldgen/v4/terrain_solid_lower_bound.cpp",
+    "core/worldgen/v4/terrain_solid_lower_bound.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_final_macro_water_census.cpp",
+    "core/tests/test_final_solid_query.cpp",
+    "core/tests/test_t311_support_probe.cpp"
+   ],
+   "gold_docs": [
+    "docs/engineering/t311-a1-final-solid.md",
+    "docs/engineering/t311-a4-censuses.md",
+    "docs/engineering/t337-solid-lower-bound.md",
+    "docs/planning/ledger.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "822df501e",
+   "merge": "822df501e796f63085c58dc01f546608f367643f",
+   "base": "469140dc60f33559d1f8df3d549359eef0e2d410",
+   "query": "Pole rows: A2 reads ground past world edge; A0/A2 boundary rule (509/510 cells)",
+   "query_source": "ledger docs/planning/ledger.md at base, row T342b",
+   "gold": [
+    "core/worldgen/v4/final_water_cell.cpp",
+    "core/worldgen/v4/final_water_cell.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_final_water_cell.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t342b-world-edge-rule.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "77449a9ff",
+   "merge": "77449a9ff9f96ae667f8e83f356f5ec47386ddb6",
+   "base": "ceb2708509181bb7ea2158c97c734a4195cadccc",
+   "query": "Globe world at Earth scale, scalable down and up: sphere mapping, coarse global model",
+   "query_source": "ledger docs/planning/ledger.md at base, row T327",
+   "gold": [
+    "core/world/topology/surface_address.h"
+   ],
+   "gold_new": [
+    "core/world/topology/cube_face.h",
+    "core/world/topology/cube_sphere_topology.h",
+    "core/world/topology/globe_config.h",
+    "core/world/topology/render_anchor.h",
+    "core/world/topology/surface_keys.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_globe_contracts.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/t327-globe-contracts.md",
+    "docs/design/t328-world-topology.md",
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md",
+    "docs/handback/t327-contracts.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "378c7df4b",
+   "merge": "378c7df4bf6a8578a72604f8a4d7978eb6f17a5d",
+   "base": "8dc507491201d2a1d38564dd7c4e3b7aad35b702",
+   "query": "Idiom localization accuracy: eval harness, ranking, term weights, wider index, learning",
+   "query_source": "ledger docs/planning/ledger.md at base, row G755",
+   "gold": [
+    "scripts/idiom.sh",
+    "scripts/idiom_context.mjs",
+    "scripts/idiom_drift.sh"
+   ],
+   "gold_new": [
+    "scripts/idiom_usage.mjs"
+   ],
+   "gold_tests": [
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    "docs/engineering/idiom-notes.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "0cad792aa",
+   "merge": "0cad792aaadd6caa0a8e1728c97ea520850e4fcf",
+   "base": "c865cacee0c488d3888a02e2e9e6c2f1f07f5946",
+   "query": "One deterministic test selector with a recorded selection artifact",
+   "query_source": "ledger docs/planning/ledger.md at base, row G716",
+   "gold": [
+    "scripts/affected_tests.mjs",
+    "scripts/deflake.mjs",
+    "scripts/results_summary.mjs",
+    "scripts/run_tests.sh"
+   ],
+   "gold_tests": [
+    "scripts/test_affected.sh",
+    "scripts/test_affected_selftest.mjs",
+    "scripts/test_all.sh",
+    "scripts/test_selection.conf"
+   ],
+   "gold_docs": [
+    ".claude/rules/handback.md",
+    ".claude/rules/orchestration.md",
+    ".claude/rules/testing.md",
+    "docs/design/g716-test-selection-receipt.md",
+    "docs/engineering/rule-history.md",
+    "docs/engineering/test-selection.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "142868eb1",
+   "merge": "142868eb13ba6fb7bc1f62cd073c40a31c0ca577",
+   "base": "a167eaffd63cf6fcab7f14b7970f763805f23f3d",
+   "query": "Capture scripts select a species or position (forest_walk_capture, tree stills)",
+   "query_source": "ledger docs/planning/ledger.md at base, row G749",
+   "gold": [
+    "bindings/bentech_game.cpp",
+    "bindings/bentech_game.h",
+    "client/session.h",
+    "client/session_ambience.cpp",
+    "core/worldgen/v4/m7/placement/tree_record.cpp",
+    "core/worldgen/v4/m7/placement/tree_record.h",
+    "scripts/forest_walk_capture.sh",
+    "scripts/idiom_drift.sh",
+    "scripts/tree_poc_capture.sh"
+   ],
+   "gold_new": [
+    "scripts/capture_spawn_server.sh"
+   ],
+   "gold_tests": [
+    "core/tests/test_tree_record.cpp",
+    "game/tests/boundary_test.gd",
+    "game/tests/forest_walk_capture.gd"
+   ],
+   "gold_docs": [
+    "docs/art/g749/README.md",
+    "docs/art/g749/fade_beech_l_0ms.png",
+    "docs/art/g749/fade_beech_l_10s.png",
+    "docs/art/g749/fade_beech_l_stand_0ms.png",
+    "docs/art/g749/fade_beech_l_stand_10s.png",
+    "docs/design/g749-capture-species-selector.md",
+    "docs/handback/g749.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "711bec0e1",
+   "merge": "711bec0e162bc9ac154ab5ba683b5e2940b1ae09",
+   "base": "180e053f480130c23ae371fc1fa53841044e393e",
+   "query": "T311 final macro water solve: produce FinalMacroWaterDecision, sources, same-body edges",
+   "query_source": "ledger docs/planning/ledger.md at base, row T342",
+   "gold": [
+    "core/worldgen/v4/final_water_surface.h",
+    "core/worldgen/v4/terrain_final_solid_query.cpp",
+    "scripts/causal_order_check.mjs"
+   ],
+   "gold_new": [
+    "core/worldgen/v4/final_macro_water.cpp",
+    "core/worldgen/v4/final_macro_water.h",
+    "core/worldgen/v4/macro_water_causes.cpp",
+    "core/worldgen/v4/macro_water_causes.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_final_macro_water.cpp",
+    "core/tests/test_final_macro_water_census.cpp",
+    "scripts/test_sets.conf"
+   ],
+   "gold_docs": [
+    "docs/design/t342-final-macro-water.md",
+    "docs/engineering/canonical-models.conf",
+    "docs/engineering/canonical-models.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "5f9aedf65",
+   "merge": "5f9aedf65beac026e5094c7dafd6e79744176ec6",
+   "base": "19557c97d71af92eca9e1c50afc23b83c25c94a9",
+   "query": "Maple model tree beside beech: species from the region, then switch on after review",
+   "query_source": "ledger docs/planning/ledger.md at base, row G482",
+   "gold": [
+    "client/tree_cache.cpp",
+    "client/tree_foliage.cpp",
+    "client/tree_ladder.cpp",
+    "client/tree_lod.cpp",
+    "client/tree_model.h",
+    "client/tree_skeleton.cpp",
+    "content/generated/block_palette.json",
+    "content/looks/surfaces.json",
+    "content/worldgen/biomes.json",
+    "content/worldgen/species.json",
+    "core/worldgen/vegetation.cpp"
+   ],
+   "gold_new": [
+    "client/tree_maple.cpp"
+   ],
+   "gold_tests": [
+    "client/tests/test_tree_maple.cpp",
+    "client/tests/test_tree_model.cpp",
+    "core/tests/golden/worldgen_goldens.h",
+    "core/tests/test_region_caves.cpp"
+   ],
+   "gold_docs": [
+    "art/references/photos/maple/ATTRIBUTION.md",
+    "art/review/dashboard.md",
+    "art/review/maple/record.md",
+    "docs/art/g482/836b816e0f/player_close_l.txt",
+    "docs/art/g482/836b816e0f/player_close_l_board.png.json",
+    "docs/art/g482/836b816e0f/player_close_l_clear.txt",
+    "docs/art/g482/836b816e0f/player_edge_l.txt",
+    "docs/art/g482/836b816e0f/player_forest_l.txt",
+    "docs/art/g482/836b816e0f/player_open7_l.txt",
+    "docs/art/g482/836b816e0f/player_under_l.txt",
+    "docs/art/g482/r3/board_r2_vs_r3.jpg",
+    "docs/art/g482/r3/player_close_l.jpg",
+    "docs/art/g482/r3/player_close_l.txt",
+    "docs/art/g482/r3/player_close_l_z100.jpg",
+    "docs/art/g482/r3/player_close_l_z100.txt",
+    "docs/art/g482/r3/player_close_l_z80.jpg",
+    "docs/art/g482/r3/player_close_l_z80.txt",
+    "docs/art/g482/r3/player_edge_l.jpg",
+    "docs/art/g482/r3/player_edge_l.txt",
+    "docs/art/g482/r3/player_forest_l.jpg",
+    "docs/art/g482/r3/player_forest_l.txt",
+    "docs/art/g482/r3/player_open7_l.jpg",
+    "docs/art/g482/r3/player_open7_l.txt",
+    "docs/art/g482/r3/player_under_l.jpg",
+    "docs/art/g482/r3/player_under_l.txt",
+    "docs/art/tree-recipe.md",
+    "docs/research/tree-microvoxel-research.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "cd5fec4a6",
+   "merge": "cd5fec4a6922dc87f9b2c79a892694300154efaf",
+   "base": "2c84fbedc55e31a1e0f16691167d982aaced8406",
+   "query": "Saves keyed on whole content hash: any data edit refuses saves; key on id layout",
+   "query_source": "ledger docs/planning/ledger.md at base, row G790",
+   "gold": [
+    "core/content/registry.cpp",
+    "core/content/registry.h",
+    "server/save_content_version.h",
+    "server/server.cpp",
+    "server/server_setup.cpp",
+    "server/server_setup.h"
+   ],
+   "gold_tests": [
+    "core/tests/test_content_registry.cpp",
+    "server/tests/test_work_save.cpp"
+   ],
+   "gold_docs": [
+    "docs/design/save-content-layout.md",
+    "docs/handback/G790.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "3ed84ca69",
+   "merge": "3ed84ca6924e0e3a4f04b8aa838d0404e47f1dd4",
+   "base": "e6e8bb89c230511b8187f6c18dfbad47437c0eaa",
+   "query": "Rules-reference lint: every path, script, command named in rules and AGENTS exists",
+   "query_source": "ledger docs/planning/ledger-archive.md at base, row G783",
+   "gold": [
+    "scripts/post_commit_smoke.mjs"
+   ],
+   "split": "holdout"
+  }
+ ]
+}

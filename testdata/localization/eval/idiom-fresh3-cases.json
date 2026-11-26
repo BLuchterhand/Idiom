@@ -1,0 +1,434 @@
+{
+ "schema": 1,
+ "corpus": "idiom-fresh3",
+ "gate": "no_regression",
+ "builder": {
+  "commits": "commits",
+  "max_commits": 2000,
+  "query_from": "message",
+  "source_regex": "\\.go$",
+  "exclude_gold": [
+   "_test\\.go$",
+   "^testdata/",
+   "^docs/"
+  ],
+  "test_regex": "_test\\.go$",
+  "doc_regex": "\\.md$|^docs/",
+  "max_gold_files": 25,
+  "min_query_len": 40,
+  "max_cases": 16,
+  "select": "newest qualifying commits of e324acb1 first-parent history whose commit is in no earlier case file (idiom-cases.json, p4 idiom-scoped-cases.json)"
+ },
+ "localization": {},
+ "cases": [
+  {
+   "id": "e324acb1d",
+   "merge": "e324acb1d365a96bad65b0e02690f6e1cb7fb269",
+   "base": "40ea5c869bdc4003476cdc40aa9de8f564dceb36",
+   "query": "learning log id_version, frozen id recipe, quarantine of orphaned no-op events",
+   "query_source": "commit message",
+   "gold": [
+    "internal/repository/comprehension/learning_log.go",
+    "internal/repository/comprehension/ranker_learning.go",
+    "internal/repository/comprehension/ranker_state_store.go"
+   ],
+   "gold_tests": [
+    "internal/repository/comprehension/learning_log_id_test.go"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "9fe60f447",
+   "merge": "9fe60f44754a6fae114843802457ba6751ffc6d8",
+   "base": "55a79c15164b659bdda98a33b0b61e7422f3ea3d",
+   "query": "localization redesign phases 1-2: BM25 first stage, scope as filter, RRF with the symbol/path channel (designer: ship, beats main on every split mean)",
+   "query_source": "commit message",
+   "gold": [
+    "cmd/idiom-localization-eval/main.go",
+    "internal/capabilities/workspace/context_tools.go",
+    "internal/repository/comprehension/collector_versions.go",
+    "internal/repository/comprehension/graph.go",
+    "internal/repository/comprehension/pack.go",
+    "internal/repository/comprehension/pack_builders.go",
+    "internal/repository/comprehension/pack_explain.go",
+    "internal/repository/comprehension/storage.go"
+   ],
+   "gold_new": [
+    "cmd/idiom-localization-eval/baseline.go",
+    "internal/evidence/eval/localization_eval_baseline.go",
+    "internal/evidence/eval/localization_eval_baseline_rank.go",
+    "internal/repository/comprehension/lexical.go",
+    "internal/repository/comprehension/lexical_pack.go",
+    "internal/repository/comprehension/lexical_rank.go",
+    "internal/repository/comprehension/lexical_store.go"
+   ],
+   "gold_tests": [
+    "internal/evidence/eval/localization_eval_baseline_test.go",
+    "internal/repository/comprehension/index_equivalence_test.go",
+    "internal/repository/comprehension/lexical_test.go",
+    "internal/repository/comprehension/localization_config_test.go",
+    "internal/repository/comprehension/views_test.go"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "55a79c151",
+   "merge": "55a79c15164b659bdda98a33b0b61e7422f3ea3d",
+   "base": "5571e7d222e77e544987fb121cb64cfd61409aa3",
+   "query": "exact term match on bare symbol name (MRR regression from namespace-qualified C++ names)",
+   "query_source": "commit message",
+   "gold": [
+    "internal/repository/comprehension/graph.go"
+   ],
+   "gold_tests": [
+    "internal/repository/comprehension/node_term_match_test.go"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "11a21c93d",
+   "merge": "11a21c93d79d48c0b6d7c0e38bddb3e0fca14bb2",
+   "base": "39ab9ca60f93ca45d92e5a4542cedef4c345c593",
+   "query": "localization accuracy phase 2: opt-in compact context_impact format; eval gate polish",
+   "query_source": "commit message",
+   "gold": [
+    "cmd/idiom-localization-eval/main.go",
+    "internal/capabilities/workspace/context_tools.go",
+    "internal/capabilities/workspace/tool_io.go",
+    "internal/evidence/eval/localization_eval_cases.go",
+    "internal/evidence/eval/localization_eval_metrics.go",
+    "internal/evidence/eval/localization_eval_runner.go",
+    "internal/evidence/eval/localization_eval_stats.go",
+    "internal/repository/comprehension/pack.go",
+    "internal/repository/comprehension/pack_builders.go",
+    "internal/repository/comprehension/views.go"
+   ],
+   "gold_new": [
+    "internal/capabilities/workspace/context_impact_compact.go",
+    "internal/repository/comprehension/pack_explain.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/context_impact_compact_test.go",
+    "internal/evidence/eval/localization_eval_test.go",
+    "internal/repository/comprehension/pack_explain_test.go"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "63d1a3de7",
+   "merge": "63d1a3de76bf2e0d373f474d3270ea3291d55af1",
+   "base": "1ac97b00059edc1f025898c6e0839c14c5693233",
+   "query": "Consolidate delegated packet evidence facts",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/surfaces/tui/app/implementation_dispatch_recovery.go",
+    "internal/workflows/implementationdispatch/dispatch_policy.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "1ac97b000",
+   "merge": "1ac97b00059edc1f025898c6e0839c14c5693233",
+   "base": "5392639eac04b686d091d55e5605cf71749fcf5f",
+   "query": "Consolidate read-only evidence projection",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/evidence_projection.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/source_grounding.go"
+   ],
+   "gold_tests": [
+    "internal/runtime/agent/evidence_registry_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "5392639ea",
+   "merge": "5392639eac04b686d091d55e5605cf71749fcf5f",
+   "base": "d7cd753dafc3a01ee10985aad5ca4ccf64a2dcc1",
+   "query": "Consolidate tool result evidence projection",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/edit_projector.go",
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/capabilities/workspace/patch.go",
+    "internal/capabilities/workspace/tool_io.go",
+    "internal/capabilities/workspace/tool_result_format.go",
+    "internal/capabilities/workspace/write_tools.go",
+    "internal/repository/semantic/languagetools/go_refactor_tools.go",
+    "internal/repository/semantic/languagetools/manager.go",
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/evidence_readonly.go",
+    "internal/runtime/agent/evidence_registry.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/implementation_lifecycle.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/source_grounding.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/runtime/agent/validation_status.go"
+   ],
+   "gold_new": [
+    "internal/runtime/agent/evidence_projection.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/manager_test.go",
+    "internal/capabilities/workspace/patch_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/evidence_registry_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "d7cd753da",
+   "merge": "d7cd753dafc3a01ee10985aad5ca4ccf64a2dcc1",
+   "base": "fd2ecee0fe772c452d6b6271a1eafa8736a6d288",
+   "query": "Move verification observation authority to workspace",
+   "query_source": "commit message",
+   "gold": [
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/runtime/agent/validation_status.go"
+   ],
+   "gold_new": [
+    "internal/capabilities/workspace/verification_observation.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/verification_observation_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "fd2ecee0f",
+   "merge": "fd2ecee0fe772c452d6b6271a1eafa8736a6d288",
+   "base": "da1519952a32fbe77cc73aa2c746ac85354fd8dd",
+   "query": "Project action classes into autonomy audit events",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/autonomy/audit.go",
+    "internal/contracts/autonomy/event.go",
+    "internal/contracts/autonomy/turn_phase_reconciliation.go"
+   ],
+   "gold_tests": [
+    "internal/contracts/autonomy/audit_test.go",
+    "internal/contracts/autonomy/event_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "da1519952",
+   "merge": "da1519952a32fbe77cc73aa2c746ac85354fd8dd",
+   "base": "470c21cfb9ce50e1f3f5599ceb8e11990016cc79",
+   "query": "Consolidate workspace action classes and delete dead shims",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/tool_class.go",
+    "internal/capabilities/workspace/tool_surface_metadata.go",
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/workflows/implementationdispatch/source_satisfied.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/tool_surface_metadata_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go",
+    "internal/runtime/agent/turn_decision_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "470c21cfb",
+   "merge": "470c21cfb9ce50e1f3f5599ceb8e11990016cc79",
+   "base": "dd6456d7c45a0ea86f8150238bb0aa0fb348babc",
+   "query": "Delete runtime dead surfaces and stale bookkeeping",
+   "query_source": "commit message",
+   "gold": [
+    "internal/contracts/plan/submit_plan_coverage.go",
+    "internal/runtime/agent/contracts_recovery.go",
+    "internal/runtime/agent/tools_surface.go",
+    "internal/surfaces/cli/artifact/artifact.go",
+    "internal/surfaces/cli/refine/refine.go",
+    "internal/surfaces/tui/app/prompt_routing.go",
+    "internal/surfaces/tui/app/rendering.go",
+    "internal/surfaces/tui/app/resume.go",
+    "internal/workflows/featureplanner/validate.go",
+    "internal/workflows/intentloop/gap_analysis.go",
+    "internal/workflows/intentloop/run.go",
+    "internal/workflows/planexecute/run.go",
+    "internal/workflows/postflight/go_build_passes.go",
+    "internal/workflows/postflight/project.go"
+   ],
+   "gold_tests": [
+    "internal/repository/semantic/languagetools/python_tools_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go",
+    "internal/surfaces/tui/app/feature_planner_product_test.go",
+    "internal/workflows/planexecute/approval_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "dd6456d7c",
+   "merge": "dd6456d7c45a0ea86f8150238bb0aa0fb348babc",
+   "base": "df555b137224b069993eef4a90ab47123ec31265",
+   "query": "Consolidate verification command execution",
+   "query_source": "commit message",
+   "gold": [
+    "internal/surfaces/cli/recover/packet.go",
+    "internal/workflows/planexecute/verification_runner.go"
+   ],
+   "gold_tests": [
+    "internal/surfaces/cli/recover/recovercmd_test.go",
+    "internal/workflows/planexecute/helpers_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "df555b137",
+   "merge": "df555b137224b069993eef4a90ab47123ec31265",
+   "base": "be12e8d978658658240ee70505d98895484ac6f7",
+   "query": "Consolidate configured tool surface setup",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/external_mcp_dispatch.go",
+    "internal/capabilities/workspace/tool_surface.go",
+    "internal/surfaces/cli/tool/toolcmd.go",
+    "internal/surfaces/tui/app/lifecycle.go",
+    "internal/surfaces/tui/app/model_state.go"
+   ],
+   "gold_new": [
+    "internal/capabilities/workspace/tool_surface_setup.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/external_tool_test.go",
+    "internal/capabilities/workspace/mcp_dispatch_test.go",
+    "internal/capabilities/workspace/timeout_test.go",
+    "internal/capabilities/workspace/tool_surface_setup_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/runtime/agent/runner_tests_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "be12e8d97",
+   "merge": "be12e8d978658658240ee70505d98895484ac6f7",
+   "base": "9a022a56208069a9056908005580a3210bb46808",
+   "query": "Consolidate timeout and parsing authorities",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/capabilities.go",
+    "internal/capabilities/workspace/context_tools.go",
+    "internal/capabilities/workspace/discovery_tools.go",
+    "internal/capabilities/workspace/external_mcp_dispatch.go",
+    "internal/capabilities/workspace/externaltool/external_tool.go",
+    "internal/capabilities/workspace/harness_audit.go",
+    "internal/capabilities/workspace/tool_dispatch.go",
+    "internal/capabilities/workspace/tool_name_suggestions.go",
+    "internal/capabilities/workspace/tool_surface.go",
+    "internal/contracts/pathparse/pathparse.go",
+    "internal/platform/gitstate/gitstate.go",
+    "internal/repository/comprehension/enrichment.go",
+    "internal/repository/comprehension/freshness.go",
+    "internal/runtime/agent/implementation_flow.go",
+    "internal/runtime/agent/plan_execute.go",
+    "internal/runtime/agent/runner_core.go",
+    "internal/surfaces/cli/context/contextcmd.go",
+    "internal/surfaces/cli/tool/toolcmd.go",
+    "internal/workflows/atomintake/source_satisfied.go",
+    "internal/workflows/implementationdispatch/atoms.go",
+    "internal/workflows/implementationdispatch/documents.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/capabilities_test.go",
+    "internal/capabilities/workspace/timeout_test.go",
+    "internal/runtime/agent/contract_surface_tests_test.go",
+    "internal/surfaces/cli/tool/toolcmd_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout"
+  },
+  {
+   "id": "9a022a562",
+   "merge": "9a022a56208069a9056908005580a3210bb46808",
+   "base": "334eeb070d6189f1b4306b4968993dfb8c113b93",
+   "query": "Move external tool execution to workspace manager",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/external_mcp_dispatch.go",
+    "internal/capabilities/workspace/externaltool/external_tool.go"
+   ],
+   "gold_tests": [
+    "internal/capabilities/workspace/external_tool_test.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "dev"
+  },
+  {
+   "id": "334eeb070",
+   "merge": "334eeb070d6189f1b4306b4968993dfb8c113b93",
+   "base": "580d68e4bad0aacdcbc153e44ce420abeadd4ffc",
+   "query": "Route shell commands through command specs",
+   "query_source": "commit message",
+   "gold": [
+    "internal/capabilities/workspace/command_runner.go",
+    "internal/capabilities/workspace/context_tools.go",
+    "internal/capabilities/workspace/language_tools_adapter.go",
+    "internal/capabilities/workspace/search_helpers.go",
+    "internal/capabilities/workspace/shell_tools.go",
+    "internal/surfaces/cli/headless/headless.go"
+   ],
+   "gold_docs": [
+    "docs/consolidation-overhaul-design.md"
+   ],
+   "split": "holdout"
+  }
+ ]
+}
