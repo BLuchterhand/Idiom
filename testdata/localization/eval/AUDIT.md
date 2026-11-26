@@ -67,3 +67,21 @@ way and retire fresh3 here.
 ## Results log
 
 Filled in by each gate run: candidate, binary commit, dev and fresh3 means, verdict.
+
+### 2026-11-26 PC gate: p5, p4, p5+p4 against e324acb1
+
+**Dev choice, fixed before any fresh3 score was read** (recall@8 / hit@8 / MRR@8; phase-3 rule: highest dev
+recall, ties by hit then MRR):
+
+| Arm | BenTech dev (51) | Idiom dev (44) |
+|---|---|---|
+| base e324acb1 | .402 / .745 / .450 | .447 / .818 / .549 |
+| p5 without hub discount (34fc1504) | .433 / .804 / .547 | .505 / .818 / .631 |
+| p5 with hub discount (efdd8ba2) | .425 / .740 / .519 (50 cases, 1 query error) | .497 / .818 / .643 |
+| p4 (62e43c1d) | pending at the time of the choice | .447 / .818 / .549 |
+
+The hub discount loses recall on both corpora and .06 hit on BenTech (scoring the errored case at 1.0 would
+still leave hit at .745), so **p5 ships without it** (`pc-idiom-p5a`); p5+p4 is `pc-idiom-p5ap4`. p4 has no dev
+knob left (x0.5 chosen on dev in 62e43c1d); its BM25F experiment 87ae2d48 is excluded, as its own message marks
+it not shippable. Eval binaries raise the context_impact dispatch timeout to 5 min and context_index to 40 min
+(BenTech queries take 18-29 s on this PC); ranking code is unchanged.
