@@ -62,7 +62,11 @@ NT form 17 µs, `Root.OpenRoot` 55 µs, `Root.Lstat` 55 µs, `Root.Stat(".")`
   shares one walker with `WalkDirUnderRoot` and keeps its pre-order. It asks
   `stop` before each descent and returns `WalkCursor{Dir, After}` values
   deepest first. A resumed directory is reopened from the root through G6, so a
-  cursor grants nothing a fresh walk would not.
+  cursor grants nothing a fresh walk would not. `SkipAll` from the callback
+  ends a resumed walk with no cursors kept, exactly as it ends a fresh one (the
+  caller is done; C++ `MaxFiles` relies on this). A cursor whose directory, or
+  an ancestor, no longer exists is skipped; any other open failure (a component
+  now a file or link, an identity mismatch, a permission error) fails closed.
 - **C++ index.** The walk enters at least `cppMinWalkedDirsPerCall` (32)
   directories, then stops at the deadline with `BudgetError{Phase: "walk"}`, the
   files found so far and `CppIndex.WalkPending`. The next call of the same
