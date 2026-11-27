@@ -355,6 +355,7 @@ func preparePackContext(requestContext context.Context, opts PackOptions) (*pack
 		IncludeStaleRuntime: opts.IncludeStaleRuntime,
 		Explain:             opts.Explain,
 	}, graph.ID, mode, intent, workspaceStateFingerprints, LocalizationConfigFingerprint(root))
+	cacheKey.Query.HistoryFingerprint = historyFingerprint(root)
 	cacheState := GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "miss_recompute", "cache_miss")
 
 	// A malformed localization section loads as the zero config and is

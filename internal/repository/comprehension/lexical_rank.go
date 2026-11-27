@@ -16,6 +16,9 @@ type LexicalHit struct {
 	// Via names the matched file a graph hop reached this one from; empty
 	// for files that matched the task themselves.
 	Via string
+	// PastWork names the past-work channel (similar_work or co_change) that
+	// reached this file; empty for files the task or the graph reached.
+	PastWork string
 }
 
 // RankLexical scores every file that shares a query term with BM25 and
@@ -115,6 +118,16 @@ func topTerms(shares []termShare) []string {
 type rankedList struct {
 	Source string
 	Hits   []LexicalHit
+	// Weight scales the list's reciprocal-rank contribution; zero means 1.
+	Weight float64
+}
+
+func (l rankedList) weight() float64 {
+	if l.Weight > 0 {
+		return l.Weight
+	}
+
+	return 1
 }
 
 const (
@@ -126,8 +139,8 @@ const (
 	fusionDepth = 24
 )
 
-// fuseRankedLists combines retrievers by reciprocal rank fusion with equal
-// weights: a file scores the sum of 1/(rrfK+rank) over the lists that hold it
+// fuseRankedLists combines retrievers by reciprocal rank fusion with list
+// weights (1 unless set): a file scores the sum of weight/(rrfK+rank) over the lists that hold it
 // in their first fusionDepth entries. Ties break by path. Matched terms come
 // from whichever list carried them.
 func fuseRankedLists(lists ...rankedList) []LexicalHit {
@@ -141,7 +154,7 @@ func fuseRankedLists(lists ...rankedList) []LexicalHit {
 				byPath[hit.Path] = fused
 			}
 
-			fused.Score += 1 / float64(rrfK+rank+1)
+			fused.Score += list.weight() / float64(rrfK+rank+1)
 
 			if len(fused.Terms) == 0 {
 				fused.Terms = hit.Terms
@@ -149,6 +162,10 @@ func fuseRankedLists(lists ...rankedList) []LexicalHit {
 
 			if fused.Via == "" {
 				fused.Via = hit.Via
+			}
+
+			if fused.PastWork == "" {
+				fused.PastWork = hit.PastWork
 			}
 		}
 	}

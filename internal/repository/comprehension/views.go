@@ -45,6 +45,9 @@ type ViewQueryInputs struct {
 	// `localization` config changes; empty for the default config so
 	// existing keys are unchanged.
 	LocalizationConfigFingerprint string `json:"localization_config_fingerprint,omitempty"`
+	// HistoryFingerprint changes with the history config, the ledger and the
+	// checked-out commit, which the past-work channel reads.
+	HistoryFingerprint string `json:"history_fingerprint,omitempty"`
 	// Explain marks packs that carry role and reason labels.
 	Explain bool `json:"explain,omitempty"`
 }

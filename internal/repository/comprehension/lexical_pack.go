@@ -43,10 +43,14 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 	languageOf := func(p string) string { return ctx.nodesByID[fileNodeID(p)].Language }
 	lexical := HopLexical(RankLexical(corpus, terms, include), buildHopGraph(ctx.graph, ctx.nodesByID), languageOf, include)
 
-	hits := fuseRankedLists(
-		rankedList{Source: "bm25", Hits: lexical},
-		rankedList{Source: "graph", Hits: graphRankedHits(graphRanked, include, languageOf)},
-	)
+	lists := []rankedList{
+		{Source: "bm25", Hits: lexical},
+		{Source: "graph", Hits: graphRankedHits(graphRanked, include, languageOf)},
+	}
+	// The past-work lists join last: they read the fused order of the first two
+	// as their seeds, and a file only they reach is marked by PastWork.
+	lists = append(lists, pastWorkLists(ctx, include, fuseRankedLists(lists...))...)
+	hits := fuseRankedLists(lists...)
 	if len(hits) == 0 {
 		return nil, false
 	}
@@ -150,6 +154,9 @@ func lexicalPackFile(ctx *packContext, files *packFileBuilder, hit LexicalHit, t
 		file.Reason = "BM25 match: " + strings.Join(hit.Terms, ", ")
 		file.matched = hit.Terms
 		file.RankerReasons = lexicalRankerReasons(hit, file.Role)
+	} else if hit.PastWork != "" {
+		file.Reason = "changed with past work matching the task (" + pastWorkReason(hit.PastWork) + ")"
+		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: hit.PastWork, State: "history"}}
 	} else if hit.Via != "" {
 		file.Reason = "graph neighbour of " + hit.Via
 		file.RankerReasons = []RankerReason{{Reason: "role_floor", State: file.Role}, {Reason: "graph_hop", State: hit.Via}}
