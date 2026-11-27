@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"idiom/internal/repository/comprehension"
 )
@@ -22,7 +23,10 @@ type LocalizationEvalCaseFile struct {
 	Gate         string                           `json:"gate,omitempty"`
 	Config       LocalizationEvalBuilderConfig    `json:"builder"`
 	Localization comprehension.LocalizationConfig `json:"localization,omitempty"`
-	Cases        []LocalizationEvalCase           `json:"cases"`
+	// SplitCut (RFC 3339) splits a usage corpus by time: cases before it are
+	// dev, the rest hold-out. Empty means the hash split.
+	SplitCut string                 `json:"split_cut,omitempty"`
+	Cases    []LocalizationEvalCase `json:"cases"`
 }
 
 // LocalizationEvalCase is one task. Query comes from the task text that existed
@@ -43,6 +47,8 @@ type LocalizationEvalCase struct {
 	GoldTests   []string                 `json:"gold_tests,omitempty"`
 	GoldDocs    []string                 `json:"gold_docs,omitempty"`
 	Split       string                   `json:"split"`
+	// Time (RFC 3339, UTC) is when a usage case's query was sent.
+	Time string `json:"time,omitempty"`
 }
 
 // LocalizationEvalRename is one renamed gold file.
@@ -77,6 +83,8 @@ type LocalizationEvalBuilderConfig struct {
 	MaxGoldFiles int      `json:"max_gold_files,omitempty"`
 	MinQueryLen  int      `json:"min_query_len,omitempty"`
 	MaxCases     int      `json:"max_cases,omitempty"`
+	// Usage drives cases built from agent sessions instead of commits.
+	Usage *LocalizationUsageConfig `json:"usage,omitempty"`
 }
 
 func gitOut(repo string, args ...string) (string, error) {
@@ -333,12 +341,27 @@ func ReadLocalizationEvalCaseFile(path string) (LocalizationEvalCaseFile, error)
 
 		seen[c.Merge] = struct{}{}
 
-		if want := LocalizationEvalSplit(c.Merge); c.Split != want {
+		if want := localizationEvalWantSplit(file.SplitCut, c); c.Split != want {
 			return file, fmt.Errorf("%s: case %s split %q does not match hash split %q", path, c.ID, c.Split, want)
 		}
 	}
 
 	return file, nil
+}
+
+// localizationEvalWantSplit is the side a case belongs on: by time when the
+// file states a cut, by hash otherwise.
+func localizationEvalWantSplit(splitCut string, c LocalizationEvalCase) string {
+	if splitCut == "" {
+		return LocalizationEvalSplit(c.Merge)
+	}
+
+	cut, err := time.Parse(time.RFC3339, splitCut)
+	if err != nil {
+		return "invalid split_cut " + splitCut
+	}
+
+	return localizationTimeSplit(c.Time, cut)
 }
 
 // recordRename scores a renamed source file by its old path, which an index at

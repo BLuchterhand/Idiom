@@ -353,7 +353,8 @@ func (r *localizationEvalRunner) runIdiom(ctx context.Context, dir string, timeo
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("idiom tool %s: %w: %s", tool, err, truncate(stderr.String(), 300))
+		// idiom reports some failures (a dispatch timeout) on stdout only.
+		return "", fmt.Errorf("idiom tool %s: %w: %s%s", tool, err, truncate(stderr.String(), 300), truncate(stdout.String(), 300))
 	}
 
 	var envelope struct {
