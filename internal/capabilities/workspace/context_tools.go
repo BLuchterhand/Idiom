@@ -339,6 +339,7 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 }
 
 type contextImpactReport struct {
+	Rerank            string                              `json:"rerank,omitempty"`
 	Task              string                              `json:"task"`
 	ArtifactPath      string                              `json:"artifact_path,omitempty"`
 	IndexID           string                              `json:"index_id,omitempty"`
@@ -383,6 +384,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 	}
 
 	task := m.contextImpactTask(req)
+	rerank := planLLMRerank(req.Limit)
 
 	freshness, err := m.contextReadFreshness(ctx, req, ToolNameContextImpact)
 	if err != nil {
@@ -399,7 +401,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		Path:              req.Path,
 		Scope:             req.Workdir,
 		Mode:              textutil.FirstNonEmpty(req.Mode, "plan"),
-		Limit:             req.Limit,
+		Limit:             rerank.packLimit,
 		BudgetTokens:      req.BudgetTokens,
 		RequiredTests:     req.RequiredTests,
 		RequiredEditPaths: req.RequiredEditPaths,
@@ -410,6 +412,8 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 	if err != nil {
 		return ToolResult{Tool: ToolNameContextImpact, Summary: "Context impact ranking failed", Error: err.Error()}
 	}
+
+	rerankStatus := rerank.apply(ctx, m.cfg.Root, task, &pack)
 
 	pack.AutoRefresh = freshness.Refresh
 	pack.Freshness = &freshness
@@ -430,7 +434,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		Provenance:        provenance,
 		GeneratedAt:       pack.GeneratedAt,
 		BudgetTokens:      pack.BudgetTokens,
-		ImpactScope:       contextImpactItems(pack, req.Limit),
+		ImpactScope:       contextImpactItems(pack, rerank.keep),
 		Tests:             append([]comprehension.PackTest(nil), pack.Tests...),
 		Risks:             append([]string(nil), pack.Risks...),
 		Unknowns:          append([]string(nil), pack.Unknowns...),
@@ -439,6 +443,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		StaleEvidence:     comprehension.StaleEvidenceSafetyForFreshness(freshness),
 		ContextViewPath:   pack.ArtifactPath,
 		ContextViewHandle: "context_pack://" + pack.PackID,
+		Rerank:            rerankStatus,
 	}
 
 	output, err := json.MarshalIndent(report, "", "  ")
@@ -447,7 +452,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 	}
 
 	if req.Format == contextFormatCompact {
-		output = []byte(renderContextImpactCompact(pack, req.Limit))
+		output = []byte(renderContextImpactCompact(pack, rerank.keep))
 	}
 
 	gap := ""
@@ -457,9 +462,17 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 
 	return ToolResult{
 		Tool:    ToolNameContextImpact,
-		Summary: fmt.Sprintf("Context impact ranked %d item(s), %d test(s); context view: %s%s%s", len(report.ImpactScope), len(report.Tests), report.ContextViewPath, gap, contextRefreshSummary(freshness.Refresh)),
+		Summary: fmt.Sprintf("Context impact ranked %d item(s), %d test(s); context view: %s%s%s", len(report.ImpactScope), len(report.Tests), report.ContextViewPath, gap, contextRefreshSummary(freshness.Refresh)) + rerankSummary(rerankStatus),
 		Output:  string(output),
 	}
+}
+
+func rerankSummary(status string) string {
+	if status == "" {
+		return ""
+	}
+
+	return "; " + status
 }
 
 func (m *Manager) contextImpactTask(req ToolRequest) string {

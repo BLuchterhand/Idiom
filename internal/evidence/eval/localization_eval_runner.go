@@ -41,7 +41,9 @@ type LocalizationEvalRunOptions struct {
 	NoSeed bool
 	// Format is the context_impact output format under test: "" (default
 	// JSON) or "compact".
-	Format       string
+	Format string
+	// Env is added to the environment of every idiom call (the rerank arms).
+	Env          []string
 	IndexTimeout time.Duration
 	QueryTimeout time.Duration
 	Log          io.Writer
@@ -347,6 +349,7 @@ func (r *localizationEvalRunner) runIdiom(ctx context.Context, dir string, timeo
 
 	cmd := exec.CommandContext(ctx, r.opts.IdiomBin, "tool", tool, "--input", input)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), r.opts.Env...)
 
 	var stdout, stderr bytes.Buffer
 

@@ -30,6 +30,8 @@ func main() {
 		err = buildUsageCases(os.Args[2:])
 	case "case-scores":
 		err = caseScores(os.Args[2:])
+	case "rerank-report":
+		err = rerankReport(os.Args[2:])
 	case "compare-scores":
 		err = compareScores(os.Args[2:])
 	case "run":
@@ -49,7 +51,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: idiom-localization-eval build-cases|build-usage-cases|case-scores|compare-scores|run|compare|baseline [flags]")
+	fmt.Fprintln(os.Stderr, "usage: idiom-localization-eval build-cases|build-usage-cases|case-scores|compare-scores|rerank-report|run|compare|baseline [flags]")
 	os.Exit(2)
 }
 
@@ -209,6 +211,9 @@ func run(args []string) error {
 	seed := fs.Bool("seed", false, "seed each index from the nearest cached tree (faster, tail ranks may differ from a cold index); default is a cold index per case")
 	format := fs.String("format", "", "context_impact output format under test: empty (default JSON) or compact")
 	timed := fs.Int("timed-calls", 3, "timed calls per case after one warm-up")
+	rerank := fs.String("rerank", "", "rerank backends for this arm, comma-separated: cross, embed, chat, anthropic (empty: no rerank)")
+	rerankDir := fs.String("rerank-dir", "", "directory for the arm's rerank cache and usage log")
+	rerankDry := fs.Bool("rerank-dry", false, "estimate rerank tokens only; call no backend")
 	out := fs.String("out", "", "result file")
 	_ = fs.Parse(args)
 
@@ -224,8 +229,13 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	renv, err := rerankEnv(*rerank, *rerankDir, *rerankDry)
+	if err != nil {
+		return err
+	}
+
 	opts := eval.LocalizationEvalRunOptions{Repo: *repo, IdiomBin: *bin, CacheDir: *cache, CacheMaxBytes: *cacheGB << 30,
-		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, Log: os.Stderr}
+		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, Env: renv, Log: os.Stderr}
 	if *only != "" {
 		opts.OnlyIDs = strings.Split(*only, ",")
 	}

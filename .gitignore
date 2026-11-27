@@ -93,3 +93,6 @@ FEATURE_REQUEST_*.md
 # Localization usage eval: case files, seeds and per-case scores are built from private agent transcripts; never commit them.
 testdata/localization/eval/*usage*
 .cache/g755/*.csv
+
+# Rerank eval working files (cases, caches, usage logs, binaries)
+/.cache/
