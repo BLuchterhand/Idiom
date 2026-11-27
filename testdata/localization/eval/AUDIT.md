@@ -85,3 +85,18 @@ still leave hit at .745), so **p5 ships without it** (`pc-idiom-p5a`); p5+p4 is 
 knob left (x0.5 chosen on dev in 62e43c1d); its BM25F experiment 87ae2d48 is excluded, as its own message marks
 it not shippable. Eval binaries raise the context_impact dispatch timeout to 5 min and context_index to 40 min
 (BenTech queries take 18-29 s on this PC); ranking code is unchanged.
+
+**fresh3, one run per candidate** (file hashes checked against the freeze before reading; all cases scored,
+deterministic on repeat):
+
+| Arm | BenTech dev (51) | BenTech fresh3 (21) | Idiom dev (44) | Idiom fresh3 (16) | Verdict |
+|---|---|---|---|---|---|
+| base e324acb1 | .402 / .745 / .450 | .328 / .762 / .477 | .447 / .818 / .549 | .372 / .813 / .615 | installed |
+| p5 (`pc-idiom-p5a`) | .433 / .804 / .547 | .296 / .762 / .417 | .505 / .818 / .631 | .477 / .875 / .594 | **fail**: BenTech fresh3 recall and MRR, Idiom fresh3 MRR |
+| p4 (`pc-idiom-p4`) | .407 / .765 / .454 | .326 / .762 / .477 | .447 / .818 / .549 | .372 / .813 / .615 | **fail by .002 recall** on BenTech fresh3 (2 of 21 cases reorder, +.125 / -.167); hit and MRR equal or better everywhere |
+| p5+p4 (`pc-idiom-p5ap4`) | not run (verdict already fixed by fresh3) | .302 / .762 / .414 | .505 / .818 / .631 | .477 / .875 / .594 | **fail**, as p5 |
+
+p5's dev gain does not hold on unseen cases: BenTech fresh3 MRR per case 4 wins, 10 losses. p4 extra files
+(.json, .gdshader, .ps1) reach the top 24 in 2 of 51 dev cases and 0 of 21 fresh3 cases, while gold holds 23 and
+7 such files: p4's fresh3 movement comes from re-ranking source files (corpus statistics shift once the extra
+documents join BM25), not from extra files displacing them.
