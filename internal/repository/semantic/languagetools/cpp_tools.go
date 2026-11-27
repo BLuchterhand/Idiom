@@ -144,6 +144,14 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 				} else {
 					info.Checkpoint = err != nil
 				}
+				if index.WalkPending != nil {
+					// A walk its deadline stopped resumes from memory on the next
+					// call of this snapshot, as a stopped parse does.
+					info.Partial = true
+					m.mu.Lock()
+					m.cppIndex, m.cppIndexInfo = index, info
+					m.mu.Unlock()
+				}
 			} else if after.GitError != "" {
 				info.CacheError = "could not verify index snapshot: " + after.GitError
 				if err == nil {

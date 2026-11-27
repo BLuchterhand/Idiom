@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,6 +36,9 @@ type CppIndex struct {
 	// answer only if the answer is marked partial.
 	Paths        []string
 	WalkComplete bool
+	// WalkPending is where a walk stopped by its deadline carries on: Paths
+	// then holds the files found so far and WalkComplete is false.
+	WalkPending []safepath.WalkCursor `json:",omitempty"`
 }
 
 // BuildOptions permits reuse because symbols are collected independently per
@@ -178,10 +180,15 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 	paths := make([]string, 0, 64)
 
 	walkStarted := time.Now()
-	errStop := filepath.SkipAll
 	var err error
 	if opts.Resume && opts.Previous != nil && opts.Previous.WalkComplete {
 		paths = slices.Clone(opts.Previous.Paths)
+	} else if opts.Resume && opts.Previous != nil && opts.Previous.WalkPending != nil {
+		var pending []safepath.WalkCursor
+		paths, pending, err = walkCppPaths(root, scope, opts, slices.Clone(opts.Previous.Paths), opts.Previous.WalkPending)
+		if err == nil && pending != nil {
+			return stoppedCppWalk(index, paths, pending, walkStarted, opts)
+		}
 	} else if opts.Previous != nil && opts.Previous.WalkComplete && opts.ChangedPaths != nil && opts.Scope == "" && opts.MaxFiles == 0 {
 		// Git's changed-path set plus both dirty/ignored snapshots accounts for
 		// additions and removals. Reuse discovery as well as parsed files.
@@ -206,72 +213,14 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 			}
 		}
 	} else {
-		// The walk ignores the deadline: it only lists directories, and a walk
-		// cut short saves nothing, so a call that arrives with its deadline spent
-		// still makes progress (the parse below honours the deadline per file).
-		err = safepath.WalkDirUnderRoot(root, root, "C++ index", func(path string, d os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-
-			if d.IsDir() {
-				if !indexsupport.ShouldVisitDir(root, path, scope) {
-					return filepath.SkipDir
-				}
-
-				if discovery.ShouldSkipDirName(d.Name()) && path != root {
-					return filepath.SkipDir
-				}
-
-				return nil
-			}
-
-			if !isCppPath(path) {
-				return nil
-			}
-
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return nil
-			}
-
-			rel = filepath.ToSlash(filepath.Clean(rel))
-			if discovery.ShouldSkipRelFile(rel) {
-				return nil
-			}
-
-			if !indexsupport.PathInScope(rel, scope) {
-				return nil
-			}
-
-			paths = append(paths, rel)
-
-			if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
-				return errStop
-			}
-
-			return nil
-		})
-	}
-
-	if err == errStop {
-		err = nil
+		var pending []safepath.WalkCursor
+		paths, pending, err = walkCppPaths(root, scope, opts, paths, nil)
+		if err == nil && pending != nil {
+			return stoppedCppWalk(index, paths, pending, walkStarted, opts)
+		}
 	}
 
 	if err != nil {
-		if ctxErr := indexsupport.ContextErr(opts.Context); ctxErr != nil && errors.Is(err, ctxErr) {
-			index.Timings.Walk = time.Since(walkStarted)
-
-			if opts.Previous != nil {
-				for _, file := range opts.Previous.Files {
-					if !opts.ChangedPaths[file.Path] {
-						index.Files = append(index.Files, file)
-					}
-				}
-			}
-			return index, &BudgetError{Phase: "walk", Timings: index.Timings, Cause: err}
-		}
-
 		return nil, err
 	}
 
