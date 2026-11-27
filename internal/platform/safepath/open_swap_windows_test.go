@@ -3,7 +3,6 @@
 package safepath
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,9 +20,7 @@ var _ = ginkgo.Describe("handle-bound path swaps", func() {
 		mustWriteFile(filepath.Join(outside, "secret.txt"), "outside data\n")
 		requireCanonicalWindowsFilesystem(root)
 		outsideAlias := filepath.Join(outside, "workspace-alias")
-		if output, err := makeDirectoryJunction(outsideAlias, root); err != nil {
-			ginkgo.Skip(fmt.Sprintf("could not create a junction: %s", strings.TrimSpace(output)))
-		}
+		mustMakeDirectoryJunction(outsideAlias, root)
 		_, err := OpenRootUnderRoot(root, outsideAlias, "test directory", Options{})
 		gomega.Expect(err).To(gomega.HaveOccurred())
 
@@ -36,9 +33,7 @@ var _ = ginkgo.Describe("handle-bound path swaps", func() {
 		}
 
 		junction := filepath.Join(root, "linked")
-		if output, err := makeDirectoryJunction(junction, outside); err != nil {
-			ginkgo.Skip(fmt.Sprintf("could not create a junction: %s", strings.TrimSpace(output)))
-		}
+		mustMakeDirectoryJunction(junction, outside)
 		_, err = ReadFileUnderRoot(root, filepath.Join(junction, "secret.txt"), "test file", Options{})
 		gomega.Expect(err).To(gomega.HaveOccurred())
 		_, err = OpenRootUnderRoot(root, junction, "test directory", Options{})
@@ -61,9 +56,7 @@ var _ = ginkgo.Describe("handle-bound path swaps", func() {
 
 		moved := filepath.Join(root, "inside-original")
 		gomega.Expect(os.Rename(inside, moved)).To(gomega.Succeed())
-		if output, err := makeDirectoryJunction(inside, outside); err != nil {
-			ginkgo.Skip(fmt.Sprintf("could not create a junction: %s", strings.TrimSpace(output)))
-		}
+		mustMakeDirectoryJunction(inside, outside)
 
 		opened, err := openPreparedFile(rootHandle, target)
 		if opened != nil {
@@ -91,9 +84,7 @@ var _ = ginkgo.Describe("handle-bound path swaps", func() {
 				if err := os.Rename(child, filepath.Join(root, "child-original")); err != nil {
 					return err
 				}
-				if output, err := makeDirectoryJunction(child, outside); err != nil {
-					ginkgo.Skip(fmt.Sprintf("could not create a junction: %s", strings.TrimSpace(output)))
-				}
+				mustMakeDirectoryJunction(child, outside)
 			}
 			return nil
 		})
@@ -103,6 +94,15 @@ var _ = ginkgo.Describe("handle-bound path swaps", func() {
 		gomega.Expect(sawExternal).To(gomega.BeFalse())
 	})
 })
+
+// mustMakeDirectoryJunction fails the spec when the junction cannot be made.
+// Junctions need no privilege, so a failure is a harness fault; skipping here
+// once hid every junction spec behind a quoting bug (G907).
+func mustMakeDirectoryJunction(path string, target string) {
+	ginkgo.GinkgoHelper()
+	output, err := makeDirectoryJunction(path, target)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "create junction %s -> %s: %s", path, target, strings.TrimSpace(output))
+}
 
 func makeDirectoryJunction(path string, target string) (string, error) {
 	// cmd.exe parses its own command line, so pass it raw: exec.Command would

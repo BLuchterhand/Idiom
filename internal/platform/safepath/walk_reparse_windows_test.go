@@ -3,11 +3,9 @@
 package safepath
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/onsi/ginkgo/v2"
@@ -21,9 +19,7 @@ var _ = ginkgo.Describe("walk guarantees the listing-based walk relies on", func
 		mustWriteFile(filepath.Join(root, "inside", "workspace.txt"), "workspace\n")
 		mustWriteFile(filepath.Join(outside, "secret.txt"), "outside\n")
 		requireCanonicalWindowsFilesystem(root)
-		if output, err := makeDirectoryJunction(filepath.Join(root, "escape"), outside); err != nil {
-			ginkgo.Skip(fmt.Sprintf("could not create a junction: %s", strings.TrimSpace(output)))
-		}
+		mustMakeDirectoryJunction(filepath.Join(root, "escape"), outside)
 
 		var seen []string
 		var junctionType fs.FileMode
@@ -48,9 +44,7 @@ var _ = ginkgo.Describe("walk guarantees the listing-based walk relies on", func
 		outside := ginkgo.GinkgoT().TempDir()
 		mustWriteFile(filepath.Join(outside, "nested", "secret.txt"), "outside\n")
 		requireCanonicalWindowsFilesystem(root)
-		if output, err := makeDirectoryJunction(filepath.Join(root, "escape"), outside); err != nil {
-			ginkgo.Skip(fmt.Sprintf("could not create a junction: %s", strings.TrimSpace(output)))
-		}
+		mustMakeDirectoryJunction(filepath.Join(root, "escape"), outside)
 
 		for _, dir := range []string{"escape", "escape/nested"} {
 			var seen []string
@@ -66,9 +60,7 @@ var _ = ginkgo.Describe("walk guarantees the listing-based walk relies on", func
 		mustWriteFile(filepath.Join(target, "inside.txt"), "inside\n")
 		requireCanonicalWindowsFilesystem(root)
 		junction := filepath.Join(root, "alias")
-		if output, err := makeDirectoryJunction(junction, target); err != nil {
-			ginkgo.Skip(fmt.Sprintf("could not create a junction: %s", strings.TrimSpace(output)))
-		}
+		mustMakeDirectoryJunction(junction, target)
 		canonicalRoot, _, err := canonicalExistingRoot(root)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
