@@ -100,3 +100,25 @@ p5's dev gain does not hold on unseen cases: BenTech fresh3 MRR per case 4 wins,
 (.json, .gdshader, .ps1) reach the top 24 in 2 of 51 dev cases and 0 of 21 fresh3 cases, while gold holds 23 and
 7 such files: p4's fresh3 movement comes from re-ranking source files (corpus statistics shift once the extra
 documents join BM25), not from extra files displacing them.
+
+### 2026-11-27 PC gate: p4-bm25f and p5-timesplit against e324acb1
+
+Design note: `docs/design-localization-classes-and-history-split.md` (on both candidate branches). Ship rule:
+beat base on recall@8 and be no worse on hit@8 and MRR@8, on both corpora; equal is a fail.
+
+| Arm | BenTech dev (51) | BenTech fresh3 | Idiom dev (44) | Idiom fresh3 (16) | Verdict |
+|---|---|---|---|---|---|
+| base e324acb1 | .402 / .745 / .450 | .328 / .762 / .477 (21) | .447 / .818 / .549 | .372 / .813 / .615 | installed |
+| p4-bm25f (`pc-idiom-p4-bm25f` e5e3dc03; extra files in their own statistics class, weight 1.0) | .422 / .765 / .455 | .345 / .800 / .501 (20 of 21) | .447 / .818 / .549 | .372 / .813 / .615 | **fail**: equal on Idiom (no extra files configured there) |
+| p5-timesplit (`pc-idiom-p5-timesplit` 77f8392e; history before the cutoff, fresh3 commits excluded) | see time split | not read | see time split | not read | **fail on dev confirm** |
+
+p4-bm25f weight 0.5 equals base on both dev sets, so weight 1.0 was chosen on BenTech dev. BenTech fresh3 case
+41e16bd69 did not score (a git lock in the shared clone, from a concurrent stream). It is not rerun because the
+Idiom tie already fixes the verdict.
+
+p5-timesplit cutoffs: BenTech 900a05152 (2026-11-25T13:05-05:00), Idiom 40ea5c869 (2026-11-25T16:05-05:00).
+Leakage audit: 0 cases read their own change. 0 BenTech fresh3 commits are in any dev history. 12 Idiom fresh3
+commits were ancestors of dev bases and are now removed through `history_exclude`. Dev cases are sorted by
+commit time: the oldest 2/3 select the weight, the newest 1/3 confirm it. Idiom confirm (15 cases): base
+.393 / .800 / .352; weights 0.25, 0.5 and 1.0 score .451-.461 recall but .733 hit. One case loses its hit,
+so every weight fails "no worse on any mean". It was not tuned on the confirm slice, and fresh3 was not read.
