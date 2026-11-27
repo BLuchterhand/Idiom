@@ -152,7 +152,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	var cppIndex *semanticcpp.CppIndex
 
 	if shouldUseCppCollector(language) {
-		cppIndex, err = semanticcpp.BuildCppIndexWithOptions(root, indexOpts)
+		cppIndex, err = semanticcpp.BuildCppIndexWithOptions(root, semanticcpp.BuildOptions{Context: indexOpts.Context, Scope: indexOpts.Scope, MaxFiles: indexOpts.MaxFiles})
 		if err != nil {
 			return BuildReport{}, fmt.Errorf("build C++ index: %w", err)
 		}

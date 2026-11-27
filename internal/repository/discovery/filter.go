@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -48,6 +49,17 @@ var noisyRelDirPrefixes = []string{
 func ShouldSkipDirName(name string) bool {
 	_, ok := noisyDirNames[name]
 	return ok
+}
+
+// SkippedDirNames returns a stable copy of the directory filter for collectors
+// that can prune discovery at its source (for example Git pathspecs).
+func SkippedDirNames() []string {
+	names := make([]string, 0, len(noisyDirNames))
+	for name := range noisyDirNames {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // RelTargetsNoisyDir reports whether a user-supplied relative path explicitly

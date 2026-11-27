@@ -12,50 +12,8 @@ import (
 	"time"
 
 	"idiom/internal/platform/hosttools"
-	"idiom/internal/platform/safepath"
-	"idiom/internal/repository/discovery"
-	"idiom/internal/repository/semantic"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
 )
-
-func (m *Manager) isCppWorkspace() bool {
-	if !m.Enabled() {
-		return false
-	}
-
-	if info, err := os.Stat(filepath.Join(m.Root(), "compile_commands.json")); err == nil && !info.IsDir() {
-		return true
-	}
-
-	found := false
-
-	_ = safepath.WalkDirUnderRoot(m.Root(), m.Root(), "C++ workspace detection", func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		if d.IsDir() {
-			if discovery.ShouldSkipDirName(d.Name()) && path != m.Root() {
-				return filepath.SkipDir
-			}
-
-			return nil
-		}
-
-		if strings.HasPrefix(filepath.Base(path), ".") {
-			return nil
-		}
-
-		if isCppExtension(filepath.Ext(path)) {
-			found = true
-			return filepath.SkipAll
-		}
-
-		return nil
-	})
-
-	return found
-}
 
 func (m *Manager) getCppIndex() (*semanticcpp.CppIndex, error) {
 	index, _, err := m.loadCppIndex(context.Background())
@@ -64,17 +22,24 @@ func (m *Manager) getCppIndex() (*semanticcpp.CppIndex, error) {
 }
 
 // loadCppIndex returns the C++ syntax index of the live working tree with its
-// identity and cost. A build is bounded by cppIndexBudget; the index is reused
-// only while the Git identity and dirty C++ file contents are unchanged.
+// identity and cost. Only completed indexes answer queries; budget-limited
+// builds save parsed files so a later process can resume.
 func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, cppIndexInfo, error) {
-	if !m.isCppWorkspace() {
+	if !m.Enabled() {
 		return nil, cppIndexInfo{}, fmt.Errorf("c++-specific tools require a workspace with C/C++ source files or compile_commands.json")
 	}
 
-	ctx, cancel := context.WithTimeout(parent, cppIndexBudget)
+	budget := cppBudgetSetting("IDIOM_CPP_INDEX_BUDGET", cppDefaultIndexBudget)
+	// Reserve time before the caller's deadline for atomic checkpoint IO and
+	// returning a typed failure, rather than racing the generic tool timeout.
+	if deadline, ok := parent.Deadline(); ok && time.Until(deadline)-4*time.Second < budget {
+		budget = max(time.Millisecond, time.Until(deadline)-4*time.Second)
+	}
+	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
 
 	info := cppSnapshot(ctx, m.Root())
+	info.Budget = budget
 
 	m.mu.Lock()
 
@@ -84,22 +49,87 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 	if cached != nil && info.Key != "" && info.Key == cachedInfo.Key {
 		cachedInfo.Memoized = true
 		cachedInfo.Git = info.Git
+		cachedInfo.Budget = budget
 
 		return cached, cachedInfo, nil
 	}
 
-	index, err := semanticcpp.BuildCppIndexWithOptions(m.Root(), semantic.IndexOptions{Context: ctx})
+	var disk *cppDiskCache
+	var previous *semanticcpp.CppIndex
+	var changed map[string]bool
+	resume := false
+	if info.Key != "" {
+		var err error
+		disk, err = openCppDiskCache()
+		if err != nil {
+			info.CacheError = err.Error()
+		} else {
+			defer disk.root.Close()
+			started := time.Now()
+			header, loaded, err := disk.read(info.Key, true)
+			if err == nil {
+				disk.touch(info.Key)
+				loaded.Root = m.Root()
+				if header.Complete {
+					info.Build, info.Symbols = loaded.Timings, header.Info.Symbols
+					info.Cache, info.Load = "disk_hit", time.Since(started)
+					m.mu.Lock()
+					m.cppIndex, m.cppIndexInfo = loaded, info
+					m.mu.Unlock()
+					return loaded, info, nil
+				}
+				previous, resume, info.Cache = loaded, true, "resumed"
+			} else {
+				previous, changed = disk.nearest(ctx, info)
+				if previous != nil {
+					info.Cache = "incremental"
+				}
+			}
+			info.Load = time.Since(started)
+		}
+	}
+	index, err := semanticcpp.BuildCppIndexWithOptions(m.Root(), semanticcpp.BuildOptions{Context: ctx, Previous: previous, ChangedPaths: changed, Resume: resume})
+	if index != nil {
+		info.Build = index.Timings
+		for _, file := range index.Files {
+			info.Symbols += len(file.Symbols)
+		}
+		if disk != nil {
+			// Refuse to label a build as current if the workspace changed during
+			// collection. Reuse is only valid for the exact content snapshot.
+			verificationBudget := budget
+			if deadline, ok := parent.Deadline(); ok {
+				verificationBudget = max(time.Millisecond, min(verificationBudget, time.Until(deadline)-2*time.Second))
+			}
+			checkCtx, checkCancel := context.WithTimeout(parent, verificationBudget)
+			after := cppSnapshot(checkCtx, m.Root())
+			verificationErr := checkCtx.Err()
+			checkCancel()
+			if after.Key == info.Key {
+				if saveErr := disk.store(info, index, err == nil); saveErr != nil {
+					info.CacheError = saveErr.Error()
+				} else {
+					info.Checkpoint = err != nil
+				}
+			} else if after.GitError != "" {
+				info.CacheError = "could not verify index snapshot: " + after.GitError
+				if err == nil {
+					if verificationErr != nil {
+						return nil, info, &semanticcpp.BudgetError{Phase: "snapshot verification", Timings: index.Timings, Cause: verificationErr}
+					}
+					return nil, info, fmt.Errorf("verify C++ index snapshot: %s", after.GitError)
+				}
+			} else if err == nil {
+				return nil, info, fmt.Errorf("C++ workspace changed during index build; retry against a stable tree")
+			}
+		}
+	}
 	if err != nil {
 		return nil, info, fmt.Errorf("build C++ semantic index: %w", err)
 	}
 
 	if index == nil {
 		return nil, info, fmt.Errorf("no C/C++ files were indexed under the workspace")
-	}
-
-	info.Build = index.Timings
-	for _, file := range index.Files {
-		info.Symbols += len(file.Symbols)
 	}
 
 	m.mu.Lock()
@@ -302,20 +332,23 @@ func (m *Manager) cppEntrypoints(req ToolRequest) ToolResult {
 	return ToolResult{Tool: "cpp_entrypoints", Summary: fmt.Sprintf("Found %d likely C++ anchor file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
-func (m *Manager) cppFindSymbol(req ToolRequest) ToolResult {
+func (m *Manager) cppFindSymbol(ctx context.Context, req ToolRequest) ToolResult {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
 		return ToolResult{Tool: "cpp_find_symbol", Summary: "C++ symbol search rejected", Error: "pattern is required"}
 	}
 
-	index, err := m.getCppIndex()
+	index, info, err := m.loadCppIndex(ctx)
 	if err != nil {
+		if failure, ok := cppBudgetFailure("cpp_find_symbol", "C++ symbol search unavailable", err, info); ok {
+			return failure
+		}
 		return ToolResult{Tool: "cpp_find_symbol", Summary: "C++ symbol search unavailable", Error: err.Error()}
 	}
 
 	matches := filterCppSymbolMatches(index.FindSymbols(pattern, goResultLimit(req.MaxDepth, 8)), m.cppPathFilter(req.Path))
 	if len(matches) == 0 {
-		return ToolResult{Tool: "cpp_find_symbol", Summary: fmt.Sprintf("No C++ symbols matched %q", pattern)}
+		return ToolResult{Tool: "cpp_find_symbol", Summary: fmt.Sprintf("No C++ symbols matched %q", pattern), Freshness: info.freshness(0, false, cppAnsweredBySyntax)}
 	}
 
 	lines := make([]string, 0, len(matches))
@@ -328,7 +361,7 @@ func (m *Manager) cppFindSymbol(req ToolRequest) ToolResult {
 		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, cppDisplayName(match.Qualified, match.Name)))
 	}
 
-	return ToolResult{Tool: "cpp_find_symbol", Summary: fmt.Sprintf("Found %d matching C++ symbol(s).", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "cpp_find_symbol", Summary: fmt.Sprintf("Found %d matching C++ symbol(s).", len(lines)), Output: strings.Join(lines, "\n"), Freshness: info.freshness(0, false, cppAnsweredBySyntax)}
 }
 
 func (m *Manager) cppReadSymbol(ctx context.Context, req ToolRequest) ToolResult {
@@ -420,7 +453,7 @@ func (m *Manager) cppWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolR
 		}
 	}
 
-	result := m.cppFindSymbol(req)
+	result := m.cppFindSymbol(ctx, req)
 
 	result.Tool = "cpp_workspace_symbol"
 
@@ -554,19 +587,41 @@ func (m *Manager) cppReferences(ctx context.Context, req ToolRequest) ToolResult
 		return *failure
 	}
 
-	return resolved.annotate(m.cppReferencesMatch(ctx, req, match))
+	references, _ := m.cppReferencesMatch(ctx, req, match)
+
+	return resolved.annotate(references)
 }
 
-func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) ToolResult {
+// cppReferenceBackend names the backend that produced reference evidence, so a
+// consumer can tell clangd's index from a name-based text search, and both from
+// no evidence at all.
+type cppReferenceBackend int
+
+const (
+	cppReferencesNoEvidence cppReferenceBackend = iota
+	cppReferencesByClangd
+	cppReferencesByTextSearch
+)
+
+func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match semanticcpp.CppSymbolMatch) (ToolResult, cppReferenceBackend) {
+	var warnings []string
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.cppReferencesViaClangd(ctx, match, pathFilter); lspErr == nil && strings.TrimSpace(output) != "" {
+		clangdCtx, cancel := context.WithTimeout(ctx, cppBudgetSetting("IDIOM_CPP_CLANGD_BUDGET", cppDefaultClangdBudget))
+		output, lspErr := m.cppReferencesViaClangd(clangdCtx, match, pathFilter)
+		cancel()
+		switch {
+		case lspErr != nil:
+			warnings = append(warnings, fmt.Sprintf("clangd references unavailable (%v); answered by name-based text search", lspErr))
+		case strings.TrimSpace(output) != "":
 			return ToolResult{
 				Tool:    "cpp_references",
 				Summary: "Resolved C++ references via clangd",
 				Output:  output,
-			}
+			}, cppReferencesByClangd
+		default:
+			warnings = append(warnings, "clangd returned no references, not even the symbol's own declaration; answered by name-based text search")
 		}
 	}
 
@@ -576,12 +631,25 @@ func (m *Manager) cppReferencesMatch(ctx context.Context, req ToolRequest, match
 		Glob:    cppSearchGlob(),
 	}
 	result := m.searchContent(ctx, searchReq, "cpp_references")
+	result.Warnings = append(warnings, result.Warnings...)
 
-	if result.Error == "" {
-		result.Summary = "Resolved C++ references via semantic/rg fallback"
+	if result.Error != "" {
+		return result, cppReferencesNoEvidence
 	}
 
-	return result
+	// The symbol was resolved from a file under this scope, so a text search
+	// that finds not even its definition is broken evidence. Path-name
+	// suggestions in its output are not references.
+	if result.Facts == nil || result.Facts.SearchHitCount == 0 {
+		result.Summary = "No C++ references found by any backend"
+		result.Output = ""
+
+		return result, cppReferencesNoEvidence
+	}
+
+	result.Summary = "Resolved C++ references via name-based text search fallback"
+
+	return result, cppReferencesByTextSearch
 }
 
 func (m *Manager) cppCallsFrom(ctx context.Context, req ToolRequest) ToolResult {
@@ -613,8 +681,27 @@ func (m *Manager) cppCalls(ctx context.Context, req ToolRequest, incoming bool) 
 		warnings = append(warnings, cppDeclaredTypeWarning)
 	}
 
-	clangdCtx, cancel := context.WithTimeout(ctx, cppClangdBudget)
-	payload, lspErr := m.cppCallHierarchyViaClangd(clangdCtx, cppPreferredDefinition(resolution.Definitions), pathFilter, incoming)
+	clangdBudget := cppBudgetSetting("IDIOM_CPP_CLANGD_BUDGET", cppDefaultClangdBudget)
+	clangdCtx, cancel := context.WithTimeout(ctx, clangdBudget)
+	// LSP shutdown can outlive its request context. Keep that cleanup off the
+	// query's critical path; cancellation still terminates the owned process.
+	type hierarchyAttempt struct {
+		payload callHierarchyResult
+		err     error
+	}
+	attempt := make(chan hierarchyAttempt, 1)
+	go func() {
+		payload, err := m.cppCallHierarchyViaClangd(clangdCtx, cppPreferredDefinition(resolution.Definitions), pathFilter, incoming)
+		attempt <- hierarchyAttempt{payload: payload, err: err}
+	}()
+	var payload callHierarchyResult
+	var lspErr error
+	select {
+	case result := <-attempt:
+		payload, lspErr = result.payload, result.err
+	case <-clangdCtx.Done():
+		lspErr = clangdCtx.Err()
+	}
 
 	timedOut := clangdCtx.Err() != nil
 	cancel()
@@ -630,7 +717,7 @@ func (m *Manager) cppCalls(ctx context.Context, req ToolRequest, incoming bool) 
 	}
 
 	if timedOut {
-		warnings = append(warnings, fmt.Sprintf("clangd call hierarchy exceeded its %s budget; answered from the syntax index", cppClangdBudget))
+		warnings = append(warnings, fmt.Sprintf("clangd call hierarchy exceeded its %s budget; answered from the syntax index", clangdBudget))
 	}
 
 	if incoming {
@@ -754,20 +841,23 @@ func (m *Manager) cppIncludes(req ToolRequest) ToolResult {
 	return ToolResult{Tool: "cpp_includes", Summary: fmt.Sprintf("Found %d direct/transitive include dependency file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
-func (m *Manager) cppWhoIncludes(req ToolRequest) ToolResult {
+func (m *Manager) cppWhoIncludes(ctx context.Context, req ToolRequest) ToolResult {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
 		return ToolResult{Tool: "cpp_who_includes", Summary: "C++ reverse-include query rejected", Error: "pattern is required"}
 	}
 
-	index, err := m.getCppIndex()
+	index, info, err := m.loadCppIndex(ctx)
 	if err != nil {
+		if failure, ok := cppBudgetFailure("cpp_who_includes", "C++ reverse-include query unavailable", err, info); ok {
+			return failure
+		}
 		return ToolResult{Tool: "cpp_who_includes", Summary: "C++ reverse-include query unavailable", Error: err.Error()}
 	}
 
 	deps := filterRelatedPaths(index.WhoIncludes(pattern), m.cppPathFilter(req.Path))
 	if len(deps) == 0 {
-		return ToolResult{Tool: "cpp_who_includes", Summary: fmt.Sprintf("No C++ includers matched %q", pattern)}
+		return ToolResult{Tool: "cpp_who_includes", Summary: fmt.Sprintf("No C++ includers matched %q", pattern), Freshness: info.freshness(0, false, cppAnsweredBySyntax)}
 	}
 
 	lines := make([]string, 0, len(deps))
@@ -780,7 +870,7 @@ func (m *Manager) cppWhoIncludes(req ToolRequest) ToolResult {
 		lines = append(lines, display)
 	}
 
-	return ToolResult{Tool: "cpp_who_includes", Summary: fmt.Sprintf("Found %d direct/transitive includer file(s).", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "cpp_who_includes", Summary: fmt.Sprintf("Found %d direct/transitive includer file(s).", len(lines)), Output: strings.Join(lines, "\n"), Freshness: info.freshness(0, false, cppAnsweredBySyntax)}
 }
 
 func (m *Manager) cppBlastRadius(ctx context.Context, req ToolRequest) ToolResult {
@@ -859,31 +949,6 @@ func (m *Manager) cppBlastRadius(ctx context.Context, req ToolRequest) ToolResul
 		Summary:   fmt.Sprintf("Found %d affected C++ translation unit(s) for %s.", len(lines), subject),
 		Output:    strings.Join(lines, "\n"),
 		Freshness: freshness,
-	}
-}
-
-func (m *Manager) cppDeadSymbol(ctx context.Context, req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: "C++ dead-symbol query rejected", Error: "pattern is required"}
-	}
-
-	refs := m.cppReferences(ctx, req)
-	if refs.Error != "" {
-		refs.Tool = "cpp_dead_symbol"
-		refs.Summary = "C++ dead-symbol query failed"
-
-		return refs
-	}
-
-	lines := nonEmptySearchLines(refs.Output)
-	switch len(lines) {
-	case 0:
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("No C++ references matched %q; the symbol is likely dead.", pattern)}
-	case 1:
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("Only one C++ reference matched %q; inspect the definition before removing it.", pattern), Output: strings.Join(lines, "\n")}
-	default:
-		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("Found %d C++ references to %q; the symbol is not dead.", len(lines), pattern), Output: strings.Join(lines, "\n")}
 	}
 }
 
@@ -1346,7 +1411,13 @@ func nonEmptySearchLines(output string) []string {
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "context:") || strings.HasPrefix(line, "targeted edit template:") {
+		// search_content appends a numbered source snippet after "context:"
+		// for a single hit; snippet lines are not matches.
+		if strings.HasPrefix(line, "context:") {
+			break
+		}
+
+		if line == "" || strings.HasPrefix(line, "targeted edit template:") {
 			continue
 		}
 

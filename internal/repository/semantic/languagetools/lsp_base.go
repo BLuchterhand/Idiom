@@ -79,6 +79,10 @@ type LSPCallHierarchyItem struct {
 	Range          LSPRange `json:"range"`
 	SelectionRange LSPRange `json:"selectionRange"`
 	Detail         string   `json:"detail"`
+	// Data is opaque server state that must round-trip into the
+	// incomingCalls/outgoingCalls request; clangd keys the symbol on it and
+	// answers an empty list without it.
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 type LSPDocumentSymbol struct {
@@ -232,8 +236,13 @@ func (c *lspBaseClient) request(ctx context.Context, method string, params any, 
 			continue
 		}
 
-		if c.handleNotification != nil && env.Method != "" && len(env.ID) == 0 {
-			c.handleNotification(env.Method, env.Params)
+		// A message with a method is a server notification or a server request.
+		// Server requests carry their own ids (clangd starts at 0), so they must
+		// never be matched against our pending request id.
+		if env.Method != "" {
+			if c.handleNotification != nil && len(env.ID) == 0 {
+				c.handleNotification(env.Method, env.Params)
+			}
 
 			continue
 		}
@@ -316,6 +325,28 @@ func (c *lspBaseClient) readMessage() ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// readMessageWithin reads one message but returns when ctx ends. The read
+// goroutine stays blocked until the server writes or the process is closed.
+func (c *lspBaseClient) readMessageWithin(ctx context.Context) ([]byte, error) {
+	type readResult struct {
+		body []byte
+		err  error
+	}
+
+	done := make(chan readResult, 1)
+	go func() {
+		body, err := c.readMessage()
+		done <- readResult{body: body, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-done:
+		return result.body, result.err
+	}
 }
 
 func (c *lspBaseClient) openFile(path string, languageID string) error {
@@ -527,10 +558,21 @@ func lspParseResponseID(raw json.RawMessage) (int, error) {
 	return strconv.Atoi(s)
 }
 
+// LSPFileURI builds an RFC 8089 file URI. A Windows drive path must become
+// file:///C:/dir/file; without the slash before the drive letter the drive is
+// parsed as the URI authority and the language server resolves no document.
 func LSPFileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	slashed := filepath.ToSlash(path)
+	if hasWindowsDrivePrefix(slashed) {
+		slashed = "/" + slashed
+	}
+
+	return (&url.URL{Scheme: "file", Path: slashed}).String()
 }
 
+// LSPPathFromURI is the inverse of LSPFileURI. Language servers report Windows
+// locations as file:///c%3A/dir/file, whose URI path "/c:/dir/file" is not a
+// usable Windows path until the slash before the drive letter is removed.
 func LSPPathFromURI(uri string, serverName string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(uri))
 	if err != nil {
@@ -541,7 +583,23 @@ func LSPPathFromURI(uri string, serverName string) (string, error) {
 		return "", fmt.Errorf("unsupported %s URI scheme %q", serverName, parsed.Scheme)
 	}
 
-	return filepath.Clean(parsed.Path), nil
+	uriPath := parsed.Path
+	if trimmed := strings.TrimPrefix(uriPath, "/"); hasWindowsDrivePrefix(trimmed) {
+		uriPath = trimmed
+	}
+
+	return filepath.Clean(filepath.FromSlash(uriPath)), nil
+}
+
+func hasWindowsDrivePrefix(slashed string) bool {
+	if len(slashed) < 2 || slashed[1] != ':' {
+		return false
+	}
+
+	drive := slashed[0]
+	isLetter := drive >= 'A' && drive <= 'Z' || drive >= 'a' && drive <= 'z'
+
+	return isLetter && (len(slashed) == 2 || slashed[2] == '/')
 }
 
 type lspURIPathFunc func(string) (string, error)

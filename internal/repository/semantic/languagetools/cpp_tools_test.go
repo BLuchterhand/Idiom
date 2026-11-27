@@ -99,6 +99,7 @@ void WorkerSystem::process_cycle() {}
 			EnableWrites:          true,
 			CommandTimeoutSeconds: 30,
 			MaxFileBytes:          65536,
+			MaxDirectoryEntries:   80,
 		})
 
 		Expect(languageDetects(root, "cpp")).To(BeTrue())
@@ -163,7 +164,7 @@ int main() { helper(); return 0; }
 		Expect(ok).To(BeTrue())
 		Expect(freshness["index_key"]).NotTo(BeNil())
 		Expect(freshness).To(HaveKey("phase_ms"))
-		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/3"))
+		Expect(freshness["collector"]).To(Equal("cpp-syntax-index/4"))
 
 		overview := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_overview"})
 		Expect(overview.Freshness).To(HaveKeyWithValue("schema", "idiom.cpp_index.v1"))
@@ -211,7 +212,7 @@ void helper() {}
 		Expect(read.Error).To(BeEmpty())
 		Expect(read.Summary).To(ContainSubstring(`[resolved Gadget::offer, requested "Gadget::offer"]`))
 		Expect(read.Output).To(ContainSubstring("Gadget::offer"))
-		Expect(read.Freshness).To(HaveKeyWithValue("collector", "cpp-syntax-index/3"))
+		Expect(read.Freshness).To(HaveKeyWithValue("collector", "cpp-syntax-index/4"))
 
 		body := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_extract_body", Pattern: "Widget::offer"})
 		Expect(body.Error).To(BeEmpty())
@@ -223,6 +224,9 @@ void helper() {}
 	})
 
 	It("uses clangd for precise navigation when available", func() {
+		// This spec verifies the optional precision backend, with an explicit
+		// budget rather than the latency-oriented fallback default.
+		GinkgoT().Setenv("IDIOM_CPP_CLANGD_BUDGET", "10s")
 		if _, err := exec.LookPath("clangd"); err != nil {
 			Skip("clangd not installed")
 		}
@@ -299,14 +303,68 @@ void WorkerSystem::process_cycle() {}
 		Expect(workspaceSymbols.Summary).To(ContainSubstring("clangd"))
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_definition", Pattern: "EntityManager::tick"}), "entity_manager.cpp")
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_declaration", Pattern: "EntityManager::tick"}), "entity_manager.h")
+		// Cross-file answers need clangd's background index and correct file
+		// URIs (file:///C:/... on Windows); the opened file alone has no main.cpp.
 		references := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
-		expectToolSuccess(references, "helper();")
+		expectToolSuccess(references, "helper();", "src/main.cpp")
 		Expect(references.Summary).To(ContainSubstring("clangd"))
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_implementations", Pattern: "SystemBase::process_cycle"}), "worker_system.cpp")
 		expectToolSuccess(manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_from", Pattern: "EntityManager::tick"}), "helper")
 		incoming := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_into", Pattern: "helper"})
 		Expect(incoming.Error).To(BeEmpty())
-		Expect(incoming.Output).To(Or(ContainSubstring("main"), ContainSubstring("tick")))
+		Expect(incoming.Summary).To(ContainSubstring("via clangd call hierarchy"))
+		Expect(incoming.Output).To(And(ContainSubstring("main"), ContainSubstring("tick")))
+		dead := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_dead_symbol", Pattern: "helper", Path: "."})
+		Expect(dead.Error).To(BeEmpty())
+		Expect(dead.Summary).To(And(ContainSubstring("not dead"), ContainSubstring("via clangd")))
+	})
+
+	It("answers references and dead-symbol checks from text search when clangd is unavailable", func() {
+		GinkgoT().Setenv("PATH", GinkgoT().TempDir())
+
+		root := GinkgoT().TempDir()
+		writeCppFixture(filepath.Join(root, "core", "include", "handle.h"), `
+#pragma once
+namespace bentech {
+bool is_valid(int h);
+bool never_called(int h);
+}
+`)
+		writeCppFixture(filepath.Join(root, "core", "src", "handle.cpp"), `
+#include "handle.h"
+namespace bentech {
+bool is_valid(int h) {
+    return h != 0;
+}
+bool never_called(int h) {
+    return never_called(h - 1);
+}
+}
+`)
+		writeCppFixture(filepath.Join(root, "core", "src", "tick.cpp"), `
+#include "handle.h"
+namespace bentech { int tick(int h) { return is_valid(h) ? 1 : 0; } }
+`)
+		writeCppFixture(filepath.Join(root, "bindings", "src", "binding.cc"), `
+#include "handle.h"
+int bind_tick() { return bentech::is_valid(1); }
+`)
+		manager := workspace.NewManager(config.Workspace{Root: root, CWD: root, MaxFileBytes: 65536, MaxDirectoryEntries: 100})
+
+		references := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_references", Pattern: "is_valid", Path: "."})
+		expectToolSuccess(references, "core/src/tick.cpp:2:", "bindings/src/binding.cc:2:", "core/include/handle.h:3:")
+		Expect(references.Summary).To(ContainSubstring("text search"))
+		Expect(references.Warnings).To(ContainElement(ContainSubstring("clangd references unavailable")))
+
+		used := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_dead_symbol", Pattern: "is_valid", Path: "."})
+		Expect(used.Error).To(BeEmpty())
+		Expect(used.Summary).To(ContainSubstring("Found 2 reference(s)"))
+		Expect(used.Summary).To(ContainSubstring("not dead"))
+
+		// Its only reference is recursion inside its own body.
+		unused := manager.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_dead_symbol", Pattern: "never_called", Path: "."})
+		Expect(unused.Error).To(BeEmpty())
+		Expect(unused.Summary).To(ContainSubstring("likely dead"))
 	})
 })
 

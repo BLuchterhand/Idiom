@@ -9,10 +9,31 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+)
+
+const (
+	// clangdBackgroundIndexBudget bounds the wait for clangd's background index.
+	// Loading cached shards takes well under a second; a first full index of a
+	// large tree can exceed it, and the query then reports clangd unavailable
+	// instead of answering from the opened file alone.
+	clangdBackgroundIndexBudget = 30 * time.Second
+
+	clangdBackgroundIndexToken = "backgroundIndexProgress"
 )
 
 type clangdLSPClient struct {
 	lspBaseClient
+
+	// queryCtx is the context the client was created for. openFile has no
+	// context parameter (managedLSPClient), but the index wait it performs must
+	// stay inside the caller's budget.
+	queryCtx context.Context
+
+	// awaitIndex is set when a compile database exists: clangd then builds a
+	// background index on the first didOpen, and cross-file references and
+	// call hierarchy only exist once that index has loaded.
+	awaitIndex bool
 }
 
 func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, error) {
@@ -22,7 +43,8 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 	}
 
 	args := []string{"--log=error"}
-	if compileDir := m.compileCommandsDir(); compileDir != "" {
+	compileDir := m.compileCommandsDir()
+	if compileDir != "" {
 		args = append(args, "--compile-commands-dir="+compileDir)
 	}
 
@@ -33,6 +55,8 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 
 	client := &clangdLSPClient{
 		lspBaseClient: base,
+		queryCtx:      ctx,
+		awaitIndex:    compileDir != "",
 	}
 
 	params := map[string]any{
@@ -41,6 +65,11 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 		"capabilities": map[string]any{
 			"general": map[string]any{
 				"positionEncodings": []string{"utf-8"},
+			},
+			// Without workDoneProgress clangd never reports when its
+			// background index is ready.
+			"window": map[string]any{
+				"workDoneProgress": true,
 			},
 		},
 		"workspaceFolders": []map[string]any{{
@@ -69,8 +98,75 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 	return client, nil
 }
 
+// openFile opens the document and, on the first open with a compile database,
+// waits for clangd's background index. Querying before it loads answers only
+// from the opened file, which silently drops every cross-file reference.
 func (c *clangdLSPClient) openFile(path string) error {
-	return c.lspBaseClient.openFile(path, clangdLanguageID(path))
+	if err := c.lspBaseClient.openFile(path, clangdLanguageID(path)); err != nil {
+		return err
+	}
+
+	if !c.awaitIndex {
+		return nil
+	}
+
+	c.awaitIndex = false
+
+	ctx, cancel := context.WithTimeout(c.queryCtx, clangdBackgroundIndexBudget)
+	defer cancel()
+
+	if err := c.awaitBackgroundIndex(ctx); err != nil {
+		// A read may still be blocked on clangd's stdout; killing the process
+		// releases it so no reader is left racing later requests.
+		c.forceClose()
+
+		return fmt.Errorf("clangd background index not ready, cross-file results unavailable: %w", err)
+	}
+
+	return nil
+}
+
+func (c *clangdLSPClient) awaitBackgroundIndex(ctx context.Context) error {
+	for {
+		body, err := c.readMessageWithin(ctx)
+		if err != nil {
+			return err
+		}
+
+		done, err := c.handleBackgroundIndexMessage(body)
+		if err != nil || done {
+			return err
+		}
+	}
+}
+
+// handleBackgroundIndexMessage acknowledges clangd's progress-token request and
+// reports whether the message ends background indexing.
+func (c *clangdLSPClient) handleBackgroundIndexMessage(body []byte) (bool, error) {
+	var env LSPEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false, nil
+	}
+
+	switch env.Method {
+	case "window/workDoneProgress/create":
+		// clangd sends no progress for the token until the client answers.
+		return false, c.writeMessage(map[string]any{"jsonrpc": "2.0", "id": env.ID, "result": nil})
+	case "$/progress":
+		var progress struct {
+			Token string `json:"token"`
+			Value struct {
+				Kind string `json:"kind"`
+			} `json:"value"`
+		}
+		if err := json.Unmarshal(env.Params, &progress); err != nil {
+			return false, nil
+		}
+
+		return progress.Token == clangdBackgroundIndexToken && progress.Value.Kind == "end", nil
+	default:
+		return false, nil
+	}
 }
 
 func clangdPathFromURI(uri string) (string, error) {

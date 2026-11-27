@@ -5,10 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
 )
 
-func gitIn(t *testing.T, root string, args ...string) {
+func gitIn(t GinkgoTInterface, root string, args ...string) {
 	t.Helper()
 
 	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
@@ -19,7 +20,7 @@ func gitIn(t *testing.T, root string, args ...string) {
 	}
 }
 
-func writeFile(t *testing.T, path string, content string) {
+func writeFile(t GinkgoTInterface, path string, content string) {
 	t.Helper()
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -33,7 +34,8 @@ func writeFile(t *testing.T, path string, content string) {
 
 // The index key must change whenever the indexed content can change: a dirty
 // tracked file, an untracked file and a gitignored C++ file the walk still reads.
-func TestCppSnapshotKeyCoversDirtyAndIgnoredFiles(t *testing.T) {
+var _ = It("C++ cache identifies dirty and ignored sources", func() {
+	t := GinkgoT()
 	root := t.TempDir()
 	gitIn(t, root, "init", "-q")
 	writeFile(t, filepath.Join(root, ".gitignore"), "ign/\n")
@@ -75,4 +77,4 @@ func TestCppSnapshotKeyCoversDirtyAndIgnoredFiles(t *testing.T) {
 	if key() == before {
 		t.Fatal("editing a tracked C++ file does not change the key")
 	}
-}
+})
