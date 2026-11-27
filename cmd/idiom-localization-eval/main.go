@@ -209,6 +209,7 @@ func run(args []string) error {
 	seed := fs.Bool("seed", false, "seed each index from the nearest cached tree (faster, tail ranks may differ from a cold index); default is a cold index per case")
 	format := fs.String("format", "", "context_impact output format under test: empty (default JSON) or compact")
 	timed := fs.Int("timed-calls", 3, "timed calls per case after one warm-up")
+	history := fs.String("history", "", "JSON object (or a file holding one) for the history section of each checkout's .idiom/config.json; {\"disabled\":true} is the no-channel arm")
 	out := fs.String("out", "", "result file")
 	_ = fs.Parse(args)
 
@@ -226,6 +227,12 @@ func run(args []string) error {
 
 	opts := eval.LocalizationEvalRunOptions{Repo: *repo, IdiomBin: *bin, CacheDir: *cache, CacheMaxBytes: *cacheGB << 30,
 		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, Log: os.Stderr}
+	if *history != "" {
+		if opts.History, err = readHistoryFlag(*history); err != nil {
+			return err
+		}
+	}
+
 	if *only != "" {
 		opts.OnlyIDs = strings.Split(*only, ",")
 	}
@@ -236,6 +243,28 @@ func run(args []string) error {
 	}
 
 	return err
+}
+
+// readHistoryFlag takes inline JSON or the path of a JSON file.
+func readHistoryFlag(value string) (map[string]any, error) {
+	raw := []byte(value)
+	if !strings.HasPrefix(strings.TrimSpace(value), "{") {
+		var err error
+		if raw, err = os.ReadFile(value); err != nil {
+			return nil, err
+		}
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("-history: %w", err)
+	}
+
+	if out == nil {
+		out = map[string]any{}
+	}
+
+	return out, nil
 }
 
 func compare(args []string) error {

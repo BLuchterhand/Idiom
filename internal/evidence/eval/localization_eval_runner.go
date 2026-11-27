@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,11 @@ type LocalizationEvalRunOptions struct {
 	IndexTimeout time.Duration
 	QueryTimeout time.Duration
 	Log          io.Writer
+	// History is the `history` section written into each checkout's
+	// .idiom/config.json (the past-work channel's switches and weights). Nil
+	// writes none. Each usage case also gets as_of set to its query time, so a
+	// run reads nothing newer than the question.
+	History map[string]any
 }
 
 // LocalizationEvalCaseResult is the deterministic part of one case result plus
@@ -166,7 +172,7 @@ func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEval
 
 	defer func() { _, _ = gitOut(r.opts.Repo, "worktree", "remove", "--force", wt) }()
 
-	if err := r.writeLocalizationConfig(wt); err != nil {
+	if err := r.writeLocalizationConfig(wt, c); err != nil {
 		cr.Error = err.Error()
 		return cr
 	}
@@ -210,12 +216,26 @@ func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEval
 	return cr
 }
 
-func (r *localizationEvalRunner) writeLocalizationConfig(wt string) error {
-	if r.file.Localization.Fingerprint() == "" {
+func (r *localizationEvalRunner) writeLocalizationConfig(wt string, c LocalizationEvalCase) error {
+	sections := map[string]any{}
+	if r.file.Localization.Fingerprint() != "" {
+		sections["localization"] = r.file.Localization
+	}
+
+	if r.opts.History != nil {
+		history := maps.Clone(r.opts.History)
+		if c.Time != "" {
+			history["as_of"] = c.Time
+		}
+
+		sections["history"] = history
+	}
+
+	if len(sections) == 0 {
 		return nil
 	}
 
-	data, err := json.MarshalIndent(map[string]any{"localization": r.file.Localization}, "", "  ")
+	data, err := json.MarshalIndent(sections, "", "  ")
 	if err != nil {
 		return err
 	}
