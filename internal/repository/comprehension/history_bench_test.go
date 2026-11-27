@@ -3,6 +3,7 @@ package comprehension
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -17,11 +18,25 @@ func BenchmarkPastWorkChannel(b *testing.B) {
 		b.Skip("IDIOM_HISTORY_BENCH_REPO not set")
 	}
 
-	cfg := HistoryConfig{LedgerPath: os.Getenv("IDIOM_HISTORY_BENCH_LEDGER")}
+	cfg := HistoryConfig{Mode: historyModeFuse, LedgerPath: os.Getenv("IDIOM_HISTORY_BENCH_LEDGER")}
 	terms := LexicalTokens("rewrite the structure system save path and the net codec")
 	seeds := []LexicalHit{{Path: "core/structures/structure_system.cpp"}, {Path: "net/codec.cpp"}}
 
-	b.Run("load", func(b *testing.B) {
+	cache := filepath.Join(root, filepath.FromSlash(historyCacheRelPath))
+
+	b.Run("load_cold", func(b *testing.B) {
+		for range b.N {
+			b.StopTimer()
+			_ = os.Remove(cache)
+			b.StartTimer()
+			LoadChangeHistory(context.Background(), root, cfg)
+		}
+	})
+
+	b.Run("load_warm", func(b *testing.B) {
+		LoadChangeHistory(context.Background(), root, cfg)
+		b.ResetTimer()
+
 		for range b.N {
 			LoadChangeHistory(context.Background(), root, cfg)
 		}
