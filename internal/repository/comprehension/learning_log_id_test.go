@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // orphanedLegacyLine is an event written in July 2026 by an id recipe that
@@ -25,116 +27,89 @@ func goldenIDEntry() LearningLogEntry {
 	}
 }
 
-// The id recipe is pinned: this value was produced before id_version existed.
-func TestLearningEventIDRecipeIsPinned(t *testing.T) {
-	if got := learningEventID(goldenIDEntry()); got != "ranker_7f0fe7d99284933b" {
-		t.Fatalf("event id recipe changed: %s", got)
-	}
-
-	versioned := goldenIDEntry()
-	versioned.IDVersion = learningEventIDVersion
-
-	if learningEventID(versioned) != "ranker_7f0fe7d99284933b" {
-		t.Fatal("id_version must not feed the hash")
-	}
-}
-
-// A field added to LearningLogEntry changes nothing about existing ids, but
-// whoever adds one must decide whether the recipe should cover it.
-func TestLearningLogEntryFieldsMatchTheFrozenRecipe(t *testing.T) {
-	names := func(v any, skip ...string) []string {
-		var out []string
-
-		typ := reflect.TypeOf(v)
-		for i := 0; i < typ.NumField(); i++ {
-			if !slices.Contains(skip, typ.Field(i).Name) {
-				out = append(out, typ.Field(i).Name)
-			}
-		}
-
-		return out
-	}
-
-	if got, want := names(LearningLogEntry{}, "EventID", "IDVersion"), names(learningEventIDRecipeV1{}); !slices.Equal(got, want) {
-		t.Fatalf("LearningLogEntry fields %v differ from the frozen recipe %v: decide whether a new recipe version is needed", got, want)
-	}
-}
-
-func TestNewLearningEventsCarryIDVersion(t *testing.T) {
-	entry, line, err := canonicalLearningDecision(LearningLogEntry{Source: "eval", Action: "boost", State: "rejected", Reason: "no_edit_paths", BeforeWeights: &map[string]float64{}, AfterWeights: &map[string]float64{}, Rollback: &LearningRollbackData{Weights: map[string]float64{}}, Verification: &LearningLogVerificationEvidence{VerificationCommand: "swe_groundedness_oracle", VerificationPassed: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if entry.IDVersion != learningEventIDVersion || !strings.Contains(string(line), `"id_version":1`) {
-		t.Fatalf("new event lacks id_version: %s", line)
-	}
-}
-
-func writeRankerLog(t *testing.T, content string) string {
-	t.Helper()
-
-	root := t.TempDir()
+func writeRankerLog(content string) string {
+	root := GinkgoT().TempDir()
 	dir := filepath.Join(root, ".idiom", "ranker")
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, "learning_log.jsonl"), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	Expect(os.MkdirAll(dir, 0o755)).To(Succeed())
+	Expect(os.WriteFile(filepath.Join(dir, "learning_log.jsonl"), []byte(content), 0o644)).To(Succeed())
 
 	return root
 }
 
-func TestOrphanedLegacyLineIsQuarantined(t *testing.T) {
-	root := writeRankerLog(t, orphanedLegacyLine+"\n")
+var _ = Describe("learning event ids", func() {
+	// The id recipe is pinned: this value was produced before id_version existed.
+	It("pins the id recipe", func() {
+		Expect(learningEventID(goldenIDEntry())).To(Equal("ranker_7f0fe7d99284933b"), "event id recipe changed")
 
-	entries, err := ReadLearningLog(context.Background(), root)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("read = %v, %v; the orphaned no-op line must be quarantined, not fail the log", entries, err)
-	}
+		versioned := goldenIDEntry()
+		versioned.IDVersion = learningEventIDVersion
 
-	quarantined, _ := os.ReadFile(filepath.Join(root, ".idiom", "ranker", "learning_log.quarantine.jsonl"))
-	if strings.TrimSpace(string(quarantined)) != orphanedLegacyLine {
-		t.Fatalf("quarantine file = %q", quarantined)
-	}
+		Expect(learningEventID(versioned)).To(Equal("ranker_7f0fe7d99284933b"), "id_version must not feed the hash")
+	})
 
-	live, _ := os.ReadFile(filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl"))
-	if len(live) != 0 {
-		t.Fatalf("log still holds %q", live)
-	}
-}
+	// A field added to LearningLogEntry changes nothing about existing ids, but
+	// whoever adds one must decide whether the recipe should cover it.
+	It("keeps LearningLogEntry fields matching the frozen recipe", func() {
+		names := func(v any, skip ...string) []string {
+			var out []string
 
-func TestOrphanedLineThatChangedWeightsIsNotQuarantined(t *testing.T) {
-	root := t.TempDir()
+			typ := reflect.TypeOf(v)
+			for i := 0; i < typ.NumField(); i++ {
+				if !slices.Contains(skip, typ.Field(i).Name) {
+					out = append(out, typ.Field(i).Name)
+				}
+			}
 
-	entry, _, err := ApplyManualRankerNudge(context.Background(), root, "boost", []string{"core/a.cpp"}, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+			return out
+		}
 
-	logPath := filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl")
+		Expect(names(LearningLogEntry{}, "EventID", "IDVersion")).To(Equal(names(learningEventIDRecipeV1{})),
+			"decide whether a new recipe version is needed")
+	})
 
-	raw, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	It("stamps new events with the id version", func() {
+		entry, line, err := canonicalLearningDecision(LearningLogEntry{Source: "eval", Action: "boost", State: "rejected", Reason: "no_edit_paths", BeforeWeights: &map[string]float64{}, AfterWeights: &map[string]float64{}, Rollback: &LearningRollbackData{Weights: map[string]float64{}}, Verification: &LearningLogVerificationEvidence{VerificationCommand: "swe_groundedness_oracle", VerificationPassed: true}})
+		Expect(err).NotTo(HaveOccurred())
 
-	if !strings.Contains(string(raw), `"after_weights":{"`) {
-		t.Fatalf("fixture must change weights: %s", raw)
-	}
+		Expect(entry.IDVersion).To(Equal(learningEventIDVersion))
+		Expect(string(line)).To(ContainSubstring(`"id_version":1`))
+	})
+})
 
-	if err := os.WriteFile(logPath, []byte(strings.Replace(string(raw), entry.EventID, "ranker_0000000000000000", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+var _ = Describe("orphaned learning log lines", func() {
+	It("quarantines an orphaned legacy no-op line instead of failing the log", func() {
+		root := writeRankerLog(orphanedLegacyLine + "\n")
 
-	if _, err := ReadLearningLog(context.Background(), root); err == nil {
-		t.Fatal("an orphaned event that changed weights must still fail the strict read")
-	}
+		entries, err := ReadLearningLog(context.Background(), root)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(entries).To(BeEmpty())
 
-	if _, err := os.Stat(filepath.Join(root, ".idiom", "ranker", "learning_log.quarantine.jsonl")); err == nil {
-		t.Fatal("nothing should have been quarantined")
-	}
-}
+		quarantined, _ := os.ReadFile(filepath.Join(root, ".idiom", "ranker", "learning_log.quarantine.jsonl"))
+		Expect(strings.TrimSpace(string(quarantined))).To(Equal(orphanedLegacyLine))
+
+		live, _ := os.ReadFile(filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl"))
+		Expect(live).To(BeEmpty(), "log still holds a line")
+	})
+
+	It("does not quarantine an orphaned line that changed weights", func() {
+		root := GinkgoT().TempDir()
+
+		entry, _, err := ApplyManualRankerNudge(context.Background(), root, "boost", []string{"core/a.cpp"}, "", "")
+		Expect(err).NotTo(HaveOccurred())
+
+		logPath := filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl")
+
+		raw, err := os.ReadFile(logPath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring(`"after_weights":{"`), "fixture must change weights")
+
+		Expect(os.WriteFile(logPath, []byte(strings.Replace(string(raw), entry.EventID, "ranker_0000000000000000", 1)), 0o644)).To(Succeed())
+
+		_, err = ReadLearningLog(context.Background(), root)
+		Expect(err).To(HaveOccurred(), "an orphaned event that changed weights must still fail the strict read")
+
+		_, err = os.Stat(filepath.Join(root, ".idiom", "ranker", "learning_log.quarantine.jsonl"))
+		Expect(err).To(HaveOccurred(), "nothing should have been quarantined")
+	})
+})

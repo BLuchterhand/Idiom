@@ -493,7 +493,9 @@ void unknownPrefix(zz::Kernel& z, godot::Thing& t) {
 
 		for _, file := range index.Files {
 			for _, symbol := range file.Symbols {
-				Expect(symbol.Kind == "namespace" && (symbol.Name == "ks" || symbol.Name == "kb")).To(BeFalse(), "an alias is not a namespace")
+				if symbol.Kind == "namespace" {
+					Expect(symbol.Name).NotTo(BeElementOf("ks", "kb"), "an alias is not a namespace")
+				}
 			}
 		}
 	})
