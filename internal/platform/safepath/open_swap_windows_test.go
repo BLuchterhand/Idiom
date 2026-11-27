@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -104,7 +105,11 @@ var _ = ginkgo.Describe("handle-bound path swaps", func() {
 })
 
 func makeDirectoryJunction(path string, target string) (string, error) {
-	command := `mklink /J "` + path + `" "` + target + `"`
-	output, err := exec.Command("cmd.exe", "/c", command).CombinedOutput()
+	// cmd.exe parses its own command line, so pass it raw: exec.Command would
+	// escape the quotes as \" and mklink would refuse the syntax, skipping
+	// every junction spec instead of running it (G907).
+	command := exec.Command("cmd.exe")
+	command.SysProcAttr = &syscall.SysProcAttr{CmdLine: `cmd.exe /c mklink /J "` + path + `" "` + target + `"`}
+	output, err := command.CombinedOutput()
 	return string(output), err
 }

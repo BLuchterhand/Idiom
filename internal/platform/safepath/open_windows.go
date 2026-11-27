@@ -24,11 +24,8 @@ func validateOpenedFile(file *os.File, canonicalRoot string, _ string, expected 
 	if err != nil {
 		return fmt.Errorf("resolve opened %s handle: %w", label, err)
 	}
-	finalPath = CleanPath(finalPath)
-	if !samePath(canonicalRoot, finalPath) {
-		if _, ok := Rel(canonicalRoot, finalPath); !ok {
-			return fmt.Errorf("opened %s handle escapes workspace root", label)
-		}
+	if !normalizedPathWithin(canonicalRoot, finalPath) {
+		return fmt.Errorf("opened %s handle escapes workspace root", label)
 	}
 
 	var info syscall.ByHandleFileInformation
@@ -39,6 +36,25 @@ func validateOpenedFile(file *os.File, canonicalRoot string, _ string, expected 
 		return fmt.Errorf("opened %s handle is a reparse point", label)
 	}
 	return nil
+}
+
+// normalizedPathWithin reports whether path is root or lies under it. Both
+// must be normalized final paths (GetFinalPathNameByHandleW with
+// FILE_NAME_NORMALIZED, as CanonicalExistingPath and finalPathForHandle
+// return), which already carry long component names, so a case-insensitive
+// lexical compare is exact. Expanding them again through CleanPath called
+// GetLongPathNameW, which reopens every component, five times per handle: 62%
+// of the walk's time (G907).
+func normalizedPathWithin(root string, path string) bool {
+	root, path = filepath.Clean(root), filepath.Clean(path)
+	if strings.EqualFold(root, path) {
+		return true
+	}
+	prefix := root
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	return len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
 }
 
 func finalPathForHandle(handle syscall.Handle) (string, error) {
