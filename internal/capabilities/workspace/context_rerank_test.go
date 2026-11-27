@@ -1,6 +1,9 @@
 package workspace
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestPlanLLMRerankOffKeepsLimit(t *testing.T) {
 	t.Setenv("IDIOM_LLM_RERANK", "")
@@ -24,5 +27,23 @@ func TestPlanLLMRerankOnWidensPoolAndKeepsCallerLimit(t *testing.T) {
 
 	if p := planLLMRerank(50); p.packLimit != 50 || p.keep != 50 {
 		t.Fatalf("on plan, wide limit = %+v", p)
+	}
+}
+
+func TestToolTimeoutFloorFromEnvOnlyRaises(t *testing.T) {
+	t.Setenv(toolTimeoutFloorEnv, "")
+
+	base := ToolTimeoutForRequest(ToolRequest{Tool: ToolNameContextImpact})
+
+	t.Setenv(toolTimeoutFloorEnv, "240")
+
+	if got := ToolTimeoutForRequest(ToolRequest{Tool: ToolNameContextImpact}); got != 240*time.Second {
+		t.Fatalf("raised = %v (base %v)", got, base)
+	}
+
+	t.Setenv(toolTimeoutFloorEnv, "1")
+
+	if got := ToolTimeoutForRequest(ToolRequest{Tool: ToolNameContextImpact}); got != base {
+		t.Fatalf("lowered = %v, base %v", got, base)
 	}
 }

@@ -43,7 +43,13 @@ type LocalizationEvalRunOptions struct {
 	// JSON) or "compact".
 	Format string
 	// Env is added to the environment of every idiom call (the rerank arms).
-	Env          []string
+	Env []string
+	// CodeMapCmd, when set, runs in each case's base worktree (for example
+	// "node scripts/code_map.mjs") to generate that base's code map. The map is
+	// moved out of the worktree, so the index stays fresh, and its path reaches
+	// idiom as IDIOM_RERANK_CODEMAP. The map is generated, not committed, in the
+	// repositories this was built for.
+	CodeMapCmd   string
 	IndexTimeout time.Duration
 	QueryTimeout time.Duration
 	Log          io.Writer
@@ -141,9 +147,10 @@ func selectLocalizationEvalCases(all []LocalizationEvalCase, opts LocalizationEv
 }
 
 type localizationEvalRunner struct {
-	file      LocalizationEvalCaseFile
-	opts      LocalizationEvalRunOptions
-	collector string
+	file        LocalizationEvalCaseFile
+	opts        LocalizationEvalRunOptions
+	collector   string
+	codeMapPath string // current case's generated code map, "" when none
 }
 
 func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEvalCase) LocalizationEvalCaseResult {
@@ -169,6 +176,11 @@ func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEval
 	defer func() { _, _ = gitOut(r.opts.Repo, "worktree", "remove", "--force", wt) }()
 
 	if err := r.writeLocalizationConfig(wt); err != nil {
+		cr.Error = err.Error()
+		return cr
+	}
+
+	if err := r.prepareCodeMap(ctx, wt, c.ID); err != nil {
 		cr.Error = err.Error()
 		return cr
 	}
@@ -210,6 +222,49 @@ func (r *localizationEvalRunner) runCase(ctx context.Context, c LocalizationEval
 	cr.Metrics5, _ = ComputeLocalizationEvalMetrics(first, c.Gold, LocalizationEvalSecondaryK)
 
 	return cr
+}
+
+// prepareCodeMap generates the base's code map with CodeMapCmd and moves it out
+// of the worktree. A failing generator leaves the case without a map.
+func (r *localizationEvalRunner) prepareCodeMap(ctx context.Context, wt, caseID string) error {
+	r.codeMapPath = ""
+
+	argv := strings.Fields(r.opts.CodeMapCmd)
+	if len(argv) == 0 {
+		return nil
+	}
+
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = wt
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(r.opts.Log, "  code map generator failed: %v: %s\n", err, truncate(string(out), 200))
+		return nil
+	}
+
+	generated := filepath.Join(wt, "docs", "engineering", "code-map.md")
+	dest := filepath.Join(r.opts.CacheDir, "codemaps", caseID+".md")
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+
+	if err := os.Rename(generated, dest); err != nil {
+		data, rerr := os.ReadFile(generated)
+		if rerr != nil {
+			return nil
+		}
+
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
+			return err
+		}
+
+		_ = os.Remove(generated)
+	}
+
+	r.codeMapPath = dest
+
+	return nil
 }
 
 func (r *localizationEvalRunner) writeLocalizationConfig(wt string) error {
@@ -349,7 +404,10 @@ func (r *localizationEvalRunner) runIdiom(ctx context.Context, dir string, timeo
 
 	cmd := exec.CommandContext(ctx, r.opts.IdiomBin, "tool", tool, "--input", input)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), r.opts.Env...)
+	cmd.Env = append(append(os.Environ(), "IDIOM_TOOL_TIMEOUT_SECONDS=240"), r.opts.Env...)
+	if r.codeMapPath != "" {
+		cmd.Env = append(cmd.Env, "IDIOM_RERANK_CODEMAP="+r.codeMapPath)
+	}
 
 	var stdout, stderr bytes.Buffer
 

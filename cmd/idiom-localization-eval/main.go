@@ -213,6 +213,7 @@ func run(args []string) error {
 	timed := fs.Int("timed-calls", 3, "timed calls per case after one warm-up")
 	rerank := fs.String("rerank", "", "rerank backends for this arm, comma-separated: cross, embed, chat, anthropic (empty: no rerank)")
 	rerankDir := fs.String("rerank-dir", "", "directory for the arm's rerank cache and usage log")
+	codeMapCmd := fs.String("codemap-cmd", "", "command run in each case's base worktree to generate its code map (the rerank text), e.g. \"node scripts/code_map.mjs\"")
 	rerankDry := fs.Bool("rerank-dry", false, "estimate rerank tokens only; call no backend")
 	out := fs.String("out", "", "result file")
 	_ = fs.Parse(args)
@@ -235,7 +236,7 @@ func run(args []string) error {
 	}
 
 	opts := eval.LocalizationEvalRunOptions{Repo: *repo, IdiomBin: *bin, CacheDir: *cache, CacheMaxBytes: *cacheGB << 30,
-		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, Env: renv, Log: os.Stderr}
+		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, Env: renv, CodeMapCmd: *codeMapCmd, Log: os.Stderr}
 	if *only != "" {
 		opts.OnlyIDs = strings.Split(*only, ",")
 	}

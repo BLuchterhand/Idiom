@@ -26,7 +26,11 @@ var codeMapLine = regexp.MustCompile(`^- (\S+) \(\d+\)(?: (.*))?$`)
 // the file's one-line purpose and its first public symbols. A missing code map
 // leaves the bare path, so ranking still works without it.
 func LoadDocs(root, codeMapPath string, paths []string) []Doc {
-	entries := parseCodeMap(filepath.Join(root, filepath.FromSlash(codeMapPath)))
+	if !filepath.IsAbs(codeMapPath) {
+		codeMapPath = filepath.Join(root, filepath.FromSlash(codeMapPath))
+	}
+
+	entries := parseCodeMap(codeMapPath)
 	docs := make([]Doc, len(paths))
 
 	for i, p := range paths {

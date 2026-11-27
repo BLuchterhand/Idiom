@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -168,10 +170,24 @@ func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, tim
 func ToolTimeoutForRequest(req ToolRequest) time.Duration {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == ToolNameContextStatus && req.Refresh {
-		return toolTimeoutFor(ToolNameContextIndex)
+		return raiseToolTimeoutFromEnv(toolTimeoutFor(ToolNameContextIndex))
 	}
 
-	return toolTimeoutFor(tool)
+	return raiseToolTimeoutFromEnv(toolTimeoutFor(tool))
+}
+
+// toolTimeoutFloorEnv names an environment variable (seconds) that raises, never
+// lowers, a tool's budget. The localization eval sets it so a loaded machine's
+// slow ranking is measured instead of reported as a stall at the 30 s default.
+const toolTimeoutFloorEnv = "IDIOM_TOOL_TIMEOUT_SECONDS"
+
+func raiseToolTimeoutFromEnv(timeout time.Duration) time.Duration {
+	secs, err := strconv.Atoi(strings.TrimSpace(os.Getenv(toolTimeoutFloorEnv)))
+	if err != nil || timeout <= 0 {
+		return timeout
+	}
+
+	return max(timeout, time.Duration(secs)*time.Second)
 }
 
 // ToolTimeoutForRequest returns the effective wall-clock budget for this

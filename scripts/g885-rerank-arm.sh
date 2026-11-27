@@ -27,7 +27,7 @@ mkdir -p "$WORK" "$INDEX_CACHE"
 
 rerank_flags=()
 if [ -n "${BACKENDS:-}" ]; then
-  rerank_flags=(-rerank "$BACKENDS" -rerank-dir "$WORK")
+  rerank_flags=(-rerank "$BACKENDS" -rerank-dir "$WORK" -codemap-cmd "${CODEMAP_CMD:-node scripts/code_map.mjs}")
   [ "${RERANK_DRY:-0}" = 1 ] && rerank_flags+=(-rerank-dry)
 fi
 

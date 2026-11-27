@@ -20,13 +20,17 @@ hold-out (`testdata/localization/eval/AUDIT.md`, "usage-eval v1"), and adds unde
   arm). `cross,embed` fuses the two orders by reciprocal rank fusion (k = 60).
 - **Document text.** Repo path, the file's one-line purpose from the repository's code map
   (`docs/engineering/code-map.md`) and its first five public symbols (same line). A missing code map leaves the path.
+  BenTech's code map is generated and gitignored, so a historical base has none: the eval runs
+  `-codemap-cmd "node scripts/code_map.mjs"` in each case's base worktree, moves the result out of the tree (the
+  index stays fresh) and hands its path over as `IDIOM_RERANK_CODEMAP`. Without it every document is a bare path.
 - **Never a failure.** Unreachable server, timeout (default 2 s local, 30 s chat and Anthropic), HTTP error, bad JSON,
   all-equal scores (a model without a rank head) or an unparsable listwise reply return Idiom's order with
   `rerank: off: <reason>` in the report (`rerank` field, and the tool summary). Any failed channel of a fused arm
   fails the whole arm, so an arm never runs on fewer channels than it names.
 - **Network.** Backend hosts must be loopback or on the tailnet (100.64.0.0/10) unless
   `IDIOM_RERANK_ALLOW_REMOTE=1`. Only the Anthropic backend leaves the user's machines. Endpoints:
-  `IDIOM_RERANK_CROSS_URL`, `IDIOM_RERANK_EMBED_URL`, `IDIOM_RERANK_CHAT_URL` (+ `_MODEL`). Defaults are
+  `IDIOM_RERANK_CROSS_URL`, `IDIOM_RERANK_EMBED_URL`, `IDIOM_RERANK_CHAT_URL` (+ `_MODEL`). The eval raises the
+  30 s tool budget with `IDIOM_TOOL_TIMEOUT_SECONDS` (it only raises): context_impact takes 16-27 s on late BenTech bases. Defaults are
   loopback ports; the tailnet addresses are set by the caller's environment, not committed.
 - **Queue.** If `IDIOM_RERANK_POOL` is set, each real call group runs inside `runner.MaybeAcquire` (the existing
   `idiom queue` gate), with the daemon unreachable meaning ungated, as for the other entry points.
