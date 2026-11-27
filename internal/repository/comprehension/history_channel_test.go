@@ -245,7 +245,7 @@ func TestHistoryNeverReadsPastTheCut(t *testing.T) {
 	r.commit(10, "Z2 brine pump rewrite", "pump/gold.go") // the asked-for change
 	cut := epoch.AddDate(0, 0, 5)
 
-	cfg := HistoryConfig{LedgerPath: "docs/ledger.md", AsOf: cut.Format(time.RFC3339)}
+	cfg := HistoryConfig{Mode: historyModeFuse, LedgerPath: "docs/ledger.md", AsOf: cut.Format(time.RFC3339)}
 	h := LoadChangeHistory(context.Background(), r.root, cfg)
 	got := paths(h.RankSimilarWork(LexicalTokens("brine pump rewrite"), allowed))
 
@@ -274,17 +274,17 @@ func TestHistoryNeverReadsPastTheCut(t *testing.T) {
 
 	// Without a cut the same repository does show the newer commit, so the
 	// checks above do not pass merely because nothing was there to leak.
-	all := LoadChangeHistory(context.Background(), r.root, HistoryConfig{LedgerPath: "docs/ledger.md"})
+	all := LoadChangeHistory(context.Background(), r.root, HistoryConfig{Mode: historyModeFuse, LedgerPath: "docs/ledger.md"})
 	if indexOf(paths(all.RankSimilarWork(LexicalTokens("brine pump rewrite"), allowed)), "pump/gold.go") < 0 {
 		t.Fatal("control failed: uncut history should contain the newer commit")
 	}
 }
 
-func TestHistoryDisabledAndOutsideGit(t *testing.T) {
+func TestHistoryOffByDefaultAndOutsideGit(t *testing.T) {
 	r := newFixtureRepo(t)
 	r.commit(1, "anything", "a.go")
 
-	if h := LoadChangeHistory(context.Background(), r.root, HistoryConfig{Disabled: true}); len(h.Commits) != 0 || len(h.Items) != 0 {
+	if h := LoadChangeHistory(context.Background(), r.root, HistoryConfig{}); len(h.Commits) != 0 || len(h.Items) != 0 {
 		t.Fatalf("disabled channel read history: %+v", h)
 	}
 
@@ -317,7 +317,7 @@ func TestHistoryFingerprintChangesWithCommitAndLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(`{"history":{"ledger_path":"docs/ledger.md"}}`), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`{"history":{"mode":"fuse","ledger_path":"docs/ledger.md"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

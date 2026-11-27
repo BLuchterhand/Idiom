@@ -2,6 +2,7 @@ package comprehension
 
 import (
 	"context"
+	"slices"
 	"strings"
 )
 
@@ -70,15 +71,16 @@ func (h ChangeHistory) RankCoChange(seeds []LexicalHit, include func(path string
 	return rankCoChange(h, seeds, include)
 }
 
-// pastWorkLists builds the channel's RRF lists. base is the fused list of the
-// other channels: its head seeds the co-change graph, and the similar-work
-// list joins the seeds so a past change can pull in its own neighbours.
-func pastWorkLists(ctx *packContext, include func(string) bool, base []LexicalHit) []rankedList {
+// fuseWithPastWork fuses the other channels' lists and, when the history
+// config asks for it, the past-work lists. With no history section (the
+// default) it is exactly fuseRankedLists(base...): no git is run, no file read.
+func fuseWithPastWork(ctx *packContext, include func(string) bool, base []rankedList) []LexicalHit {
 	cfg, err := LoadHistoryConfig(ctx.root)
-	if err != nil || cfg.Disabled {
-		return nil
+	if err != nil || !cfg.enabled() {
+		return fuseRankedLists(base...)
 	}
 
+	head := fuseRankedLists(base...)
 	indexed := func(path string) bool {
 		_, ok := ctx.nodesByID[fileNodeID(path)]
 
@@ -88,12 +90,25 @@ func pastWorkLists(ctx *packContext, include func(string) bool, base []LexicalHi
 	history := LoadChangeHistory(ctx.requestContext, ctx.root, cfg)
 	similar := history.RankSimilarWork(LexicalTokens(ctx.task), indexed)
 
-	seedBase := fuseRankedLists(rankedList{Source: "base", Hits: base}, rankedList{Source: pastWorkSimilar, Hits: similar})
+	if cfg.Mode == historyModeBackfill {
+		keep := cfg.backfillKeep()
+		seeds := head[:min(keep, len(head))]
+		co := history.RankCoChange(seeds, indexed)
+
+		return backfillOrder(head, fuseRankedLists(pastLists(cfg, similar, co)...), keep)
+	}
+
+	seedBase := fuseRankedLists(rankedList{Source: "base", Hits: head}, rankedList{Source: pastWorkSimilar, Hits: similar})
 	co := history.RankCoChange(seedBase, indexed)
 
+	return fuseRankedLists(append(slices.Clone(base), pastLists(cfg, similar, co)...)...)
+}
+
+// pastLists weights the two lists; a weight of 0 drops one (rankedList
+// treats 0 as 1).
+func pastLists(cfg HistoryConfig, similar, co []LexicalHit) []rankedList {
 	var lists []rankedList
 
-	// A weight of 0 drops the list (rankedList treats 0 as 1).
 	if w := cfg.similarWeight(); w > 0 {
 		lists = append(lists, rankedList{Source: pastWorkSimilar, Hits: similar, Weight: w})
 	}

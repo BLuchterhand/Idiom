@@ -43,14 +43,10 @@ func lexicalPackFiles(ctx *packContext, files *packFileBuilder, overlay runtimeP
 	languageOf := func(p string) string { return ctx.nodesByID[fileNodeID(p)].Language }
 	lexical := HopLexical(RankLexical(corpus, terms, include), buildHopGraph(ctx.graph, ctx.nodesByID), languageOf, include)
 
-	lists := []rankedList{
+	hits := fuseWithPastWork(ctx, include, []rankedList{
 		{Source: "bm25", Hits: lexical},
 		{Source: "graph", Hits: graphRankedHits(graphRanked, include, languageOf)},
-	}
-	// The past-work lists join last: they read the fused order of the first two
-	// as their seeds, and a file only they reach is marked by PastWork.
-	lists = append(lists, pastWorkLists(ctx, include, fuseRankedLists(lists...))...)
-	hits := fuseRankedLists(lists...)
+	})
 	if len(hits) == 0 {
 		return nil, false
 	}

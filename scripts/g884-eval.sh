@@ -6,7 +6,7 @@
 #
 # It builds one idiom binary from this checkout (with the eval-only timeout
 # patch applied through `go build -overlay`, so the tree stays clean), runs the
-# cases twice with it, once with the channel off (`-history {"disabled":true}`)
+# cases twice with it, once with the channel off (`-history {"mode":"off"}`)
 # and once with it on, writes a per-case score CSV for each arm, and prints
 # compare-scores for dev and hold-out:
 #   candidate vs the frozen e324acb1 CSVs, and candidate vs the channel-off arm.
@@ -23,15 +23,17 @@
 #   -t N     timed calls per case after the warm-up (default 1; 0 for a fast sweep)
 #   -n NAME  arm name used in file names (default cand)
 #   -S       skip the channel-off arm
+#   -k DIR   index cache / checkout directory (default <out>/cache); arms run in parallel need one each
 set -u
 set -o pipefail
 
 repo=""; cases=""; baseline=""; others=""; out=".cache/g884"; hist="{}"; subset="all"; timed=1; name="cand"; skipoff=0
-while getopts "r:c:b:a:o:H:s:t:n:S" opt; do
+cache=""
+while getopts "r:c:b:a:o:H:s:t:n:Sk:" opt; do
   case "$opt" in
     r) repo="$OPTARG" ;; c) cases="$OPTARG" ;; b) baseline="$OPTARG" ;; a) others="$OPTARG" ;;
     o) out="$OPTARG" ;; H) hist="$OPTARG" ;; s) subset="$OPTARG" ;; t) timed="$OPTARG" ;;
-    n) name="$OPTARG" ;; S) skipoff=1 ;;
+    n) name="$OPTARG" ;; S) skipoff=1 ;; k) cache="$OPTARG" ;;
     *) exit 2 ;;
   esac
 done
@@ -40,6 +42,7 @@ done
 root="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$out" "$out/bin" "$out/runs"
 out="$(cd "$out" && pwd)"
+[ -n "$cache" ] || cache="$out/cache"
 exe=""; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) exe=".exe" ;; esac
 
 # Eval-only build: context_impact's 30 s and context_index's 5 min dispatch
@@ -64,22 +67,22 @@ evalbin="$out/bin/loc-eval$exe"; idiom="$out/bin/idiom$exe"
 echo "built from $(git -C "$root" rev-parse --short HEAD)"
 
 arm() { # arm <tag> <history json>
-  local tag="$1" h="$2"
+  local tag="$1.$subset" h="$2" # a run file is never shared across splits
   [ -s "$out/runs/$tag.json" ] || timeout 28800 "$evalbin" run -repo "$repo" -cases "$cases" -idiom-bin "$idiom" \
-    -cache "$out/cache" -subset "$subset" -timed-calls "$timed" -history "$h" -out "$out/runs/$tag.json" > "$out/runs/$tag.log" 2>&1 || return 1
+    -cache "$cache" -subset "$subset" -timed-calls "$timed" -history "$h" -out "$out/runs/$tag.json" > "$out/runs/$tag.log" 2>&1 || return 1
   "$evalbin" case-scores -run "$out/runs/$tag.json" -cases "$cases" -out "$out/runs/$tag.csv"
 }
 
-[ "$skipoff" = 1 ] || arm "off" '{"disabled":true}' || { echo "channel-off arm failed, see $out/runs/off.log"; exit 1; }
+[ "$skipoff" = 1 ] || arm "off" '{"mode":"off"}' || { echo "channel-off arm failed, see $out/runs/off.log"; exit 1; }
 arm "$name" "$hist" || { echo "candidate arm failed, see $out/runs/$name.log"; exit 1; }
 
-after="$out/runs/$name.csv"; [ -n "$others" ] && after="$after,$others"
+after="$out/runs/$name.$subset.csv"; [ -n "$others" ] && after="$after,$others"
 splits="dev holdout"; [ "$subset" = all ] || splits="$subset"
 for split in $splits; do
   echo "== $split: $name vs frozen e324acb1"
   "$evalbin" compare-scores -split "$split" -before "$baseline" -after "$after" 2>&1 | sed 's/^/   /'
   if [ "$skipoff" = 0 ]; then
     echo "== $split: $name vs channel-off arm (same binary)"
-    "$evalbin" compare-scores -split "$split" -before "$out/runs/off.csv" -after "$out/runs/$name.csv" 2>&1 | sed 's/^/   /'
+    "$evalbin" compare-scores -split "$split" -before "$out/runs/off.$subset.csv" -after "$out/runs/$name.$subset.csv" 2>&1 | sed 's/^/   /'
   fi
 done

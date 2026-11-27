@@ -47,11 +47,11 @@ type rawCommit struct {
 }
 
 func loadChangeHistory(ctx context.Context, root string, cfg HistoryConfig) ChangeHistory {
-	if cfg.Disabled {
+	if !cfg.enabled() {
 		return ChangeHistory{}
 	}
 
-	raw, headTime := readRawCommits(ctx, root)
+	raw, headTime := cachedRawCommits(ctx, root)
 	if len(raw) == 0 {
 		return ChangeHistory{}
 	}

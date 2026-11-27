@@ -15,14 +15,24 @@ const (
 	// weights, chosen on the usage-eval v1 dev split only (AUDIT.md, G884).
 	defaultSimilarWeight  = 1.0
 	defaultCoChangeWeight = 1.0
+	defaultBackfillKeep   = 5
+
+	historyModeBackfill = "backfill"
+	historyModeFuse     = "fuse"
 )
 
 // HistoryConfig is the optional `history` section of <root>/.idiom/config.json.
 // It is separate from the localization section on purpose: it shapes ranking,
 // never the index, so editing it must not invalidate an index cache.
 type HistoryConfig struct {
-	// Disabled turns the whole channel off (the baseline arm of an eval).
-	Disabled bool `json:"disabled,omitempty"`
+	// Mode selects how the lists join the ranking: "" or "off" (the default:
+	// no history is read), "backfill" (the first BackfillKeep files of the
+	// other channels stay put and history fills the rest of the top
+	// backfillSlots) or "fuse" (history lists join RRF with their weights).
+	Mode string `json:"mode,omitempty"`
+	// BackfillKeep is how many leading files backfill leaves untouched;
+	// nil means defaultBackfillKeep.
+	BackfillKeep *int `json:"backfill_keep,omitempty"`
 	// LedgerPath is a planning ledger, a Markdown file with one table row per
 	// work item, relative to the root. Empty reads commit messages only.
 	LedgerPath string `json:"ledger_path,omitempty"`
@@ -41,6 +51,18 @@ type HistoryConfig struct {
 
 type historyConfigFile struct {
 	History *HistoryConfig `json:"history"`
+}
+
+func (c HistoryConfig) enabled() bool {
+	return c.Mode == historyModeBackfill || c.Mode == historyModeFuse
+}
+
+func (c HistoryConfig) backfillKeep() int {
+	if c.BackfillKeep == nil {
+		return defaultBackfillKeep
+	}
+
+	return max(0, *c.BackfillKeep)
 }
 
 func weightOrDefault(w *float64, def float64) float64 {
@@ -98,7 +120,7 @@ func LoadHistoryConfig(root string) (HistoryConfig, error) {
 // checked-out commit. A new commit or ledger edit therefore misses the cache.
 func historyFingerprint(root string) string {
 	cfg, err := LoadHistoryConfig(root)
-	if err != nil || cfg.Disabled {
+	if err != nil || !cfg.enabled() {
 		return ""
 	}
 
