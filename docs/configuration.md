@@ -124,8 +124,9 @@ and 256 MiB total, evicting the least recently used entries first.
 `IDIOM_CPP_INDEX_BUDGET` accepts a positive Go duration such as `15s` or `2m`.
 It caps one call's build; the default cap is **10 minutes**. The budget follows
 the work: under a tool envelope a call builds until the envelope's deadline minus
-a four-second reserve for the snapshot check, the checkpoint write and the
-answer, instead of stopping at a fixed guess. Invalid values use the default.
+what must still run: a second Git snapshot, budgeted at what the first one took
+on this call, and a four-second reserve for the checkpoint write and the answer,
+instead of stopping at a fixed guess. Invalid values use the default.
 Optional clangd call/reference attempts have a 500 ms budget before falling back
 to syntax or text evidence. `IDIOM_CPP_CLANGD_BUDGET` overrides that attempt
 budget when the operator prefers to wait longer for precision; the enclosing tool

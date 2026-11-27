@@ -350,6 +350,32 @@ var _ = It("C++ cache configures the indexing budget", func() {
 	}
 })
 
+// The build stops early enough for the second snapshot, as slow as the first,
+// plus the checkpoint reserve to finish inside the caller's deadline.
+var _ = It("C++ cache budget follows the caller's deadline and the snapshot cost", func() {
+	t := GinkgoT()
+	t.Setenv("IDIOM_CPP_INDEX_BUDGET", "")
+	if got := cppIndexBudget(context.Background(), time.Second); got != cppIndexBudgetCap {
+		t.Fatalf("no deadline: got %s want the cap %s", got, cppIndexBudgetCap)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	snapshot := 3 * time.Second
+	want := 30*time.Second - cppIndexReserve - snapshot
+	if got := cppIndexBudget(ctx, snapshot); got > want || got < want-time.Second {
+		t.Fatalf("30 s deadline, 3 s snapshot: got %s want about %s", got, want)
+	}
+
+	spent, cancelSpent := context.WithCancel(context.Background())
+	cancelSpent()
+	expired, cancelExpired := context.WithDeadline(spent, time.Now().Add(-time.Second))
+	defer cancelExpired()
+	if got := cppIndexBudget(expired, snapshot); got <= 0 {
+		t.Fatalf("an expired deadline must still give a positive budget, got %s", got)
+	}
+})
+
 var _ = It("C++ cache supports snapshots with hundreds of dirty source hashes", func() {
 	t := GinkgoT()
 	t.Setenv("IDIOM_CACHE_DIR", t.TempDir())

@@ -39,14 +39,16 @@ func (m *Manager) getCppIndex(ctx context.Context) (*semanticcpp.CppIndex, error
 }
 
 // cppIndexBudget is how long one call may build: the caller's tool envelope
-// minus a reserve for the checkpoint write and the answer, capped by
-// IDIOM_CPP_INDEX_BUDGET (default cppIndexBudgetCap). The build therefore
-// works as long as the caller waits instead of stopping at a fixed guess, and
-// an unfinished build resumes on the next call.
-func cppIndexBudget(parent context.Context) time.Duration {
+// minus what must still run after the build, capped by IDIOM_CPP_INDEX_BUDGET
+// (default cppIndexBudgetCap). After the build come a second Git snapshot,
+// which costs about what the first one (snapshotCost) did on this machine and
+// load, then the checkpoint write and the answer (cppIndexReserve). The build
+// therefore works as long as the caller waits instead of stopping at a fixed
+// guess, and an unfinished build resumes on the next call.
+func cppIndexBudget(parent context.Context, snapshotCost time.Duration) time.Duration {
 	budget := cppBudgetSetting("IDIOM_CPP_INDEX_BUDGET", cppIndexBudgetCap)
 	if deadline, ok := parent.Deadline(); ok {
-		budget = min(budget, max(time.Millisecond, time.Until(deadline)-cppIndexReserve))
+		budget = min(budget, max(time.Millisecond, time.Until(deadline)-cppIndexReserve-snapshotCost))
 	}
 
 	return budget
@@ -61,11 +63,10 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 		return nil, cppIndexInfo{}, fmt.Errorf("c++-specific tools require a workspace with C/C++ source files or compile_commands.json")
 	}
 
-	budget := cppIndexBudget(parent)
+	info := m.cppSnapshotOutsideDeadline(parent)
+	budget := cppIndexBudget(parent, info.Git)
 	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
-
-	info := m.cppSnapshotOutsideDeadline(parent)
 	info.Budget = budget
 
 	m.mu.Lock()
