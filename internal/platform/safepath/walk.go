@@ -1,6 +1,7 @@
 package safepath
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -128,17 +129,34 @@ func (w *dirWalker) run(pending []WalkCursor) ([]WalkCursor, error) {
 			return nil, err
 		}
 		dir, dirInfo, err := openWalkRoot(w.canonicalRoot, w.rootInfo, filepath.Join(w.startRelative, relative), w.label)
+		if errors.Is(err, errWalkDirVanished) {
+			// Deleted since the checkpoint: nothing under it is left to walk.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		left, err := w.walkDirectory(dir, dirInfo, filepath.ToSlash(relative), cursor.After)
 		_ = dir.Close()
-		if left, err = finishWalk(left, err); err != nil || left != nil {
-			return append(left, pending[index+1:]...), err
+		if err == filepath.SkipAll {
+			// The caller is done with the whole walk, as in a fresh walk: no
+			// cursor is kept, so a resumed walk never visits past this point.
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if left != nil {
+			return append(left, pending[index+1:]...), nil
 		}
 	}
 	return nil, nil
 }
+
+// errWalkDirVanished marks a resume cursor whose directory, or one of its
+// ancestors, no longer exists. Only a not-exist answer counts: a component that
+// is now a link, a file or another object still fails the walk closed.
+var errWalkDirVanished = errors.New("walk directory no longer exists")
 
 func finishWalk(left []WalkCursor, err error) ([]WalkCursor, error) {
 	if err == filepath.SkipAll {
@@ -190,6 +208,10 @@ func openWalkRoot(canonicalRoot string, expectedRootInfo os.FileInfo, relative s
 		}
 
 		info, err := current.Lstat(component)
+		if errors.Is(err, fs.ErrNotExist) {
+			_ = current.Close()
+			return nil, nil, fmt.Errorf("inspect %s directory: %w: %w", label, errWalkDirVanished, err)
+		}
 		if err != nil {
 			_ = current.Close()
 			return nil, nil, fmt.Errorf("inspect %s directory: %w", label, err)

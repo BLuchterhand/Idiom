@@ -87,4 +87,30 @@ var _ = Describe("C++ index walk across calls", func() {
 			t.Fatalf("resumed index differs from a full build: %v", err)
 		}
 	})
+
+	It("stops a resumed walk at MaxFiles", func() {
+		t := GinkgoT()
+		root := t.TempDir()
+		writeCppDirTree(root, 3*cppMinWalkedDirsPerCall)
+
+		spent, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		stopped, err := BuildCppIndexWithOptions(root, BuildOptions{Context: spent})
+		var budget *BudgetError
+		if !errors.As(err, &budget) || budget.Phase != "walk" || len(stopped.WalkPending) < 2 {
+			t.Fatalf("want a walk checkpoint with at least two cursors: %v", err)
+		}
+
+		// One more file is the first file under the first cursor, so the walk
+		// must stop there rather than carry on with the cursors after it.
+		maxFiles := len(stopped.Paths) + 1
+		resumed, err := BuildCppIndexWithOptions(root, BuildOptions{Previous: stopped, Resume: true, MaxFiles: maxFiles})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(resumed.Paths) != maxFiles {
+			t.Fatalf("resumed walk kept %d paths, want MaxFiles %d", len(resumed.Paths), maxFiles)
+		}
+	})
 })
