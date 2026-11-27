@@ -30,6 +30,8 @@ func main() {
 		err = buildUsageCases(os.Args[2:])
 	case "case-scores":
 		err = caseScores(os.Args[2:])
+	case "compare-scores":
+		err = compareScores(os.Args[2:])
 	case "run":
 		err = run(os.Args[2:])
 	case "compare":
@@ -47,7 +49,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: idiom-localization-eval build-cases|build-usage-cases|case-scores|run|compare|baseline [flags]")
+	fmt.Fprintln(os.Stderr, "usage: idiom-localization-eval build-cases|build-usage-cases|case-scores|compare-scores|run|compare|baseline [flags]")
 	os.Exit(2)
 }
 

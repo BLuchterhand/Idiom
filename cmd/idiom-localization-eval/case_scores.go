@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"idiom/internal/evidence/eval"
 )
@@ -40,7 +41,7 @@ func caseScores(args []string) error {
 		times[c.ID] = c.Time
 	}
 
-	rows := [][]string{{"id", "split", "recall@8", "hit@8", "mrr@8", "timestamp"}}
+	rows := [][]string{eval.LocalizationCaseScoreColumns}
 
 	for _, c := range result.Cases {
 		if c.Error != "" {
@@ -68,4 +69,43 @@ func caseScores(args []string) error {
 
 func formatScore(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// compareScores judges a candidate against a baseline on per-case score
+// files: paired per case on one split, with wins, losses, ties and an exact
+// two-sided sign test per metric. Each side may join several machines' files.
+func compareScores(args []string) error {
+	fs := flag.NewFlagSet("compare-scores", flag.ExitOnError)
+	before := fs.String("before", "", "baseline score CSVs, comma-separated")
+	after := fs.String("after", "", "candidate score CSVs, comma-separated")
+	split := fs.String("split", "holdout", "split to judge")
+	_ = fs.Parse(args)
+
+	if *before == "" || *after == "" {
+		return fmt.Errorf("-before and -after are required")
+	}
+
+	b, err := eval.ReadLocalizationCaseScores(strings.Split(*before, ","))
+	if err != nil {
+		return err
+	}
+
+	a, err := eval.ReadLocalizationCaseScores(strings.Split(*after, ","))
+	if err != nil {
+		return err
+	}
+
+	cmp, err := eval.CompareLocalizationCaseScores(b, a, *split)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("split %s, %d paired cases\n", cmp.Split, cmp.Cases)
+
+	for _, m := range cmp.Metrics {
+		fmt.Printf("%-9s before %.3f after %.3f  wins %d losses %d ties %d  sign p (two-sided) %.4f\n",
+			m.Name, m.BeforeMean, m.AfterMean, m.Wins, m.Losses, m.Ties, m.SignPTwoSided)
+	}
+
+	return nil
 }

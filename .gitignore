@@ -89,3 +89,7 @@ FEATURE_REQUEST_*.md
 # Generated dependency notices included in release archives
 /third-party-licenses/
 /vendor/
+
+# Localization usage eval: case files, seeds and per-case scores are built from private agent transcripts; never commit them.
+testdata/localization/eval/*usage*
+.cache/g755/*.csv

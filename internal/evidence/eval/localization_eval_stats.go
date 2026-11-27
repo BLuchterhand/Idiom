@@ -239,6 +239,12 @@ func LocalizationEvalSignTestP(wins, losses int) float64 {
 	return math.Min(p, 1)
 }
 
+// LocalizationEvalSignTestTwoSidedP is the exact two-sided sign test p-value:
+// twice the smaller tail, capped at 1. Ties are dropped by the caller.
+func LocalizationEvalSignTestTwoSidedP(wins, losses int) float64 {
+	return math.Min(1, 2*math.Min(LocalizationEvalSignTestP(wins, losses), LocalizationEvalSignTestP(losses, wins)))
+}
+
 func logBinomial(n, k int) float64 {
 	a, _ := math.Lgamma(float64(n + 1))
 	b, _ := math.Lgamma(float64(k + 1))

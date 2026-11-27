@@ -123,3 +123,113 @@ commits were ancestors of dev bases and are now removed through `history_exclude
 commit time: the oldest 2/3 select the weight, the newest 1/3 confirm it. Idiom confirm (15 cases): base
 .393 / .800 / .352; weights 0.25, 0.5 and 1.0 score .451-.461 recall but .733 hit. One case loses its hit,
 so every weight fails "no worse on any mean". It was not tuned on the confirm slice, and fresh3 was not read.
+
+## bentech-usage (built 2026-11-27, PC Idiom lane, not gating yet)
+
+Cases from real agent use, built by `idiom-localization-eval build-usage-cases`. The seed (the builder config:
+regexes and numbers only) and the case files are kept on each machine and never committed, because the case files
+hold query text from private sessions. `.gitignore` excludes `testdata/localization/eval/*usage*` and
+`.cache/g755/*.csv`. Seed fields as used on the PC: `query_regex` `(?s)idiom\.sh\s+(?:context_impact|context_query)\b(.*)`,
+`path_root_regex` `(?i)^.*?/bentech(?:/\.claude/worktrees/[^/]+)?/(.+)$`, `label_tools` Read, Edit, Write,
+MultiEdit, `window_minutes` 30, `dedupe_jaccard` 0.8, `worktree_regex` `(?i)/bentech/\.claude/worktrees/([^/\s"'&;)]+)`,
+`branch_ref_prefix` `refs/remotes/origin/`, plus a drop rule for emails, absolute or home paths and `<placeholders>`.
+The source, test and doc regexes, `max_gold_files` 60 and `min_query_len` 12 are the same as fresh3's.
+
+**Source.** This PC's Claude Code transcripts for BenTech, including subagents, from 2026-11-11 (the oldest one kept)
+to 2026-11-27. The repository PostToolUse logger (`build/idiom/usage/usage.jsonl`, G755) held 36 lines from one
+worktree. That logger is on origin/main, but most local checkouts predate it, so the transcripts are the record.
+
+**Label rules.**
+- A query is each Bash `scripts/idiom.sh context_impact` or `context_query` call. Its text comes from `task=` or
+  `query=`, or from the JSON argument.
+- A query is dropped if it contains an email address, an absolute or home path, or a `<placeholder>`.
+- A query's labels are the repository files it opened with Read, Edit, Write or MultiEdit within 30 minutes. The
+  session's next query ends the window early.
+- These labels are dropped: files outside the repository, files the session had opened before the query, and files
+  whose name the query itself contains. Files named in the brief are kept (`drop_brief_named` is off; turning it
+  on gains only 4 cases).
+- Queries whose word sets overlap by Jaccard 0.8 or more merge into the earliest, which takes the union of their
+  labels.
+- Each case's base is the newest commit on BenTech origin/main at the query time.
+- Labels are sorted with the same source, test and doc regexes as fresh3. A source label missing at base becomes
+  gold_new. A case needs at least one gold file.
+
+**Funnel.** 220 calls in, 19 dropped, 28 merged. 58 had no labels and 71 had no gold (27 of them only on source
+files newer than main), leaving 44 cases. Labels: 1237 opened, 133 dropped as already opened before the query.
+
+**Split by time.** Cut `split_cut` 2026-11-16T22:52:49Z: dev 29 cases, hold-out 15.
+
+**VOID: baseline from the installed binary.** The first baseline ran the installed `~/.idiom/bin/idiom.exe` (sha256
+5e0572b7…, dated 2026-11-15) and scored dev .251 / .586 / .343 and hold-out .117 / .200 / .122. That binary is not
+e324acb1 (see the next section), so these numbers measure no committed version and are void. They are kept only so
+the earlier report can be traced. The e324acb1 baselines in the gates above were built from e324acb1 source
+(`pc-idiom-gate` has no Go change from it), so they stand.
+
+**Short of the 100-case goal.** Ways to close the gap:
+- add the Mac's transcripts: the builder takes any number of transcript directories;
+- add weeks of use;
+- resolve each base on the agent's own branch rather than main, which would recover up to 27 cases.
+
+**Exposure bias.** The labels include files that agents opened because Idiom listed them. That favours rankers like
+the installed one, so use this set as a paired comparison, not an absolute score.
+
+### 2026-11-27 bentech-usage rescored with a pinned e324acb1 build; branch bases; Mac combined
+
+**Pinned binary.** e324acb1 was built from a temporary worktree into `build/eval-e324acb1/idiom.exe`, and the
+worktree was removed afterwards. It does not match the installed `~/.idiom/bin/idiom.exe`:
+- the sha256 hashes differ (6d318896… against 5e0572b7…);
+- the installed file is dated 2026-11-15, older than the e324acb1 commit (2026-11-25);
+- both print version "dev";
+- on 3 cases the rankings differ (recall .5/1/0 against .25/0/0).
+
+The installed baseline above is therefore not e324acb1. All scoring below uses the e324acb1 build. Two cases (one
+per set) hit e324acb1's 30 s dispatch timeout on the cold call. They were rescored with the same commit plus only
+the eval timeout patch (`idiom-base.exe`, ranking code unchanged). The runner now reports idiom's stdout when the
+tool fails, which is where that timeout is reported.
+
+**Branch bases** (`-base branch`). Each case's base is the newest commit at query time on the agent's own branch:
+- the checkout is found from a worktree the command `cd`s into, else from the session cwd;
+- the branch is found from `git worktree list` or the branch the transcript recorded;
+- queries whose branch is unknown or deleted are dropped (29).
+
+This gives 39 cases, fewer than main bases (44). Branch bases do not recover the files agents create, because
+those are opened before they are committed.
+
+**Cut** fixed at 2026-11-16T22:52:49Z (`-split-cut`). Per-case scores (id, split, recall@8, hit@8, MRR@8, query
+time, no query text) are written by `case-scores` and kept local.
+
+| Set | dev n | dev recall / hit / MRR | hold-out n | hold-out recall / hit / MRR |
+|---|---|---|---|---|
+| PC, main bases | 29 | .362 / .655 / .392 | 15 | .192 / .333 / .182 |
+| PC, branch bases | 26 | .365 / .692 / .424 | 13 | .240 / .385 / .276 |
+| Mac (35, all hold-out) | 0 | — | 35 | .261 / .457 / .301 |
+| PC main + Mac | 29 | .362 / .655 / .392 | 50 | .240 / .420 / .265 |
+| PC branch + Mac | 26 | .365 / .692 / .424 | 48 | .256 / .438 / .294 |
+
+Combined rows sum per-case scores and divide by the case count. No case id appears on both machines, and every
+Mac case is after the cut.
+
+## usage-eval v1 (frozen 2026-11-27)
+
+**Set.** BenTech usage cases with branch bases, cut 2026-11-16T22:52:49Z: 74 cases. Dev has 26, all from the PC.
+Hold-out has 48: 13 from the PC and 35 from the Mac. (The main-base variant would be 79 cases, but v1 uses branch
+bases.) Case files and score files stay on the machine that built them. These sha256 hashes pin them:
+- PC cases `usage-v1/pc-cases.json`: 28cfe5e9fbeb487f881396f31a6e0711023558077ab55bbf2d0ab7ae01ea5081
+- PC baseline scores `usage-v1/baseline-pc.csv`: 0e95f7ef567b758a544835f7e894c2ce4688cd915f451d5e9c30b883f4c09191
+- Mac baseline scores `usage-v1/baseline-mac.csv`: 7fe8b8db2d2e2cfe62293629a64d4a7a61ce0502f1a8aa59584f51b88d6cff89
+
+**Baseline** e324acb1 (recall / hit / MRR @8): dev .365 / .692 / .424, hold-out .256 / .438 / .294.
+
+**Judging rule.** A candidate is judged on the hold-out, paired per case against the v1 baseline scores. Report wins,
+losses and ties per metric, with an exact two-sided sign test p-value (ties dropped):
+
+    idiom-localization-eval compare-scores -split holdout \
+      -before usage-v1/baseline-pc.csv,usage-v1/baseline-mac.csv \
+      -after <candidate-pc.csv>,<candidate-mac.csv>
+
+Each machine scores its own cases with `run`, then writes its score file with `case-scores`. The two files join by
+case id; an id present on both machines is an error. Dev is for tuning only.
+
+**Re-run policy.** A new version is built monthly, or once 25 new cases have accrued since the last one, from
+sessions newer than the previous version's newest query. Older weeks are never mined to grow a set. v1 stays
+frozen: a new version gets its own name, cut and hashes.
