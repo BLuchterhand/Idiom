@@ -33,7 +33,8 @@ type CppIndex struct {
 	NamespaceAliases map[string]string
 	Timings          CppBuildTimings
 	// Paths and WalkComplete allow a budget-limited build to resume without
-	// repeating discovery. Partial indexes must never be used to answer queries.
+	// repeating discovery. A partial index (a build stopped by its deadline) may
+	// answer only if the answer is marked partial.
 	Paths        []string
 	WalkComplete bool
 }
@@ -205,11 +206,10 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 			}
 		}
 	} else {
+		// The walk ignores the deadline: it only lists directories, and a walk
+		// cut short saves nothing, so a call that arrives with its deadline spent
+		// still makes progress (the parse below honours the deadline per file).
 		err = safepath.WalkDirUnderRoot(root, root, "C++ index", func(path string, d os.DirEntry, walkErr error) error {
-			if err := indexsupport.ContextErr(opts.Context); err != nil {
-				return err
-			}
-
 			if walkErr != nil {
 				return walkErr
 			}
@@ -294,8 +294,11 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 
 	index.Timings.Walk = time.Since(walkStarted)
 	parseStarted := time.Now()
+	parsedThisCall := 0
 	for _, rel := range paths {
-		if err := indexsupport.ContextErr(opts.Context); err != nil {
+		// Stop on the deadline only after this call has parsed its minimum, so
+		// every call makes progress and a cold build ends in a bounded number of calls.
+		if err := indexsupport.ContextErr(opts.Context); err != nil && parsedThisCall >= cppMinParsedPerCall {
 			// Retain unchanged files not reached yet, along with new parses.
 			for _, pending := range paths[len(index.Files):] {
 				if file, ok := previous[pending]; ok && !opts.ChangedPaths[pending] {
@@ -303,6 +306,9 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 				}
 			}
 			index.Timings.Parse, index.Timings.Files = time.Since(parseStarted), len(index.Files)
+			// A partial index is linked too, so a caller may answer from it as
+			// long as it marks the answer partial.
+			linkCppIndex(index, byName, byRel)
 			return index, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
 		}
 		if file, ok := previous[rel]; ok && !opts.ChangedPaths[rel] {
@@ -321,14 +327,32 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 			index.Timings.Reused++
 		} else {
 			index.Timings.Parsed++
+			parsedThisCall++
 		}
 	}
 
 	index.Timings.Parse = time.Since(parseStarted)
 	index.Timings.Files = len(index.Files)
-	if err := indexsupport.ContextErr(opts.Context); err != nil {
-		return index, &BudgetError{Phase: "parse", Timings: index.Timings, Cause: err}
-	}
+	// Every file is collected: linking is cheap, so a deadline that passed during
+	// the last files no longer fails the build.
+	linkCppIndex(index, byName, byRel)
+
+	return index, nil
+}
+
+// cppMinParsedPerCall is the files a build parses before it honours its
+// deadline. Files parse in milliseconds, so the overrun is small, and it makes
+// a cold build finish in at most ceil(files / cppMinParsedPerCall) calls even
+// when each call arrives with its deadline already spent.
+const cppMinParsedPerCall = 32
+
+// MinParsedPerCall exports the per-call parse floor so callers can state the
+// call bound for a cold index.
+const MinParsedPerCall = cppMinParsedPerCall
+
+// linkCppIndex sorts the collected files, merges their aliases and resolves
+// includes against the full path set into the forward and reverse maps.
+func linkCppIndex(index *CppIndex, byName map[string][]string, byRel map[string]string) {
 	linkStarted := time.Now()
 
 	slices.SortFunc(index.Files, func(a, b CppFile) int {
@@ -348,9 +372,6 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 			file.Includes = textutil.AppendUnique(file.Includes, include)
 		}
 		slices.Sort(file.Includes)
-		if len(file.Includes) == 0 {
-			continue
-		}
 
 		for _, include := range file.Includes {
 			index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], include)
@@ -359,8 +380,6 @@ func BuildCppIndexWithOptions(root string, opts BuildOptions) (*CppIndex, error)
 	}
 
 	index.Timings.Link = time.Since(linkStarted)
-
-	return index, nil
 }
 
 // IsIndexPath applies the syntax collector's file and directory filters to a

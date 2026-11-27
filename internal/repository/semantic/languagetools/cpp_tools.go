@@ -2,6 +2,7 @@ package languagetools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,30 +16,56 @@ import (
 	semanticcpp "idiom/internal/repository/semantic/cpp"
 )
 
-func (m *Manager) getCppIndex() (*semanticcpp.CppIndex, error) {
-	index, _, err := m.loadCppIndex(context.Background())
+// getCppIndex loads the index for tools that only need files and includes,
+// within ctx's envelope. A nil ctx is a follow-up inside a tool that already
+// loaded the index (fallbacks): it reuses that index, partial or not, rather
+// than start a build with no envelope.
+func (m *Manager) getCppIndex(ctx context.Context) (*semanticcpp.CppIndex, error) {
+	if ctx == nil {
+		m.mu.Lock()
+		memo := m.cppIndex
+		m.mu.Unlock()
+
+		if memo != nil {
+			return memo, nil
+		}
+
+		ctx = context.Background()
+	}
+
+	index, _, err := m.loadCppIndex(ctx)
 
 	return index, err
 }
 
+// cppIndexBudget is how long one call may build: the caller's tool envelope
+// minus a reserve for the checkpoint write and the answer, capped by
+// IDIOM_CPP_INDEX_BUDGET (default cppIndexBudgetCap). The build therefore
+// works as long as the caller waits instead of stopping at a fixed guess, and
+// an unfinished build resumes on the next call.
+func cppIndexBudget(parent context.Context) time.Duration {
+	budget := cppBudgetSetting("IDIOM_CPP_INDEX_BUDGET", cppIndexBudgetCap)
+	if deadline, ok := parent.Deadline(); ok {
+		budget = min(budget, max(time.Millisecond, time.Until(deadline)-cppIndexReserve))
+	}
+
+	return budget
+}
+
 // loadCppIndex returns the C++ syntax index of the live working tree with its
-// identity and cost. Only completed indexes answer queries; budget-limited
-// builds save parsed files so a later process can resume.
+// identity and cost. A build that runs out of budget saves its parsed files so
+// the next call resumes, and answers now from the files parsed so far:
+// info.Partial is set and every result built from it is marked partial.
 func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, cppIndexInfo, error) {
 	if !m.Enabled() {
 		return nil, cppIndexInfo{}, fmt.Errorf("c++-specific tools require a workspace with C/C++ source files or compile_commands.json")
 	}
 
-	budget := cppBudgetSetting("IDIOM_CPP_INDEX_BUDGET", cppDefaultIndexBudget)
-	// Reserve time before the caller's deadline for atomic checkpoint IO and
-	// returning a typed failure, rather than racing the generic tool timeout.
-	if deadline, ok := parent.Deadline(); ok && time.Until(deadline)-4*time.Second < budget {
-		budget = max(time.Millisecond, time.Until(deadline)-4*time.Second)
-	}
+	budget := cppIndexBudget(parent)
 	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
 
-	info := cppSnapshot(ctx, m.Root())
+	info := m.cppSnapshotOutsideDeadline(parent)
 	info.Budget = budget
 
 	m.mu.Lock()
@@ -46,18 +73,28 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 	cached, cachedInfo := m.cppIndex, m.cppIndexInfo
 	m.mu.Unlock()
 
-	if cached != nil && info.Key != "" && info.Key == cachedInfo.Key {
-		cachedInfo.Memoized = true
-		cachedInfo.Git = info.Git
-		cachedInfo.Budget = budget
-
-		return cached, cachedInfo, nil
-	}
-
 	var disk *cppDiskCache
 	var previous *semanticcpp.CppIndex
 	var changed map[string]bool
 	resume := false
+
+	if cached != nil && info.Key != "" && info.Key == cachedInfo.Key {
+		if !cachedInfo.Partial {
+			cachedInfo.Memoized = true
+			cachedInfo.Git = info.Git
+			cachedInfo.Budget = budget
+
+			return cached, cachedInfo, nil
+		}
+
+		// A partial index of this snapshot resumes in memory.
+		previous, resume, info.Cache = cached, true, "resumed"
+	} else if cached != nil && info.Key == "" && cachedInfo.Key == "" && cachedInfo.Partial {
+		// Without a Git key nothing proves the tree is unchanged, so every
+		// retained file is checked by content hash and reparsed only if it differs.
+		previous, changed, info.Cache = cached, cppAllPaths(cached), "resumed_verified"
+	}
+
 	if info.Key != "" {
 		var err error
 		disk, err = openCppDiskCache()
@@ -67,7 +104,9 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 			defer disk.root.Close()
 			started := time.Now()
 			header, loaded, err := disk.read(info.Key, true)
-			if err == nil {
+			if previous != nil {
+				// Resuming in memory; the disk is only written below.
+			} else if err == nil {
 				disk.touch(info.Key)
 				loaded.Root = m.Root()
 				if header.Complete {
@@ -97,14 +136,7 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 		if disk != nil {
 			// Refuse to label a build as current if the workspace changed during
 			// collection. Reuse is only valid for the exact content snapshot.
-			verificationBudget := budget
-			if deadline, ok := parent.Deadline(); ok {
-				verificationBudget = max(time.Millisecond, min(verificationBudget, time.Until(deadline)-2*time.Second))
-			}
-			checkCtx, checkCancel := context.WithTimeout(parent, verificationBudget)
-			after := cppSnapshot(checkCtx, m.Root())
-			verificationErr := checkCtx.Err()
-			checkCancel()
+			after := m.cppSnapshotOutsideDeadline(parent)
 			if after.Key == info.Key {
 				if saveErr := disk.store(info, index, err == nil); saveErr != nil {
 					info.CacheError = saveErr.Error()
@@ -114,9 +146,6 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 			} else if after.GitError != "" {
 				info.CacheError = "could not verify index snapshot: " + after.GitError
 				if err == nil {
-					if verificationErr != nil {
-						return nil, info, &semanticcpp.BudgetError{Phase: "snapshot verification", Timings: index.Timings, Cause: verificationErr}
-					}
 					return nil, info, fmt.Errorf("verify C++ index snapshot: %s", after.GitError)
 				}
 			} else if err == nil {
@@ -124,6 +153,12 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 			}
 		}
 	}
+	var budgetErr *semanticcpp.BudgetError
+	if errors.As(err, &budgetErr) && index != nil && index.WalkComplete && len(index.Files) > 0 {
+		info.Partial, info.TotalFiles = true, len(index.Paths)
+		err = nil
+	}
+
 	if err != nil {
 		return nil, info, fmt.Errorf("build C++ semantic index: %w", err)
 	}
@@ -138,7 +173,28 @@ func (m *Manager) loadCppIndex(parent context.Context) (*semanticcpp.CppIndex, c
 	m.cppIndexInfo = info
 	m.mu.Unlock()
 
+	notePartialCppIndex(parent, info)
+
 	return index, info, nil
+}
+
+// cppSnapshotOutsideDeadline keys the index with its own timeout instead of the
+// caller's deadline (see cppSnapshotTimeout); caller values still pass through.
+func (m *Manager) cppSnapshotOutsideDeadline(parent context.Context) cppIndexInfo {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), cppSnapshotTimeout)
+	defer cancel()
+
+	return cppSnapshot(ctx, m.Root())
+}
+
+// cppAllPaths marks every file of an index for a content-hash check.
+func cppAllPaths(index *semanticcpp.CppIndex) map[string]bool {
+	paths := make(map[string]bool, len(index.Files))
+	for _, file := range index.Files {
+		paths[file.Path] = true
+	}
+
+	return paths
 }
 
 // resolveCppTarget loads the index and resolves req.Pattern to exactly one
@@ -302,7 +358,7 @@ func (m *Manager) cppOverview(ctx context.Context) ToolResult {
 }
 
 func (m *Manager) cppEntrypoints(req ToolRequest) ToolResult {
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(req.invocationContext)
 	if err != nil {
 		return ToolResult{Tool: "cpp_entrypoints", Summary: "C++ entrypoints unavailable", Error: err.Error()}
 	}
@@ -426,7 +482,7 @@ func (m *Manager) cppRelatedFiles(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "cpp_related_files", Summary: "C++ related-file search rejected", Error: "pattern is required"}
 	}
 
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(req.invocationContext)
 	if err != nil {
 		return ToolResult{Tool: "cpp_related_files", Summary: "C++ related-file search unavailable", Error: err.Error()}
 	}
@@ -818,7 +874,7 @@ func (m *Manager) cppIncludes(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "cpp_includes", Summary: "C++ include query rejected", Error: "pattern is required"}
 	}
 
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(req.invocationContext)
 	if err != nil {
 		return ToolResult{Tool: "cpp_includes", Summary: "C++ include query unavailable", Error: err.Error()}
 	}
@@ -958,7 +1014,7 @@ func (m *Manager) cppFileOutline(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "cpp_file_outline", Summary: "C++ file outline rejected", Error: err.Error()}
 	}
 
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(req.invocationContext)
 	if err != nil {
 		return ToolResult{Tool: "cpp_file_outline", Summary: "C++ file outline unavailable", Error: err.Error()}
 	}
@@ -1114,7 +1170,7 @@ func (m *Manager) cppPathFilter(path string) string {
 }
 
 func (m *Manager) cppDeclarationFallbackMatch(match semanticcpp.CppSymbolMatch) (semanticcpp.CppSymbolMatch, error) {
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(nil)
 	if err != nil {
 		return semanticcpp.CppSymbolMatch{}, err
 	}
@@ -1175,7 +1231,7 @@ func (m *Manager) cppDeclarationFallbackMatch(match semanticcpp.CppSymbolMatch) 
 }
 
 func (m *Manager) cppDefinitionFallbackMatch(match semanticcpp.CppSymbolMatch) (semanticcpp.CppSymbolMatch, error) {
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(nil)
 	if err != nil {
 		return semanticcpp.CppSymbolMatch{}, err
 	}
@@ -1238,7 +1294,7 @@ func (m *Manager) cppDefinitionFallbackMatch(match semanticcpp.CppSymbolMatch) (
 }
 
 func (m *Manager) cppImplementationFallback(match semanticcpp.CppSymbolMatch, pathFilter string) (string, error) {
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(nil)
 	if err != nil {
 		return "", err
 	}
@@ -1455,7 +1511,7 @@ func (m *Manager) runClangdCheck(ctx context.Context, compileDir string, rel str
 }
 
 func (m *Manager) cppDiagnosticTargets(req ToolRequest) ([]string, error) {
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(req.invocationContext)
 	if err != nil {
 		return nil, err
 	}

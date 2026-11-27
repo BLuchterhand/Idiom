@@ -189,7 +189,7 @@ func (m *Manager) cppWorkspaceSymbolsViaClangd(ctx context.Context, pattern stri
 		},
 		fileURI: LSPFileURI,
 		candidates: func(pattern string, budget int) ([]string, error) {
-			index, err := m.getCppIndex()
+			index, err := m.getCppIndex(ctx)
 			if err != nil {
 				return nil, err
 			}

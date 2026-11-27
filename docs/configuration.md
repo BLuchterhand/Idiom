@@ -122,20 +122,30 @@ and 256 MiB total, evicting the least recently used entries first.
 `IDIOM_CPP_CACHE_MAX_BYTES` overrides the total byte bound.
 
 `IDIOM_CPP_INDEX_BUDGET` accepts a positive Go duration such as `15s` or `2m`.
-The default is **20 seconds**: a measured BenTech build exceeded the old 10-second
-limit, while the tool envelope is 30 seconds. The default leaves time for atomic
-checkpoint IO and optional clangd queries. A larger configured budget is capped
-by the caller's deadline with four seconds reserved for checkpointing. Invalid
-values use the default. Optional clangd call/reference attempts have a 500 ms
-budget before falling back to syntax or text evidence.
-`IDIOM_CPP_CLANGD_BUDGET` overrides that attempt budget when the operator prefers
-to wait longer for precision; the enclosing tool deadline still applies.
+It caps one call's build; the default cap is **10 minutes**. The budget follows
+the work: under a tool envelope a call builds until the envelope's deadline minus
+a four-second reserve for the snapshot check, the checkpoint write and the
+answer, instead of stopping at a fixed guess. Invalid values use the default.
+Optional clangd call/reference attempts have a 500 ms budget before falling back
+to syntax or text evidence. `IDIOM_CPP_CLANGD_BUDGET` overrides that attempt
+budget when the operator prefers to wait longer for precision; the enclosing tool
+deadline still applies.
 
-Budget-limited builds return `cpp_index_budget_exceeded` with phase timings and
-`checkpoint_saved`. Completed file parses and a completed discovery manifest are
-persisted so the next process resumes instead of repeating them. Partial indexes
-never answer queries. A very slow cold build can require several calls; process
-exit does not leave a background builder running. Freshness reports distinguish
-`disk_hit`, `incremental`, `resumed`, and in-process `memoized` results, and expose
-cache errors, parsed/reused file counts, and cache load time. Read/search permission
+A build that runs out of budget never fails the query. The directory walk always
+finishes, and each call parses at least 32 new files before it honours its
+deadline, so a cold index of N files completes in at most ceil(N / 32) calls even
+when every call arrives with its deadline spent (a few files' overrun, since files
+parse in milliseconds). The unfinished index is linked and answers now: the
+summary starts with `PARTIAL C++ index (indexed of total files)`, a
+`cpp_index_partial` warning says results may miss symbols, callers or includes,
+and freshness reports `fresh: false` with `partial` counts. Completed file parses
+and the discovery manifest are checkpointed by content hash, so the next call
+(or the next process) resumes instead of repeating them; a changed file is
+reparsed alone. The Git snapshot that keys the index has its own 15-second
+timeout rather than the caller's deadline, since without a key a call cannot
+resume. Outside Git a partial index resumes in memory after checking each
+retained file's content hash. Process exit does not leave a background builder
+running. Freshness reports distinguish `disk_hit`, `incremental`, `resumed`,
+`resumed_verified` and in-process `memoized` results, and expose cache errors,
+parsed/reused file counts, and cache load time. Read/search permission
 contracts remain enforced by the workspace tool boundary.

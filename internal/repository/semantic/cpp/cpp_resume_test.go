@@ -31,10 +31,13 @@ func (c *progressCancelContext) Err() error {
 	return c.Context.Err()
 }
 
+// cacheTestFiles is more than cppMinParsedPerCall, so a cancelled build stops partway.
+const cacheTestFiles = 80
+
 var _ = It("C++ cache retains parsed files after cancellation", func() {
 	t := GinkgoT()
 	root := t.TempDir()
-	for i := 0; i < 15; i++ {
+	for i := 0; i < cacheTestFiles; i++ {
 		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("file%02d.cpp", i)), []byte(fmt.Sprintf("void f%d() {}\n", i)), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -43,23 +46,26 @@ var _ = It("C++ cache retains parsed files after cancellation", func() {
 	defer cancel()
 	partial, err := BuildCppIndexWithOptions(root, BuildOptions{Context: &progressCancelContext{Context: ctx, cancel: cancel, polls: 22}})
 	var budget *BudgetError
-	if !errors.As(err, &budget) || partial == nil || !partial.WalkComplete || len(partial.Files) == 0 || len(partial.Files) == 15 {
+	if !errors.As(err, &budget) || partial == nil || !partial.WalkComplete || len(partial.Files) != cppMinParsedPerCall {
 		t.Fatalf("expected retained partial parse: %+v %v", partial, err)
 	}
 	resumed, err := BuildCppIndexWithOptions(root, BuildOptions{Previous: partial, Resume: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.Timings.Reused != len(partial.Files) || resumed.Timings.Parsed+resumed.Timings.Reused != 15 {
+	if resumed.Timings.Reused != len(partial.Files) || resumed.Timings.Parsed+resumed.Timings.Reused != cacheTestFiles {
 		t.Fatalf("resume: %+v", resumed.Timings)
 	}
 	full, err := BuildCppIndex(root)
 	if err != nil || !reflect.DeepEqual(full.Files, resumed.Files) {
 		t.Fatalf("resume differs from full build: %v", err)
 	}
-	// A canceled walk of a different snapshot must drop the changed old file.
-	partial, err = BuildCppIndexWithOptions(root, BuildOptions{Context: ctx, Previous: full, ChangedPaths: map[string]bool{"file00.cpp": true}})
-	if !errors.As(err, &budget) || len(partial.Files) != 14 {
-		t.Fatalf("walk retained stale changed file: %+v %v", partial, err)
+	// A stopped incremental build must not keep the changed file's old entry.
+	if err := os.WriteFile(filepath.Join(root, "file00.cpp"), []byte("void changed() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next, err := BuildCppIndexWithOptions(root, BuildOptions{Context: ctx, Previous: full, ChangedPaths: map[string]bool{"file00.cpp": true}})
+	if err != nil || next.Timings.Parsed != 1 || next.FileByPath("file00.cpp").Symbols[0].Name != "changed" {
+		t.Fatalf("stale changed file: %+v %v", next, err)
 	}
 })

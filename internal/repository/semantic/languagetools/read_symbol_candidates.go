@@ -175,7 +175,7 @@ func (m *Manager) pythonReadSymbolMatches(pattern string) ([]semanticpython.Pyth
 }
 
 func (m *Manager) cppReadSymbolMatches(pattern string) ([]semanticcpp.CppSymbolMatch, error) {
-	index, err := m.getCppIndex()
+	index, err := m.getCppIndex(nil)
 	if err != nil {
 		return nil, err
 	}

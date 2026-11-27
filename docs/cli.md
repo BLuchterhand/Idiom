@@ -143,14 +143,15 @@ result, carries `sidecar.freshness` (`idiom.cpp_index.v1`):
 | `working_tree` / `dirty_cpp_paths` / `dirty_cpp_count` / `ignored_cpp_count` | Dirty, untracked and ignored C++ files are included (the index reads the working tree); dirty ones are listed. |
 | `answered_by` | `syntax-index` when the answer came from this index, `clangd` when clangd answered (the index identity then only describes the surrounding workspace). |
 | `phase_ms`, `query_ms`, `budget_ms`, `files`, `symbols`, `index_build` | Cost: Git identity, directory walk, parse, link, the query itself. |
-| `fresh` | `false` when the index budget (10 s) was exceeded or Git identity could not be read. |
+| `fresh` | `false` when the answer came from a partial index or Git identity could not be read. |
+| `partial` | Present when the index is incomplete: `indexed_files` of `total_files`. The summary then starts with `PARTIAL C++ index` and a `cpp_index_partial` warning asks the caller to repeat the call. |
 
 No on-disk index cache is kept: measured on Undermarch, parsing is about 0.1 s
 of a 0.3-0.4 s build and the directory walk about 0.1 s, so a cache cannot beat
 a rebuild. The `index_key` is the cache identity if one is ever added.
 
 Failures are structured in `sidecar.error.code`: `cpp_index_budget_exceeded`
-(with the phase that was running), `ambiguous_symbol` (the name belongs to more
+(only when the directory walk itself could not finish), `ambiguous_symbol` (the name belongs to more
 than one owner; candidates are in `Output`; pass `Owner::name` or a `path`) and
 `symbol_not_found` (nothing is named exactly that; nearest names are in
 `Output`). Qualify by owner: `Owner::name`, or `ns::Owner::name` (a qualified

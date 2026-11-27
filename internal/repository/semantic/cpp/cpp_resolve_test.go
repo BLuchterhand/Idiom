@@ -2,6 +2,8 @@ package cpp
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -105,18 +107,33 @@ void free_helper_extra() {
 		Expect(none.Total).To(BeZero())
 	})
 
-	It("reports the phase when the context budget is exhausted", func() {
+	It("reports the parse phase and a partial index when the context budget is exhausted", func() {
+		root := GinkgoT().TempDir()
+		for i := range cppMinParsedPerCall + 1 {
+			mustWriteFile(filepath.Join(root, fmt.Sprintf("x%02d.cpp", i)), fmt.Sprintf("int x%d() { return 1; }\n", i))
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		partial, err := BuildCppIndexWithOptions(root, BuildOptions{Context: ctx})
+
+		var budget *BudgetError
+		Expect(errors.As(err, &budget)).To(BeTrue())
+		Expect(budget.Phase).To(Equal("parse"))
+		Expect(partial.Files).To(HaveLen(cppMinParsedPerCall))
+	})
+
+	It("finishes a tree smaller than the per-call minimum even with a spent deadline", func() {
 		root := GinkgoT().TempDir()
 		mustWriteFile(filepath.Join(root, "x.cpp"), "int x() { return 1; }\n")
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := BuildCppIndexWithOptions(root, BuildOptions{Context: ctx})
-
-		var budget *BudgetError
-		Expect(err).To(HaveOccurred())
-		Expect(err).To(BeAssignableToTypeOf(budget))
+		index, err := BuildCppIndexWithOptions(root, BuildOptions{Context: ctx})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(index.Files).To(HaveLen(1))
 	})
 })
 

@@ -10,9 +10,10 @@ func (m *Manager) Dispatch(ctx context.Context, req ToolRequest) ToolResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, partial := withCppPartialNote(ctx)
 	req.invocationContext = ctx
 
-	result := m.dispatch(ctx, req)
+	result := partial.markPartial(m.dispatch(ctx, req))
 	return annotateToolFailure(result)
 }
 

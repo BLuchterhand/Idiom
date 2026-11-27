@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"idiom/internal/platform/gitstate"
@@ -24,9 +25,17 @@ const (
 	// /4: main (alias maps, comment blanking) and the resumable per-file
 	// checkpoint each moved /2 to /3 independently; merged files carry aliases.
 	cppCollectorVersion = "cpp-syntax-index/4"
-	// Leave room inside the 30s tool envelope for checkpoint IO and the optional
-	// clangd attempt. A timeout retains parsed files for the next process.
-	cppDefaultIndexBudget = 20 * time.Second
+	// cppIndexBudgetCap bounds one call's build when its caller sets no deadline
+	// (IDIOM_CPP_INDEX_BUDGET overrides it); under a tool envelope the build
+	// uses the envelope minus cppIndexReserve instead.
+	cppIndexBudgetCap = 10 * time.Minute
+	// cppIndexReserve is kept before the caller's deadline for the snapshot
+	// check, the checkpoint write and the answer.
+	cppIndexReserve = 4 * time.Second
+	// cppSnapshotTimeout bounds the Git snapshot that keys the index. It is not
+	// tied to the caller's deadline: without a key a call cannot resume, so a
+	// call that arrives late would redo the same first files forever.
+	cppSnapshotTimeout = 15 * time.Second
 	// Fresh CLI processes can spend the whole attempt initializing clangd. Keep
 	// this below the warm-query target; syntax/text evidence remains available.
 	cppDefaultClangdBudget = 500 * time.Millisecond
@@ -55,6 +64,7 @@ const (
 
 const (
 	cppCodeBudgetExceeded = "cpp_index_budget_exceeded"
+	cppCodeIndexPartial   = "cpp_index_partial"
 	cppCodeAmbiguous      = "ambiguous_symbol"
 	cppCodeNotFound       = "symbol_not_found"
 )
@@ -81,6 +91,62 @@ type cppIndexInfo struct {
 	Load          time.Duration
 	Budget        time.Duration
 	Checkpoint    bool
+	// Partial marks an index whose build ran out of budget: it holds
+	// len(Files) of TotalFiles files and the next call resumes it.
+	Partial    bool
+	TotalFiles int
+}
+
+type cppPartialNoteKey struct{}
+
+// cppPartialNote collects, per tool dispatch, whether any C++ index load
+// answered from a partial index, so Dispatch marks the result once whatever
+// path the tool took to the index.
+type cppPartialNote struct {
+	mu      sync.Mutex
+	partial bool
+	info    cppIndexInfo
+}
+
+func withCppPartialNote(ctx context.Context) (context.Context, *cppPartialNote) {
+	note := &cppPartialNote{}
+
+	return context.WithValue(ctx, cppPartialNoteKey{}, note), note
+}
+
+func notePartialCppIndex(ctx context.Context, info cppIndexInfo) {
+	note, ok := ctx.Value(cppPartialNoteKey{}).(*cppPartialNote)
+	if !ok || !info.Partial {
+		return
+	}
+
+	note.mu.Lock()
+	note.partial, note.info = true, info
+	note.mu.Unlock()
+}
+
+// markPartial labels a result answered from a partial index: the summary says
+// so first, a warning tells the caller to repeat the call, and the freshness
+// report carries the counts.
+func (note *cppPartialNote) markPartial(result ToolResult) ToolResult {
+	note.mu.Lock()
+	partial, info := note.partial, note.info
+	note.mu.Unlock()
+
+	if !partial {
+		return result
+	}
+
+	indexed := info.Build.Files
+	result.Summary = fmt.Sprintf("PARTIAL C++ index (%d of %d files): %s", indexed, info.TotalFiles, result.Summary)
+	result.Warnings = append(result.Warnings, fmt.Sprintf("%s: the C++ index is incomplete (%d of %d files parsed); results may miss symbols, callers or includes. Repeat the call: indexing resumes where it stopped.", cppCodeIndexPartial, indexed, info.TotalFiles))
+
+	if report, ok := result.Freshness.(map[string]any); ok {
+		report["fresh"] = false
+		report["partial"] = map[string]int{"indexed_files": indexed, "total_files": info.TotalFiles}
+	}
+
+	return result
 }
 
 func cppBudgetSetting(name string, fallback time.Duration) time.Duration {

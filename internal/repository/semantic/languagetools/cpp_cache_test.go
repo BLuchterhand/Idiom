@@ -342,9 +342,9 @@ var _ = It("C++ cache configures the indexing budget", func() {
 	for _, test := range []struct {
 		value string
 		want  time.Duration
-	}{{"", cppDefaultIndexBudget}, {"bad", cppDefaultIndexBudget}, {"0s", cppDefaultIndexBudget}, {"-1s", cppDefaultIndexBudget}, {"90s", 90 * time.Second}} {
+	}{{"", cppIndexBudgetCap}, {"bad", cppIndexBudgetCap}, {"0s", cppIndexBudgetCap}, {"-1s", cppIndexBudgetCap}, {"90s", 90 * time.Second}} {
 		t.Setenv("IDIOM_CPP_INDEX_BUDGET", test.value)
-		if got := cppBudgetSetting("IDIOM_CPP_INDEX_BUDGET", cppDefaultIndexBudget); got != test.want {
+		if got := cppBudgetSetting("IDIOM_CPP_INDEX_BUDGET", cppIndexBudgetCap); got != test.want {
 			t.Fatalf("%q: got %s want %s", test.value, got, test.want)
 		}
 	}
@@ -371,18 +371,123 @@ var _ = It("C++ cache supports snapshots with hundreds of dirty source hashes", 
 	}
 })
 
-var _ = It("C++ cache returns typed failures from all five query tools", func() {
-	t := GinkgoT()
-	root := cppTestRepo(t)
-	for _, tool := range []string{"cpp_calls_into", "cpp_references", "cpp_blast_radius", "cpp_who_includes", "cpp_find_symbol"} {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		result := cppTestManager(t, root).Dispatch(ctx, ToolRequest{Tool: tool, Pattern: "target"})
-		if result.Code != cppCodeBudgetExceeded || result.Error == "" || result.Output != "" {
-			t.Fatalf("%s did not fail closed with a typed budget error: %+v", tool, result)
+// cppQueryTestManager is a Manager over a real tree whose host resolves paths
+// under root, for tests that drive whole query tools.
+func cppQueryTestManager(t GinkgoTInterface, root string) *Manager {
+	t.Helper()
+	host := NewMockHost(gomock.NewController(t))
+	host.EXPECT().Enabled().Return(true).AnyTimes()
+	host.EXPECT().Root().Return(root).AnyTimes()
+	host.EXPECT().ResolvePath(gomock.Any(), gomock.Any()).DoAndReturn(func(path string, _ string) (string, error) {
+		return filepath.Join(root, path), nil
+	}).AnyTimes()
+	display := func(path string) string {
+		if rel, err := filepath.Rel(root, path); err == nil {
+			return filepath.ToSlash(rel)
+		}
+		return path
+	}
+	host.EXPECT().DisplayPath(gomock.Any()).DoAndReturn(display).AnyTimes()
+	host.EXPECT().HandleDisplay(gomock.Any()).DoAndReturn(display).AnyTimes()
+	host.EXPECT().MaxDirectoryEntries().Return(0).AnyTimes()
+	host.EXPECT().RememberPath(gomock.Any()).AnyTimes()
+	host.EXPECT().PrimeDiscoveredPaths(gomock.Any()).AnyTimes()
+	host.EXPECT().SearchContent(gomock.Any(), gomock.Any()).Return(ToolResult{}).AnyTimes()
+	return NewManager(host)
+}
+
+// writeCppUnits adds n translation units that include a.h and define u<i>.
+func writeCppUnits(t GinkgoTInterface, root string, n int) {
+	t.Helper()
+	for i := range n {
+		writeFile(t, filepath.Join(root, fmt.Sprintf("unit%03d.cpp", i)), fmt.Sprintf("#include \"a.h\"\nvoid u%d() { target(); }\n", i))
+	}
+}
+
+// findUntilComplete repeats cpp_find_symbol under a spent deadline until the
+// index is no longer partial, failing past bound calls (counting done before).
+func findUntilComplete(t GinkgoTInterface, manager *Manager, ctx context.Context, pattern string, done int, bound int) ToolResult {
+	t.Helper()
+	for calls := done + 1; ; calls++ {
+		result := manager.Dispatch(ctx, ToolRequest{Tool: "cpp_find_symbol", Pattern: pattern})
+		if !containsPrefix(result.Warnings, cppCodeIndexPartial) {
+			return result
+		}
+		if calls >= bound {
+			t.Fatalf("index still partial after %d calls, bound %d", calls, bound)
 		}
 	}
+}
+
+func cppCallBound(files int) int {
+	return (files + semanticcpp.MinParsedPerCall - 1) / semanticcpp.MinParsedPerCall
+}
+
+// A spent deadline never fails a query: each of the five tools answers from
+// the partial index, says so, and repeated calls finish the index.
+var _ = It("C++ cache answers all five query tools from a partial index, marked partial", func() {
+	t := GinkgoT()
+	t.Setenv("IDIOM_CACHE_DIR", t.TempDir())
+	root := cppTestRepo(t)
+	const extraUnits = 200
+	writeCppUnits(t, root, extraUnits)
+	manager := cppQueryTestManager(t, root)
+
+	spent, cancel := context.WithCancel(context.Background())
+	cancel()
+	tools := []string{"cpp_calls_into", "cpp_references", "cpp_blast_radius", "cpp_who_includes", "cpp_find_symbol"}
+	patterns := map[string]string{"cpp_calls_into": "target", "cpp_references": "target", "cpp_blast_radius": "a.h", "cpp_who_includes": "a.h", "cpp_find_symbol": "target"}
+	for _, tool := range tools {
+		result := manager.Dispatch(spent, ToolRequest{Tool: tool, Pattern: patterns[tool]})
+		if result.Code == cppCodeBudgetExceeded || !strings.HasPrefix(result.Summary, "PARTIAL C++ index") || !containsPrefix(result.Warnings, cppCodeIndexPartial) {
+			t.Fatalf("%s did not answer from a marked partial index: %+v", tool, result)
+		}
+		if report, ok := result.Freshness.(map[string]any); !ok || report["fresh"] != false || report["partial"] == nil {
+			t.Fatalf("%s freshness does not report the partial index: %+v", tool, result.Freshness)
+		}
+	}
+
+	result := findUntilComplete(t, manager, spent, "u199", len(tools), cppCallBound(extraUnits+3))
+	if !strings.Contains(result.Output, "u199") {
+		t.Fatalf("finished index misses the last unit: %+v", result)
+	}
 })
+
+// Without Git there is no snapshot key, so a partial index resumes in memory
+// only after checking every retained file's content hash.
+var _ = It("C++ cache resumes a partial index outside Git and reparses an edited file", func() {
+	t := GinkgoT()
+	t.Setenv("IDIOM_CACHE_DIR", t.TempDir())
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.h"), "void target();\n")
+	const units = 100
+	writeCppUnits(t, root, units)
+	manager := cppQueryTestManager(t, root)
+
+	spent, cancel := context.WithCancel(context.Background())
+	cancel()
+	first := manager.Dispatch(spent, ToolRequest{Tool: "cpp_find_symbol", Pattern: "u0"})
+	if !containsPrefix(first.Warnings, cppCodeIndexPartial) {
+		t.Fatalf("first call over %d files should be partial: %+v", units+1, first)
+	}
+	// unit000.cpp was parsed by the first call; its edit must not be lost.
+	writeFile(t, filepath.Join(root, "unit000.cpp"), "#include \"a.h\"\nvoid edited0() { target(); }\n")
+
+	findUntilComplete(t, manager, spent, "u99", 1, cppCallBound(units+1))
+	edited := manager.Dispatch(spent, ToolRequest{Tool: "cpp_find_symbol", Pattern: "edited0"})
+	if !strings.Contains(edited.Output, "unit000.cpp") {
+		t.Fatalf("edited file kept its stale entry: %+v", edited)
+	}
+})
+
+func containsPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // targetCallerCount counts resolved call sites of the fixtures' free function
 // target (main resolves callers through ResolveSymbol and CallsInto).
