@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,23 +25,7 @@ var _ = It("keeps repository tests on Ginkgo and async assertions recoverable", 
 	suiteCounts := map[string]int{}
 	var violations []string
 
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", "node_modules", "testdata", "vendor":
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-
+	err := walkRepositoryFiles(root, ".go", func(path string) error {
 		source, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
@@ -540,23 +523,7 @@ func testLabelsByDirectory(root string) (map[string]map[string]bool, []string, e
 	fset := token.NewFileSet()
 	labelsByDir := make(map[string]map[string]bool)
 	var violations []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", "node_modules", "testdata", "vendor":
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
+	err := walkRepositoryFiles(root, "_test.go", func(path string) error {
 		file, parseErr := parser.ParseFile(fset, path, nil, 0)
 		if parseErr != nil {
 			return parseErr
@@ -601,23 +568,7 @@ type labeledBuildTagRequirement struct {
 func labeledBuildTagRequirements(root string) ([]labeledBuildTagRequirement, error) {
 	fset := token.NewFileSet()
 	requirements := make(map[string]labeledBuildTagRequirement)
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", "node_modules", "testdata", "vendor":
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
+	err := walkRepositoryFiles(root, "_test.go", func(path string) error {
 		source, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
