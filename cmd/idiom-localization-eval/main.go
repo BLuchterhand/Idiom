@@ -112,6 +112,7 @@ func run(args []string) error {
 	seed := fs.Bool("seed", false, "seed each index from the nearest cached tree (faster, tail ranks may differ from a cold index); default is a cold index per case")
 	format := fs.String("format", "", "context_impact output format under test: empty (default JSON) or compact")
 	timed := fs.Int("timed-calls", 3, "timed calls per case after one warm-up")
+	codeMapCmd := fs.String("codemap-cmd", "", "command run in each case's base worktree to generate its code map, e.g. \"node scripts/code_map.mjs\"")
 	out := fs.String("out", "", "result file")
 	_ = fs.Parse(args)
 
@@ -128,7 +129,7 @@ func run(args []string) error {
 	defer stop()
 
 	opts := eval.LocalizationEvalRunOptions{Repo: *repo, IdiomBin: *bin, CacheDir: *cache, CacheMaxBytes: *cacheGB << 30,
-		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, Log: os.Stderr}
+		Subset: *subset, TimedCalls: *timed, NoSeed: !*seed, Format: *format, CodeMapCmd: *codeMapCmd, Log: os.Stderr}
 	if *only != "" {
 		opts.OnlyIDs = strings.Split(*only, ",")
 	}
